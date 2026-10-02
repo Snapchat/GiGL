@@ -12,7 +12,7 @@ To generate a frozen config from a template task config, see instructions at top
 Args:
     --task_config_uri: Path to the task config URI.
     --torch_process_group_init_method: Method to initialize the torch process group.
-    --process_count: Number of processes to spawn.
+    --local_world_size: Number of processes to spawn.
     --embedding_output_uri: URI to save embeddings.
     --batch_size: Batch size for inference.
     --use_local_saved_model: Use a local saved model instead of a remote URI.
@@ -52,37 +52,35 @@ logger = Logger()
 
 @torch.no_grad()
 def inference(
-    process_number: int,
-    process_count: int,
+    local_rank: int,
+    local_world_size: int,
     port: int,
     dataset: DistDataset,
     embedding_output_uri: Uri,
-    saved_model_uri: Uri,
+    model_uri: Uri,
     batch_size: int = 4,
 ):
     """Run inference on the model."""
-    logger.info(f"Starting inference on process {process_number} of {process_count}")
+    logger.info(f"Starting inference on process {local_rank} of {local_world_size}")
 
     # Initialize the distributed environment
     torch.distributed.init_process_group(
         backend="gloo",
         init_method=f"tcp://localhost:{port}",
-        world_size=process_count,
-        rank=process_number,
+        world_size=local_world_size,
+        rank=local_rank,
     )
 
     # Create the model
     model = init_model()
     # Load the model state
-    model.load_state_dict(load_state_dict_from_uri(saved_model_uri))
-    logger.info(
-        f"Used saved model at {saved_model_uri} to initialize the model {model}."
-    )
+    model.load_state_dict(load_state_dict_from_uri(model_uri))
+    logger.info(f"Used saved model at {model_uri} to initialize the model {model}.")
     model.eval()
 
     for node_type in dataset.get_node_types():
         # Create a data loader
-        logger.info(f"Process {process_number} is processing node type {node_type}.")
+        logger.info(f"Process {local_rank} is processing node type {node_type}.")
         assert isinstance(dataset.node_ids, Mapping)
         loader = DistNeighborLoader(
             dataset,
@@ -98,7 +96,7 @@ def inference(
         )
         Path(export_dir.uri).mkdir(parents=True, exist_ok=True)
         exporter = EmbeddingExporter(
-            export_dir, file_prefix=f"embeddings_{process_number}_"
+            export_dir, file_prefix=f"embeddings_{local_rank}_"
         )
         for batch in loader:
             embeddings = model(batch.x_dict, batch.edge_index_dict)
@@ -110,7 +108,7 @@ def inference(
             )
         exporter.flush_records()
         torch.distributed.barrier()  # Wait for all ranks to finish exporting embeddings
-    logger.info(f"Finished inference on process {process_number}")
+    logger.info(f"Finished inference on process {local_rank}")
 
 
 if __name__ == "__main__":
@@ -126,7 +124,7 @@ if __name__ == "__main__":
         default=f"tcp://localhost:{get_free_port()}?rank=0&world_size=1",
     )
     parser.add_argument(
-        "--process_count", type=str, default="1", help="Number of processes to spawn"
+        "--local_world_size", type=str, default="1", help="Number of processes to spawn"
     )
     parser.add_argument(
         "--embedding_output_uri",
@@ -157,23 +155,23 @@ if __name__ == "__main__":
         _tfrecord_uri_pattern=".*tfrecord",
     )
     if strtobool(args.use_local_saved_model):
-        saved_model_uri = LOCAL_SAVED_MODEL_URI
+        model_uri = LOCAL_SAVED_MODEL_URI
     else:
-        saved_model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
-    logger.info(f"Using saved model URI: {saved_model_uri}")
+        model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri
+    logger.info(f"Using saved model URI: {model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
     torch.multiprocessing.spawn(
         inference,
         args=(
-            int(args.process_count),  # process_count
+            int(args.local_world_size),  # local_world_size
             inference_port,  # port
             dataset,  # dataset
             UriFactory.create_uri(args.embedding_output_uri),  # embedding_output_uri
-            UriFactory.create_uri(saved_model_uri),  # saved_model_uri
+            UriFactory.create_uri(model_uri),  # model_uri
             gbml_config_pb_wrapper.inferencer_config.inference_batch_size,  # batch_size
         ),
-        nprocs=int(args.process_count),
+        nprocs=int(args.local_world_size),
         join=True,
     )  # ty: ignore[call-non-callable] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
 

@@ -11,7 +11,6 @@ import torch.multiprocessing as mp
 from parameterized import param, parameterized
 
 from gigl.common import LocalUri
-from gigl.common.utils.vertex_ai_context import get_vertex_ai_job_id
 from gigl.distributed.utils import (
     GraphStoreInfo,
     get_free_ports_from_master_node,
@@ -26,9 +25,11 @@ from gigl.distributed.utils.networking import (
 )
 from gigl.env.distributed import (
     COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY,
+    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY,
+    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY,
+    GRAPH_STORE_READINESS_URI_ENV_KEY,
     GraphStoreInfo,
 )
-from gigl.env.pipelines_config import get_resource_config
 from tests.test_assets.distributed.utils import get_process_group_init_method
 from tests.test_assets.test_case import TestCase
 
@@ -343,18 +344,31 @@ def _test_get_graph_store_info_in_dist_context(
             worker_pool = "workerpool2"
             index = rank - compute_nodes
         worker_pool_sizes = [1, compute_nodes - 1, storage_nodes]
-    with patch.dict(
-        os.environ,
-        {
-            "RANK": str(rank),
-            "WORLD_SIZE": str(world_size),
-            "CLUSTER_SPEC": json.dumps(
-                _get_cluster_spec_for_test(worker_pool_sizes, worker_pool, index)
-            ),
-            COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(4),
-        },
-        clear=False,
+    with (
+        patch.dict(
+            os.environ,
+            {
+                "RANK": str(rank),
+                "WORLD_SIZE": str(world_size),
+                "CLUSTER_SPEC": json.dumps(
+                    _get_cluster_spec_for_test(worker_pool_sizes, worker_pool, index)
+                ),
+                COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: str(4),
+            },
+            clear=False,
+        ),
+        patch(
+            "gigl.distributed.utils.networking.get_resource_config"
+        ) as mock_get_resource_config,
+        patch(
+            "gigl.distributed.utils.networking.get_vertex_ai_job_id",
+            return_value="test_job_id",
+        ),
     ):
+        temp_assets_bucket_path = LocalUri("/tmp/gigl-networking-test-assets")
+        mock_get_resource_config.return_value.temp_assets_bucket_path = (
+            temp_assets_bucket_path
+        )
         try:
             # Call get_graph_store_info
             graph_store_info = get_graph_store_info()
@@ -425,10 +439,10 @@ def _test_get_graph_store_info_in_dist_context(
 
             # Verify readiness URI is constructed correctly
             expected_readiness_uri = (
-                get_resource_config().temp_assets_bucket_path
+                temp_assets_bucket_path
                 / "gigl"
                 / "graph_store"
-                / get_vertex_ai_job_id()
+                / "test_job_id"
                 / "graph_store_readiness.txt"
             )
             assert graph_store_info.readiness_uri == expected_readiness_uri, (
@@ -475,15 +489,230 @@ class TestGetGraphStoreInfo(TestCase):
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    def test_get_graph_store_info_fails_when_not_running_in_vertex_ai_job(self):
-        """Test that get_graph_store_info fails when not running in a Vertex AI job."""
-        with self.assertRaises(ValueError) as context:
+    def test_get_graph_store_info_requires_initialized_process_group(self):
+        with self.assertRaisesRegex(ValueError, "initialized cluster-wide"):
             get_graph_store_info()
 
+    def test_get_graph_store_info_from_generic_environment(self):
+        env = {
+            GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "1",
+            GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+            GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready",
+            COMPUTE_CLUSTER_LOCAL_WORLD_SIZE_ENV_KEY: "1",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=False,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            patch.object(dist, "get_world_size", return_value=2),
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_master_node",
+                return_value="10.0.0.1",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_node",
+                return_value="10.0.0.2",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_free_ports_from_node",
+                side_effect=([1000, 1001], [1002, 1003, 1004]),
+            ),
+        ):
+            info = get_graph_store_info()
+
+        self.assertEqual(info.num_compute_nodes, 1)
+        self.assertEqual(info.num_storage_nodes, 1)
+        self.assertEqual(info.cluster_master_ip, "10.0.0.1")
+        self.assertEqual(info.storage_cluster_master_ip, "10.0.0.2")
+        self.assertEqual(info.readiness_uri, LocalUri("/tmp/gigl-graph-store-ready"))
+
+    def test_graph_store_environment_overrides_vertex_ai_topology(self):
+        env = {
+            GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "1",
+            GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+            GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=True,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            patch.object(dist, "get_world_size", return_value=2),
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_master_node",
+                return_value="10.0.0.1",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_node",
+                return_value="10.0.0.2",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_free_ports_from_node",
+                side_effect=([1000, 1001], [1002, 1003, 1004]),
+            ),
+            self.assertLogs("root", level="WARNING") as logs,
+        ):
+            info = get_graph_store_info()
+
+        self.assertEqual(info.num_compute_nodes, 1)
+        self.assertEqual(info.num_storage_nodes, 1)
+        self.assertEqual(info.readiness_uri, LocalUri("/tmp/gigl-graph-store-ready"))
         self.assertIn(
-            "get_graph_store_info must be called in a Vertex AI job.",
-            str(context.exception),
+            "Using explicit GiGL GraphStore environment variables instead of "
+            "Vertex AI cluster information.",
+            logs.output[0],
         )
+
+    def test_partial_graph_store_environment_raises_on_vertex_ai(self):
+        env = {GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready"}
+        expected_missing_keys = (
+            f"{GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY}.*"
+            f"{GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY}"
+        )
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=True,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            self.assertRaisesRegex(ValueError, expected_missing_keys),
+        ):
+            get_graph_store_info()
+
+    def test_vertex_ai_topology_is_used_without_graph_store_environment(self):
+        cluster_spec = _get_cluster_spec_for_test([1, 0, 1], "workerpool0", 0)
+        env = {
+            "CLOUD_ML_JOB_ID": "test-job-id",
+            "CLUSTER_SPEC": json.dumps(cluster_spec),
+            "RANK": "0",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(dist, "is_initialized", return_value=True),
+            patch.object(dist, "get_world_size", return_value=2),
+            patch(
+                "gigl.distributed.utils.networking.get_resource_config"
+            ) as mock_get_resource_config,
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_master_node",
+                return_value="10.0.0.1",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_internal_ip_from_node",
+                return_value="10.0.0.2",
+            ),
+            patch(
+                "gigl.distributed.utils.networking.get_free_ports_from_node",
+                side_effect=([1000, 1001], [1002, 1003, 1004]),
+            ),
+        ):
+            mock_get_resource_config.return_value.temp_assets_bucket_path = LocalUri(
+                "/tmp/gigl-networking-test-assets"
+            )
+            info = get_graph_store_info()
+
+        self.assertEqual(info.num_compute_nodes, 1)
+        self.assertEqual(info.num_storage_nodes, 1)
+        self.assertEqual(
+            info.readiness_uri,
+            LocalUri("/tmp/gigl-networking-test-assets")
+            / "gigl"
+            / "graph_store"
+            / "test-job-id"
+            / "graph_store_readiness.txt",
+        )
+
+    def test_missing_graph_store_topology_raises_explicit_error(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=False,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            self.assertRaisesRegex(ValueError, "Unable to resolve GraphStore topology"),
+        ):
+            get_graph_store_info()
+
+    @parameterized.expand(
+        [
+            param(
+                "non-positive compute count",
+                {
+                    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "0",
+                    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+                    GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready",
+                },
+                GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY,
+            ),
+            param(
+                "invalid storage count",
+                {
+                    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "1",
+                    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "many",
+                    GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready",
+                },
+                GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY,
+            ),
+            param(
+                "missing readiness URI",
+                {
+                    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "1",
+                    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+                },
+                GRAPH_STORE_READINESS_URI_ENV_KEY,
+            ),
+            param(
+                "empty readiness URI",
+                {
+                    GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "1",
+                    GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+                    GRAPH_STORE_READINESS_URI_ENV_KEY: "",
+                },
+                GRAPH_STORE_READINESS_URI_ENV_KEY,
+            ),
+        ]
+    )
+    def test_invalid_generic_environment_raises(
+        self,
+        _name: str,
+        env: dict[str, str],
+        expected_key: str,
+    ):
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=False,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            self.assertRaisesRegex(ValueError, expected_key),
+        ):
+            get_graph_store_info()
+
+    def test_declared_topology_must_match_process_group(self):
+        env = {
+            GRAPH_STORE_NUM_COMPUTE_NODES_ENV_KEY: "2",
+            GRAPH_STORE_NUM_STORAGE_NODES_ENV_KEY: "1",
+            GRAPH_STORE_READINESS_URI_ENV_KEY: "/tmp/gigl-graph-store-ready",
+        }
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "gigl.distributed.utils.networking.is_currently_running_in_vertex_ai_job",
+                return_value=False,
+            ),
+            patch.object(dist, "is_initialized", return_value=True),
+            patch.object(dist, "get_world_size", return_value=2),
+            self.assertRaisesRegex(ValueError, "expected world size 3"),
+        ):
+            get_graph_store_info()
 
     @parameterized.expand(
         [

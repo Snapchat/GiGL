@@ -36,9 +36,7 @@ Now you can create the GiGL runner object and kick off a pipeline.
 Example:
 
 ```python
-
 runner = Runner.run(pipeline_config=pipeline_config)
-
 ```
 
 3. Optional: The runner also supports running individual components as needed
@@ -60,7 +58,6 @@ use of Vertex AI to run the Kubeflow Pipelines.
 ### Usage Example
 
 ```python
-
 from gigl.orchestration.kubeflow.runner import KfpOrchestrator
 from gigl.common import UriFactory
 from gigl.src.common.types import AppliedTaskIdentifier
@@ -77,7 +74,6 @@ orchestrator.run(
     resource_config_uri=resource_config_uri,
     start_at="config_populator"
 )
-
 ```
 
 ## Importable GiGL

@@ -396,11 +396,11 @@ abstract class NodeAnchorBasedLinkPredictionBaseTask(
         STRUCT( _root_node AS node_id,
           _condensed_node_type AS condensed_node_type,
           _node_features AS feature_values ) AS root_node,
-        ARRAY() AS hard_neg_edges,
-        _pos_hydrated_edges AS pos_edges,
-        ARRAY() AS neg_edges,
-        STRUCT( _neighbor_nodes AS nodes,
-          _neighbor_edges AS edges ) AS neighborhood
+        ${emptyEdgeArrayWithProtoSchema} AS hard_neg_edges,
+        ${castEdgeArrayToProtoSchema("_pos_hydrated_edges")} AS pos_edges,
+        ${emptyEdgeArrayWithProtoSchema} AS neg_edges,
+        STRUCT( ${castNodeArrayToProtoSchema("_neighbor_nodes")} AS nodes,
+          ${castEdgeArrayToProtoSchema("_neighbor_edges")} AS edges ) AS neighborhood
       FROM
         ${dfVIEW}
                 """)
@@ -410,11 +410,11 @@ abstract class NodeAnchorBasedLinkPredictionBaseTask(
         STRUCT( _root_node AS node_id,
           _condensed_node_type AS condensed_node_type,
           _node_features AS feature_values ) AS root_node,
-        _neg_hydrated_edges AS hard_neg_edges,
-        _pos_hydrated_edges AS pos_edges,
-        ARRAY() AS neg_edges,
-        STRUCT( _neighbor_nodes AS nodes,
-          _neighbor_edges AS edges ) AS neighborhood
+        ${castEdgeArrayToProtoSchema("_neg_hydrated_edges")} AS hard_neg_edges,
+        ${castEdgeArrayToProtoSchema("_pos_hydrated_edges")} AS pos_edges,
+        ${emptyEdgeArrayWithProtoSchema} AS neg_edges,
+        STRUCT( ${castNodeArrayToProtoSchema("_neighbor_nodes")} AS nodes,
+          ${castEdgeArrayToProtoSchema("_neighbor_edges")} AS edges ) AS neighborhood
       FROM
         ${dfVIEW}
                 """)

@@ -10,6 +10,7 @@ from graphlearn_torch.distributed import (
     RemoteDistSamplingWorkerOptions,
 )
 from graphlearn_torch.sampler import NodeSamplerInput
+from jaxtyping import Int64
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 
@@ -18,29 +19,24 @@ from gigl.common.logger import Logger
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_ppr_sampler import (
-    PPR_EDGE_INDEX_METADATA_KEY,
-    PPR_WEIGHT_METADATA_KEY,
-)
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import (
-    PPRSamplerOptions,
     SamplerOptions,
     resolve_sampler_options,
 )
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     SamplingClusterSetup,
-    attach_ppr_outputs,
-    extract_edge_type_metadata,
     extract_metadata,
     labeled_to_homogeneous,
+    materialize_quantized_edge_features,
+    materialize_quantized_node_features,
     set_missing_features,
     shard_nodes_by_process,
     strip_label_edges,
-    strip_non_ppr_edge_types,
 )
+from gigl.distributed.utils.sampling_errors import raise_if_sampling_error
 from gigl.src.common.types.graph_data import (
     NodeType,  # TODO (mkolodner-sc): Change to use torch_geometric.typing
 )
@@ -71,10 +67,10 @@ class DistNeighborLoader(BaseDistLoader):
         num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
         input_nodes: Optional[
             Union[
-                torch.Tensor,
-                Tuple[NodeType, torch.Tensor],
-                abc.Mapping[int, torch.Tensor],
-                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
+                Int64[torch.Tensor, "nodes"],
+                Tuple[NodeType, Int64[torch.Tensor, "nodes"]],
+                abc.Mapping[int, Int64[torch.Tensor, "nodes"]],
+                Tuple[NodeType, abc.Mapping[int, Int64[torch.Tensor, "nodes"]]],
             ]
         ] = None,
         num_workers: int = 1,
@@ -93,7 +89,7 @@ class DistNeighborLoader(BaseDistLoader):
         with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
-    ):
+    ) -> None:
         """
         Distributed Neighbor Loader.
         Takes in some input nodes and samples neighbors from the dataset.
@@ -285,6 +281,7 @@ class DistNeighborLoader(BaseDistLoader):
                 sampling_config=sampling_config,
                 worker_options=worker_options,
                 sampler_options=sampler_options,
+                channel_name=f"nbr_channel_{runtime.rank}_of_{runtime.world_size}",
             )
 
         # Call base class — handles metadata storage and connection initialization
@@ -417,6 +414,8 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=node_feature_info,
                 edge_feature_info=edge_feature_info,
+                node_quantization_metadata=dataset.fetch_node_quantization_metadata(),
+                edge_quantization_metadata=dataset.fetch_edge_quantization_metadata(),
                 edge_dir=dataset.fetch_edge_dir(),
             ),
             backend_key,
@@ -534,11 +533,17 @@ class DistNeighborLoader(BaseDistLoader):
                 edge_types=edge_types,
                 node_feature_info=dataset.node_feature_info,
                 edge_feature_info=dataset.edge_feature_info,
+                node_quantization_metadata=dataset.node_quantization_metadata,
+                edge_quantization_metadata=dataset.edge_quantization_metadata,
                 edge_dir=dataset.edge_dir,
             ),
         )
 
     def _collate_fn(self, msg: SampleMessage) -> Union[Data, HeteroData]:
+        # A sampling worker that failed forwards a poison-pill message instead of
+        # a batch; surface it as a RuntimeError with the worker traceback before
+        # doing any parsing that would choke on the sentinel payload.
+        raise_if_sampling_error(msg)
         # Extract user-defined metadata before super()._collate_fn, which
         # calls GLT's to_hetero_data.  to_hetero_data misinterprets #META. keys
         # as edge types and fails when edge_dir="out" (tries to call
@@ -557,16 +562,18 @@ class DistNeighborLoader(BaseDistLoader):
         if self._is_homogeneous_with_labeled_edge_type:
             data = labeled_to_homogeneous(DEFAULT_HOMOGENEOUS_EDGE_TYPE, data)
 
-        if isinstance(self._sampler_options, PPRSamplerOptions):
-            matched, metadata = extract_edge_type_metadata(
-                metadata=metadata,
-                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
-            )
-            ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
-            ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
-            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
-            if isinstance(data, HeteroData):
-                data = strip_non_ppr_edge_types(data, set(ppr_edge_indices.keys()))
+        data, metadata = self._apply_ppr_outputs(data, metadata)
+        data, metadata = materialize_quantized_node_features(
+            data=data,
+            metadata=metadata,
+            node_quantization_metadata=self._node_quantization_metadata,
+        )
+        data, metadata = materialize_quantized_edge_features(
+            data=data,
+            metadata=metadata,
+            edge_quantization_metadata=self._edge_quantization_metadata,
+            edge_dir=self.edge_dir,
+        )
 
         # Attach any remaining metadata (e.g. custom user-defined keys) directly onto the
         # data object so downstream code can access them via attribute lookup.

@@ -1,18 +1,22 @@
 import datetime
 import itertools
+import os
 import re
-from typing import Iterable, Optional, Tuple, Union
+import time
+from typing import Iterable, Optional, Sequence, Tuple, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
+from google.api_core.client_options import ClientOptions
 from google.api_core.exceptions import NotFound
 from google.cloud.bigquery._helpers import _record_field_to_json
-from google.cloud.bigquery.job import _AsyncJob
+from google.cloud.bigquery.job import LoadJob, _AsyncJob
 from google.cloud.bigquery.table import RowIterator
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
+from gigl.env.constants import GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
 from gigl.src.common.constants.time import DEFAULT_DATE_FORMAT
 from gigl.src.common.utils.time import convert_days_to_ms, current_datetime
 
@@ -58,9 +62,39 @@ def _load_file_to_bq_with_retry(
 
 
 class BqUtils:
-    def __init__(self, project: Optional[str] = None) -> None:
-        logger.info(f"BqUtils initialized with project: {project}")
-        self.__bq_client = bigquery.Client(project=project)
+    def __init__(
+        self,
+        project: Optional[str] = None,
+        quota_project_id: Optional[str] = None,
+    ) -> None:
+        """Initialize a BqUtils instance.
+
+        A non-empty ``quota_project_id`` takes precedence over the
+        ``GIGL_BIGQUERY_QUOTA_PROJECT`` environment variable. If neither is
+        set, the BigQuery client uses google-auth's default quota project.
+
+        Args:
+            project (Optional[str]): Default project for BigQuery resources and
+                jobs.
+            quota_project_id (Optional[str]): Project used for BigQuery quota
+                and billing.
+        """
+        resolved_quota_project_id = quota_project_id or os.environ.get(
+            GIGL_BIGQUERY_QUOTA_PROJECT_ENV_KEY
+        )
+        logger.info(
+            f"BqUtils initialized with project: {project}, "
+            f"quota project: {resolved_quota_project_id}"
+        )
+        if resolved_quota_project_id:
+            self.__bq_client = bigquery.Client(
+                project=project,
+                client_options=ClientOptions(
+                    quota_project_id=resolved_quota_project_id
+                ),
+            )
+        else:
+            self.__bq_client = bigquery.Client(project=project)
 
     def create_bq_dataset(self, dataset_id, exists_ok=True) -> None:
         dataset = bigquery.Dataset(dataset_id)
@@ -411,6 +445,44 @@ class BqUtils:
         bq_schema = self.__bq_client.get_table(bq_table).schema
         schema_dict = {field.name: field for field in bq_schema}
         return schema_dict
+
+    def load_files_to_bq(
+        self,
+        source_uris: Union[str, Sequence[str]],
+        bq_path: str,
+        job_config: bigquery.LoadJobConfig,
+        should_run_async: bool = False,
+    ) -> LoadJob:
+        """Load one or more GCS files into a BigQuery table.
+
+        Args:
+            source_uris (Union[str, Sequence[str]]): GCS URI or URIs to load.
+                Wildcards are supported.
+            bq_path (str): Destination table in ``project.dataset.table`` format.
+            job_config (bigquery.LoadJobConfig): BigQuery load configuration.
+            should_run_async (bool): Whether to return before the load finishes.
+                Defaults to False.
+
+        Returns:
+            LoadJob: The created BigQuery load job.
+        """
+        start_time = time.perf_counter()
+        load_job = self.__bq_client.load_table_from_uri(
+            source_uris=source_uris,
+            destination=bq_path,
+            job_config=job_config,
+        )
+        if should_run_async:
+            logger.info(
+                f"Started load job {load_job.job_id} for {bq_path}, running asynchronously."
+            )
+        else:
+            load_job.result()
+            logger.info(
+                f"Loaded {load_job.output_rows:,} rows into {bq_path} in "
+                f"{time.perf_counter() - start_time:.2f} seconds."
+            )
+        return load_job
 
     def load_file_to_bq(
         self,

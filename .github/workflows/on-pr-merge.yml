@@ -100,7 +100,8 @@ jobs:
     - name: Run Integration Tests
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make integration_test"
+        # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
+        cmd: "make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 

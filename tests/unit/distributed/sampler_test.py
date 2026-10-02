@@ -32,12 +32,12 @@ def _build_sampler_input(
     """Builds a simple ABLPNodeSamplerInput for testing with two edge types."""
     node = torch.arange(num_nodes)
     positive_label_by_edge_types = {
-        _USER_BUYS_ITEM: torch.arange(100, 100 + num_nodes),
-        _USER_CLICKS_ITEM: torch.arange(200, 200 + num_nodes),
+        _USER_BUYS_ITEM: torch.arange(100, 100 + num_nodes).unsqueeze(1),
+        _USER_CLICKS_ITEM: torch.arange(200, 200 + num_nodes).unsqueeze(1),
     }
     negative_label_by_edge_types = {
-        _USER_BUYS_ITEM: torch.arange(300, 300 + num_nodes),
-        _USER_CLICKS_ITEM: torch.arange(400, 400 + num_nodes),
+        _USER_BUYS_ITEM: torch.arange(300, 300 + num_nodes).unsqueeze(1),
+        _USER_CLICKS_ITEM: torch.arange(400, 400 + num_nodes).unsqueeze(1),
     }
     return ABLPNodeSamplerInput(
         node=node,
@@ -50,8 +50,8 @@ def _build_sampler_input(
 class TestABLPNodeSamplerInput(TestCase):
     def test_construction_and_properties(self) -> None:
         node = torch.tensor([10, 20, 30])
-        positive_labels = {_USER_BUYS_ITEM: torch.tensor([1, 2, 3])}
-        negative_labels = {_USER_CLICKS_ITEM: torch.tensor([4, 5, 6])}
+        positive_labels = {_USER_BUYS_ITEM: torch.tensor([[1], [2], [3]])}
+        negative_labels = {_USER_CLICKS_ITEM: torch.tensor([[4], [5], [6]])}
 
         sampler_input = ABLPNodeSamplerInput(
             node=node,
@@ -94,19 +94,19 @@ class TestABLPNodeSamplerInput(TestCase):
         self.assertEqual(sliced.input_type, _USER)
         self.assert_tensor_equality(
             sliced.positive_label_by_edge_types[_USER_BUYS_ITEM],
-            torch.tensor([100, 102]),
+            torch.tensor([[100], [102]]),
         )
         self.assert_tensor_equality(
             sliced.positive_label_by_edge_types[_USER_CLICKS_ITEM],
-            torch.tensor([200, 202]),
+            torch.tensor([[200], [202]]),
         )
         self.assert_tensor_equality(
             sliced.negative_label_by_edge_types[_USER_BUYS_ITEM],
-            torch.tensor([300, 302]),
+            torch.tensor([[300], [302]]),
         )
         self.assert_tensor_equality(
             sliced.negative_label_by_edge_types[_USER_CLICKS_ITEM],
-            torch.tensor([400, 402]),
+            torch.tensor([[400], [402]]),
         )
 
     def test_getitem_with_list_index(self) -> None:
@@ -116,10 +116,11 @@ class TestABLPNodeSamplerInput(TestCase):
         self.assertIsInstance(sliced, ABLPNodeSamplerInput)
         self.assertTrue(torch.equal(sliced.node, torch.tensor([1])))
         self.assert_tensor_equality(
-            sliced.positive_label_by_edge_types[_USER_BUYS_ITEM], torch.tensor([101])
+            sliced.positive_label_by_edge_types[_USER_BUYS_ITEM], torch.tensor([[101]])
         )
         self.assert_tensor_equality(
-            sliced.negative_label_by_edge_types[_USER_CLICKS_ITEM], torch.tensor([401])
+            sliced.negative_label_by_edge_types[_USER_CLICKS_ITEM],
+            torch.tensor([[401]]),
         )
 
     def test_share_memory(self) -> None:
@@ -165,8 +166,12 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         self,
     ) -> None:
         sampler = _build_sampler_stub(edge_dir="out")
-        positive_labels = {_USER_FRIEND_USER: torch.tensor([11, 12, -1, 13])}
-        negative_labels = {_USER_FRIEND_USER: torch.tensor([13, 14, 10, -1])}
+        positive_labels = {
+            _USER_FRIEND_USER: torch.tensor([[11, 12], [-1, 13], [-1, -1]])
+        }
+        negative_labels = {
+            _USER_FRIEND_USER: torch.tensor([[13, 14], [10, -1], [-1, -1]])
+        }
         sampler_input = ABLPNodeSamplerInput(
             node=torch.tensor([10, 11, 10]),
             input_type=_USER,
@@ -206,10 +211,10 @@ class TestBaseGiGLSamplerPreparation(TestCase):
             node=torch.tensor([4, 5]),
             input_type=_USER,
             positive_label_by_edge_types={
-                _USER_BUYS_ITEM: torch.tensor([20, 21, 20, -1])
+                _USER_BUYS_ITEM: torch.tensor([[20, 21], [20, -1]])
             },
             negative_label_by_edge_types={
-                _USER_BUYS_ITEM: torch.tensor([21, 22, -1, 20])
+                _USER_BUYS_ITEM: torch.tensor([[21, 22], [-1, 20]])
             },
         )
 

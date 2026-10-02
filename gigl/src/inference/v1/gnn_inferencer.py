@@ -19,15 +19,16 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_INFERENCER_S
-from gigl.src.common.graph_builder.graph_builder_factory import GraphBuilderFactory
+from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.bq import BqUtils
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from gigl.src.common.utils.model import load_state_dict_from_uri
 from gigl.src.inference.lib.assets import InferenceAssets
@@ -247,9 +248,7 @@ class InferencerV1:
 
         inferencer_instance: BaseInferencer = self.generate_inferencer_instance()
 
-        graph_builder = GraphBuilderFactory.get_graph_builder(
-            backend_name=inferencer_instance.model.graph_backend  # ty: ignore[invalid-argument-type] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        )
+        graph_builder = PygGraphBuilder()
 
         inference_blueprint: BaseInferenceBlueprint = (
             InferenceBlueprintFactory.get_inference_blueprint(
@@ -412,11 +411,25 @@ if __name__ == "__main__":
     task_config_uri = UriFactory.create_uri(args.task_config_uri)
     resource_config_uri = UriFactory.create_uri(args.resource_config_uri)
     custom_worker_image_uri = args.custom_worker_image_uri
-
-    initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
+    cpu_docker_uri = args.cpu_docker_uri
+    cuda_docker_uri = args.cuda_docker_uri
 
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
-    inferencer = InferencerV1(bq_gcp_project=get_resource_config().project)
+    initialize_gigl_runtime(
+        applied_task_identifier=applied_task_identifier,
+        task_config_uri=task_config_uri,
+        resource_config_uri=resource_config_uri,
+        service_name=args.job_name,
+        component=GiGLComponents.Inferencer,
+        cpu_docker_uri=cpu_docker_uri,
+        cuda_docker_uri=cuda_docker_uri,
+    )
+
+    inferencer = InferencerV1(
+        bq_gcp_project=get_resource_config(
+            resource_config_uri=resource_config_uri
+        ).project
+    )
     inferencer.run(
         applied_task_identifier=applied_task_identifier,
         task_config_uri=task_config_uri,

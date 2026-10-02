@@ -327,6 +327,12 @@ def _run_weighted_sampling_correctness_homogeneous(
     for datum in loader:
         assert isinstance(datum, Data), f"Expected Data, got {type(datum)}"
         assert datum.x is not None, "Node features missing from sampled subgraph"
+        # The graph has no edge features, so with_edge is derived as False and GLT
+        # must not attach sampled edge ids -- yet weighted sampling still works.
+        assert getattr(datum, "edge", None) is None, (
+            "Featureless weighted dataset should sample with with_edge=False, "
+            "but sampled edge ids were attached to the batch."
+        )
         # Bad nodes have feature 0.0; hub and good nodes have feature > 0.
         bad_mask = datum.x[:, 0] == 0.0
         assert not bad_mask.any(), (
@@ -547,6 +553,11 @@ class WeightedEdgePartitionerTestCase(TestCase):
             )
             assert edge_ids is not None
 
+            self.assertIsNotNone(
+                partition_output.edge_partition_book,
+                msg=f"Rank {rank}: edge partition book must be retained for weights",
+            )
+
             self.assertEqual(weights.shape, edge_ids.shape)
             expected_weights = edge_ids.float() * 0.1
             torch.testing.assert_close(
@@ -726,7 +737,7 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 True,  # should_assign_edges_by_src_node
                 self._master_ip_address,
                 master_port,
-                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+                InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
                 DistRangePartitioner,
                 rank_to_edge_weights,
             ),
@@ -752,6 +763,11 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 msg=f"Rank {rank}: edge_ids must be present when features are registered",
             )
             assert edge_ids is not None
+
+            self.assertIsNotNone(
+                partition_output.edge_partition_book,
+                msg=f"Rank {rank}: edge partition book must be retained for weights",
+            )
 
             self.assertEqual(
                 weights.shape,

@@ -50,7 +50,6 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   3. Once you are done, make sure to restart the instance. You may also need to navigate to the GCP compute instance UI, and under the `Observability` tab of your instance click the "Install OPS Agent" button under the GPU metrics to ensure the GPU metrics are also being reported.
 
   Next, Follow instructions to [install GiGL](#install-gigl)
-
 ````
 
 ````{dropdown} Manual Setup

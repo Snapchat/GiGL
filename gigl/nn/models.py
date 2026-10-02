@@ -2,6 +2,7 @@ from typing import Optional, Union
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float, Int64
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.nn.conv import LGConv
@@ -38,7 +39,10 @@ class LinkPredictionGNN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+    ) -> Union[
+        Float[torch.Tensor, "_nodes embedding_dim"],
+        dict[NodeType, Float[torch.Tensor, "_nodes embedding_dim"]],
+    ]:
         if isinstance(data, HeteroData):
             if output_node_types is None:
                 raise ValueError(
@@ -52,9 +56,9 @@ class LinkPredictionGNN(nn.Module):
 
     def decode(
         self,
-        query_embeddings: torch.Tensor,
-        candidate_embeddings: torch.Tensor,
-    ) -> torch.Tensor:
+        query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
+        candidate_embeddings: Float[torch.Tensor, "candidates embedding_dim"],
+    ) -> Float[torch.Tensor, "queries candidates"]:
         return self._decoder(
             query_embeddings=query_embeddings,
             candidate_embeddings=candidate_embeddings,
@@ -216,8 +220,11 @@ class LightGCN(nn.Module):
         data: Union[Data, HeteroData],
         device: torch.device,
         output_node_types: Optional[list[NodeType]] = None,
-        anchor_node_ids: Optional[torch.Tensor] = None,
-    ) -> Union[torch.Tensor, dict[NodeType, torch.Tensor]]:
+        anchor_node_ids: Optional[Int64[torch.Tensor, "anchors"]] = None,
+    ) -> Union[
+        Float[torch.Tensor, "_nodes embedding_dim"],
+        dict[NodeType, Float[torch.Tensor, "_nodes embedding_dim"]],
+    ]:
         """
         Forward pass of the LightGCN model.
 
@@ -325,7 +332,7 @@ class LightGCN(nn.Module):
 
     def _lookup_embeddings_for_single_node_type(
         self, node_type: str, ids: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Union[torch.Tensor, Awaitable[torch.Tensor]]:
         """
         Fetch per-ID embeddings for a single node type using EmbeddingBagCollection.
 
@@ -340,7 +347,9 @@ class LightGCN(nn.Module):
             ids (torch.Tensor): Node IDs to look up, shape [batch_size].
 
         Returns:
-            torch.Tensor: Embeddings for the requested node type, shape [batch_size, embedding_dim].
+            Embeddings for the requested node type, shape
+            ``[batch_size, embedding_dim]``. Distributed embedding collections
+            return an awaitable that resolves to the tensor.
         """
         if node_type not in self._feature_keys:
             raise KeyError(

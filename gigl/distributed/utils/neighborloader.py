@@ -5,15 +5,29 @@ from collections import abc
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Optional, TypeVar, Union
+from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
+from torch_geometric.data.storage import EdgeStorage, NodeStorage
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
-from gigl.types.graph import FeatureInfo, is_label_edge_type
+from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
+from gigl.distributed.sampler import (
+    EDGE_PACKED_FEATURES_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
+)
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
+    FeatureQuantizationIndexTensors,
+    FeatureQuantizationMetadata,
+    is_label_edge_type,
+)
 
 logger = Logger()
 
@@ -46,6 +60,13 @@ class DatasetSchema:
     edge_feature_info: Optional[Union[FeatureInfo, dict[EdgeType, FeatureInfo]]]
     # Edge direction.
     edge_dir: Union[str, Literal["in", "out"]]
+    # Quantization metadata for packed node features.
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ] = None
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+    ] = None
 
 
 def patch_fanout_for_sampling(
@@ -53,23 +74,29 @@ def patch_fanout_for_sampling(
     num_neighbors: Union[list[int], dict[EdgeType, list[int]]],
 ) -> Union[list[int], dict[EdgeType, list[int]]]:
     """
-    Sets up an approprirate fanout for sampling.
+    Normalizes the user-provided fanout into the per-edge-type form the samplers expect.
 
-    Does the following:
-    - For all label edge types, sets the fanout to be zero.
-    - For all other edge types, if the fanout is not specified, uses the original fanout.
+    For heterogeneous datasets, broadcasts a single fanout list to every message-passing
+    edge type, or validates a per-edge-type dict.
 
-    Note that if fanout is provided as a dict, the keys (edges) in the fanout must be in `edge_types`.
+    Label edge types (positive/negative supervision edges injected by ABLP) are never
+    sampled -- the samplers skip them during traversal (see
+    ``DistNeighborSampler._sample_from_nodes`` and ``DistPPRNeighborSampler``), so they
+    take no fanout. Callers must not specify them: any label edge type in ``num_neighbors``
+    raises ``ValueError``.
 
-    We add this because the existing sampling logic (below) makes strict assumptions that we need to conform to.
-    https://github.com/alibaba/graphlearn-for-pytorch/blob/26fe3d4e050b081bc51a79dc9547f244f5d314da/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L317-L318
+    For homogeneous datasets (``edge_types`` is None) the fanout list is returned unchanged.
 
     Args:
         edge_types (Optional[list[EdgeType]]): List of all edge types in the graph, is None for homogeneous datasets
-        num_neighbors (dict[EdgeType, list[int]]): Specified fanout by the user
+        num_neighbors (Union[list[int], dict[EdgeType, list[int]]]): Specified fanout by the user
     Returns:
-        Union[list[int], dict[EdgeType, list[int]]]: Modified fanout that is appropriate for sampling. Is a list[int]
-            if the dataset is homogeneous, otherwise is dict[EdgeType, list[int]]
+        Union[list[int], dict[EdgeType, list[int]]]: Normalized fanout. A list[int] for
+            homogeneous datasets, otherwise a dict[EdgeType, list[int]] over message-passing edges.
+    Raises:
+        ValueError: If a label edge type is supplied in ``num_neighbors``, if the dataset has
+            no message-passing edge types to fan out around, or on malformed fanout (extra or
+            missing edge types, inconsistent hop counts, or negative fanout).
     """
     if edge_types is None:
         if isinstance(num_neighbors, abc.Mapping):
@@ -79,32 +106,50 @@ def patch_fanout_for_sampling(
         if not all(hop >= 0 for hop in num_neighbors):
             raise ValueError(f"Hops provided must be non-negative, got {num_neighbors}")
         return num_neighbors
+
+    message_passing_edge_types = [
+        edge_type for edge_type in edge_types if not is_label_edge_type(edge_type)
+    ]
+    # A graph with only label edges and no message-passing edges cannot be sampled;
+    # fail explicitly rather than letting the validation tail raise StopIteration on an
+    # empty dict.
+    if not message_passing_edge_types:
+        raise ValueError(
+            f"No message-passing edge types found in dataset edge types {edge_types}; "
+            "cannot construct a fanout."
+        )
+
     if isinstance(num_neighbors, list):
         original_fanout = num_neighbors
-        should_broadcast_fanout = True
-        num_neighbors = {}
+        num_neighbors = {
+            edge_type: original_fanout for edge_type in message_passing_edge_types
+        }
     else:
+        # Label (positive/negative supervision) edges are injected internally and are
+        # never sampled, so callers must not specify them in the fanout. Reject them
+        # explicitly: they are part of the dataset edge types, so the extra-edge-types
+        # check below would not catch them.
+        provided_label_edge_types = {
+            edge_type for edge_type in num_neighbors if is_label_edge_type(edge_type)
+        }
+        if provided_label_edge_types:
+            raise ValueError(
+                f"Label edge types {provided_label_edge_types} were provided in num_neighbors. "
+                "Label (positive/negative supervision) edges are injected internally and are never "
+                "sampled, so they must not be specified in the fanout."
+            )
         extra_edge_types = set(num_neighbors.keys()) - set(edge_types)
         if extra_edge_types:
             raise ValueError(
                 f"Found extra edge types {extra_edge_types} in fanout which is not in dataset edge types {edge_types}."
             )
-        original_fanout = next(iter(num_neighbors.values()))
-        should_broadcast_fanout = False
         num_neighbors = deepcopy(num_neighbors)
-
-    num_hop = len(original_fanout)
-    zero_samples = [0 for _ in range(num_hop)]
-    for edge_type in edge_types:
-        # TODO(kmonte): stop setting fanout for positive/negative edges once GLT sampling correctly ignores those edges during fanout.
-        if is_label_edge_type(edge_type):
-            num_neighbors[edge_type] = zero_samples
-        elif should_broadcast_fanout and edge_type not in num_neighbors:
-            num_neighbors[edge_type] = original_fanout
-        elif not should_broadcast_fanout and edge_type not in num_neighbors:
+        missing_edge_types = set(message_passing_edge_types) - set(num_neighbors.keys())
+        if missing_edge_types:
             raise ValueError(
-                f"Found non-labeled edge type in dataset {edge_type} which is not in the provided fanout {num_neighbors.keys()}. \
-                If fanout is provided as a dict, all edges must be present."
+                f"Found non-labeled edge type(s) {missing_edge_types} in the dataset which are not in "
+                f"the provided fanout {set(num_neighbors.keys())}. If fanout is provided as a dict, "
+                "all message-passing edges must be present."
             )
 
     hops = len(next(iter(num_neighbors.values())))
@@ -300,6 +345,227 @@ def set_missing_features(
     return data
 
 
+def _materialize_quantized_features(
+    store: Union[Data, NodeStorage, EdgeStorage],
+    packed_features: torch.Tensor,
+    quantization_metadata: FeatureQuantizationMetadata,
+    feature_attribute: Literal["x", "edge_attr"],
+) -> None:
+    """Reconstruct and assign quantized features for one PyG feature store.
+
+    Args:
+        store: PyG data or typed storage receiving the reconstructed features.
+        packed_features: Quantized feature columns for sampled graph entities.
+        quantization_metadata: Column layout and dequantization metadata.
+        feature_attribute: PyG attribute that stores the feature tensor.
+
+    Raises:
+        ValueError: If expected raw feature columns are absent or have an
+            unexpected dimension.
+    """
+    dequantized = dequantize_torch_tensor(
+        packed_features, metadata=quantization_metadata
+    )
+    raw_features = getattr(store, feature_attribute, None)
+    materialized_features = dequantized.new_empty(
+        (dequantized.size(0), quantization_metadata.feature_dim)
+    )
+    scatter_idx: FeatureQuantizationIndexTensors = (
+        quantization_metadata.scatter_index_tensors(materialized_features.device)
+    )
+    materialized_features[:, scatter_idx.quantized] = dequantized
+
+    if raw_features is None and quantization_metadata.raw_feature_dim:
+        raise ValueError(
+            f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+        )
+    if raw_features is not None:
+        if raw_features.size(1) != quantization_metadata.raw_feature_dim:
+            raise ValueError(
+                f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
+            )
+        materialized_features[:, scatter_idx.raw] = raw_features
+    setattr(store, feature_attribute, materialized_features)
+
+
+def materialize_quantized_node_features(
+    data: _GraphType,
+    metadata: dict[str, torch.Tensor],
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ],
+) -> tuple[_GraphType, dict[str, torch.Tensor]]:
+    """Materialize packed quantized node features into PyG node feature tensors.
+
+    Reconstructs each node feature tensor in its original column order by
+    dequantizing packed features and combining them with any unquantized
+    feature columns already present in ``data``. Consumed packed-feature
+    entries are removed from ``metadata``.
+
+    Args:
+        data: Homogeneous or heterogeneous sampled graph containing raw node
+            feature columns.
+        metadata: Sample metadata containing packed node feature tensors.
+        node_quantization_metadata: Quantization metadata for the graph's node
+            features. Homogeneous graphs require a single value; heterogeneous
+            graphs require metadata for each node type.
+
+    Returns:
+        A tuple containing the graph with reconstructed node features and the
+        remaining sample metadata.
+
+    Raises:
+        ValueError: If the graph and quantization metadata shapes do not match,
+            required packed features are missing, or raw feature dimensions are
+            inconsistent.
+    """
+    if node_quantization_metadata is None:
+        return data, metadata
+
+    if isinstance(data, Data):
+        if isinstance(node_quantization_metadata, dict):
+            raise ValueError("Expect scalar quantization metadata for homogeneous data")
+        packed_features = metadata.pop(NODE_PACKED_FEATURES_METADATA_KEY, None)
+        labeled_homogeneous_packed_features_key = (
+            f"{NODE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_NODE_TYPE}"
+        )
+        if packed_features is None:
+            # Labeled homogeneous graphs are sampled as heterogeneous graphs, so
+            # the packed-feature transport key retains the default node type.
+            packed_features = metadata.pop(
+                labeled_homogeneous_packed_features_key, None
+            )
+        if packed_features is None:
+            raise ValueError(
+                f"Missing packed quantized features in metadata keys {NODE_PACKED_FEATURES_METADATA_KEY} or {labeled_homogeneous_packed_features_key}"
+            )
+        _materialize_quantized_features(
+            data,
+            packed_features,
+            node_quantization_metadata,
+            feature_attribute="x",
+        )
+    else:
+        if not isinstance(node_quantization_metadata, dict):
+            raise ValueError("Expected per-node-type metadata for heterogeneous data.")
+        node_quantization_metadata = cast(
+            dict[NodeType, FeatureQuantizationMetadata], node_quantization_metadata
+        )
+        for node_type, quantization_metadata in node_quantization_metadata.items():
+            metadata_key = f"{NODE_PACKED_FEATURES_METADATA_KEY}.{node_type}"
+            packed_features = metadata.pop(metadata_key, None)
+            if packed_features is None:
+                continue
+            _materialize_quantized_features(
+                data[node_type],
+                packed_features,
+                quantization_metadata,
+                feature_attribute="x",
+            )
+
+    return data, metadata
+
+
+def materialize_quantized_edge_features(
+    data: _GraphType,
+    metadata: dict[str, torch.Tensor],
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+    ],
+    edge_dir: Literal["in", "out"] = "in",
+) -> tuple[_GraphType, dict[str, torch.Tensor]]:
+    """Materialize packed quantized edge features into PyG edge feature tensors.
+
+    Reconstructs each edge feature tensor in its original column order by
+    dequantizing packed features and combining them with any unquantized
+    feature columns already present in ``data``. Consumed packed-feature
+    entries are removed from ``metadata``.
+
+    Args:
+        data: Homogeneous or heterogeneous sampled graph containing raw edge
+            feature columns.
+        metadata: Sample metadata containing packed edge feature tensors.
+        edge_quantization_metadata: Quantization metadata for the graph's edge
+            features. Homogeneous graphs require a single value; heterogeneous
+            graphs require metadata for each edge type.
+        edge_dir: Sampling direction. GLT reverses heterogeneous output edge
+            stores when sampling outward.
+
+    Returns:
+        A tuple containing the graph with reconstructed edge features and the
+        remaining sample metadata.
+
+    Raises:
+        ValueError: If the graph and quantization metadata shapes do not match,
+            required packed features are missing, or raw feature dimensions are
+            inconsistent.
+    """
+    if edge_quantization_metadata is None:
+        return data, metadata
+
+    if isinstance(data, Data):
+        if isinstance(edge_quantization_metadata, dict):
+            raise ValueError("Expect scalar quantization metadata for homogeneous data")
+        packed_features = metadata.pop(EDGE_PACKED_FEATURES_METADATA_KEY, None)
+        labeled_homogeneous_output_edge_type = (
+            reverse_edge_type(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+            if edge_dir == "out"
+            else DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
+        labeled_homogeneous_packed_features_key = (
+            f"{EDGE_PACKED_FEATURES_METADATA_KEY}."
+            f"{labeled_homogeneous_output_edge_type}"
+        )
+        if packed_features is None:
+            # Labeled homogeneous graphs are sampled as heterogeneous graphs, so
+            # the transport key uses GLT's direction-dependent output edge type.
+            packed_features = metadata.pop(
+                labeled_homogeneous_packed_features_key, None
+            )
+        if packed_features is None:
+            raise ValueError(
+                "Missing packed quantized features in metadata keys "
+                f"{EDGE_PACKED_FEATURES_METADATA_KEY} or "
+                f"{labeled_homogeneous_packed_features_key}"
+            )
+        _materialize_quantized_features(
+            data,
+            packed_features,
+            edge_quantization_metadata,
+            feature_attribute="edge_attr",
+        )
+    else:
+        if not isinstance(edge_quantization_metadata, dict):
+            raise ValueError("Expected per-edge-type metadata for heterogeneous data.")
+        edge_quantization_metadata = cast(
+            dict[EdgeType, FeatureQuantizationMetadata], edge_quantization_metadata
+        )
+        for edge_type, quantization_metadata in edge_quantization_metadata.items():
+            output_edge_type = (
+                reverse_edge_type(edge_type) if edge_dir == "out" else edge_type
+            )
+            metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
+            packed_features = metadata.pop(metadata_key, None)
+            if packed_features is None:
+                if (
+                    output_edge_type not in data.edge_types
+                    or data[output_edge_type].num_edges == 0
+                ):
+                    continue
+                raise ValueError(
+                    "Missing packed quantized edge features for sampled edge type "
+                    f"{output_edge_type}"
+                )
+            _materialize_quantized_features(
+                data[output_edge_type],
+                packed_features,
+                quantization_metadata,
+                feature_attribute="edge_attr",
+            )
+
+    return data, metadata
+
+
 def extract_metadata(
     msg: SampleMessage, device: torch.device
 ) -> tuple[dict[str, torch.Tensor], SampleMessage]:
@@ -338,12 +604,11 @@ def attach_ppr_outputs(
     ppr_edge_indices: dict[EdgeType, torch.Tensor],
     ppr_weights: dict[EdgeType, torch.Tensor],
 ) -> None:
-    """Attach PPR edge indices and weights onto a HeteroData object.
+    """Attach PPR edge indices and weights onto a Data/HeteroData object.
 
     For each PPR edge type, sets ``data[edge_type].edge_index`` and
     ``data[edge_type].edge_attr`` in-place.  Called from the loader's
-    ``_collate_fn`` only when a PPR sampler is active; the function is a
-    no-op if both dicts are empty.
+    ``_collate_fn`` only when a PPR sampler is active.
 
     Args:
         data: The Data or HeteroData object to attach outputs to.
@@ -352,11 +617,24 @@ def attach_ppr_outputs(
 
     Raises:
         AssertionError: If ``ppr_edge_indices`` and ``ppr_weights`` have different edge-type keys.
+        ValueError: If homogeneous ``Data`` does not have exactly one PPR edge type.
     """
     assert ppr_edge_indices.keys() == ppr_weights.keys(), (
         f"PPR edge index and weight edge types must match, "
         f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
     )
+    if isinstance(data, Data):
+        if len(ppr_edge_indices) != 1:
+            raise ValueError(
+                "Expected exactly one PPR edge type for homogeneous Data output, "
+                f"got {set(ppr_edge_indices.keys())}"
+            )
+        edge_type = next(iter(ppr_edge_indices))
+        data.edge_index = ppr_edge_indices[edge_type]
+        data.edge_attr = ppr_weights[edge_type]
+        # Homogeneous Data has no per-edge-type stores; the PPR edges are attached.
+        return
+
     for edge_type, edge_index in ppr_edge_indices.items():
         data[edge_type].edge_index = edge_index
         data[edge_type].edge_attr = ppr_weights[edge_type]

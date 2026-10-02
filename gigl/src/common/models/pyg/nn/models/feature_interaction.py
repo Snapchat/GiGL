@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from jaxtyping import Float
 from torch_geometric.nn.models import MLP
 
 from gigl.src.common.models.layers.feature_interaction import DCNv2
@@ -60,7 +61,9 @@ class FeatureInteraction(nn.Module):
                 **mlp_feats_kwargs,
             )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: Float[torch.Tensor, "nodes input_dim"]
+    ) -> Float[torch.Tensor, "nodes output_dim"]:
         if self.combination_mode and self.combination_mode == CombinationMode.parallel:
             assert isinstance(self.dcnv2, nn.Module) and isinstance(self.mlp, nn.Module)
             x_cross = self.dcnv2(x)

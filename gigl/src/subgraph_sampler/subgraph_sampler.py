@@ -97,10 +97,13 @@ class SubgraphSampler:
                 "graph_db_config"
             )
         )
+        # Default to the Spark 3.5 runner (Dataproc 2.2): Google blocks cluster creation on
+        # Dataproc image 2.0 starting 2026-08-25. Setting the `use_spark35_runner`
+        # experimental flag to "False" remains a temporary escape hatch until then.
         use_spark35: bool = bool(
             strtobool(
                 gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.experimental_flags.get(
-                    "use_spark35_runner", "False"
+                    "use_spark35_runner", "True"
                 )
             )
         )
@@ -374,6 +377,9 @@ if __name__ == "__main__":
     applied_task_identifier = AppliedTaskIdentifier(args.job_name)
     custom_worker_image_uri = args.custom_worker_image_uri
 
+    # SubgraphSampler/SplitGenerator are legacy Scala/Spark components that do not
+    # consume the GiGL Python runtime env vars, so we only initialize metrics here
+    # (rather than initialize_gigl_runtime). See the skip branch in initialize_gigl_runtime.
     initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
 
     sgs = SubgraphSampler()

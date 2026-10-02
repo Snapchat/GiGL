@@ -5,14 +5,11 @@ import pyarrow as pa
 import tensorflow_data_validation as tfdv
 import tensorflow_data_validation.utils.display_util
 import tensorflow_transform
-import tfx_bsl
-import tfx_bsl.tfxio.tensor_adapter
-import tfx_bsl.tfxio.tf_example_record
 from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
-from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
+from tfx_bsl.public import tfxio
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
@@ -27,12 +24,18 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
+from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
+    EDGE_PACKED_FEATURE_KEY,
+    NODE_PACKED_FEATURE_KEY,
+    apply_feature_quantization_transform,
+)
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
     EdgeDataPreprocessingSpec,
+    FeatureQuantizationSpec,
     FeatureSpecDict,
     InstanceDict,
     NodeDataPreprocessingSpec,
@@ -92,7 +95,7 @@ class IngestRawFeatures(beam.PTransform):
         data_reference: DataReference,
         feature_spec: FeatureSpecDict,
         schema: schema_pb2.Schema,
-        beam_record_tfxio: RecordBasedTFXIO,
+        beam_record_tfxio: tfxio.TFExampleBeamRecord,
     ):
         self.data_reference = data_reference
         self.feature_spec = feature_spec
@@ -171,7 +174,7 @@ class ReadExistingTFTransformFn(beam.PTransform):
 class AnalyzeAndBuildTFTransformFn(beam.PTransform):
     def __init__(
         self,
-        tensor_adapter_config: tfx_bsl.tfxio.tensor_adapter.TensorAdapterConfig,
+        tensor_adapter_config: tfxio.TensorAdapterConfig,
         preprocessing_fn: Callable[[TFTensorDict], TFTensorDict],
     ):
         self.tensor_adapter_config = tensor_adapter_config
@@ -279,7 +282,7 @@ def get_load_data_and_transform_pipeline_component(
             raw_feature_spec
         )
 
-        beam_record_tfxio = tfx_bsl.tfxio.tf_example_record.TFExampleBeamRecord(
+        beam_record_tfxio = tfxio.TFExampleBeamRecord(
             physical_format="tfrecord", schema=raw_data_schema
         )
 
@@ -362,6 +365,33 @@ def get_load_data_and_transform_pipeline_component(
             if should_use_existing_transform_fn
             else beam.pvalue.AsSingleton(analyzed_transform_fn[1].deferred_metadata)  # type: ignore
         )
+        logical_metadata = (
+            transformed_metadata
+            if should_use_existing_transform_fn
+            else analyzed_transform_fn[1].deferred_metadata  # type: ignore
+        )
+        quantization_spec: FeatureQuantizationSpec | None = None
+        if isinstance(
+            preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
+        ):
+            quantization_spec = preprocessing_spec.feature_quantization_spec
+        if quantization_spec is not None:
+            if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
+                packed_feature_key = EDGE_PACKED_FEATURE_KEY
+            else:
+                packed_feature_key = NODE_PACKED_FEATURE_KEY
+            transformed_features, resolved_transformed_metadata = (
+                apply_feature_quantization_transform(
+                    logical_features=transformed_features,
+                    logical_metadata=logical_metadata,
+                    logical_feature_keys=list(
+                        preprocessing_spec.features_outputs or []
+                    ),
+                    quantization_spec=quantization_spec,
+                    quantization_metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
+                    packed_feature_key=packed_feature_key,
+                )
+            )
 
         transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
             file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,

@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 KT = TypeVar("KT")
 VT = TypeVar("VT")
@@ -42,10 +42,13 @@ class FrozenDict(Mapping[KT, VT]):
         if len(self) != len(other):
             return False
 
+        # isinstance(other, Mapping) loses generic params; narrow to an
+        # indexable Mapping[Any, Any] so `other_mapping[self_key]` type-checks.
+        other_mapping = cast(Mapping[Any, Any], other)
         for self_key, self_val in self.items():
-            if self_key not in other:
+            if self_key not in other_mapping:
                 return False
-            if self_val != other[self_key]:  # ty: ignore[invalid-argument-type]
+            if self_val != other_mapping[self_key]:
                 return False
         return True
 

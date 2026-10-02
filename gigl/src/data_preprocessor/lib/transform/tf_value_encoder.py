@@ -71,19 +71,14 @@ class TFValueEncoder:
         # prepare value
         if value is None:
             value = TFValueEncoder.get_value_to_impute(dtype=dtype)
-        if not isinstance(value, list):
-            value = [value]
+        value_list: list[Any] = value if isinstance(value, list) else [value]
 
         # encode value
         if dtype.is_integer or dtype.is_bool:
-            tf_feature = TFValueEncoder.__int_values_to_tf_feature(
-                value=value  # ty: ignore[invalid-argument-type]
-            )
+            tf_feature = TFValueEncoder.__int_values_to_tf_feature(value=value_list)
         elif dtype.is_floating:
-            tf_feature = TFValueEncoder.__float_values_to_tf_feature(
-                value=value  # ty: ignore[invalid-argument-type]
-            )
+            tf_feature = TFValueEncoder.__float_values_to_tf_feature(value=value_list)
         else:
-            tf_feature = TFValueEncoder.__bytes_values_to_tf_feature(value=value)
+            tf_feature = TFValueEncoder.__bytes_values_to_tf_feature(value=value_list)
 
         return tf_feature

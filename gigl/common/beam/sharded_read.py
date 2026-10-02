@@ -4,9 +4,9 @@ import apache_beam as beam
 from apache_beam.io.gcp.bigquery import BigQueryQueryPriority
 from apache_beam.io.gcp.internal.clients.bigquery import DatasetReference
 from apache_beam.pvalue import PBegin
-from google.cloud import bigquery
 
 from gigl.common.logger import Logger
+from gigl.src.common.utils.bq import BqUtils
 
 logger = Logger()
 
@@ -31,11 +31,8 @@ def _assert_shard_key_in_table(table_name: str, shard_key: str) -> None:
     """
     Validate that the shard key is a valid column in the BigQuery table.
     """
-    client = bigquery.Client()
-    table_ref = bigquery.TableReference.from_string(table_name)
-
-    table = client.get_table(table_ref)
-    column_names = [field.name for field in table.schema]
+    bq_utils = BqUtils()
+    column_names = list(bq_utils.fetch_bq_table_schema(bq_table=table_name))
 
     if shard_key not in column_names:
         raise ValueError(

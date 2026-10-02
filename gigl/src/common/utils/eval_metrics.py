@@ -1,9 +1,12 @@
 import torch
+from jaxtyping import Float, Float32, Int64
 
 
 def hit_rate_at_k(
-    pos_scores: torch.FloatTensor, neg_scores: torch.FloatTensor, ks: torch.LongTensor
-) -> torch.FloatTensor:
+    pos_scores: Float[torch.FloatTensor, "*batch positives"],
+    neg_scores: Float[torch.FloatTensor, "*batch negatives"],
+    ks: Int64[torch.LongTensor, "requested_ks"],
+) -> Float32[torch.FloatTensor, "requested_ks"]:
     """Computes Hit Rate @ K metrics for various Ks, evaluating 1+ positives against 1+ negatives.
 
     Args:
@@ -47,8 +50,9 @@ def hit_rate_at_k(
 
 
 def mean_reciprocal_rank(
-    pos_scores: torch.FloatTensor, neg_scores: torch.FloatTensor
-) -> torch.FloatTensor:
+    pos_scores: Float[torch.FloatTensor, "*batch positives"],
+    neg_scores: Float[torch.FloatTensor, "*batch negatives"],
+) -> Float32[torch.FloatTensor, ""]:
     """Computes Mean Reciprocal Rank (MRR), evaluating 1+ positives against 1+ negatives.
 
     Args:

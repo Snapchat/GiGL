@@ -323,8 +323,8 @@ class SupervisedNodeClassificationTask(
           STRUCT( _root_node AS node_id,
             _condensed_node_type AS condensed_node_type,
             _node_features AS feature_values ) AS root_node,
-          STRUCT( _neighbor_nodes AS nodes,
-            _neighbor_edges AS edges ) AS neighborhood,
+          STRUCT( ${castNodeArrayToProtoSchema("_neighbor_nodes")} AS nodes,
+            ${castEdgeArrayToProtoSchema("_neighbor_edges")} AS edges ) AS neighborhood,
           ARRAY(STRUCT( _label_type AS label_type,
               CAST(_label AS INTEGER) AS label) ) AS root_node_labels
         FROM

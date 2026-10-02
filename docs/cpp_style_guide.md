@@ -20,14 +20,14 @@ make check_lint_cpp    # Run clang-tidy static analysis
 > clang-tidy. If you add a new `.cu` file, it will not appear in lint output — this is expected. Lint coverage for CUDA
 > files requires upgrading to a clang-tidy version with CUDA support.
 
-______________________________________________________________________
+---
 
 ## Build Configuration
 
 All builds use `-O3 -g`: full optimization with debug symbols always enabled. Debug symbols add no runtime overhead and
 ensure stack traces are always readable.
 
-______________________________________________________________________
+---
 
 ## Formatting (`.clang-format`)
 
@@ -96,7 +96,7 @@ Includes are sorted and split into three priority groups (lower number = appears
 Raw string literals with the `pb` delimiter (e.g. `R"pb(...)pb"`) are formatted as TextProto using Google style,
 matching the protobuf idiom used throughout the codebase.
 
-______________________________________________________________________
+---
 
 ## Static Analysis (`.clang-tidy`)
 
@@ -170,7 +170,7 @@ Enforced via `readability-identifier-naming`:
 | `readability-function-size.LineThreshold`                  | `1000`                 | Functions over 1000 lines are flagged                                                                                                                                                 |
 | `readability-braces-around-statements.ShortStatementLines` | `0`                    | Braces required for all control-flow bodies, even single-line                                                                                                                         |
 
-______________________________________________________________________
+---
 
 ## pybind11 Extension Modules
 

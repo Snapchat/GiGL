@@ -1,3 +1,4 @@
+import threading
 import time
 from functools import wraps
 from typing import Callable, Optional, Tuple, Type, TypeVar, Union
@@ -48,6 +49,7 @@ def retry(
             a lot of extra room so retries can actually take place.
             If timeout occurs, src.common.utils.timeout.TimedOutException is raised.
             Defaults to None.
+            Only applicable if run in a main thread. Raise RuntimeError if not in main thread.
         should_throw_original_exception (Optional[bool]): Defaults to False.
     """
 
@@ -103,8 +105,21 @@ def retry(
             return ret_val
 
         if deadline_s is not None:
-            global_retry_timeout_decorator = timeout(seconds=deadline_s)
-            return global_retry_timeout_decorator(f_retry)
+            timed_f_retry = timeout(seconds=deadline_s)(f_retry)
+
+            @wraps(f)
+            def f_retry_with_deadline(*args, **kwargs) -> T:
+                if threading.current_thread() is not threading.main_thread():
+                    raise RuntimeError(
+                        "retry(deadline_s=...) only works in the main thread."
+                        f"{f.__module__}:{f.__name__} was called from thread: "
+                        f"{threading.current_thread().name!r}."
+                        "This failure is because deadline_s uses SIGALRM, "
+                        "under the hood, which only works in the main thread."
+                    )
+                return timed_f_retry(*args, **kwargs)
+
+            return f_retry_with_deadline
 
         return f_retry
 

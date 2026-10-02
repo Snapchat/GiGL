@@ -8,10 +8,7 @@ from google.protobuf.json_format import MessageToDict
 import gigl.env.dep_constants as dep_constants
 import gigl.src.common.constants.gcs as gcs_constants
 from gigl.common import GcsUri, LocalUri, UriFactory
-from gigl.common.constants import (
-    SPARK_31_TFRECORD_JAR_GCS_PATH,
-    SPARK_35_TFRECORD_JAR_GCS_PATH,
-)
+from gigl.common.constants import SPARK_35_TFRECORD_JAR_GCS_PATH
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils import metrics_service_provider
 from gigl.src.subgraph_sampler import subgraph_sampler
@@ -148,9 +145,7 @@ class SubgraphSamplerTest(TestCase):
             applied_task_identifier=self.task_identifier,
             resource_config_uri=LocalUri(self.resource_config_path_local_path),
             task_config_uri=LocalUri(self.gbml_config_path_local_path),
-            additional_spark35_jar_file_uris=[
-                LocalUri("/does/not/exist/should/not/be/passed/in")
-            ],
+            additional_spark35_jar_file_uris=[LocalUri(self.sidecar_jar_local_path)],
         )
         subgraph_sampler_root = gcs_constants.get_subgraph_sampler_root_dir(
             applied_task_identifier=self.task_identifier
@@ -193,6 +188,10 @@ class SubgraphSamplerTest(TestCase):
                         subgraph_sampler_root,
                         "subgraph_sampler.jar",
                     ),
+                    LocalUri(self.sidecar_jar_local_path): GcsUri.join(
+                        subgraph_sampler_root,
+                        "sidecar.jar",
+                    ),
                 },
             )
 
@@ -205,9 +204,13 @@ class SubgraphSamplerTest(TestCase):
                 max_job_duration=ANY,
                 runtime_args=ANY,
                 extra_jar_file_uris=[
-                    SPARK_31_TFRECORD_JAR_GCS_PATH,
+                    GcsUri.join(
+                        subgraph_sampler_root,
+                        "sidecar.jar",
+                    ).uri,
+                    SPARK_35_TFRECORD_JAR_GCS_PATH,
                 ],
-                use_spark35=False,
+                use_spark35=True,
             )
 
     @patch(_INGESTOR_FQN)

@@ -46,7 +46,7 @@ trainerConfig:
       splitter_cls_path: "gigl.utils.data_splitters.DistNodeAnchorLinkSplitter"
       # Note this gets parsed with ast.literal_eval.
       # We do this so that the tuples for edge types get parsed as such.
-      spillter_kwargs: >-
+      splitter_kwargs: >-
         {
           "sampling_direction": "in",
           "should_convert_labels_to_edges": true,
@@ -86,6 +86,7 @@ from typing import Literal, Optional, Union
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from jaxtyping import Float
 from torch_geometric.data import HeteroData
 
 from examples.link_prediction.models import init_example_gigl_heterogeneous_model
@@ -94,13 +95,14 @@ from gigl.common.logger import Logger
 from gigl.common.utils.torch_training import is_distributed_available_and_initialized
 from gigl.distributed import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.graph_store.compute import (
+from gigl.distributed.graph_store import (
+    GraphStoreInfo,
+    RemoteDistDataset,
+    get_graph_store_info,
     init_compute_process,
     shutdown_compute_process,
 )
-from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
-from gigl.distributed.utils import get_available_device, get_graph_store_info
-from gigl.env.distributed import GraphStoreInfo
+from gigl.distributed.utils import get_available_device
 from gigl.nn import LinkPredictionGNN, RetrievalLoss
 from gigl.src.common.translators.model_eval_metrics_translator import (
     write_eval_metrics_to_uri,
@@ -178,8 +180,11 @@ def _setup_dataloaders(
     """
     rank = torch.distributed.get_rank()
 
-    query_node_type = supervision_edge_type.dst_node_type
-    labeled_node_type = supervision_edge_type.src_node_type
+    # Supervision edges are directed outward (query -> labeled), matching taskMetadata,
+    # so the anchor/query node is the src and the labeled node is the dst. This mirrors
+    # standard/colocated mode (see `examples/link_prediction/heterogeneous_training.py`).
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
     anchor_node_type = query_node_type
 
     print(
@@ -210,6 +215,7 @@ def _setup_dataloaders(
         channel_size=sampling_worker_shared_channel_size,
         process_start_gap_seconds=process_start_gap_seconds,
         shuffle=shuffle,
+        use_label_edge_index_output=True,
     )
 
     print(f"---Rank {rank} finished setting up main loader for split={split}")
@@ -258,7 +264,7 @@ def _compute_loss(
     supervision_edge_type: EdgeType,
     edge_dir: str,
     device: torch.device,
-) -> torch.Tensor:
+) -> Float[torch.Tensor, ""]:
     """
     With the provided model and loss function, computes the forward pass on the main batch data and random negative data.
     Args:
@@ -272,9 +278,10 @@ def _compute_loss(
     Returns:
         torch.Tensor: Final loss for the current batch on the current process
     """
-    # Extract relevant node types from the supervision edge
-    query_node_type = supervision_edge_type.dst_node_type
-    labeled_node_type = supervision_edge_type.src_node_type
+    # Extract relevant node types from the supervision edge. Supervision edges are directed
+    # outward (query -> labeled), matching taskMetadata, so query is the src and labeled is the dst.
+    query_node_type = supervision_edge_type.src_node_type
+    labeled_node_type = supervision_edge_type.dst_node_type
 
     if query_node_type == labeled_node_type:
         inference_node_types = [query_node_type]
@@ -293,23 +300,16 @@ def _compute_loss(
     )
 
     # Extracting local query, random negative, positive, hard_negative, and random_negative indices.
-    query_node_idx: torch.Tensor = torch.arange(
-        main_data[query_node_type].batch_size
-    ).to(device)
+    query_node_idx = torch.arange(main_data[query_node_type].batch_size, device=device)
     random_negative_batch_size = random_negative_data[labeled_node_type].batch_size
 
-    positive_idx: torch.Tensor = torch.cat(list(main_data.y_positive.values())).to(
-        device
-    )
-    repeated_query_node_idx = query_node_idx.repeat_interleave(
-        torch.tensor([len(v) for v in main_data.y_positive.values()]).to(device)
-    )
+    positive_label_edge_index: torch.Tensor = main_data.y_positive
+    repeated_query_node_idx = query_node_idx[positive_label_edge_index[0]]
+    positive_idx = positive_label_edge_index[1]
     if hasattr(main_data, "y_negative"):
-        hard_negative_idx: torch.Tensor = torch.cat(
-            list(main_data.y_negative.values())
-        ).to(device)
+        hard_negative_idx: torch.Tensor = main_data.y_negative[1]
     else:
-        hard_negative_idx = torch.empty(0, dtype=torch.long).to(device)
+        hard_negative_idx = torch.empty(0, dtype=torch.long, device=device)
 
     # Use local IDs to get the corresponding embeddings in the tensors
 
@@ -614,7 +614,8 @@ def _training_process(
         val_main_loader.shutdown()
         val_random_negative_loader.shutdown()
 
-        # We save the model on the process with rank 0.
+        # Only rank 0 writes the checkpoint; every rank holds the same DDP-synced
+        # weights, so writing from all of them would be redundant and race on the URI.
         if torch.distributed.get_rank() == 0:
             print(
                 f"Training loop finished, took {time.time() - training_start_time:.3f} seconds, saving model to {args.model_uri}"
@@ -843,19 +844,18 @@ def _run_example_training(
     # Training Hyperparameters
     trainer_args = dict(gbml_config_pb_wrapper.trainer_config.trainer_args)
 
-    if torch.cuda.is_available():
-        default_local_world_size = torch.cuda.device_count()
-    else:
-        default_local_world_size = 2
-    local_world_size = int(
-        trainer_args.get("local_world_size", str(default_local_world_size))
-    )
+    # In Graph Store mode the launcher fixes the number of processes per compute machine
+    # (COMPUTE_CLUSTER_LOCAL_WORLD_SIZE env var, exposed as cluster_info.num_processes_per_compute);
+    # spawning any other number of processes would desync ranks from the compute process group.
+    local_world_size = cluster_info.num_processes_per_compute
+    print(f"Using local_world_size from cluster topology: {local_world_size}")
+    flush()
 
-    if torch.cuda.is_available():
-        if local_world_size > torch.cuda.device_count():
-            raise ValueError(
-                f"Specified a local world size of {local_world_size} which exceeds the number of devices {torch.cuda.device_count()}"
-            )
+    if torch.cuda.is_available() and local_world_size > torch.cuda.device_count():
+        raise ValueError(
+            f"Specified a local world size of {local_world_size} which exceeds the "
+            f"number of devices {torch.cuda.device_count()}"
+        )
 
     fanout = trainer_args.get("num_neighbors", "[10, 10]")
     num_neighbors = parse_fanout(fanout)
@@ -902,21 +902,8 @@ def _run_example_training(
     )
 
     # Step 3: Extract model/data config
-    graph_metadata = gbml_config_pb_wrapper.graph_metadata_pb_wrapper
-
-    node_type_to_feature_dim: dict[NodeType, int] = {
-        graph_metadata.condensed_node_type_to_node_type_map[
-            condensed_node_type
-        ]: node_feature_dim
-        for condensed_node_type, node_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_dim_map.items()
-    }
-
-    edge_type_to_feature_dim: dict[EdgeType, int] = {
-        graph_metadata.condensed_edge_type_to_edge_type_map[
-            condensed_edge_type
-        ]: edge_feature_dim
-        for condensed_edge_type, edge_feature_dim in gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_dim_map.items()
-    }
+    node_type_to_feature_dim = gbml_config_pb_wrapper.node_type_to_feature_dim_map
+    edge_type_to_feature_dim = gbml_config_pb_wrapper.edge_type_to_feature_dim_map
 
     model_uri = UriFactory.create_uri(
         gbml_config_pb_wrapper.gbml_config_pb.shared_config.trained_model_metadata.trained_model_uri

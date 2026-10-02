@@ -35,12 +35,14 @@ preprocessor_config:
     max_num_workers: 128
     machine_type: "n2d-highmem-64"
     disk_size_gb: 300
+# Kept in step with e2e_cicd_resource_config.yaml: n2 rather than n2d, since n2d
+# stocks out in us-central1. Same vCPU and memory.
 subgraph_sampler_config:
-  machine_type: "n2d-highmem-16"
+  machine_type: "n2-highmem-16"
   num_local_ssds: 2
   num_replicas: 4
 split_generator_config:
-  machine_type: n2d-standard-16
+  machine_type: n2-standard-16
   num_local_ssds: 2
   num_replicas: 4
 trainer_config:

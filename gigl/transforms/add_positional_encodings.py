@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 from torch_geometric.data import HeteroData
@@ -253,6 +253,12 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         is_undirected (bool, optional): If set to :obj:`True`, the graph is
             assumed to be undirected for distance computation.
             (default: :obj:`False`)
+        sampling_direction (str, optional): Direction used for directed
+            distance computation. ``"out"`` preserves existing shortest paths
+            over graph edges, while ``"in"`` computes shortest paths over
+            reversed graph edges. Use ``"in"`` to align hop-distance relative
+            encodings with incoming Graph Transformer sampling.
+            (default: :obj:`"out"`)
     """
 
     def __init__(
@@ -260,10 +266,17 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         h_max: int,
         attr_name: Optional[str] = "hop_distance",
         is_undirected: bool = False,
+        sampling_direction: Literal["in", "out"] = "out",
     ) -> None:
+        if sampling_direction not in {"in", "out"}:
+            raise ValueError(
+                "sampling_direction must be one of {'in', 'out'}, "
+                f"got '{sampling_direction}'."
+            )
         self.h_max = h_max
         self.attr_name = attr_name
         self.is_undirected = is_undirected
+        self.sampling_direction = sampling_direction
 
     def forward(self, data: HeteroData) -> HeteroData:
         assert isinstance(data, HeteroData), (
@@ -274,6 +287,8 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         # Convert to homogeneous to compute shortest paths
         homo_data = data.to_homogeneous()
         edge_index = homo_data.edge_index
+        if self.sampling_direction == "in":
+            edge_index = edge_index.flip(0)
         num_nodes = homo_data.num_nodes
         num_edges = edge_index.size(1)
 
@@ -442,4 +457,8 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
         return data
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(h_max={self.h_max})"
+        return (
+            f"{self.__class__.__name__}("
+            f"h_max={self.h_max}, sampling_direction='{self.sampling_direction}'"
+            ")"
+        )

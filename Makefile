@@ -21,6 +21,14 @@ DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
+# Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
+# runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
+# ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
+# other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
+# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
+INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
+
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
@@ -35,8 +43,6 @@ GIGL_E2E_TEST_COMPILED_PIPELINE_PATH:=/tmp/gigl/pipeline_${DATE}_${GIT_HASH}.yam
 
 GIT_BRANCH:=$(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
-# Find all markdown files in the repo except for those in .venv, tools, or cmake cache directories.
-MD_FILES := $(shell find . -type f -name "*.md" ! -path "*/.venv/*" ! -path "*/tools/*" ! -path "*/.cache/*")
 GIGL_ALERT_EMAILS?=""
 
 get_ver_hash:
@@ -112,26 +118,39 @@ check_format_scala:
 	( cd scala; sbt "scalafmtCheckAll; scalafixAll --check"; )
 	( cd scala_spark35; sbt "scalafmtCheckAll; scalafixAll --check"; )
 
+# Markdown (plus toml/dockerfile/cmake) formatting is handled by dprint; file
+# scoping (e.g. excluding .claude/skills, whose SKILL.md YAML frontmatter
+# formatters corrupt) lives in dprint.json.
 check_format_md:
 	@echo "Checking markdown files..."
-	uv run mdformat --check ${MD_FILES}
+	uv run dprint check
 
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
 
+# Runs the `whitespace` pre-commit alias (end-of-file-fixer and trailing-whitespace) on every
+# tracked file. It fixes files in place and exits non-zero if it changed anything.
+format_whitespace:
+	uv run pre-commit run --all-files --show-diff-on-failure whitespace
+
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
-check_format: check_format_py check_format_cpp check_format_scala check_format_md
+check_format: check_format_py check_format_cpp check_format_scala check_format_md format_whitespace
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
 # By default, runs all tests under tests/integration.
 # See the help text for "--test_file_pattern" in tests/test_args.py for more details.
+# Builds a fresh src-cpu image from current source so Vertex-AI-launching integration
+# tests run against current code. CI passes an immutable INTEGRATION_TEST_CPU_IMAGE_TAG;
+# see the var definition above.
 integration_test: build_cpp_extensions
+	uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${INTEGRATION_TEST_CPU_IMAGE}
+	GIGL_CPU_DOCKER_URI=${INTEGRATION_TEST_CPU_IMAGE} \
 	uv run python -m tests.integration.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
-		--test_file_pattern=$(PY_TEST_FILES) \
+		--test_file_pattern=$(PY_TEST_FILES)
 
 
 notebooks_test:
@@ -152,12 +171,12 @@ format_scala:
 
 format_md:
 	@echo "Formatting markdown files..."
-	uv run mdformat ${MD_FILES}
+	uv run dprint fmt
 
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
 
-format: format_py format_cpp format_scala format_md
+format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
 	uv run ty check ${PYTHON_DIRS}
@@ -203,9 +222,6 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	# You will need to update the base image tag below whenever the requirements are updated by:
 	#   1) running `make push_new_docker_base_image`
 	#   2) Replace the git hash `DOCKER_LATEST_BASE_IMAGE_TAG` that tags the base image with the new generated tag
-	# Note: don't forget to `make generate_cpu_hashed_requirements` and `make generate_cuda_hashed_requirements`
-	# before running this if you've updated requirements.in
-	# You may be able to utilize git comment `/make_cuda_hashed_req` to help you build the cuda hashed req as well
 	# See ci.yaml or type in `/help` in your PR for more info.
 	@echo "All Docker images compiled and pushed"
 
@@ -217,7 +233,7 @@ push_dev_workbench_docker_image: compile_jars
 run_cora_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_nalp_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_nalp_test"
@@ -225,7 +241,7 @@ run_cora_nalp_e2e_test:
 run_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_snc_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_snc_test"
@@ -233,7 +249,7 @@ run_cora_snc_e2e_test:
 run_cora_udl_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_cora_udl_e2e_test: compile_gigl_kubeflow_pipeline
 run_cora_udl_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="cora_udl_test"
@@ -241,7 +257,7 @@ run_cora_udl_e2e_test:
 run_dblp_nalp_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_dblp_nalp_e2e_test: compile_gigl_kubeflow_pipeline
 run_dblp_nalp_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="dblp_nalp_test"
@@ -249,7 +265,7 @@ run_dblp_nalp_e2e_test:
 run_hom_cora_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_test"
@@ -257,7 +273,7 @@ run_hom_cora_sup_e2e_test:
 run_het_dblp_sup_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_test"
@@ -265,7 +281,7 @@ run_het_dblp_sup_e2e_test:
 run_hom_cora_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_sup_gs_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_sup_gs_test"
@@ -273,7 +289,7 @@ run_hom_cora_sup_gs_e2e_test:
 run_het_dblp_sup_gs_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_het_dblp_sup_gs_e2e_test: compile_gigl_kubeflow_pipeline
 run_het_dblp_sup_gs_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="het_dblp_sup_gs_test"
@@ -281,7 +297,7 @@ run_het_dblp_sup_gs_e2e_test:
 run_hom_cora_snc_e2e_test: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_hom_cora_snc_e2e_test: compile_gigl_kubeflow_pipeline
 run_hom_cora_snc_e2e_test:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
@@ -289,7 +305,7 @@ run_hom_cora_snc_e2e_test:
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
-	uv run python tests/e2e_tests/e2e_test.py \
+	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
 

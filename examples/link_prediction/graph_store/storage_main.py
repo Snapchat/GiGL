@@ -82,12 +82,12 @@ import torch
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.os_utils import import_obj
-from gigl.distributed.graph_store.storage_utils import (
+from gigl.distributed.graph_store import (
+    GraphStoreInfo,
     build_storage_dataset,
+    get_graph_store_info,
     run_storage_server,
 )
-from gigl.distributed.utils import get_graph_store_info
-from gigl.env.distributed import GraphStoreInfo
 from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 
 logger = Logger()

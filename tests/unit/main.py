@@ -1,5 +1,9 @@
 import sys
 
+from tests.test_assets.runtime_type_checking import install_runtime_typechecking
+
+install_runtime_typechecking()
+
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.utils.test_utils import parse_args, run_tests

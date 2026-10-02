@@ -12,6 +12,7 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.env.pipelines_config import get_resource_config
+from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_CONFIG_POPULATOR_S
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.dataset_split import DatasetSplit
@@ -19,9 +20,9 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
+from gigl.src.common.utils.gigl_runtime import initialize_gigl_runtime
 from gigl.src.common.utils.metrics_service_provider import (
     get_metrics_service_instance,
-    initialize_metrics,
 )
 from snapchat.research.gbml import (
     dataset_metadata_pb2,
@@ -616,6 +617,8 @@ class ConfigPopulator:
         applied_task_identifier: AppliedTaskIdentifier,
         task_config_uri: Uri,
         resource_config_uri: Uri,
+        cpu_docker_uri: Optional[str] = None,
+        cuda_docker_uri: Optional[str] = None,
     ) -> GcsUri:
         """
         Runs the ConfigPopulator; given an input GbmlConfig file, produces a frozen one.
@@ -624,12 +627,20 @@ class ConfigPopulator:
             applied_task_identifier (AppliedTaskIdentifier): The job name.
             task_config_uri (Uri): Template GbmlConfig URI.
             resource_config_uri: GiGL resource config Uri
+            cpu_docker_uri (Optional[str]): CPU source image URI. Defaults to the release CPU image.
+            cuda_docker_uri (Optional[str]): CUDA source image URI. Defaults to the release CUDA image.
 
         Returns:
             GcsUri: The URI of the frozen GbmlConfig.
         """
-        initialize_metrics(
-            task_config_uri=task_config_uri, service_name=applied_task_identifier
+        initialize_gigl_runtime(
+            applied_task_identifier=applied_task_identifier,
+            task_config_uri=task_config_uri,
+            resource_config_uri=resource_config_uri,
+            service_name=applied_task_identifier,
+            component=GiGLComponents.ConfigPopulator,
+            cpu_docker_uri=cpu_docker_uri,
+            cuda_docker_uri=cuda_docker_uri,
         )
 
         resource_config = get_resource_config(resource_config_uri=resource_config_uri)
@@ -673,6 +684,18 @@ if __name__ == "__main__":
         type=str,
         help="Runtime argument for resource and env specifications of each component",
     )
+    parser.add_argument(
+        "--cpu_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for cpu at runtime",
+    )
+    parser.add_argument(
+        "--cuda_docker_uri",
+        type=str,
+        default=None,
+        help="Uri to dockerized source code compiled for gpu at runtime",
+    )
 
     args = parser.parse_args()
 
@@ -688,6 +711,8 @@ if __name__ == "__main__":
         applied_task_identifier=ati,
         task_config_uri=template_uri,
         resource_config_uri=resource_config_uri,
+        cpu_docker_uri=args.cpu_docker_uri,
+        cuda_docker_uri=args.cuda_docker_uri,
     )
 
     # Write fozen_gbml_config_uri to file where it can be read by subsequent components

@@ -241,6 +241,9 @@ if __name__ == "__main__":
     if not args.job_name or not args.task_config_uri or not args.resource_config_uri:
         raise RuntimeError("Missing command-line arguments")
 
+    # SubgraphSampler/SplitGenerator are legacy Scala/Spark components that do not
+    # consume the GiGL Python runtime env vars, so we only initialize metrics here
+    # (rather than initialize_gigl_runtime). See the skip branch in initialize_gigl_runtime.
     initialize_metrics(task_config_uri=task_config_uri, service_name=args.job_name)
 
     split_generator = SplitGenerator()

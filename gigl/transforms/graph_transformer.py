@@ -57,24 +57,85 @@ Example Usage:
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Literal, Optional, TypedDict
+from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
+from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
+from gigl.src.common.types.graph_data import EdgeType as GiGLEdgeType
+
 TokenInputData = dict[str, Tensor]
 
 
 class SequenceAuxiliaryData(TypedDict):
-    anchor_bias: Optional[Tensor]
-    pairwise_bias: Optional[Tensor]
+    anchor_bias: Optional[Float[Tensor, "anchors sequence"]]
+    pairwise_bias: Optional[Float[Tensor, "anchors sequence sequence"]]
+    pairwise_relation_indices: Optional[Int64[Tensor, "relation_edges 4"]]
+    pairwise_nonmissing_indices: Optional[Int64[Tensor, "nonmissing_edges 3"]]
     token_input: Optional[TokenInputData]
 
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
+PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
+
+
+def _validate_reserved_anchor_feature_usage(
+    pairwise_bias_attr_names: list[str],
+    anchor_bias_attr_names: list[str],
+    anchor_input_attr_names: list[str],
+    sequence_construction_method: str,
+) -> None:
+    """Validate placement of the reserved PPR anchor-relative features.
+
+    ``ppr_weight`` and ``ppr_relation_features`` are produced per (anchor,
+    neighbor) edge, so they may only be requested as anchor-relative token
+    inputs (and, for the scalar ``ppr_weight``, as a scalar bias) under
+    ``sequence_construction_method='ppr'``. Shared by
+    ``heterodata_to_graph_transformer_input`` and ``GraphTransformerEncoder`` so
+    the rules stay defined in one place.
+    """
+    # Neither reserved PPR feature may be used as a pairwise attention bias;
+    # both are anchor-relative (produced per (anchor, neighbor) edge).
+    for name in (PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME):
+        if name in pairwise_bias_attr_names:
+            raise ValueError(
+                f"'{name}' is an anchor-relative feature and cannot be used as "
+                "pairwise attention bias."
+            )
+
+    # ppr_relation_features is multi-column, so it can only be a token input,
+    # never a scalar attention bias.
+    if PPR_RELATION_FEATURES_NAME in anchor_bias_attr_names:
+        raise ValueError(
+            f"'{PPR_RELATION_FEATURES_NAME}' is multi-column token input and "
+            "cannot be used as scalar attention bias."
+        )
+
+    # Either reserved feature, used as any anchor feature (scalar bias or token
+    # input), requires the PPR sequence path.
+    for name in (PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME):
+        if (
+            name in anchor_bias_attr_names + anchor_input_attr_names
+            and sequence_construction_method != "ppr"
+        ):
+            raise ValueError(
+                f"The reserved anchor-relative feature '{name}' requires "
+                "sequence_construction_method='ppr'."
+            )
+
+
+class _TokenOccurrenceIndex(NamedTuple):
+    batch_indices: Tensor
+    positions: Tensor
+    node_indices: Tensor
+    sorted_node_indices: Tensor
+    node_sort_perm: Tensor
+    sorted_batch_node_keys: Tensor
+    batch_node_sort_perm: Tensor
 
 
 def heterodata_to_graph_transformer_input(
@@ -82,7 +143,7 @@ def heterodata_to_graph_transformer_input(
     batch_size: int,
     max_seq_len: int,
     anchor_node_type: NodeType,
-    anchor_node_ids: Optional[Tensor] = None,
+    anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
     hop_distance: int = 2,
     sequence_construction_method: Literal["khop", "ppr"] = "khop",
     include_anchor_first: bool = True,
@@ -90,7 +151,13 @@ def heterodata_to_graph_transformer_input(
     anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
     anchor_based_input_attr_names: Optional[list[str]] = None,
     pairwise_attention_bias_attr_names: Optional[list[str]] = None,
-) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
+    relation_edge_types: Optional[list[GiGLEdgeType]] = None,
+    sampling_direction: Literal["in", "out"] = "out",
+) -> tuple[
+    Float[Tensor, "anchors sequence feature_dim"],
+    Bool[Tensor, "anchors sequence"],
+    SequenceAuxiliaryData,
+]:
     """
     Transform a HeteroData object to Graph Transformer sequence input.
 
@@ -131,6 +198,16 @@ def heterodata_to_graph_transformer_input(
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
+        relation_edge_types: Optional ordered edge types used to materialize sparse
+            relation coordinates. Each output relation index corresponds to one
+            edge type in this list. Directed edges are stored as
+            ``(batch_idx, query_pos=dst_token, key_pos=src_token, relation_idx)``.
+        sampling_direction: Direction used for token construction.
+            ``"out"`` preserves the existing k-hop reachability expansion.
+            ``"in"`` expands over reversed edges and is supported only
+            with ``sequence_construction_method="khop"``. Directed relative
+            encodings such as ``"hop_distance"`` should be computed with the
+            same direction.
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -143,6 +220,12 @@ def heterodata_to_graph_transformer_input(
                 ``"anchor_bias"`` shaped ``(batch, seq, num_anchor_attrs)`` or None
                 ``"pairwise_bias"`` shaped
                 ``(batch, seq, seq, num_pairwise_attrs)`` or None
+                ``"pairwise_relation_indices"`` shaped
+                ``(num_relation_edges, 4)`` or None, storing
+                ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates
+                ``"pairwise_nonmissing_indices"`` shaped ``(num_pairs, 3)`` or None,
+                storing ``(batch_idx, row_pos, col_pos)`` coordinates for
+                nonmissing pairwise entries
                 ``"token_input"`` as a dict mapping attribute name to a
                 ``(batch, seq, 1)`` tensor, or None
 
@@ -184,19 +267,22 @@ def heterodata_to_graph_transformer_input(
     anchor_input_attr_names = anchor_based_input_attr_names or []
     pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
 
-    if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
+    _validate_reserved_anchor_feature_usage(
+        pairwise_bias_attr_names=pairwise_bias_attr_names,
+        anchor_bias_attr_names=anchor_bias_attr_names,
+        anchor_input_attr_names=anchor_input_attr_names,
+        sequence_construction_method=sequence_construction_method,
+    )
+
+    if sampling_direction not in {"in", "out"}:
         raise ValueError(
-            f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and cannot "
-            "be used as pairwise attention bias."
+            "sampling_direction must be one of {'in', 'out'}, "
+            f"got '{sampling_direction}'."
         )
 
-    if (
-        PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
-        and sequence_construction_method != "ppr"
-    ):
+    if sequence_construction_method == "ppr" and sampling_direction != "out":
         raise ValueError(
-            "The reserved anchor-relative feature 'ppr_weight' requires "
-            "sequence_construction_method='ppr'."
+            "sequence_construction_method='ppr' supports only sampling_direction='out'."
         )
 
     if sequence_construction_method == "ppr":
@@ -231,8 +317,11 @@ def heterodata_to_graph_transformer_input(
     anchor_indices = offset + anchor_local_indices
 
     ppr_weight_sequences: Optional[Tensor] = None
+    ppr_relation_feature_sequences: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
+        if sampling_direction == "in":
+            homo_edge_index = homo_edge_index.flip(0)
         # Use sparse matrix operations for efficient k-hop neighbor extraction
         # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
         reachable = _get_k_hop_neighbors_sparse(
@@ -250,12 +339,45 @@ def heterodata_to_graph_transformer_input(
             device=device,
         )
     elif sequence_construction_method == "ppr":
+        # Build the PPR sequence from the "ppr" edges only. When
+        # include_sampled_edges is on, the batch also carries the original
+        # relation edge types; those feed the relation-message channel via
+        # _lookup_pairwise_relation_indices and must not leak into the sequence.
+        #
+        # Gather just the "ppr" edges and remap their endpoints with the SAME
+        # node_type_offsets used for homo_data, so the indices line up with
+        # anchor_indices and num_nodes (both computed over the full graph).
+        # NB: data.edge_type_subgraph(ppr_edge_types).to_homogeneous() must NOT be
+        # used here -- it drops node types absent from PPR edges and renumbers the
+        # rest, silently shifting indices out of sync with anchor_indices.
+        ppr_edge_types = [et for et in data.edge_types if et[1] == "ppr"]
+        ppr_source_indices: list[Tensor] = []
+        ppr_target_indices: list[Tensor] = []
+        ppr_edge_features: list[Tensor] = []
+        for ppr_edge_type in ppr_edge_types:
+            edge_store = data[ppr_edge_type]
+            edge_index = edge_store.edge_index.to(device=device, dtype=torch.long)
+            ppr_source_indices.append(
+                edge_index[0] + node_type_offsets[ppr_edge_type[0]]
+            )
+            ppr_target_indices.append(
+                edge_index[1] + node_type_offsets[ppr_edge_type[2]]
+            )
+            ppr_edge_features.append(edge_store.edge_attr.to(device))
+        ppr_homo_data = Data(
+            edge_index=torch.stack(
+                [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
+            ),
+            edge_attr=torch.cat(ppr_edge_features, dim=0),
+            num_nodes=num_nodes,
+        )
         (
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
+            ppr_relation_feature_sequences,
         ) = _build_sequence_layout_from_ppr_edges(
-            homo_data=homo_data,
+            homo_data=ppr_homo_data,
             anchor_indices=anchor_indices,
             max_seq_len=max_seq_len,
             include_anchor_first=include_anchor_first,
@@ -264,6 +386,9 @@ def heterodata_to_graph_transformer_input(
             return_edge_weights=(
                 PPR_WEIGHT_FEATURE_NAME
                 in anchor_bias_attr_names + anchor_input_attr_names
+            ),
+            return_relation_features=(
+                PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
             ),
         )
     else:
@@ -276,7 +401,7 @@ def heterodata_to_graph_transformer_input(
         {
             attr_name
             for attr_name in (anchor_bias_attr_names + anchor_input_attr_names)
-            if attr_name != PPR_WEIGHT_FEATURE_NAME
+            if attr_name not in {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         }
     )
     anchor_based_matrices = _get_sparse_feature_matrices(
@@ -306,10 +431,22 @@ def heterodata_to_graph_transformer_input(
         device=device,
     )
 
-    pairwise_feature_sequences = _lookup_pairwise_relative_features(
+    pairwise_feature_sequences, pairwise_nonmissing_indices = (
+        _lookup_pairwise_relative_features(
+            node_index_sequences=node_index_sequences,
+            valid_mask=valid_mask,
+            csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
+            attr_names=pairwise_bias_attr_names,
+            device=device,
+        )
+    )
+    pairwise_relation_indices = _lookup_pairwise_relation_indices(
+        data=data,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
-        csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
+        relation_edge_types=relation_edge_types,
+        node_type_offsets=node_type_offsets,
+        num_nodes=num_nodes,
         device=device,
     )
 
@@ -318,12 +455,14 @@ def heterodata_to_graph_transformer_input(
         available_anchor_attr_names=anchor_matrix_attr_names,
         requested_anchor_attr_names=anchor_bias_attr_names,
         ppr_weight_sequences=ppr_weight_sequences,
+        ppr_relation_feature_sequences=ppr_relation_feature_sequences,
     )
     token_input_features = _compose_anchor_feature_dict(
         anchor_relative_feature_sequences=anchor_relative_feature_sequences,
         available_anchor_attr_names=anchor_matrix_attr_names,
         requested_anchor_attr_names=anchor_input_attr_names,
         ppr_weight_sequences=ppr_weight_sequences,
+        ppr_relation_feature_sequences=ppr_relation_feature_sequences,
     )
 
     return (
@@ -332,6 +471,8 @@ def heterodata_to_graph_transformer_input(
         {
             "anchor_bias": anchor_bias_features,
             "pairwise_bias": pairwise_feature_sequences,
+            "pairwise_relation_indices": pairwise_relation_indices,
+            "pairwise_nonmissing_indices": pairwise_nonmissing_indices,
             "token_input": token_input_features,
         },
     )
@@ -350,18 +491,16 @@ def _get_node_type_offsets(
 
 
 def _validate_ppr_sequence_input(data: HeteroData) -> None:
-    if not data.edge_types:
+    # The batch may also contain original relation edge types when
+    # include_sampled_edges is on (they feed the relation-message channel via
+    # _lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
+    ppr_edge_types = [et for et in data.edge_types if et[1] == "ppr"]
+    if not ppr_edge_types:
         raise ValueError(
             "sequence_construction_method='ppr' requires at least one PPR edge type."
         )
 
-    if any(edge_type[1] != "ppr" for edge_type in data.edge_types):
-        raise ValueError(
-            "sequence_construction_method='ppr' expects the hetero batch to contain "
-            f"only PPR edges, got edge types: {data.edge_types}."
-        )
-
-    for edge_type in data.edge_types:
+    for edge_type in ppr_edge_types:
         edge_store = data[edge_type]
         if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
             raise ValueError(
@@ -391,6 +530,7 @@ def _compose_anchor_feature_tensor(
     available_anchor_attr_names: list[str],
     requested_anchor_attr_names: list[str],
     ppr_weight_sequences: Optional[Tensor],
+    ppr_relation_feature_sequences: Optional[Tensor],
 ) -> Optional[Tensor]:
     if not requested_anchor_attr_names:
         return None
@@ -407,6 +547,13 @@ def _compose_anchor_feature_tensor(
                     f"Requested '{PPR_WEIGHT_FEATURE_NAME}' but it was not computed."
                 )
             feature_parts.append(ppr_weight_sequences)
+            continue
+        if attr_name == PPR_RELATION_FEATURES_NAME:
+            if ppr_relation_feature_sequences is None:
+                raise ValueError(
+                    f"Requested '{PPR_RELATION_FEATURES_NAME}' but it was not computed."
+                )
+            feature_parts.append(ppr_relation_feature_sequences)
             continue
 
         if anchor_relative_feature_sequences is None:
@@ -430,6 +577,7 @@ def _compose_anchor_feature_dict(
     available_anchor_attr_names: list[str],
     requested_anchor_attr_names: list[str],
     ppr_weight_sequences: Optional[Tensor],
+    ppr_relation_feature_sequences: Optional[Tensor],
 ) -> Optional[TokenInputData]:
     if not requested_anchor_attr_names:
         return None
@@ -446,6 +594,13 @@ def _compose_anchor_feature_dict(
                     f"Requested '{PPR_WEIGHT_FEATURE_NAME}' but it was not computed."
                 )
             feature_dict[attr_name] = ppr_weight_sequences
+            continue
+        if attr_name == PPR_RELATION_FEATURES_NAME:
+            if ppr_relation_feature_sequences is None:
+                raise ValueError(
+                    f"Requested '{PPR_RELATION_FEATURES_NAME}' but it was not computed."
+                )
+            feature_dict[attr_name] = ppr_relation_feature_sequences
             continue
 
         if anchor_relative_feature_sequences is None:
@@ -568,7 +723,8 @@ def _build_sequence_layout_from_ppr_edges(
     num_nodes: int,
     device: torch.device,
     return_edge_weights: bool = False,
-) -> tuple[Tensor, Tensor, Optional[Tensor]]:
+    return_relation_features: bool = False,
+) -> tuple[Tensor, Tensor, Optional[Tensor], Optional[Tensor]]:
     """Build sequences directly from outgoing PPR edges for each anchor.
 
     The sequence order is:
@@ -595,6 +751,7 @@ def _build_sequence_layout_from_ppr_edges(
             dtype=torch.float,
             device=device,
         )
+    ppr_relation_feature_sequences = None
 
     if include_anchor_first and max_seq_len > 0:
         node_index_sequences[:, 0] = anchor_indices
@@ -604,26 +761,40 @@ def _build_sequence_layout_from_ppr_edges(
         start_pos = 0
 
     if start_pos >= max_seq_len:
-        return node_index_sequences, valid_mask, ppr_weight_sequences
+        return (
+            node_index_sequences,
+            valid_mask,
+            ppr_weight_sequences,
+            ppr_relation_feature_sequences,
+        )
 
     if not hasattr(homo_data, "edge_attr") or homo_data.edge_attr is None:
         raise ValueError(
             "sequence_construction_method='ppr' requires homogeneous edge_attr weights."
         )
 
-    edge_weights = homo_data.edge_attr
-    if edge_weights.dim() == 2:
-        if edge_weights.size(1) != 1:
-            raise ValueError(
-                "PPR edge weights must be 1D or shape [N, 1], "
-                f"got {tuple(edge_weights.shape)}."
-            )
-        edge_weights = edge_weights.squeeze(1)
-    elif edge_weights.dim() != 1:
+    edge_features = homo_data.edge_attr.float()
+    if edge_features.dim() == 1:
+        edge_features = edge_features.unsqueeze(1)
+    elif edge_features.dim() != 2:
         raise ValueError(
-            "PPR edge weights must be 1D or shape [N, 1], "
-            f"got {tuple(edge_weights.shape)}."
+            f"PPR edge features must be 1D or 2D, got {tuple(edge_features.shape)}."
         )
+    if edge_features.size(1) < 1:
+        raise ValueError("PPR edge features must contain at least one weight column.")
+    if return_relation_features:
+        if edge_features.size(1) == 1:
+            raise ValueError(
+                f"Requested '{PPR_RELATION_FEATURES_NAME}' but PPR edge_attr only "
+                "contains the scalar weight column."
+            )
+        ppr_relation_feature_sequences = torch.zeros(
+            (batch_size, max_seq_len, edge_features.size(1) - 1),
+            dtype=torch.float,
+            device=device,
+        )
+    edge_weights = edge_features[:, 0]
+    relation_features = edge_features[:, 1:] if return_relation_features else None
 
     anchor_batch_index_by_homo_idx = torch.full(
         (num_nodes,),
@@ -640,32 +811,56 @@ def _build_sequence_layout_from_ppr_edges(
     anchor_batch_idx = anchor_batch_index_by_homo_idx[src_idx]
     keep = anchor_batch_idx >= 0
     if not keep.any():
-        return node_index_sequences, valid_mask, ppr_weight_sequences
+        return (
+            node_index_sequences,
+            valid_mask,
+            ppr_weight_sequences,
+            ppr_relation_feature_sequences,
+        )
 
     all_anchor_batch_idx = anchor_batch_idx[keep]
     all_dst_idx = dst_idx[keep]
     all_weights = edge_weights[keep]
+    all_relation_features = (
+        relation_features[keep] if relation_features is not None else None
+    )
 
     if include_anchor_first:
         keep = all_dst_idx != anchor_indices[all_anchor_batch_idx]
         if not keep.any():
-            return node_index_sequences, valid_mask, ppr_weight_sequences
+            return (
+                node_index_sequences,
+                valid_mask,
+                ppr_weight_sequences,
+                ppr_relation_feature_sequences,
+            )
         all_anchor_batch_idx = all_anchor_batch_idx[keep]
         all_dst_idx = all_dst_idx[keep]
         all_weights = all_weights[keep]
+        all_relation_features = (
+            all_relation_features[keep] if all_relation_features is not None else None
+        )
 
     # Flattened COO edges can be laid out in one pass by sorting first on weight
     # and then stably on anchor batch id, which preserves descending-weight order
-    # within each anchor group without a Python loop.
+    # within each anchor group without a Python loop. Relation features, when
+    # present, are reordered by the same permutation to stay aligned with edges.
     weight_order = torch.argsort(all_weights, descending=True, stable=True)
     all_anchor_batch_idx = all_anchor_batch_idx[weight_order]
     all_dst_idx = all_dst_idx[weight_order]
     all_weights = all_weights[weight_order]
+    if all_relation_features is not None:
+        all_relation_features = all_relation_features[weight_order]
 
     batch_order = torch.argsort(all_anchor_batch_idx, stable=True)
     sorted_batch_idx = all_anchor_batch_idx[batch_order]
     sorted_dst_idx = all_dst_idx[batch_order]
     sorted_weights = all_weights[batch_order]
+    sorted_relation_features = (
+        all_relation_features[batch_order]
+        if all_relation_features is not None
+        else None
+    )
 
     n = sorted_batch_idx.size(0)
     is_group_start = torch.zeros(n, dtype=torch.long, device=device)
@@ -682,6 +877,11 @@ def _build_sequence_layout_from_ppr_edges(
     valid_positions = positions[valid]
     valid_dst_idx = sorted_dst_idx[valid]
     valid_weights = sorted_weights[valid]
+    valid_relation_features = (
+        sorted_relation_features[valid]
+        if sorted_relation_features is not None
+        else None
+    )
 
     node_index_sequences[valid_batch_idx, valid_positions] = valid_dst_idx
     valid_mask[valid_batch_idx, valid_positions] = True
@@ -689,8 +889,20 @@ def _build_sequence_layout_from_ppr_edges(
         ppr_weight_sequences[valid_batch_idx, valid_positions, 0] = (
             valid_weights.float()
         )
+    if (
+        ppr_relation_feature_sequences is not None
+        and valid_relation_features is not None
+    ):
+        ppr_relation_feature_sequences[valid_batch_idx, valid_positions] = (
+            valid_relation_features.float()
+        )
 
-    return node_index_sequences, valid_mask, ppr_weight_sequences
+    return (
+        node_index_sequences,
+        valid_mask,
+        ppr_weight_sequences,
+        ppr_relation_feature_sequences,
+    )
 
 
 def _gather_sequences_from_node_indices(
@@ -798,8 +1010,9 @@ def _lookup_pairwise_relative_features(
     node_index_sequences: Tensor,
     valid_mask: Tensor,
     csr_matrices: Optional[list[Tensor]],
+    attr_names: Optional[list[str]],
     device: torch.device,
-) -> Optional[Tensor]:
+) -> tuple[Optional[Tensor], Optional[Tensor]]:
     """
     Look up pairwise sparse values for each valid token pair in the sequence.
 
@@ -815,13 +1028,20 @@ def _lookup_pairwise_relative_features(
         node_index_sequences: (batch_size, max_seq_len) node indices for each sequence position
         valid_mask: (batch_size, max_seq_len) bool tensor indicating valid positions
         csr_matrices: List of sparse CSR matrices, each (num_nodes, num_nodes)
+        attr_names: Optional names for the pairwise attributes. Used only to
+            produce clearer error messages when multiple attrs disagree on
+            sparse support.
         device: Device for output tensor
 
     Returns:
         features: (batch_size, max_seq_len, max_seq_len, num_attrs) tensor where
             features[b, i, j, k] = csr_matrices[k][node_index_sequences[b, i], node_index_sequences[b, j]]
             for valid (i, j) pairs, 0.0 for padding positions.
-        Returns None if csr_matrices is empty.
+        nonmissing_indices: (num_nonmissing_pairs, 3) long tensor containing
+            ``(batch_idx, row_pos, col_pos)`` coordinates for valid diagonal
+            self pairs and valid sparse entries. Missing non-self pairs and
+            padding are omitted.
+        Returns (None, None) if csr_matrices is empty.
 
     Example:
         # batch_size=2, max_seq_len=3, num_attrs=1 (e.g., random_walk_se)
@@ -844,7 +1064,7 @@ def _lookup_pairwise_relative_features(
         # (pad)   [0.0,       0.0,      0.0]
     """
     if not csr_matrices:
-        return None
+        return None, None
 
     batch_size, max_seq_len = node_index_sequences.shape
     num_attrs = len(csr_matrices)
@@ -856,23 +1076,276 @@ def _lookup_pairwise_relative_features(
 
     pair_valid_mask = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
     if not pair_valid_mask.any():
-        return features
+        return features, torch.zeros((0, 3), dtype=torch.long, device=device)
 
-    row_indices = node_index_sequences.unsqueeze(2).expand(-1, -1, max_seq_len)
-    col_indices = node_index_sequences.unsqueeze(1).expand(-1, max_seq_len, -1)
+    valid_batch_indices, valid_row_positions, valid_col_positions = torch.nonzero(
+        pair_valid_mask,
+        as_tuple=True,
+    )
+    valid_row_indices = node_index_sequences[
+        valid_batch_indices,
+        valid_row_positions,
+    ]
+    valid_col_indices = node_index_sequences[
+        valid_batch_indices,
+        valid_col_positions,
+    ]
+    self_pair_mask = valid_row_positions == valid_col_positions
 
-    valid_row_indices = row_indices[pair_valid_mask]
-    valid_col_indices = col_indices[pair_valid_mask]
-
+    first_attr_name = attr_names[0] if attr_names else "attr_0"
+    nonmissing_support: Optional[Tensor] = None
     for attr_idx, pe_matrix in enumerate(csr_matrices):
-        pe_values = _lookup_csr_values(
+        pe_values, found_mask = _lookup_csr_values_and_found(
             csr_matrix=pe_matrix,
             row_indices=valid_row_indices,
             col_indices=valid_col_indices,
         )
-        features[..., attr_idx][pair_valid_mask] = pe_values
+        features[
+            valid_batch_indices,
+            valid_row_positions,
+            valid_col_positions,
+            attr_idx,
+        ] = pe_values
+        attr_nonmissing_support = found_mask | self_pair_mask
+        if attr_idx == 0:
+            nonmissing_support = attr_nonmissing_support
+            continue
+        if nonmissing_support is None or not torch.equal(
+            nonmissing_support,
+            attr_nonmissing_support,
+        ):
+            attr_name = attr_names[attr_idx] if attr_names else f"attr_{attr_idx}"
+            raise ValueError(
+                "Pairwise attention bias attributes must share identical "
+                "nonmissing support after treating valid diagonal self pairs "
+                f"as nonmissing, but '{first_attr_name}' and '{attr_name}' "
+                "differ."
+            )
 
-    return features
+    assert nonmissing_support is not None
+    pairwise_nonmissing_indices = torch.stack(
+        [
+            valid_batch_indices[nonmissing_support],
+            valid_row_positions[nonmissing_support],
+            valid_col_positions[nonmissing_support],
+        ],
+        dim=1,
+    )
+    return features, pairwise_nonmissing_indices
+
+
+def _lookup_pairwise_relation_indices(
+    data: HeteroData,
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    relation_edge_types: Optional[list[GiGLEdgeType]],
+    node_type_offsets: dict[NodeType, int],
+    num_nodes: int,
+    device: torch.device,
+) -> Optional[Tensor]:
+    """Build sparse relation coordinates for valid token pairs.
+
+    For a directed edge ``source -> target``, attention uses ``query=target`` and
+    ``key=source`` so relation-aware attention follows message-passing
+    orientation.
+    """
+    if not relation_edge_types:
+        return None
+
+    token_occurrences = _build_token_occurrence_index(
+        node_index_sequences=node_index_sequences,
+        valid_mask=valid_mask,
+        num_nodes=num_nodes,
+        device=device,
+    )
+    if token_occurrences.batch_indices.numel() == 0:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+
+    relation_index_parts: list[Tensor] = []
+    for relation_idx, edge_type in enumerate(relation_edge_types):
+        edge_type_tuple = edge_type.tuple_repr()
+        if edge_type_tuple not in data.edge_types:
+            continue
+
+        edge_index = data[edge_type_tuple].edge_index.to(
+            device=device,
+            dtype=torch.long,
+        )
+        if edge_index.numel() == 0:
+            continue
+
+        src_offset = int(node_type_offsets[edge_type.src_node_type])
+        dst_offset = int(node_type_offsets[edge_type.dst_node_type])
+        source_indices = edge_index[0] + src_offset
+        target_indices = edge_index[1] + dst_offset
+        (
+            relation_batch_indices,
+            relation_query_positions,
+            relation_key_positions,
+        ) = _match_directed_edges_to_token_pairs(
+            source_indices=source_indices,
+            target_indices=target_indices,
+            token_occurrences=token_occurrences,
+            num_nodes=num_nodes,
+            device=device,
+        )
+        if relation_batch_indices.numel() == 0:
+            continue
+
+        relation_indices = torch.stack(
+            [
+                relation_batch_indices,
+                relation_query_positions,
+                relation_key_positions,
+                torch.full(
+                    (relation_batch_indices.size(0),),
+                    relation_idx,
+                    dtype=torch.long,
+                    device=device,
+                ),
+            ],
+            dim=1,
+        )
+        relation_index_parts.append(torch.unique(relation_indices, dim=0))
+
+    if not relation_index_parts:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+    return torch.cat(relation_index_parts, dim=0)
+
+
+def _build_token_occurrence_index(
+    node_index_sequences: Tensor,
+    valid_mask: Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> _TokenOccurrenceIndex:
+    """Index valid sequence tokens for sparse directed-edge to token matching."""
+    token_batch_indices, token_positions = torch.nonzero(valid_mask, as_tuple=True)
+    token_batch_indices = token_batch_indices.to(device=device, dtype=torch.long)
+    token_positions = token_positions.to(device=device, dtype=torch.long)
+    token_node_indices = node_index_sequences[token_batch_indices, token_positions].to(
+        device=device,
+        dtype=torch.long,
+    )
+
+    sorted_token_node_indices, node_sort_perm = torch.sort(token_node_indices)
+    token_batch_node_keys = token_batch_indices * num_nodes + token_node_indices
+    sorted_token_batch_node_keys, batch_node_sort_perm = torch.sort(
+        token_batch_node_keys
+    )
+
+    return _TokenOccurrenceIndex(
+        batch_indices=token_batch_indices,
+        positions=token_positions,
+        node_indices=token_node_indices,
+        sorted_node_indices=sorted_token_node_indices,
+        node_sort_perm=node_sort_perm,
+        sorted_batch_node_keys=sorted_token_batch_node_keys,
+        batch_node_sort_perm=batch_node_sort_perm,
+    )
+
+
+def _match_directed_edges_to_token_pairs(
+    source_indices: Tensor,
+    target_indices: Tensor,
+    token_occurrences: _TokenOccurrenceIndex,
+    num_nodes: int,
+    device: torch.device,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Map ``source -> target`` graph edges onto valid sequence coordinates."""
+    empty = torch.zeros((0,), dtype=torch.long, device=device)
+    if source_indices.numel() == 0 or token_occurrences.batch_indices.numel() == 0:
+        return empty, empty, empty
+
+    source_indices = source_indices.to(device=device, dtype=torch.long)
+    target_indices = target_indices.to(device=device, dtype=torch.long)
+
+    target_lower_bounds = torch.searchsorted(
+        token_occurrences.sorted_node_indices,
+        target_indices,
+        right=False,
+    )
+    target_upper_bounds = torch.searchsorted(
+        token_occurrences.sorted_node_indices,
+        target_indices,
+        right=True,
+    )
+    target_match_counts = target_upper_bounds - target_lower_bounds
+    matched_edge_mask = target_match_counts > 0
+    if not matched_edge_mask.any():
+        return empty, empty, empty
+
+    matched_edge_indices = torch.nonzero(matched_edge_mask, as_tuple=True)[0]
+    matched_target_counts = target_match_counts[matched_edge_indices]
+    total_target_matches = int(matched_target_counts.sum().item())
+    repeated_target_edge_indices = torch.repeat_interleave(
+        matched_edge_indices,
+        matched_target_counts,
+    )
+    repeated_target_lower_bounds = torch.repeat_interleave(
+        target_lower_bounds[matched_edge_indices],
+        matched_target_counts,
+    )
+    target_group_start_offsets = torch.repeat_interleave(
+        torch.cumsum(matched_target_counts, dim=0) - matched_target_counts,
+        matched_target_counts,
+    )
+    target_sorted_positions = (
+        repeated_target_lower_bounds
+        + torch.arange(total_target_matches, device=device, dtype=torch.long)
+        - target_group_start_offsets
+    )
+    target_token_indices = token_occurrences.node_sort_perm[target_sorted_positions]
+    target_batch_indices = token_occurrences.batch_indices[target_token_indices]
+    target_query_positions = token_occurrences.positions[target_token_indices]
+
+    source_query_keys = (
+        target_batch_indices * num_nodes + source_indices[repeated_target_edge_indices]
+    )
+    source_lower_bounds = torch.searchsorted(
+        token_occurrences.sorted_batch_node_keys,
+        source_query_keys,
+        right=False,
+    )
+    source_upper_bounds = torch.searchsorted(
+        token_occurrences.sorted_batch_node_keys,
+        source_query_keys,
+        right=True,
+    )
+    source_match_counts = source_upper_bounds - source_lower_bounds
+    matched_target_mask = source_match_counts > 0
+    if not matched_target_mask.any():
+        return empty, empty, empty
+
+    matched_target_indices = torch.nonzero(matched_target_mask, as_tuple=True)[0]
+    matched_source_counts = source_match_counts[matched_target_indices]
+    total_source_matches = int(matched_source_counts.sum().item())
+    repeated_target_indices = torch.repeat_interleave(
+        matched_target_indices,
+        matched_source_counts,
+    )
+    repeated_source_lower_bounds = torch.repeat_interleave(
+        source_lower_bounds[matched_target_indices],
+        matched_source_counts,
+    )
+    source_group_start_offsets = torch.repeat_interleave(
+        torch.cumsum(matched_source_counts, dim=0) - matched_source_counts,
+        matched_source_counts,
+    )
+    source_sorted_positions = (
+        repeated_source_lower_bounds
+        + torch.arange(total_source_matches, device=device, dtype=torch.long)
+        - source_group_start_offsets
+    )
+    source_token_indices = token_occurrences.batch_node_sort_perm[
+        source_sorted_positions
+    ]
+
+    return (
+        target_batch_indices[repeated_target_indices],
+        target_query_positions[repeated_target_indices],
+        token_occurrences.positions[source_token_indices],
+    )
 
 
 def _get_k_hop_neighbors_sparse(
@@ -964,11 +1437,35 @@ def _lookup_csr_values(
     Returns:
         (n,) values from csr_matrix[row, col], or default_value if not present
     """
+    values, _ = _lookup_csr_values_and_found(
+        csr_matrix=csr_matrix,
+        row_indices=row_indices,
+        col_indices=col_indices,
+        default_value=default_value,
+    )
+    return values
+
+
+def _lookup_csr_values_and_found(
+    csr_matrix: Tensor,
+    row_indices: Tensor,
+    col_indices: Tensor,
+    default_value: float = 0.0,
+) -> tuple[Tensor, Tensor]:
+    """
+    Look up values in a CSR sparse matrix and report which entries were present.
+
+    Returns both the looked-up values and a boolean found-mask so callers can
+    distinguish missing sparse entries from explicit zero-valued entries.
+    """
     n = row_indices.size(0)
     device = row_indices.device
 
     if n == 0:
-        return torch.zeros(0, device=device, dtype=torch.float)
+        return (
+            torch.zeros(0, device=device, dtype=torch.float),
+            torch.zeros(0, device=device, dtype=torch.bool),
+        )
 
     crow_indices = csr_matrix.crow_indices()
     col_indices_csr = csr_matrix.col_indices()
@@ -981,7 +1478,10 @@ def _lookup_csr_values(
     max_row_len = row_lengths.max().item()
 
     if max_row_len == 0:
-        return torch.full((n,), default_value, device=device, dtype=torch.float)
+        return (
+            torch.full((n,), default_value, device=device, dtype=torch.float),
+            torch.zeros((n,), device=device, dtype=torch.bool),
+        )
 
     # Build offset matrix: (n, max_row_len)
     offsets = row_starts.unsqueeze(1) + torch.arange(max_row_len, device=device)
@@ -1007,4 +1507,4 @@ def _lookup_csr_values(
         value_indices = row_starts[found] + match_offsets[found]
         result[found] = values_csr[value_indices].float()
 
-    return result
+    return result, found
