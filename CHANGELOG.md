@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 
+### Changed
+
+- The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
+  its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/786
+
 ### Fixed
 
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
