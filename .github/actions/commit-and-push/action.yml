@@ -6,6 +6,11 @@ description: |
   If a new branch is specified, the action will create a new branch and push the changes to it.
   Otherwise, the action will push the changes to the current branch.
 
+  Authentication for the push is supplied inline, scoped to each git invocation, rather than
+  relying on credentials persisted in .git/config by actions/checkout. This lets callers run
+  (pinned) PR-authored code earlier in the job WITHOUT a push-capable token on disk, then push
+  safely from this trusted step.
+
 
 inputs:
   commit_message:
@@ -30,10 +35,25 @@ runs:
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Build an inline auth header (same scheme actions/checkout uses) and pass it only on
+        # the push commands via `git -c`, so it is not persisted to .git/config. Note this
+        # keeps the token off disk but does NOT fully isolate it from PR-authored code that ran
+        # earlier in the same job (e.g. a lingering background process could read git's argv);
+        # full isolation would require pushing from a separate job.
+        AUTH_B64="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+        echo "::add-mask::$AUTH_B64"
+        # Prepend an empty extraheader entry to RESET any header persisted in .git/config by a
+        # prior actions/checkout. http.extraheader is multi-valued: leaving a persisted value in
+        # place alongside ours would send TWO Authorization headers -> GitHub rejects with HTTP
+        # 400 ("Duplicate header"). The reset makes this robust for callers that check out with
+        # persist-credentials: true (e.g. create_release / nightly).
+        GIT_AUTH=(-c "http.https://github.com/.extraheader=" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_B64}")
+
         if [ "$TO_NEW_BRANCH_NAMED" != "" ]; then
           echo "Creating a new branch, named $TO_NEW_BRANCH_NAMED, and pushing the changes to it"
-          git checkout -b $TO_NEW_BRANCH_NAMED
-          git push --set-upstream origin $TO_NEW_BRANCH_NAMED
+          git checkout -b "$TO_NEW_BRANCH_NAMED"
+          git "${GIT_AUTH[@]}" push --set-upstream origin "$TO_NEW_BRANCH_NAMED"
         fi
 
         # Stages changes (modifications and deletions) to tracked files, but ignores new untracked files.
@@ -48,5 +68,5 @@ runs:
         fi
 
         git commit -m "$COMMIT_MESSAGE"
-        git push
+        git "${GIT_AUTH[@]}" push
       shell: bash

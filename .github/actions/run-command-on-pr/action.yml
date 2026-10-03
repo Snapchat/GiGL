@@ -7,6 +7,12 @@ inputs:
   pr_number:
     description: 'The pull request number'
     required: true
+  sha:
+    description: |
+      The exact commit SHA authorized for this run (frozen upstream by a prepare job or
+      supplied at workflow_dispatch time). Passed to checkout-pr-branch, which fails closed
+      if the PR head has moved off this SHA. This is the anti-TOCTOU control.
+    required: true
   command:
     description: 'The command to execute on the PR'
     required: true
@@ -75,6 +81,7 @@ runs:
       with:
         pr_number: ${{ inputs.pr_number }}
         github-token: ${{ inputs.github-token }}
+        sha: ${{ inputs.sha }}
 
     - name: Setup development environment
       if: ${{ inputs.install_dev_deps == 'true' || inputs.setup_gcloud == 'true' }}
