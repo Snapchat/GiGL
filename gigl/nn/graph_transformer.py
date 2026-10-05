@@ -12,19 +12,22 @@ replacement as the encoder in ``LinkPredictionGNN``.
 """
 
 import math
-from typing import Callable, Literal, Optional, cast
+from typing import Callable, Literal, Optional, Union, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.data.hetero_data
+from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
+    _validate_reserved_anchor_feature_usage,
     heterodata_to_graph_transformer_input,
 )
 
@@ -189,7 +192,9 @@ class FeedForwardNetwork(nn.Module):
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self, x: Float[Tensor, "batch sequence model_dim"]
+    ) -> Float[Tensor, "batch sequence model_dim"]:
         """Forward pass.
 
         Args:
@@ -442,12 +447,14 @@ class GraphTransformerEncoderLayer(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        attn_bias: Optional[Tensor] = None,
-        valid_mask: Optional[Tensor] = None,
-        pairwise_relation_indices: Optional[Tensor] = None,
+        x: Float[Tensor, "batch sequence model_dim"],
+        attn_bias: Optional[
+            Union[Float[Tensor, ""], Float[Tensor, "... #sequence"]]
+        ] = None,
+        valid_mask: Optional[Bool[Tensor, "batch sequence"]] = None,
+        pairwise_relation_indices: Optional[Int64[Tensor, "relation_edges 4"]] = None,
         query_seq_len: Optional[int] = None,
-    ) -> Tensor:
+    ) -> Float[Tensor, "batch query_sequence model_dim"]:
         """Forward pass.
 
         Args:
@@ -1327,19 +1334,12 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names
         anchor_input_attr_names = anchor_based_input_attr_names
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names
-        if PPR_WEIGHT_FEATURE_NAME in pairwise_bias_attr_names:
-            raise ValueError(
-                f"'{PPR_WEIGHT_FEATURE_NAME}' is an anchor-relative feature and "
-                "cannot be used as pairwise attention bias."
-            )
-        if (
-            PPR_WEIGHT_FEATURE_NAME in anchor_bias_attr_names + anchor_input_attr_names
-            and sequence_construction_method != "ppr"
-        ):
-            raise ValueError(
-                "The reserved anchor-relative feature 'ppr_weight' requires "
-                "sequence_construction_method='ppr'."
-            )
+        _validate_reserved_anchor_feature_usage(
+            pairwise_bias_attr_names=pairwise_bias_attr_names,
+            anchor_bias_attr_names=anchor_bias_attr_names,
+            anchor_input_attr_names=anchor_input_attr_names,
+            sequence_construction_method=sequence_construction_method,
+        )
         self._sequence_construction_method = sequence_construction_method
         self._sampling_direction = sampling_direction
         self._prioritize_hop_order = prioritize_hop_order
@@ -1490,9 +1490,9 @@ class GraphTransformerEncoder(nn.Module):
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
         anchor_node_type: Optional[NodeType] = None,
-        anchor_node_ids: Optional[Tensor] = None,
+        anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
         device: Optional[torch.device] = None,
-    ) -> torch.Tensor:
+    ) -> Float[torch.Tensor, "anchors output_dim"]:
         """Run the forward pass of the Graph Transformer encoder.
 
         Args:
@@ -1579,6 +1579,7 @@ class GraphTransformerEncoder(nn.Module):
         relative_pe_attr_names.update(self._anchor_based_input_attr_names or [])
         relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
         relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
+        relative_pe_attr_names.discard(PPR_RELATION_FEATURES_NAME)
         if relative_pe_attr_names:
             for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):

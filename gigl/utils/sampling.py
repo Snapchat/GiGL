@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Union
 
 import torch
+from jaxtyping import Int64
 
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
@@ -136,7 +137,13 @@ class ABLPInputNodes:
             )
     """
 
-    anchor_nodes: torch.Tensor
+    anchor_nodes: Int64[torch.Tensor, "anchors"]
     anchor_node_type: NodeType
 
-    labels: dict[EdgeType, tuple[torch.Tensor, Optional[torch.Tensor]]]
+    labels: dict[
+        EdgeType,
+        tuple[
+            Int64[torch.Tensor, "anchors _positive_labels_per_anchor"],
+            Optional[Int64[torch.Tensor, "anchors _negative_labels_per_anchor"]],
+        ],
+    ]

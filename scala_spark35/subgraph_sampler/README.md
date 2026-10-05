@@ -111,7 +111,7 @@ To silence the worker logs
 
 ## Scalability
 
-______________________________________________________________________
+---
 
 ### Performance
 
@@ -155,7 +155,7 @@ As any of below factor increases we should think of strategies to scale the SGS 
 
 ## Resources
 
-______________________________________________________________________
+---
 
 Naming Conventions
 

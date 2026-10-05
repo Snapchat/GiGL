@@ -2,6 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from jaxtyping import Float
 from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import OptPairTensor  # noqa
@@ -99,7 +100,9 @@ class JumpingKnowledge(MessagePassing):
             self.att.reset_parameters()
         self.output_linear.reset_parameters()
 
-    def forward(self, xs: list[torch.Tensor]) -> Tensor:
+    def forward(
+        self, xs: list[Float[torch.Tensor, "nodes hidden_dim"]]
+    ) -> Float[Tensor, "nodes output_dim"]:
         r"""
         Args:
             xs (list[torch.Tensor]): List containing the layer-wise

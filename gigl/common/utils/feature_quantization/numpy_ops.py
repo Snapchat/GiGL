@@ -6,17 +6,18 @@ the dataloader collate path operates on torch tensors that may already be on GPU
 """
 
 import numpy as np
+from jaxtyping import Float, UInt8
 
 from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
 
 def quantize_ndarray(
-    features: np.ndarray,
+    features: Float[np.ndarray, "entities feature_dim"],
     *,
     bits: int,
     clip_min: float | None = None,
     clip_max: float | None = None,
-) -> np.ndarray:
+) -> UInt8[np.ndarray, "entities packed_feature_dim"]:
     """Quantize a 2D float array into packed uint8 codes.
 
     For multi-bit quantization, `clip_min` and `clip_max` are required and

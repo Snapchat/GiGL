@@ -82,15 +82,15 @@ project. Leaving the variable unset or empty preserves google-auth's default beh
    and [give it relevant IAM perms](https://cloud.google.com/iam/docs/roles-overview):
 
 ```{note}
-  You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`, and `roles/iam.serviceAccountAdmin`
+You youself are going to need the following permissions to create new IAM bindings: `roles/resourcemanager.projectIamAdmin`, and `roles/iam.serviceAccountAdmin`
 ```
 
 a. Firstly give the SA permission to use itself:
 
 ```bash
- gcloud iam service-accounts add-iam-policy-binding $SERVICE_ACCOUNT \
- --member="serviceAccount:$SERVICE_ACCOUNT" \
- --role="roles/iam.serviceAccountUser"
+gcloud iam service-accounts add-iam-policy-binding $SERVICE_ACCOUNT \
+--member="serviceAccount:$SERVICE_ACCOUNT" \
+--role="roles/iam.serviceAccountUser"
 ```
 
 b. Next, the SA will need some permissions at the project level:
@@ -126,9 +126,9 @@ VAI pipelines can pull the docker images you push to the registry you created. Y
 Alternative, you can find your `$PROJECT_NUMBER` from your main project console page: `console.cloud.google.com`
 
 ```bash
- gcloud projects add-iam-policy-binding $PROJECT_ID \
-   --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
-   --role="roles/artifactregistry.reader"
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-cc.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.reader"
 ```
 
 10. Give your SA `storage.objectAdmin` and `roles/storage.legacyBucketReader` on the buckets you created i.e. to grant

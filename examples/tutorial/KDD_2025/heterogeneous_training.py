@@ -41,6 +41,7 @@ from distutils.util import strtobool
 from typing import Literal
 
 import torch
+from jaxtyping import Float
 from torch.nn.parallel import DistributedDataParallel
 from torch_geometric.data import HeteroData
 
@@ -70,7 +71,7 @@ SUPERVISION_EDGE_TYPE = EdgeType(QUERY_NODE_TYPE, Relation("to"), TARGET_NODE_TY
 FANOUT = [10, 10]
 
 
-def compute_loss(model: torch.nn.Module, data: HeteroData) -> torch.Tensor:
+def compute_loss(model: torch.nn.Module, data: HeteroData) -> Float[torch.Tensor, ""]:
     main_out: dict[str, torch.Tensor] = model(data.x_dict, data.edge_index_dict)
     anchor_nodes = torch.arange(data[QUERY_NODE_TYPE].batch_size).repeat_interleave(
         torch.tensor([len(v) for v in data.y_positive.values()])

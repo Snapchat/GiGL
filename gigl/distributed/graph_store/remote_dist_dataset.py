@@ -80,6 +80,14 @@ class RemoteDistDataset:
             DistServer.get_node_quantization_metadata,
         )
 
+    def fetch_edge_quantization_metadata(
+        self,
+    ) -> Union[
+        FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata], None
+    ]:
+        """Fetch main-edge feature quantization metadata from storage."""
+        return request_server(0, DistServer.get_edge_quantization_metadata)
+
     def fetch_edge_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:

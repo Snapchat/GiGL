@@ -15,7 +15,7 @@ from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, PartitionOutput
 from tests.test_assets.distributed.constants import (
     EDGE_TYPE_TO_FEATURE_DIMENSION_MAP,
@@ -191,14 +191,16 @@ class DistRandomPartitionerTestCase(TestCase):
             node_ids: torch.Tensor
 
             self.assertEqual(graph.edge_index.size(0), 2)
+            # The mocked ids fit int32, so the partitioner narrows the edge index.
+            self.assertEqual(graph.edge_index.dtype, torch.int32)
             # We take the unique items in either source or destination nodes, as source/destination node ids which
             # repeat across multiple edges will still only take up one slot in the partition book.
             if should_assign_edges_by_src_node:
                 target_node_type = edge_type.src_node_type
-                node_ids = torch.unique(graph.edge_index[0])
+                node_ids = torch.unique(graph.edge_index[0]).long()
             else:
                 target_node_type = edge_type.dst_node_type
-                node_ids = torch.unique(graph.edge_index[1])
+                node_ids = torch.unique(graph.edge_index[1]).long()
 
             num_nodes_on_rank: int = RANK_TO_NODE_TYPE_TYPE_TO_NUM_NODES[rank][
                 target_node_type
@@ -328,10 +330,10 @@ class DistRandomPartitionerTestCase(TestCase):
             node_ids: torch.Tensor
             if should_assign_edges_by_src_node:
                 target_node_type = edge_type.src_node_type
-                node_ids = torch.unique(graph.edge_index[0])
+                node_ids = torch.unique(graph.edge_index[0]).long()
             else:
                 target_node_type = edge_type.dst_node_type
-                node_ids = torch.unique(graph.edge_index[1])
+                node_ids = torch.unique(graph.edge_index[1]).long()
 
             num_nodes_on_rank: int = RANK_TO_NODE_TYPE_TYPE_TO_NUM_NODES[rank][
                 target_node_type
@@ -702,6 +704,22 @@ class DistRandomPartitionerTestCase(TestCase):
                 partitioner_class=DistRangePartitioner,
                 expected_pb_dtype=torch.int64,
             ),
+            param(
+                "Homogeneous packed-edge-only tensor partitioning",
+                is_heterogeneous=False,
+                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
+                should_assign_edges_by_src_node=True,
+                partitioner_class=DistPartitioner,
+                expected_pb_dtype=torch.uint8,
+            ),
+            param(
+                "Homogeneous packed-edge-only range partitioning",
+                is_heterogeneous=False,
+                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
+                should_assign_edges_by_src_node=True,
+                partitioner_class=DistRangePartitioner,
+                expected_pb_dtype=torch.int64,
+            ),
         ]
     )
     def test_partitioning_correctness(
@@ -775,6 +793,10 @@ class DistRandomPartitionerTestCase(TestCase):
         has_edge_quantized_features = (
             input_data_strategy == InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES
         )
+        is_packed_edge_only = (
+            input_data_strategy
+            == InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES
+        )
 
         for rank, partition_output in output_dict.items():
             partitioned_edge_index = partition_output.partitioned_edge_index
@@ -800,7 +822,30 @@ class DistRandomPartitionerTestCase(TestCase):
                     graph.edge_index
                 )
 
-            if has_edge_quantized_features:
+            if is_packed_edge_only:
+                self.assertIsNotNone(partition_output.edge_partition_book)
+                self.assertIsNone(partition_output.partitioned_edge_features)
+                packed_features = partition_output.partitioned_edge_quantized_features
+                self.assertIsNotNone(packed_features)
+                assert isinstance(packed_features, FeaturePartitionData)
+                assert isinstance(partitioned_edge_index, GraphPartitionData)
+                self.assertEqual(packed_features.feats.dtype, torch.uint8)
+                self.assertEqual(
+                    packed_features.feats.size(0),
+                    partitioned_edge_index.edge_index.size(1),
+                )
+                assert partitioned_edge_index.edge_ids is not None
+                if packed_features.ids is not None:
+                    self.assert_tensor_equality(
+                        tensor_a=packed_features.ids,
+                        tensor_b=partitioned_edge_index.edge_ids,
+                    )
+                for index, edge_id in enumerate(partitioned_edge_index.edge_ids):
+                    self.assert_tensor_equality(
+                        tensor_a=packed_features.feats[index],
+                        tensor_b=edge_id.to(torch.uint8).unsqueeze(0),
+                    )
+            elif has_edge_quantized_features:
                 self.assertIsNotNone(partition_output.edge_partition_book)
                 assert partition_output.partitioned_edge_features is not None
                 self._assert_edge_feature_outputs(
@@ -830,10 +875,18 @@ class DistRandomPartitionerTestCase(TestCase):
                         else partitioned_edge_index
                     )
                     self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
+                    if is_range_based_partition:
+                        self.assertIsNone(edge_type_features.ids)
+                        expected_source_nodes = edge_type_graph.edge_index[0]
+                    else:
+                        assert edge_type_features.ids is not None
+                        expected_source_nodes = MOCKED_UNIFIED_GRAPH.edge_index[
+                            edge_type
+                        ][0, edge_type_features.ids]
                     expected_features = torch.stack(
                         (
-                            edge_type_graph.edge_index[0] * 3 + 17,
-                            edge_type_graph.edge_index[0] * 5 + 29,
+                            expected_source_nodes * 3 + 17,
+                            expected_source_nodes * 5 + 29,
                         ),
                         dim=1,
                     ).to(torch.uint8)
@@ -841,7 +894,8 @@ class DistRandomPartitionerTestCase(TestCase):
                         tensor_a=edge_type_features.feats,
                         tensor_b=expected_features,
                     )
-                    if edge_type_features.ids is not None:
+                    if not is_range_based_partition:
+                        assert edge_type_features.ids is not None
                         assert edge_type_graph.edge_ids is not None
                         self.assert_tensor_equality(
                             tensor_a=edge_type_features.ids,
@@ -1025,7 +1079,9 @@ class DistRandomPartitionerTestCase(TestCase):
             expected_edge_index = MOCKED_UNIFIED_GRAPH.edge_index[edge_type]
 
             # We combine the output edge indices across all the ranks
-            output_edge_index = torch.cat(unified_output_edge_index[edge_type], dim=1)
+            output_edge_index = torch.cat(
+                unified_output_edge_index[edge_type], dim=1
+            ).long()
 
             # Finally, we check that the expected tensor and output tensor have the same columns, which is achieved by setting the shuffle dimension to 1
             self.assert_tensor_equality(
@@ -1521,6 +1577,40 @@ class DistRandomPartitionerTestCase(TestCase):
             ValueError, "Node labels have already been registered"
         ):
             partitioner3.register_node_labels(node_labels=node_labels)
+
+
+class EdgeIndexDtypeTest(TestCase):
+    @parameterized.expand(
+        [
+            param(
+                "both_fit",
+                max_node_ids={"user": 10, "item": 2**31 - 1},
+                expected=torch.int32,
+            ),
+            param(
+                "one_too_large",
+                max_node_ids={"user": 10, "item": 2**31},
+                expected=torch.int64,
+            ),
+            param(
+                "endpoint_not_registered",
+                max_node_ids={"user": 10},
+                expected=torch.int64,
+            ),
+            param("nodes_not_registered", max_node_ids=None, expected=torch.int64),
+        ]
+    )
+    def test_width(
+        self, _name: str, max_node_ids: Optional[dict[str, int]], expected: torch.dtype
+    ) -> None:
+        partitioner = DistPartitioner()
+        partitioner._max_node_ids = (
+            None
+            if max_node_ids is None
+            else {NodeType(t): max_id for t, max_id in max_node_ids.items()}
+        )
+        edge_type = EdgeType(NodeType("user"), Relation("to"), NodeType("item"))
+        self.assertEqual(partitioner._edge_index_dtype(edge_type), expected)
 
 
 if __name__ == "__main__":

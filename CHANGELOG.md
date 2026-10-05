@@ -6,8 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Make the sampling-loader bring-up RPC timeout configurable via `GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS` (workers reset
+  to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
+  bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and
+  exit codes instead of hanging by @dsaini2 in https://github.com/Snapchat/GiGL/pull/760
+- Apply local patches to the pinned GraphLearn-Torch build in `install_glt.sh` (`gigl/scripts/patches/`): an exact
+  bitmap distinct-count in CPU graph init replacing `at::_unique`'s ~3x transient allocation, int32 CSR column-id
+  support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
+  build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
+- Replace `coo_to_csr` on the dataset's graph-build path with a memory-lean two-pass counting sort
+  (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
+  edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
+  drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+
+### Changed
+
+- The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
+  its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/786
+
+### Fixed
+
+- `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
+  a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/761
+
 ### Removed
 
+- Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
+  dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
 - Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by
   @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
 

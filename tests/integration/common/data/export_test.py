@@ -63,7 +63,7 @@ class EmbeddingExportIntegrationTest(TestCase):
         with EmbeddingExporter(export_dir=self.embedding_output_dir) as exporter:
             for i in torch.arange(num_nodes):
                 exporter.add_embedding(
-                    torch.tensor([i]), torch.ones(128, 1) * i, "node"
+                    torch.tensor([i]), torch.ones(1, 128) * i, "node"
                 )
 
         # We also want nested directories to be picked up.
@@ -76,7 +76,7 @@ class EmbeddingExportIntegrationTest(TestCase):
         ) as exporter:
             for i in torch.arange(num_nodes, num_nodes * 2):
                 exporter.add_embedding(
-                    torch.tensor([i]), torch.ones(128, 1) * i, "node"
+                    torch.tensor([i]), torch.ones(1, 128) * i, "node"
                 )
         bq_client = BqUtils()
         bq_export_table_path = bq_client.join_path(

@@ -5,6 +5,7 @@ import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
+from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -12,6 +13,7 @@ from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
+from gigl.distributed.sampler import EDGE_PACKED_FEATURES_METADATA_KEY
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -463,7 +465,6 @@ def _run_heterogeneous_partially_quantized_neighbor_loader(
         batch_size=1,
         pin_memory_device=torch.device("cpu"),
     )
-
     batch = next(iter(loader))
     assert isinstance(batch, HeteroData)
     for node_type, expected_features_for_node_type in expected_features.items():
@@ -1164,17 +1165,40 @@ class SamplingSeedTest(TestCase):
         )
         self.assertEqual(first, second)
 
+    def test_packed_edge_metadata_requests_sampled_edge_ids(self) -> None:
+        schema = self._schema()
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=schema.edge_types,
+            node_feature_info=schema.node_feature_info,
+            edge_feature_info=None,
+            edge_dir=schema.edge_dir,
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=2,
+                quantized_feature_indices=(0, 1),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[1], dataset_schema=schema
+        )
+
+        self.assertTrue(config.with_edge)
+
 
 # NOTE on the test strategy: GiGL loaders always sample via the multiprocess
 # producer, which spawns worker subprocesses with a *fresh* interpreter
 # (`mp.get_context("spawn")`, dist_sampling_producer.py). A `mock.patch` applied in the
 # loader process therefore never reaches the sampler running in that subprocess, so we
 # cannot inject a synthetic failure by mocking the sampler. Instead we reproduce a real
-# sampler failure end-to-end: a heterogeneous dataset with edge features on only a
-# subset of its message-passing edge types. When the featureless type is reached during
-# sampling, its feature lookup raises `KeyError` inside the sampling coroutine — the exact
-# swallowed-exception case this change surfaces. Without the change this hangs forever, so
-# the test uses a bounded join.
+# sampler failure end-to-end: a heterogeneous dataset with an incomplete feature store
+# for one message-passing edge type. When the missing edge ID is reached during sampling,
+# its feature lookup raises inside the sampling coroutine - the exact swallowed-exception
+# case this change surfaces. Without the change this hangs forever, so the test uses a
+# bounded join.
 
 
 def _run_partial_edge_feature_coverage_raises(
@@ -1201,11 +1225,11 @@ def _run_partial_edge_feature_coverage_raises(
 
 class TestSamplingErrorPropagation(TestCase):
     def _build_partial_edge_feature_dataset(self) -> DistDataset:
-        """Build a hetero dataset with edge features on only one message-passing type.
+        """Build a hetero dataset with an incomplete edge feature store.
 
-        ``user-to-story`` has edge features; ``story-to-user`` does not. Both are
-        reachable from ``user`` seeds within a 2-hop fanout, so the featureless type is
-        actually sampled and its edge-feature lookup raises inside the coroutine.
+        Both edge types are reachable from ``user`` seeds within a 2-hop fanout.
+        ``story-to-user`` omits the last edge ID, so its feature lookup raises inside
+        the sampling coroutine.
         """
         n = 5
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
@@ -1234,6 +1258,9 @@ class TestSamplingErrorPropagation(TestCase):
             partitioned_edge_features={
                 _USER_TO_STORY: FeaturePartitionData(
                     feats=torch.ones(n, 3), ids=torch.arange(n)
+                ),
+                _STORY_TO_USER: FeaturePartitionData(
+                    feats=torch.ones(n - 1, 3), ids=torch.arange(n - 1)
                 ),
             },
             partitioned_positive_labels=None,
@@ -1264,7 +1291,169 @@ class TestSamplingErrorPropagation(TestCase):
         message = error_holder.get("msg", "")
         # The training process raised with the worker's real traceback embedded.
         self.assertIn("sampling worker failed", message.lower())
-        self.assertIn("story-to-user", message)
+        self.assertIn("IndexError", message)
+        self.assertIn("index 4 is out of bounds", message)
+
+
+def _run_heterogeneous_partially_quantized_edge_feature_neighbor_loader(
+    _,
+    dataset: DistDataset,
+    expected_edge_features: dict[EdgeType, torch.Tensor],
+) -> None:
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_USER, torch.tensor([0])),
+        num_neighbors=[1, 1],
+        batch_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+    batch = next(iter(loader))
+    assert isinstance(batch, HeteroData)
+    for edge_type, expected_features in expected_edge_features.items():
+        assert_tensor_equality(batch[edge_type].edge_attr, expected_features)
+    assert not hasattr(batch[_STORY_TO_USER], "edge_attr")
+    shutdown_rpc()
+
+
+def _run_incoming_heterogeneous_quantized_edge_feature_neighbor_loader(
+    _,
+    dataset: DistDataset,
+    expected_edge_features: torch.Tensor,
+) -> None:
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(_STORY, torch.tensor([0])),
+        num_neighbors=[1],
+        batch_size=1,
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    edge_feature_info = loader._edge_feature_info
+    edge_quantization_metadata = loader._edge_quantization_metadata
+    assert isinstance(edge_feature_info, dict)
+    assert isinstance(edge_quantization_metadata, dict)
+    assert set(edge_feature_info) == {_USER_TO_STORY}
+    assert set(edge_quantization_metadata) == {_USER_TO_STORY}
+    assert edge_feature_info[_USER_TO_STORY].dim == 2
+    assert edge_quantization_metadata[_USER_TO_STORY].feature_dim == 4
+
+    batch = next(iter(loader))
+    assert isinstance(batch, HeteroData)
+    assert_tensor_equality(batch[_USER_TO_STORY].edge_attr, expected_edge_features)
+    assert EDGE_PACKED_FEATURES_METADATA_KEY not in batch
+    assert f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{_USER_TO_STORY}" not in batch
+    shutdown_rpc()
+
+
+class HeterogeneousEdgeFeatureLookupTest(TestCase):
+    def test_heterogeneous_loader_supports_partially_quantized_edge_types(
+        self,
+    ) -> None:
+        # Sampling user reaches both edge types. Only user-to-story has raw and
+        # packed features, so story-to-user must not be looked up in either store.
+        expected_edge_features = {
+            reverse_edge_type(_USER_TO_STORY): torch.tensor([[0.0, 10.0]])
+        }
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
+            edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0], [0]]), edge_ids=None
+                )
+            },
+            partitioned_node_features=None,
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.tensor([[10.0]]), ids=torch.tensor([0])
+                ),
+            },
+            partitioned_edge_quantized_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.tensor([[0]], dtype=torch.uint8),
+                    ids=torch.tensor([0]),
+                )
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            edge_quantization_metadata={
+                _USER_TO_STORY: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=2,
+                    quantized_feature_indices=(0,),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_heterogeneous_partially_quantized_edge_feature_neighbor_loader,
+            args=(dataset, expected_edge_features),
+        )
+
+    def test_incoming_edges_reverse_feature_metadata_and_output_stores(self) -> None:
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
+            edge_partition_book={
+                _USER_TO_STORY: torch.zeros(1),
+                _STORY_TO_USER: torch.zeros(1),
+            },
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0], [0]]), edge_ids=None
+                ),
+                _STORY_TO_USER: GraphPartitionData(
+                    edge_index=torch.tensor([[0], [0]]), edge_ids=None
+                ),
+            },
+            partitioned_node_features=None,
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.tensor([[10.0, 20.0]]), ids=torch.tensor([0])
+                )
+            },
+            partitioned_edge_quantized_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    # The high-order 2-bit codes unpack to [0, 3] in feature
+                    # slots 0 and 2; raw [10, 20] therefore yields [0, 10, 3, 20].
+                    feats=torch.tensor([[48]], dtype=torch.uint8),
+                    ids=torch.tensor([0]),
+                )
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="in",
+            edge_quantization_metadata={
+                _USER_TO_STORY: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=4,
+                    quantized_feature_indices=(0, 2),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+        dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_incoming_heterogeneous_quantized_edge_feature_neighbor_loader,
+            args=(dataset, torch.tensor([[0.0, 10.0, 3.0, 20.0]])),
+        )
 
 
 if __name__ == "__main__":

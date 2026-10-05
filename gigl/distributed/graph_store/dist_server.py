@@ -418,6 +418,14 @@ class DistServer:
         """Get node feature quantization metadata from the dataset."""
         return self.dataset.node_quantization_metadata
 
+    def get_edge_quantization_metadata(
+        self,
+    ) -> Union[
+        FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata], None
+    ]:
+        """Get main-edge feature quantization metadata from the dataset."""
+        return self.dataset.edge_quantization_metadata
+
     def get_edge_feature_info(
         self,
     ) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo], None]:

@@ -9,14 +9,19 @@ from typing import Literal, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
-from torch_geometric.data.storage import NodeStorage
+from torch_geometric.data.storage import EdgeStorage, NodeStorage
 from torch_geometric.typing import EdgeType, NodeType
 
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
-from gigl.distributed.sampler import NODE_PACKED_FEATURES_METADATA_KEY
+from gigl.distributed.sampler import (
+    EDGE_PACKED_FEATURES_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
+)
 from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
     FeatureInfo,
     FeatureQuantizationIndexTensors,
@@ -58,6 +63,9 @@ class DatasetSchema:
     # Quantization metadata for packed node features.
     node_quantization_metadata: Optional[
         Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ] = None
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
     ] = None
 
 
@@ -337,6 +345,49 @@ def set_missing_features(
     return data
 
 
+def _materialize_quantized_features(
+    store: Union[Data, NodeStorage, EdgeStorage],
+    packed_features: torch.Tensor,
+    quantization_metadata: FeatureQuantizationMetadata,
+    feature_attribute: Literal["x", "edge_attr"],
+) -> None:
+    """Reconstruct and assign quantized features for one PyG feature store.
+
+    Args:
+        store: PyG data or typed storage receiving the reconstructed features.
+        packed_features: Quantized feature columns for sampled graph entities.
+        quantization_metadata: Column layout and dequantization metadata.
+        feature_attribute: PyG attribute that stores the feature tensor.
+
+    Raises:
+        ValueError: If expected raw feature columns are absent or have an
+            unexpected dimension.
+    """
+    dequantized = dequantize_torch_tensor(
+        packed_features, metadata=quantization_metadata
+    )
+    raw_features = getattr(store, feature_attribute, None)
+    materialized_features = dequantized.new_empty(
+        (dequantized.size(0), quantization_metadata.feature_dim)
+    )
+    scatter_idx: FeatureQuantizationIndexTensors = (
+        quantization_metadata.scatter_index_tensors(materialized_features.device)
+    )
+    materialized_features[:, scatter_idx.quantized] = dequantized
+
+    if raw_features is None and quantization_metadata.raw_feature_dim:
+        raise ValueError(
+            f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+        )
+    if raw_features is not None:
+        if raw_features.size(1) != quantization_metadata.raw_feature_dim:
+            raise ValueError(
+                f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
+            )
+        materialized_features[:, scatter_idx.raw] = raw_features
+    setattr(store, feature_attribute, materialized_features)
+
+
 def materialize_quantized_node_features(
     data: _GraphType,
     metadata: dict[str, torch.Tensor],
@@ -371,48 +422,6 @@ def materialize_quantized_node_features(
     if node_quantization_metadata is None:
         return data, metadata
 
-    def materialize(
-        store: Union[Data, NodeStorage],
-        packed_features: torch.Tensor,
-        quantization_metadata: FeatureQuantizationMetadata,
-    ) -> None:
-        """Reconstruct and assign node features for one PyG node store.
-
-        Args:
-            store: Node store receiving the reconstructed ``x`` tensor.
-            packed_features: Quantized feature columns for the sampled nodes.
-            quantization_metadata: Column layout and dequantization metadata.
-
-        Raises:
-            ValueError: If expected raw feature columns are absent or have an
-                unexpected dimension.
-        """
-        dequantized = dequantize_torch_tensor(
-            packed_features, metadata=quantization_metadata
-        )
-        x = getattr(store, "x", None)
-        out = dequantized.new_empty(
-            (dequantized.size(0), quantization_metadata.feature_dim)
-        )
-        scatter_idx: FeatureQuantizationIndexTensors = (
-            quantization_metadata.scatter_index_tensors(out.device)
-        )
-        out[:, scatter_idx.quantized] = dequantized
-
-        if x is None and quantization_metadata.raw_feature_dim:
-            raise ValueError(
-                f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
-            )
-        if x is not None:
-            if x.size(1) != quantization_metadata.raw_feature_dim:
-                raise ValueError(
-                    "Expected "
-                    f"{quantization_metadata.raw_feature_dim} raw node features "
-                    f"before dequantization, got {x.size(1)}"
-                )
-            out[:, scatter_idx.raw] = x
-        store.x = out
-
     if isinstance(data, Data):
         if isinstance(node_quantization_metadata, dict):
             raise ValueError("Expect scalar quantization metadata for homogeneous data")
@@ -430,7 +439,12 @@ def materialize_quantized_node_features(
             raise ValueError(
                 f"Missing packed quantized features in metadata keys {NODE_PACKED_FEATURES_METADATA_KEY} or {labeled_homogeneous_packed_features_key}"
             )
-        materialize(data, packed_features, node_quantization_metadata)
+        _materialize_quantized_features(
+            data,
+            packed_features,
+            node_quantization_metadata,
+            feature_attribute="x",
+        )
     else:
         if not isinstance(node_quantization_metadata, dict):
             raise ValueError("Expected per-node-type metadata for heterogeneous data.")
@@ -442,7 +456,112 @@ def materialize_quantized_node_features(
             packed_features = metadata.pop(metadata_key, None)
             if packed_features is None:
                 continue
-            materialize(data[node_type], packed_features, quantization_metadata)
+            _materialize_quantized_features(
+                data[node_type],
+                packed_features,
+                quantization_metadata,
+                feature_attribute="x",
+            )
+
+    return data, metadata
+
+
+def materialize_quantized_edge_features(
+    data: _GraphType,
+    metadata: dict[str, torch.Tensor],
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
+    ],
+    edge_dir: Literal["in", "out"] = "in",
+) -> tuple[_GraphType, dict[str, torch.Tensor]]:
+    """Materialize packed quantized edge features into PyG edge feature tensors.
+
+    Reconstructs each edge feature tensor in its original column order by
+    dequantizing packed features and combining them with any unquantized
+    feature columns already present in ``data``. Consumed packed-feature
+    entries are removed from ``metadata``.
+
+    Args:
+        data: Homogeneous or heterogeneous sampled graph containing raw edge
+            feature columns.
+        metadata: Sample metadata containing packed edge feature tensors.
+        edge_quantization_metadata: Quantization metadata for the graph's edge
+            features. Homogeneous graphs require a single value; heterogeneous
+            graphs require metadata for each edge type.
+        edge_dir: Sampling direction. GLT reverses heterogeneous output edge
+            stores when sampling outward.
+
+    Returns:
+        A tuple containing the graph with reconstructed edge features and the
+        remaining sample metadata.
+
+    Raises:
+        ValueError: If the graph and quantization metadata shapes do not match,
+            required packed features are missing, or raw feature dimensions are
+            inconsistent.
+    """
+    if edge_quantization_metadata is None:
+        return data, metadata
+
+    if isinstance(data, Data):
+        if isinstance(edge_quantization_metadata, dict):
+            raise ValueError("Expect scalar quantization metadata for homogeneous data")
+        packed_features = metadata.pop(EDGE_PACKED_FEATURES_METADATA_KEY, None)
+        labeled_homogeneous_output_edge_type = (
+            reverse_edge_type(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+            if edge_dir == "out"
+            else DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
+        labeled_homogeneous_packed_features_key = (
+            f"{EDGE_PACKED_FEATURES_METADATA_KEY}."
+            f"{labeled_homogeneous_output_edge_type}"
+        )
+        if packed_features is None:
+            # Labeled homogeneous graphs are sampled as heterogeneous graphs, so
+            # the transport key uses GLT's direction-dependent output edge type.
+            packed_features = metadata.pop(
+                labeled_homogeneous_packed_features_key, None
+            )
+        if packed_features is None:
+            raise ValueError(
+                "Missing packed quantized features in metadata keys "
+                f"{EDGE_PACKED_FEATURES_METADATA_KEY} or "
+                f"{labeled_homogeneous_packed_features_key}"
+            )
+        _materialize_quantized_features(
+            data,
+            packed_features,
+            edge_quantization_metadata,
+            feature_attribute="edge_attr",
+        )
+    else:
+        if not isinstance(edge_quantization_metadata, dict):
+            raise ValueError("Expected per-edge-type metadata for heterogeneous data.")
+        edge_quantization_metadata = cast(
+            dict[EdgeType, FeatureQuantizationMetadata], edge_quantization_metadata
+        )
+        for edge_type, quantization_metadata in edge_quantization_metadata.items():
+            output_edge_type = (
+                reverse_edge_type(edge_type) if edge_dir == "out" else edge_type
+            )
+            metadata_key = f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
+            packed_features = metadata.pop(metadata_key, None)
+            if packed_features is None:
+                if (
+                    output_edge_type not in data.edge_types
+                    or data[output_edge_type].num_edges == 0
+                ):
+                    continue
+                raise ValueError(
+                    "Missing packed quantized edge features for sampled edge type "
+                    f"{output_edge_type}"
+                )
+            _materialize_quantized_features(
+                data[output_edge_type],
+                packed_features,
+                quantization_metadata,
+                feature_attribute="edge_attr",
+            )
 
     return data, metadata
 

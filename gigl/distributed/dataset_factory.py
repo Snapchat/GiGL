@@ -25,6 +25,7 @@ from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
+    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -232,6 +233,10 @@ def _load_and_build_partitioned_dataset(
         world_size=world_size,
         edge_dir=edge_dir,
         node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
+        edge_quantization_metadata=remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name=weight_edge_feat_name,
+        ),
     )
 
     dataset.build(

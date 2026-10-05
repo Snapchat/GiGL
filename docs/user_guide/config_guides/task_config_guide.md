@@ -3,6 +3,9 @@
 The task config specifies task-related configurations - guiding the behavior of components according to the needs of
 your machine learning task.
 
+Task configs can be split into Hydra config groups. See
+[composing task and resource configs with Hydra](./hydra_composition.md).
+
 Whenever we say "task config" we are talking about an instance off
 {py:class}`snapchat.research.gbml.gbml_config_pb2.GbmlConfig`
 

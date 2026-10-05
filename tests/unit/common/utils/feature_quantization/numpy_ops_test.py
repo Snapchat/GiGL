@@ -1,4 +1,5 @@
 import numpy as np
+from jaxtyping import TypeCheckError
 
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from tests.test_assets.test_case import TestCase
@@ -81,7 +82,7 @@ class NumpyFeatureQuantizationOpsTest(TestCase):
             quantize_ndarray(np.zeros((1, 1)), bits=3, clip_min=0.0, clip_max=1.0)
 
     def test_quantize_ndarray_rejects_non_2d_features(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeCheckError):
             quantize_ndarray(np.zeros((1, 1, 1)), bits=2, clip_min=0.0, clip_max=1.0)
 
     def test_quantize_ndarray_requires_multi_bit_clip_bounds(self) -> None:

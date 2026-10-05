@@ -165,9 +165,9 @@ subgraphSamplerConfig:
 An example of specifying the `subgraphSamplerconfig` to use the Pure-Spark backend:
 
 ```yaml
- subgraphSamplerConfig:
-   numNeighborsToSample: 10
-   numPositiveSamples: 3
+subgraphSamplerConfig:
+  numNeighborsToSample: 10
+  numPositiveSamples: 3
 ```
 
 **Import GiGL**
@@ -206,20 +206,20 @@ The python entry point {py:class}`gigl.src.subgraph_sampler.subgraph_sampler.Sub
 time.
 
 ```
-  --cluster_name="unique_name_for_the_cluster"
+--cluster_name="unique_name_for_the_cluster"
 ```
 
 Ensure to skip deleting the cluster so it can be re-used. But, be sure to clean up manually after to prevent $ waste.
 
 ```
-  --skip_cluster_delete
+--skip_cluster_delete
 ```
 
 Marks cluster is to be used for debugging/development by the alias provided. i.e. for username some_user, provide
 debug_cluster_owner_alias="some_user"
 
 ```
-  --debug_cluster_owner_alias="your_alias"
+--debug_cluster_owner_alias="your_alias"
 ```
 
 *Example for when you would want to use cluster for development:*

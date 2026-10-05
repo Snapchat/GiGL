@@ -6,14 +6,15 @@ path, where packed feature data is already represented as torch tensors.
 """
 
 import torch
+from jaxtyping import Float32, UInt8
 
 from gigl.types.graph import FeatureQuantizationMetadata
 
 
 def dequantize_torch_tensor(
-    packed_features: torch.Tensor,
+    packed_features: UInt8[torch.Tensor, "... packed_feature_dim"],
     metadata: FeatureQuantizationMetadata,
-) -> torch.Tensor:
+) -> Float32[torch.Tensor, "... {metadata.quantized_feature_dim}"]:
     """Reconstruct approximate float features from packed uint8 codes."""
     q = metadata
 

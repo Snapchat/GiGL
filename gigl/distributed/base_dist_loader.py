@@ -36,7 +36,10 @@ from typing_extensions import Self
 
 import gigl.distributed.utils
 from gigl.common.logger import Logger
-from gigl.distributed.constants import DEFAULT_MASTER_INFERENCE_PORT
+from gigl.distributed.constants import (
+    DEFAULT_MASTER_INFERENCE_PORT,
+    sampling_rpc_init_timeout_seconds,
+)
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import (
@@ -246,6 +249,7 @@ class BaseDistLoader(DistLoader):
         self._node_feature_info = dataset_schema.node_feature_info
         self._edge_feature_info = dataset_schema.edge_feature_info
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
+        self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
         # Sampled-edge PPR output requires a final HeteroData batch so virtual
@@ -457,7 +461,10 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=dataset_schema.edge_feature_info is not None,
+            with_edge=(
+                dataset_schema.edge_feature_info is not None
+                or dataset_schema.edge_quantization_metadata is not None
+            ),
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
@@ -666,7 +673,7 @@ class BaseDistLoader(DistLoader):
             # Load testing shows that when num_rpc_threads exceed 16, the performance
             # will degrade.
             num_rpc_threads=min(dataset_num_partitions, 16),
-            rpc_timeout=600,
+            rpc_timeout=sampling_rpc_init_timeout_seconds(),
             channel_size=channel_size,
             pin_memory=pin_memory,
         )

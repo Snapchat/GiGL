@@ -7,6 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
 - AGENTS.md should direct agents to read CLAUDE.md and discover/use skills under `.claude/skills`.
 
+## Custom Agents
+
+- At the start of each session, discover repository-local custom agents in `.claude/agents/` and read the agent(s)
+  relevant to the task before using them. Coding agents must follow these as repository guidance.
+- Before opening a PR or requesting code review, invoke the `setup-pr` agent in `.claude/agents/setup-pr.md`.
+
 ## Project Overview
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
@@ -140,6 +146,22 @@ development.
 - Use `Final` for constants. Use `@dataclass(frozen=True)` for immutable data containers when named fields and a stable
   shape add real clarity; do not introduce a dataclass for tiny internal-only plumbing.
 - Always annotate empty containers: `names: list[str] = []` not `names = []`.
+- A Shape Contract is a runtime-checkable Jaxtyping dtype and shape annotation at a stable API boundary.
+- Use Jaxtyping annotations for tensors crossing loader or sampler boundaries, public model `forward` or `decode`
+  methods, and loss interfaces. Do not add them to internal tensor operations, dynamic PyG or TorchRec keyed containers,
+  or low-level message-passing operations unless they clarify a stable boundary.
+- Use an exact dtype such as `Int64`, `Int32`, `Float32`, or `UInt8` only when the boundary guarantees it. Keep `Float`
+  for model and loss boundaries that intentionally support mixed precision.
+- Reuse axis names when dimensions must match across annotations. Use `_name` when a dimension must not bind to another
+  annotation, `_` when its meaning is unknown, and `#name` when size `1` is valid because the dimension supports PyTorch
+  broadcasting. Use numeric dimensions only when the size is guaranteed. Use `...` or `*name` only when variable rank is
+  part of the boundary contract. Use `{expression}` for an exact dimension derived from a runtime argument or instance
+  configuration only when it adds a useful boundary contract. Whitespace separates axes; do not add leading or trailing
+  whitespace.
+- Unit, integration, and end-to-end test launchers install runtime Shape Contract checking before test discovery.
+  Typeguard checks every shape-bearing tensor value in annotated containers in `gigl` and `examples` when a contracted
+  call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`
+  fails the test command.
 
 ### Docstrings
 
