@@ -28,6 +28,11 @@ runs:
   steps:
     - name: Submit Cloud Build job
       env:
+        CMD: ${{ inputs.cmd }}
+        PROJECT: ${{ inputs.project }}
+        SERVICE_ACCOUNT: ${{ inputs.service_account }}
+        MACHINE_TYPE: ${{ inputs.machine_type }}
+        TIMEOUT: ${{ inputs.timeout }}
         PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
       run: |
         BUILDER_SUBSTITUTION=""
@@ -36,10 +41,10 @@ runs:
         fi
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${{ inputs.cmd }}"${BUILDER_SUBSTITUTION} \
-          --service-account="projects/${{ inputs.project }}/serviceAccounts/${{ inputs.service_account }}" \
-          --project="${{ inputs.project }}" \
-          --machine-type="${{ inputs.machine_type }}" \
-          --timeout="${{ inputs.timeout }}" \
+          --substitutions=_CMD="${CMD}"${BUILDER_SUBSTITUTION} \
+          --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
+          --project="${PROJECT}" \
+          --machine-type="${MACHINE_TYPE}" \
+          --timeout="${TIMEOUT}" \
           --polling-interval=15 # Polling interval is set to 15 seconds to avoid rate limiting issues with Cloud Build API
       shell: bash
