@@ -18,15 +18,13 @@ FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dca
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
-# The NVIDIA driver — libcuda.so.1 and libnvidia-ml.so.1 — ships in no image: Vertex AI
-# and GKE bind-mount it into /usr/local/nvidia/lib{,64} at container start, so both
-# directories are empty while this image builds and nothing here can verify them.
-# Losing them fails two ways: fbgemm_gpu names libcuda.so.1 in DT_NEEDED across 19 of its
-# extensions, so `import torchrec` raises outright, while plain torch imports fine and
-# reports no CUDA device, which reads as a CPU machine rather than a broken image.
-# Prepended so the base's own entries survive, and set here rather than inherited because
-# upstream shuffles both variables between releases —
-# pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel already puts /usr/local/cuda/lib64 first.
+# Vertex AI and GKE mount the host NVIDIA driver (libcuda.so.1, libnvidia-ml.so.1, nvidia-smi)
+# into /usr/local/nvidia/{lib,lib64,bin} at container start; no image ships it, and the
+# directories are empty at build time. The loader finds it only through LD_LIBRARY_PATH:
+# without it torch reports no CUDA device and `import torchrec` fails. pytorch/pytorch bases
+# export these paths, nvidia/cuda bases do not (LD_LIBRARY_PATH=/usr/local/cuda/lib64), so
+# they are set here instead of inherited from whatever the FROM line names.
+# `scripts/smoke_test_image.py --require-nvidia-driver-path` asserts them without a GPU.
 ENV LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}"
 ENV PATH="/usr/local/nvidia/bin:${PATH}"
 
@@ -46,7 +44,7 @@ RUN apt-get update && apt-get install -y \
 
 # The base ships its own uv at /usr/local/bin. install_py_deps.sh installs the pinned uv only
 # when none is on PATH, so leaving this one would build the venv with the base's uv, which may
-# not know the interpreter .python-version names.
+# not know the interpreter PYTHON_VERSION names.
 RUN rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
 WORKDIR /gigl_deps
@@ -55,7 +53,6 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY requirements requirements
 COPY gigl/scripts gigl/scripts
-COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
@@ -63,11 +60,14 @@ COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
 
-# PYTHON_VERSION (e.g. 3.13) picks the venv's interpreter; empty builds on .python-version.
-# only-managed keeps uv from settling for a system Python that matches the request.
+# The Python version this image's venv is built on, e.g. 3.13.15. Required.
 ARG PYTHON_VERSION
-RUN UV_PYTHON="${PYTHON_VERSION:-$(cat .python-version)}" UV_PYTHON_PREFERENCE=only-managed \
-    bash ./requirements/install_py_deps.sh
+# Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
+# uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
+ENV UV_PYTHON=${PYTHON_VERSION}
+# only-managed keeps uv from settling for a system Python that matches the request.
+RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
+    && UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
@@ -78,15 +78,6 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
-# Without UV_PYTHON, uv requests .python-version. In an image built on another minor, that
-# request makes `uv run` delete this venv and rebuild it on the .python-version interpreter.
-# Pointing uv at the venv's own interpreter keeps every later uv command on this venv.
-# Under make, the Makefile exports its own UV_PYTHON from PYTHON_VERSION instead.
-ENV UV_PYTHON="${UV_PROJECT_ENVIRONMENT}/bin/python"
-# The Makefile turns PYTHON_VERSION into UV_PYTHON and the -pyXY image suffix, so this keeps
-# `make` in this image on the minor the venv above was built on. The Makefile falls back to
-# .python-version when it is empty.
-ENV PYTHON_VERSION=${PYTHON_VERSION}
 
 WORKDIR /
 

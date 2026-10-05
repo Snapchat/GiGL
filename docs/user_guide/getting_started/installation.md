@@ -182,14 +182,13 @@ Each image runs the exact Python version listed for its minor in the matrix of
 `.github/workflows/build-base-docker-images.yml` (currently 3.11.14, 3.12.14 and 3.13.15); the 3.11 entry equals
 `.python-version`.
 
-To build your own base images, pass the minor, or a full version such as `3.12.9`, as `PYTHON_VERSION`; without it, the
-bases use `.python-version`. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes
-no aarch64 Linux wheel.
+To build your own base images, pass the full Python version as `PYTHON_VERSION`; it is required. The images are built
+for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
 
 ```bash
 for image in cpu cuda dataflow; do
   docker build --platform linux/amd64 -f "containers/Dockerfile.${image}.base" \
-    --build-arg PYTHON_VERSION=3.12 -t "gigl-${image}-base:dev-py312" .
+    --build-arg PYTHON_VERSION=3.12.14 -t "gigl-${image}-base:dev-py312" .
 done
 ```
 

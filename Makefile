@@ -3,16 +3,14 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
-# Python interpreter for every uv command, e.g. `make unit_test PYTHON_VERSION=3.13`.
-# Defaults to .python-version, the same request uv makes without UV_PYTHON. An empty value
-# also falls back, because the builder image sets PYTHON_VERSION from a build arg that may
-# be empty, and an empty UV_PYTHON is not a valid interpreter request.
-override PYTHON_VERSION := $(or $(PYTHON_VERSION),$(shell cat .python-version))
+# Python for every uv command and for the -pyXY image suffix, e.g. `make unit_test PYTHON_VERSION=3.13`.
+# Defaults to UV_PYTHON when the environment sets it (GiGL's images set it to the version their venv is
+# built on), otherwise to .python-version. Must be a version (X.Y or X.Y.Z), not an interpreter path.
+PYTHON_VERSION ?= $(or $(UV_PYTHON),$(shell cat .python-version))
 export UV_PYTHON := $(PYTHON_VERSION)
 # major.minor of PYTHON_VERSION; ty accepts only X.Y.
 PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subst ., ,$(PYTHON_VERSION)))
-# Every GiGL image is published per Python minor under this tag suffix, e.g. -py313;
-# see gigl/dep_vars.env.
+# Every GiGL image is published once per Python minor under this tag suffix, e.g. -py313.
 PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
 # dep_vars.env key suffix for this minor, e.g. PY313; see gigl/dep_vars.env.
 PY_KEY := PY$(subst .,,$(PYTHON_MINOR_VERSION))
