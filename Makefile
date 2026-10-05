@@ -14,6 +14,9 @@ PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subs
 PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
 # dep_vars.env key suffix for this minor, e.g. PY313; see gigl/dep_vars.env.
 PY_KEY := PY$(subst .,,$(PYTHON_MINOR_VERSION))
+# Every supported minor has its keys in dep_vars.env; anything else (an unsupported minor, an empty
+# PYTHON_VERSION, an interpreter path) stops here instead of producing images with a malformed suffix.
+$(if $(DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_$(PY_KEY)),,$(error PYTHON_VERSION "$(PYTHON_VERSION)" is not a supported Python version; gigl/dep_vars.env lists the supported minors))
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
