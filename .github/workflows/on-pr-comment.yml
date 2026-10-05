@@ -130,10 +130,23 @@ jobs:
             # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
             make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
+  # `/e2e_test all` (exactly one space) runs every supported Python minor; `/e2e_test` and
+  # `/all_test` run only the default one. The non-default minors run the in-memory (GLT)
+  # pipelines only. GitHub rejects `matrix` in a job-level `if`, so the matrix itself is
+  # picked from the comment body with `fromJSON`.
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
+    strategy:
+      fail-fast: false
+      matrix:
+        include: >-
+          ${{ fromJSON(contains(github.event.comment.body, '/e2e_test all')
+          && '[{"python": "3.11", "target": "run_all_e2e_tests"},
+          {"python": "3.12", "target": "run_glt_e2e_tests"},
+          {"python": "3.13", "target": "run_glt_e2e_tests"}]'
+          || '[{"python": "3.11", "target": "run_all_e2e_tests"}]') }}
     steps:
     - name: Run E2E Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -141,39 +154,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "E2E Test"
-        setup_gcloud: "true"
-        use_cloud_run: "true"
-        gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
-        workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
-        gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-        command: |
-          make run_all_e2e_tests
-
-  # E2E for the non-default Python minors runs only the GLT pipelines, and only on its own
-  # command: /e2e_test and /all_test do not trigger it. GitHub rejects `matrix` in a job-level
-  # `if`, so each leg skips its step unless the comment names its minor.
-  integration-e2e-test-nondefault-python:
-    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_py312') || contains(github.event.comment.body, '/e2e_py313')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 155 # Same budget as integration-e2e-test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - python: "3.12"
-            command: "/e2e_py312"
-          - python: "3.13"
-            command: "/e2e_py313"
-    steps:
-    - name: Run GLT E2E Tests on Python 3.12 or 3.13
-      if: ${{ contains(github.event.comment.body, matrix.command) }}
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
-        should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python ${{ matrix.python }} GLT E2E Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} E2E Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
@@ -181,7 +162,7 @@ jobs:
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
         python_version: ${{ matrix.python }}
         command: |
-          make run_glt_e2e_tests
+          make ${{ matrix.target }}
 
   notebooks-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}

@@ -1,3 +1,5 @@
+import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -9,7 +11,7 @@ DEP_VARS_FILE_PATH = Path.joinpath(REPO_ROOT, "gigl", "dep_vars.env")
 
 
 def check_ci_python_matrices() -> None:
-    """CI matrices must list every classifier minor, or every one but the .python-version minor."""
+    """CI matrices must list every classifier minor, every one but the .python-version minor, or only it."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     supported = [
         c.split(" :: ")[-1]
@@ -25,12 +27,24 @@ def check_ci_python_matrices() -> None:
     for job_name, expected in [
         ("unit-test-python", supported),
         ("ci-unit-test-python-matrix", supported),
-        ("integration-e2e-test-nondefault-python", non_default),
         ("ci-integration-e2e-test-nondefault-python-matrix", non_default),
     ]:
         matrix = jobs[job_name]["strategy"]["matrix"]
         actual = matrix.get("python") or [leg["python"] for leg in matrix["include"]]
         assert actual == expected, f"{job_name} matrix is {actual}, expected {expected}"
+    # integration-e2e-test picks its legs from the comment: `/e2e_test all` runs every minor,
+    # `/e2e_test` only the default one.
+    include = jobs["integration-e2e-test"]["strategy"]["matrix"]["include"]
+    all_legs, default_legs = [
+        [leg["python"] for leg in json.loads(legs)]
+        for legs in re.findall(r"'(\[.*?\])'", include)
+    ]
+    assert all_legs == supported, (
+        f"`/e2e_test all` runs {all_legs}, expected {supported}"
+    )
+    assert default_legs == [default], (
+        f"`/e2e_test` runs {default_legs}, expected {[default]}"
+    )
 
 
 if __name__ == "__main__":

@@ -157,13 +157,9 @@ Run all end-to-end tests:
 /e2e_test
 ```
 
-`/e2e_test` runs on the default Python minor (`.python-version`), while Python unit tests run on every supported minor.
-To run the in-memory (GLT) end-to-end tests on another minor:
-
-```
-/e2e_py312
-/e2e_py313
-```
+`/e2e_test` runs the full end-to-end suite on the default Python minor (`.python-version`). `/e2e_test all` also runs
+the in-memory (GLT) end-to-end pipelines on every other supported minor. Python unit tests (`/unit_test`) run on every
+supported minor.
 
 #### Running tests locally
 
