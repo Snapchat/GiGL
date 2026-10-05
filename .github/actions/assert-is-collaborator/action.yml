@@ -17,11 +17,12 @@ runs:
       uses: actions/github-script@v7
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        USERNAME: ${{ inputs.username }}
       with:
         # https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator
         script: |
           try {
-            const username = "${{ inputs.username }}";
+            const username = process.env.USERNAME;
             const result = await github.rest.repos.checkCollaborator({
               owner: context.repo.owner,
               repo: context.repo.repo,
