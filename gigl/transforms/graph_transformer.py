@@ -763,7 +763,8 @@ def _binarize_sparse_tensor(
         sparse_tensor.indices(),
         torch.ones(sparse_tensor._nnz(), device=device, dtype=torch.float),
         size=sparse_tensor.shape,
-    ).coalesce()
+        is_coalesced=True,
+    )
 
 
 def _filter_sparse_frontier_by_batch(
