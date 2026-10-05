@@ -13,11 +13,9 @@ env:
   GIGL_BASE_CPU_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cpu-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   GIGL_BUILDER_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-builder:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  # The GIGL_*_IMAGE refs above are stems: each matrix leg pushes <stem>-py3XX for its minor, and
-  # gigl/dep_vars.env stores the stems.
-  # Each leg's PYTHON_VERSION build arg is the full .python-version value (e.g. 3.11.14) when the
-  # leg's minor matches it, so the default-minor images run the pinned patch. Other minors pass
-  # only the minor (e.g. 3.12) and get the newest patch of it that the pinned uv version installs.
+  # The GIGL_*_IMAGE values above are the tag that every image of one run shares. Each matrix leg
+  # pushes <value>-<tag>, built on the Python version in its `python` entry; the `python` of the
+  # py311 leg equals .python-version.
   WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
@@ -33,13 +31,20 @@ jobs:
           Starting to [build](${{env.WORKFLOW_URL}}) the CUDA, CPU, Dataflow and builder images for Python 3.11, 3.12 and 3.13.
           This may take a while, please be patient.
           The images will be pushed to the GCP Artifact Registry.
-          Once done, the workflow will update the `gigl/dep_vars.env` file with the new image stems.
+          Each image is pushed as `<ref>-py311`, `<ref>-py312` and `<ref>-py313`.
+          Once done, the workflow will update `gigl/dep_vars.env` and the Cloud Build default builder with the new refs.
 
   build-cuda-base-image:
     runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     strategy:
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        include:
+          - python: "3.11.14"
+            tag: py311
+          - python: "3.12.14"
+            tag: py312
+          - python: "3.13.15"
+            tag: py313
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -61,23 +66,25 @@ jobs:
 
     - name: Build and Push CUDA Base Image
       env:
-        PYTHON_MINOR: ${{ matrix.python }}
+        PYTHON_VERSION: ${{ matrix.python }}
+        IMAGE: ${{ env.GIGL_BASE_CUDA_IMAGE }}-${{ matrix.tag }}
       run: |
-        PYTHON_VERSION="${PYTHON_MINOR}"
-        if [[ "${PYTHON_MINOR}" == "$(cut -d. -f1,2 .python-version)" ]]; then
-          PYTHON_VERSION="$(cat .python-version)"
-        fi
-        IMAGE="${GIGL_BASE_CUDA_IMAGE}-py${PYTHON_MINOR//./}"
         gcloud auth configure-docker us-central1-docker.pkg.dev
-        docker build --build-arg PYTHON_VERSION=${PYTHON_VERSION} -f ./containers/Dockerfile.cuda.base -t ${IMAGE} .
-        docker push ${IMAGE}
+        docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cuda.base -t "${IMAGE}" .
+        docker push "${IMAGE}"
         echo "Pushed CUDA base image to ${IMAGE}"
 
   build-cpu-base-image:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        include:
+          - python: "3.11.14"
+            tag: py311
+          - python: "3.12.14"
+            tag: py312
+          - python: "3.13.15"
+            tag: py313
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -98,24 +105,26 @@ jobs:
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
     - name: Build and Push CPU Base Image and Docker CPU Image
       env:
-        PYTHON_MINOR: ${{ matrix.python }}
+        PYTHON_VERSION: ${{ matrix.python }}
+        IMAGE: ${{ env.GIGL_BASE_CPU_IMAGE }}-${{ matrix.tag }}
       run: |
-        PYTHON_VERSION="${PYTHON_MINOR}"
-        if [[ "${PYTHON_MINOR}" == "$(cut -d. -f1,2 .python-version)" ]]; then
-          PYTHON_VERSION="$(cat .python-version)"
-        fi
-        IMAGE="${GIGL_BASE_CPU_IMAGE}-py${PYTHON_MINOR//./}"
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
-        docker build --build-arg PYTHON_VERSION=${PYTHON_VERSION} -f ./containers/Dockerfile.cpu.base -t ${IMAGE} .
-        docker push ${IMAGE}
+        docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cpu.base -t "${IMAGE}" .
+        docker push "${IMAGE}"
         echo "Pushed CPU base image to ${IMAGE}"
 
   build-dataflow-base-image:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        include:
+          - python: "3.11.14"
+            tag: py311
+          - python: "3.12.14"
+            tag: py312
+          - python: "3.13.15"
+            tag: py313
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -136,23 +145,25 @@ jobs:
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
     - name: Build and Push Dataflow Base Image
       env:
-        PYTHON_MINOR: ${{ matrix.python }}
+        PYTHON_VERSION: ${{ matrix.python }}
+        IMAGE: ${{ env.GIGL_BASE_DATAFLOW_IMAGE }}-${{ matrix.tag }}
       run: |
-        PYTHON_VERSION="${PYTHON_MINOR}"
-        if [[ "${PYTHON_MINOR}" == "$(cut -d. -f1,2 .python-version)" ]]; then
-          PYTHON_VERSION="$(cat .python-version)"
-        fi
-        IMAGE="${GIGL_BASE_DATAFLOW_IMAGE}-py${PYTHON_MINOR//./}"
         gcloud auth configure-docker us-central1-docker.pkg.dev
-        docker build --build-arg PYTHON_VERSION=${PYTHON_VERSION} -f ./containers/Dockerfile.dataflow.base -t ${IMAGE} .
-        docker push ${IMAGE}
+        docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.dataflow.base -t "${IMAGE}" .
+        docker push "${IMAGE}"
         echo "Pushed Dataflow base image to ${IMAGE}"
 
   build-builder-image:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        include:
+          - python: "3.11.14"
+            tag: py311
+          - python: "3.12.14"
+            tag: py312
+          - python: "3.13.15"
+            tag: py313
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -174,19 +185,15 @@ jobs:
 
     - name: Build and Push the builder image used by cloud build
       env:
-        PYTHON_MINOR: ${{ matrix.python }}
+        PYTHON_VERSION: ${{ matrix.python }}
+        IMAGE: ${{ env.GIGL_BUILDER_IMAGE }}-${{ matrix.tag }}
       run: |
-        PYTHON_VERSION="${PYTHON_MINOR}"
-        if [[ "${PYTHON_MINOR}" == "$(cut -d. -f1,2 .python-version)" ]]; then
-          PYTHON_VERSION="$(cat .python-version)"
-        fi
-        IMAGE="${GIGL_BUILDER_IMAGE}-py${PYTHON_MINOR//./}"
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Download scala deps so they are avaialble for docker context to use
         # See: Dockerfile.builder
         bash ./requirements/install_scala_deps.sh --download-only
-        docker build --build-arg PYTHON_VERSION=${PYTHON_VERSION} -f ./containers/Dockerfile.builder -t ${IMAGE} .
-        docker push ${IMAGE}
+        docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.builder -t "${IMAGE}" .
+        docker push "${IMAGE}"
         echo "Pushed Builder image to ${IMAGE}"
 
   build-and-commit-base-images:
@@ -213,11 +220,11 @@ jobs:
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
-          Built and pushed new images, each as `<stem>-py311`, `<stem>-py312` and `<stem>-py313`:
+          Built and pushed new images, each as `<ref>-py311`, `<ref>-py312` and `<ref>-py313`:
           * CUDA base image: `${{ env.GIGL_BASE_CUDA_IMAGE }}`
           * CPU base image: `${{ env.GIGL_BASE_CPU_IMAGE }}`
           * Dataflow base image: `${{ env.GIGL_BASE_DATAFLOW_IMAGE }}`
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
-          Updated `gigl/dep_vars.env` with the new stems.
-          Updated `.github/cloud_builder/run_command_on_active_checkout.yaml` to the new builder stem, with a `_BUILDER_SUFFIX` default for the default Python minor.
+          Updated `gigl/dep_vars.env` with every per-minor ref.
+          Updated the `_BUILDER_IMAGE` default in `.github/cloud_builder/run_command_on_active_checkout.yaml` to the new builder for the `.python-version` minor.

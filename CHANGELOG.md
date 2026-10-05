@@ -31,9 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
   by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
-  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. The `-py311` images use that pinned patch from
-    `.python-version`; the `-py312` and `-py313` images use the newest 3.12 and 3.13 patch that GiGL's pinned uv version
-    installs when the images are built.
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
+    `.python-version` value), 3.12.14 or 3.13.15.
   - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
     `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
     release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline
