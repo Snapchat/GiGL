@@ -9,8 +9,8 @@ WHY THIS EXISTS
     compiled ``.so``. A patch can apply to a file the build then excludes, a stale build directory
     can be reused, or a wheel can be installed from somewhere other than the tree that was
     patched -- and every one of those failures is silent, because the unpatched code paths work.
-    They just work at 3x the memory (the bitmap count) or reject the int32 topology the trainer is
-    about to build (int32 support), several hours into a 16-GPU job.
+    They can use 3x the memory (the bitmap count), reject an int32 topology, or crash when edge
+    ids are requested from a graph that has none.
 
     The unit tests in ``tests/unit/utils/glt_int32_indices_test.py`` cover the same ground in far
     more detail, but they SKIP on an unpatched wheel by design -- GiGL's CI runs against the
@@ -29,6 +29,7 @@ Usage:
 """
 
 import os
+import subprocess
 import sys
 
 import torch
@@ -40,12 +41,16 @@ from graphlearn_torch.data import Graph, Topology
 _NEGATIVE_COLUMN_ID = -1
 
 
-def build_cpu_csr_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
+def build_cpu_csr_graph(
+    indptr: torch.Tensor,
+    indices: torch.Tensor,
+    edge_ids: torch.Tensor | None = None,
+) -> Graph:
     """Build a CPU ``Graph`` over a ready-made CSR, bypassing ``Topology.__init__``.
 
-    Populating the attributes directly keeps the fixture free of the ``arange(num_edges)`` edge
-    ids ``Topology.__init__`` would attach, so the CSR reaches the compiled extension exactly as
-    given -- including a dtype upstream's constructor would upcast.
+    Populating the attributes directly avoids the ``arange(num_edges)`` edge ids
+    ``Topology.__init__`` would attach. The CSR reaches the compiled extension exactly as
+    given, including a dtype upstream's constructor would upcast.
 
     Lives here rather than in the test suite because this module must stay importable during an
     image build, before the test dependencies are installed.
@@ -54,7 +59,7 @@ def build_cpu_csr_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
     topology._layout = "CSR"
     topology._indptr = indptr
     topology._indices = indices
-    topology._edge_ids = None
+    topology._edge_ids = edge_ids
     topology._edge_weights = None
     graph = Graph.__new__(Graph)
     graph.topo = topology
@@ -63,6 +68,70 @@ def build_cpu_csr_graph(indptr: torch.Tensor, indices: torch.Tensor) -> Graph:
     graph._graph = None
     graph.lazy_init()
     return graph
+
+
+def _probe_cpu_random_missing_edge_ids(index_dtype: torch.dtype) -> None:
+    """Exercise both CPU random sampler entry points in an isolated process."""
+    from graphlearn_torch import py_graphlearn_torch as pywrap
+
+    indptr = torch.tensor([0, 2], dtype=torch.int64)
+    indices = torch.tensor([4, 7], dtype=index_dtype)
+    seeds = torch.tensor([0], dtype=torch.int64)
+
+    graph_without_ids = build_cpu_csr_graph(indptr, indices)
+    sampler = pywrap.CPURandomSampler(graph_without_ids.graph_handler)
+    neighbors, counts = sampler.sample(seeds, 2)
+    if neighbors.tolist() != [4, 7] or counts.tolist() != [2]:
+        raise AssertionError("sampling without edge ids changed")
+    try:
+        sampler.sample_with_edge(seeds, 1)
+    except RuntimeError as error:
+        if "requires edge ids" not in str(error):
+            raise
+    else:
+        raise AssertionError("sample_with_edge accepted a graph without edge ids")
+
+    edge_ids = torch.tensor([10, 11], dtype=torch.int64)
+    graph_with_ids = build_cpu_csr_graph(indptr, indices, edge_ids)
+    neighbors, counts, sampled_edge_ids = pywrap.CPURandomSampler(
+        graph_with_ids.graph_handler
+    ).sample_with_edge(seeds, 2)
+    if (
+        neighbors.tolist() != [4, 7]
+        or counts.tolist() != [2]
+        or sampled_edge_ids.tolist() != [10, 11]
+    ):
+        raise AssertionError("sampling with explicit edge ids changed")
+
+
+def verify_cpu_random_missing_edge_ids() -> bool:
+    """A missing edge-id request must raise without killing the verifier process."""
+    results: list[bool] = []
+    for dtype_name in ("int32", "int64"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                os.path.abspath(__file__),
+                "--probe-missing-edge-ids",
+                dtype_name,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        detail = (
+            result.stderr.splitlines()[-1]
+            if result.stderr
+            else f"child process exited with code {result.returncode}"
+        )
+        results.append(
+            _check(
+                f"CPU random sampler: {dtype_name} missing and explicit edge ids",
+                result.returncode == 0,
+                "" if result.returncode == 0 else detail,
+            )
+        )
+    return all(results)
 
 
 def _check(name: str, passed: bool, detail: str = "") -> bool:
@@ -279,6 +348,7 @@ def main() -> int:
         "0001-glt-csr-col-count-and-int32-indices (col_count)": verify_bitmap_col_count(),
         "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
         "0002-glt-unpin-shm-queue-on-teardown": verify_queue_teardown(),
+        "0003-glt-reject-missing-cpu-random-edge-ids": verify_cpu_random_missing_edge_ids(),
     }
     failed = [name for name, passed in results.items() if not passed]
     if failed:
@@ -286,8 +356,8 @@ def main() -> int:
             f"\nFATAL: {failed} did not take effect in the installed graphlearn_torch. The patch "
             f"files applied to the source tree, so the wheel that got INSTALLED is not the one "
             f"that was built from it -- check for a stale build directory or a second wheel on "
-            f"the path. Shipping this image would OOM (bitmap count) or reject the int32 topology the "
-            f"trainer builds, hours into a multi-GPU job."
+            f"the path. Shipping this image could OOM during graph initialization, reject an "
+            f"int32 topology, or crash on a missing edge-id request."
         )
         return 1
     print("\nAll GLT patches verified live in the installed graphlearn_torch.")
@@ -295,4 +365,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    if len(sys.argv) == 3 and sys.argv[1] == "--probe-missing-edge-ids":
+        _probe_cpu_random_missing_edge_ids(getattr(torch, sys.argv[2]))
+    else:
+        sys.exit(main())
