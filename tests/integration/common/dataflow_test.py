@@ -50,7 +50,7 @@ class DataflowUtilsTest(TestCase):
 
         # Ensure the pipeline options were propogated through
         parsed_options = options.get_all_options()
-        self.assertEquals(parsed_options["num_workers"], NUM_WORKERS)
-        self.assertEquals(parsed_options["max_num_workers"], MAX_NUM_WORKERS)
-        self.assertEquals(parsed_options["machine_type"], MACHINE_TYPE)
-        self.assertEquals(parsed_options["disk_size_gb"], DISK_SIZE_GB)
+        self.assertEqual(parsed_options["num_workers"], NUM_WORKERS)
+        self.assertEqual(parsed_options["max_num_workers"], MAX_NUM_WORKERS)
+        self.assertEqual(parsed_options["machine_type"], MACHINE_TYPE)
+        self.assertEqual(parsed_options["disk_size_gb"], DISK_SIZE_GB)

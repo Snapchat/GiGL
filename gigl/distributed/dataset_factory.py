@@ -5,7 +5,6 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 
 import time
 from collections.abc import Mapping
-from distutils.util import strtobool
 from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import torch
@@ -29,6 +28,7 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -629,11 +629,11 @@ def build_dataset_from_task_config_uri(
     )
 
     should_use_range_partitioning = bool(
-        strtobool(args.get("should_use_range_partitioning", "True"))
+        str_to_bool(args.get("should_use_range_partitioning", "True"))
     )
 
     should_load_tensors_in_parallel = bool(
-        strtobool(args.get("should_load_tensors_in_parallel", "True"))
+        str_to_bool(args.get("should_load_tensors_in_parallel", "True"))
     )
 
     logger.info(
