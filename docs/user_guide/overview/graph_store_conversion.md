@@ -1,7 +1,8 @@
 # Converting Colocated Loops To Graph Store
 
 This guide is for training and inference loops that already use GiGL's in-memory sampling path with `DistDataset`,
-`DistNeighborLoader`, or `DistABLPLoader`.
+`DistNeighborLoader`, or `DistABLPLoader`. Graph store is a suggested modality for when you have very large
+graphs, with limited GPUs. With graph store, you can train on O(100B) graphs using some small number of GPUs.
 
 The goal is not to rewrite model code. The goal is to move graph ownership out of the compute machines and into a
 storage cluster, then let compute processes sample from that graph over RPC.
@@ -287,7 +288,7 @@ trainer_resource_config:
       machine_type: n2-highmem-32
       gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
       gpu_limit: 0
-      num_replicas: 2
+      num_replicas: 4
     compute_pool:
       machine_type: n1-standard-16
       gpu_type: NVIDIA_TESLA_T4
