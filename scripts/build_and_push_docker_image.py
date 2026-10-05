@@ -92,7 +92,7 @@ def build_and_push_dataflow_image(
         image_name=image_name,
         dockerfile_path=dockerfile_path,
         context_path=CONTEXT_PATH,
-        multi_arch=True,
+        multi_arch=False,
     )
 
 

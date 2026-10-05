@@ -16,13 +16,34 @@ permissions:
   issues: 'write'
 
 jobs:
+  # A matrix job reports one check per leg in the merge queue but a single check under its
+  # job id when skipped on pull_request, so no matrix job can be a required check. Each
+  # matrix job has a gate job whose id is the required check instead: skipped on
+  # pull_request, and in the merge queue it passes only if every leg passed.
   ci-unit-test-python:
+    needs: [ci-unit-test-python-matrix]
+    # always() runs this even when a leg failed, so it reports a failure instead of skipping.
+    if: ${{ always() && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check that every leg passed
+      env:
+        MATRIX_RESULT: ${{ needs.ci-unit-test-python-matrix.result }}
+      run: |
+        echo "ci-unit-test-python-matrix: ${MATRIX_RESULT}"
+        [[ "${MATRIX_RESULT}" == "success" ]]
+
+  ci-unit-test-python-matrix:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     steps:
     - uses: actions/checkout@v4
     - name: Setup development environment
@@ -42,6 +63,7 @@ jobs:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        python_version: ${{ matrix.python }}
 
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
@@ -123,6 +145,44 @@ jobs:
         cmd: "make run_all_e2e_tests"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+
+  # The non-default Python minors run only the GLT e2e pipelines, in parallel with ci-integration-e2e-test.
+  ci-integration-e2e-test-nondefault-python:
+    needs: [ci-integration-e2e-test-nondefault-python-matrix]
+    # always() runs this even when a leg failed, so it reports a failure instead of skipping.
+    if: ${{ always() && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check that every leg passed
+      env:
+        MATRIX_RESULT: ${{ needs.ci-integration-e2e-test-nondefault-python-matrix.result }}
+      run: |
+        echo "ci-integration-e2e-test-nondefault-python-matrix: ${MATRIX_RESULT}"
+        [[ "${MATRIX_RESULT}" == "success" ]]
+
+  ci-integration-e2e-test-nondefault-python-matrix:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run GLT E2E Tests
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      with:
+        cmd: "make run_glt_e2e_tests"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+        python_version: ${{ matrix.python }}
 
 # TODO(kmonte): Re-enable this once the tests are fixed.
   # ci-integration-example-notebooks-test:

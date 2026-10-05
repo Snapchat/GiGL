@@ -50,44 +50,56 @@ def update_dep_vars_env(
     cpu_image_name: str,
     dataflow_image_name: str,
     dev_workbench_image_name: str,
-    kfp_pipeline_path: str,
+    kfp_pipeline_path_prefix: str,
 ) -> None:
+    """
+    Rewrite the release refs in gigl/dep_vars.env.
+
+    Every per-minor release key (``..._PY<major><minor>=``) already in the file gets the
+    ref for its minor, so the file's keys are the only list of supported minors.
+
+    Args:
+        cuda_image_name (str): CUDA src image ref without the Python tag suffix.
+        cpu_image_name (str): CPU src image ref without the Python tag suffix.
+        dataflow_image_name (str): Dataflow src image ref without the Python tag suffix.
+        dev_workbench_image_name (str): Dev workbench image ref; it is not built per minor.
+        kfp_pipeline_path_prefix (str): KFP pipeline path without the Python suffix and ``.yaml``.
+    """
     print(
         f"Updating gigl/dep_vars.env with: "
         + f"cuda_image: {cuda_image_name}, "
         + f"cpu_image: {cpu_image_name}, "
         + f"dataflow_image: {dataflow_image_name}, "
         + f"dev_workbench_image: {dev_workbench_image_name}, "
-        + f"kfp_pipeline: {kfp_pipeline_path}"
+        + f"kfp_pipeline: {kfp_pipeline_path_prefix}, "
+        + "each per-minor ref with its -py<major><minor> suffix"
     )
 
     dep_vars_env_path = f"{GIGL_ROOT_DIR}/gigl/dep_vars.env"
     with open(dep_vars_env_path, "r") as f:
         content = f.read()
 
+    def per_minor_release_line(match: re.Match[str]) -> str:
+        key, kind, py = match.group(1), match.group(2), match.group(3)
+        suffix = f"-py{py}"
+        refs = {
+            "SRC_IMAGE_CUDA": cuda_image_name + suffix,
+            "SRC_IMAGE_CPU": cpu_image_name + suffix,
+            "SRC_IMAGE_DATAFLOW_CPU": dataflow_image_name + suffix,
+            "KFP_PIPELINE_PATH": f"{kfp_pipeline_path_prefix}{suffix}.yaml",
+        }
+        return f"{key}={refs[kind]}"
+
     content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=.*",
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA=" + cuda_image_name,
-        content,
-    )
-    content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=.*",
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU=" + cpu_image_name,
-        content,
-    )
-    content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=.*",
-        r"DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU=" + dataflow_image_name,
+        r"(?m)^(DEFAULT_GIGL_RELEASE_"
+        r"(SRC_IMAGE_CUDA|SRC_IMAGE_CPU|SRC_IMAGE_DATAFLOW_CPU|KFP_PIPELINE_PATH)"
+        r"_PY(\d+))=.*$",
+        per_minor_release_line,
         content,
     )
     content = re.sub(
         r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=.*",
         r"DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE=" + dev_workbench_image_name,
-        content,
-    )
-    content = re.sub(
-        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=.*",
-        r"DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH=" + kfp_pipeline_path,
         content,
     )
 
@@ -165,14 +177,16 @@ def bump_version(
     cpu_image_name = f"{base_image_registry}/src-cpu:{new_version}"
     dataflow_image_name = f"{base_image_registry}/src-cpu-dataflow:{new_version}"
     dev_workbench_image_name = f"{base_image_registry}/gigl-dev-workbench:{new_version}"
-    kfp_pipeline_path = f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}.yaml"
+    kfp_pipeline_path_prefix = (
+        f"gs://{GIGL_PUBLIC_BUCKET_NAME}/releases/pipelines/gigl-pipeline-{new_version}"
+    )
 
     update_dep_vars_env(
         cuda_image_name=cuda_image_name,
         cpu_image_name=cpu_image_name,
         dataflow_image_name=dataflow_image_name,
         dev_workbench_image_name=dev_workbench_image_name,
-        kfp_pipeline_path=kfp_pipeline_path,
+        kfp_pipeline_path_prefix=kfp_pipeline_path_prefix,
     )
     update_version(version=new_version)
     update_pyproject(version=new_version)

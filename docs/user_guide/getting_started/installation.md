@@ -4,9 +4,12 @@
 
 These are the current environments supported by GiGL
 
-| Python | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
-| ------ | --------------- | --------- | ---------- | ------- | --- |
-| 3.11   | Supported       | Supported | 12.8       | 2.8     | 2.7 |
+| Python      | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
+| ----------- | --------------- | --------- | ---------- | ------- | --- |
+| 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
+
+Python 3.11 is the default, and the full CI suite runs on it. GiGL's Docker images are published for each supported
+minor; see [Docker images and Python versions](#docker-images-and-python-versions).
 
 ## Available Versions
 
@@ -110,14 +113,20 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ### Install Wheel
 
-1. Create a python virtual environment w/ `python==3.11.*`
+1. Create a python virtual environment w/ `python>=3.11,<3.14`
 
 2. Install GiGL
 
 #### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CUDA 12.8
 
+The `gigl-cu128` registry needs Google Cloud credentials; anonymous requests get HTTP 401. Install the Artifact Registry
+keyring backend into the same environment, and pip authenticates with your Application Default Credentials
+(`gcloud auth application-default login`). See
+[Artifact Registry authentication](https://cloud.google.com/artifact-registry/docs/python/authentication).
+
 ```bash
-pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
+pip install keyring keyrings.google-artifactregistry-auth
+pip install "gigl[pyg27-torch28-cu128, transform]" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cu128 \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
@@ -126,7 +135,7 @@ pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
 #### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
 
 ```bash
-pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
+pip install "gigl[pyg27-torch28-cpu, transform]" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cpu \
 --extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
@@ -159,3 +168,30 @@ tooling:
 ```bash
 make install_dev_deps
 ```
+
+### Docker images and Python versions
+
+GiGL publishes every runtime Docker image and the KFP pipeline once per supported Python minor, with a `-py311`,
+`-py312` or `-py313` suffix: for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`. There is no
+unsuffixed ref. `gigl/dep_vars.env` lists each image and the pipeline once per minor, under keys ending in `_PY311`,
+`_PY312` and `_PY313`, and `gigl.common.constants` picks the running interpreter's, so the default images and pipeline
+always match the launching interpreter. That matters because Ray requires every node in a cluster to run the same Python
+version, and Dataflow requires the worker container's Python minor to match the launching environment's.
+
+Each image runs the exact Python version listed for its minor in the matrix of
+`.github/workflows/build-base-docker-images.yml` (currently 3.11.14, 3.12.14 and 3.13.15); the 3.11 entry equals
+`.python-version`.
+
+To build your own base images, pass the full Python version as `PYTHON_VERSION`; it is required. The images are built
+for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
+
+```bash
+for image in cpu cuda dataflow; do
+  docker build --platform linux/amd64 -f "containers/Dockerfile.${image}.base" \
+    --build-arg PYTHON_VERSION=3.12.14 -t "gigl-${image}-base:dev-py312" .
+done
+```
+
+Build src images on those bases with `--build-arg BASE_IMAGE=...` to `containers/Dockerfile.src` (CPU and CUDA) or
+`containers/Dockerfile.dataflow.src`. `scripts/build_and_push_docker_image.py` instead builds on the published base for
+the running interpreter's minor, the `DOCKER_LATEST_BASE_*` key for it in `gigl/dep_vars.env`.

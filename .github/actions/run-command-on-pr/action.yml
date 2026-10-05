@@ -47,6 +47,10 @@ inputs:
     description: "Google Cloud Service Account Email"
     required: false
     default: ""
+  python_version:
+    description: "Python major.minor, e.g. 3.13, forwarded to run-cloud-run-command-on-active-checkout. Only used with use_cloud_run."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -59,7 +63,11 @@ runs:
 
     - name: Set up workflow URL
       shell: bash
-      run: echo "WORKFLOW_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_ENV
+      env:
+        SERVER_URL: ${{ github.server_url }}
+        REPOSITORY: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+      run: echo "WORKFLOW_URL=${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" >> $GITHUB_ENV
 
     - name: Commment workflow started
       if: ${{ inputs.should_leave_progress_comments == 'true' }}
@@ -98,6 +106,7 @@ runs:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
         project: ${{ inputs.gcp_project_id }}
+        python_version: ${{ inputs.python_version }}
 
     - name: Commment workflow succeeded
       if: ${{ inputs.should_leave_progress_comments == 'true' }}

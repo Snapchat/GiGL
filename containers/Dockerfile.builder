@@ -61,14 +61,20 @@ COPY requirements requirements
 COPY gigl/scripts gigl/scripts
 
 
-COPY .python-version tmp/.python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
-RUN  bash ./requirements/install_py_deps.sh --dev
+# The Python version this image's venv is built on, e.g. 3.13.15. Required.
+ARG PYTHON_VERSION
+# Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
+# uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
+ENV UV_PYTHON=${PYTHON_VERSION}
+# only-managed keeps uv from settling for a system Python that matches the request.
+RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
+    && UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.

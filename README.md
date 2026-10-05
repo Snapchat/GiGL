@@ -157,6 +157,10 @@ Run all end-to-end tests:
 /e2e_test
 ```
 
+`/e2e_test` runs the full end-to-end suite on the default Python minor (`.python-version`). `/e2e_test all` also runs
+the in-memory (GLT) end-to-end pipelines on every other supported minor. Python unit tests (`/unit_test`) run on every
+supported minor.
+
 #### Running tests locally
 
 The entry point for running all tests is from the `Makefile`. We provide some documentation below on how you can run

@@ -45,6 +45,7 @@ Examples:
 """
 
 import argparse
+import sys
 import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
@@ -74,7 +75,9 @@ class E2ETest:
         task_config_uri: The URI of the task config to use.
         resource_config_uri: The URI of the resource config to use.
         name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
-            where <test_name> is the key in :attr:`E2ETestsSpec.tests`.
+            where <test_name> is the key in :attr:`E2ETestsSpec.tests`. The default names the Python minor
+            (e.g. `_py313_on_20260101_120000`) so that runs of one test on several minors, started in the
+            same second, do not share GCS paths or BigQuery tables.
         start_at: Specify the component where to start the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         stop_after: Specify the component where to stop the pipeline. Choices are defined in:
@@ -86,6 +89,7 @@ class E2ETest:
     task_config_uri: str
     resource_config_uri: str
     name_suffix: str = (
+        f"_py{sys.version_info.major}{sys.version_info.minor}"
         "_on_${now:}"  # Makes use of gigl.common.omegaconf_resolvers#now_resolver()
     )
     start_at: str = "config_populator"

@@ -44,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     steps:
     - name: Run Python Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -51,7 +55,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python Unit Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} Unit Test"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
@@ -61,6 +65,7 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         command: |
           make unit_test_py
 
@@ -125,25 +130,39 @@ jobs:
             # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
             make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
+  # `/e2e_test all` (exactly one space) runs every supported Python minor; `/e2e_test` and
+  # `/all_test` run only the default one. The non-default minors run the in-memory (GLT)
+  # pipelines only. GitHub rejects `matrix` in a job-level `if`, so the matrix itself is
+  # picked from the comment body with `fromJSON`.
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
+    strategy:
+      fail-fast: false
+      matrix:
+        include: >-
+          ${{ fromJSON(contains(github.event.comment.body, '/e2e_test all')
+          && '[{"python": "3.11", "target": "run_all_e2e_tests"},
+          {"python": "3.12", "target": "run_glt_e2e_tests"},
+          {"python": "3.13", "target": "run_glt_e2e_tests"}]'
+          || '[{"python": "3.11", "target": "run_all_e2e_tests"}]') }}
     steps:
-    - name: Run E2E Tests
+    - name: Run E2E Tests (`/e2e_test all` adds the GLT pipelines on every other Python minor)
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "E2E Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} E2E Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         command: |
-          make run_all_e2e_tests
+          make ${{ matrix.target }}
 
   notebooks-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
