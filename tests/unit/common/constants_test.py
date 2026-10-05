@@ -3,48 +3,42 @@ import sys
 from absl.testing import absltest
 
 from gigl.common import constants
-from gigl.common.constants import (
-    PATH_BASE_IMAGES_VARIABLE_FILE,
-    add_python_suffix,
-    parse_makefile_vars,
-)
+from gigl.common.constants import PATH_BASE_IMAGES_VARIABLE_FILE, parse_makefile_vars
 from tests.test_assets.test_case import TestCase
 
-_IMAGE_CONSTANTS = [
+# Constants read from a dep_vars.env key that exists once per supported Python minor.
+_PER_MINOR_CONSTANTS = [
     "DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG",
     "DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG",
     "DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG",
     "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA",
     "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU",
     "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU",
-    "DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE",
+    "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH",
 ]
+_SUPPORTED_KEY_SUFFIXES = ["PY311", "PY312", "PY313"]
 
 
-class AddPythonSuffixTest(TestCase):
-    def test_add_python_suffix(self) -> None:
-        self.assertEqual(
-            add_python_suffix("registry/src-cpu:0.3.1", (3, 13)),
-            "registry/src-cpu:0.3.1-py313",
-        )
-        self.assertEqual(
-            add_python_suffix(
-                "gs://bucket/releases/pipelines/gigl-pipeline-0.3.1.yaml", (3, 12)
-            ),
-            "gs://bucket/releases/pipelines/gigl-pipeline-0.3.1-py312.yaml",
-        )
+class PerMinorConstantsTest(TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._dep_vars = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
 
     def test_constants_use_running_python(self) -> None:
-        stems = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
-        suffix = f"-py{sys.version_info.major}{sys.version_info.minor}"
-        for name in _IMAGE_CONSTANTS:
+        key_suffix = f"PY{sys.version_info.major}{sys.version_info.minor}"
+        for name in _PER_MINOR_CONSTANTS:
             with self.subTest(name):
-                self.assertEqual(getattr(constants, name), stems[name] + suffix)
-        pipeline_stem = stems["DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH"]
-        self.assertEqual(
-            constants.DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH,
-            pipeline_stem.removesuffix(".yaml") + suffix + ".yaml",
-        )
+                self.assertEqual(
+                    getattr(constants, name), self._dep_vars[f"{name}_{key_suffix}"]
+                )
+
+    def test_every_supported_minor_is_listed(self) -> None:
+        for name in _PER_MINOR_CONSTANTS + [
+            "DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG"
+        ]:
+            for key_suffix in _SUPPORTED_KEY_SUFFIXES:
+                with self.subTest(f"{name}_{key_suffix}"):
+                    self.assertIn(f"{name}_{key_suffix}", self._dep_vars)
 
 
 if __name__ == "__main__":

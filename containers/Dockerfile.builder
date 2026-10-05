@@ -61,18 +61,20 @@ COPY requirements requirements
 COPY gigl/scripts gigl/scripts
 
 
-COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
-# PYTHON_VERSION (e.g. 3.13) picks the venv's interpreter; empty builds on .python-version.
-# only-managed keeps uv from settling for a system Python that matches the request.
+# The Python version this image's venv is built on, e.g. 3.13.15. Required.
 ARG PYTHON_VERSION
-RUN UV_PYTHON="${PYTHON_VERSION:-$(cat .python-version)}" UV_PYTHON_PREFERENCE=only-managed \
-    bash ./requirements/install_py_deps.sh --dev
+# Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
+# uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
+ENV UV_PYTHON=${PYTHON_VERSION}
+# only-managed keeps uv from settling for a system Python that matches the request.
+RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
+    && UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
@@ -83,15 +85,6 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
-# Without UV_PYTHON, uv requests .python-version. In an image built on another minor, that
-# request makes `uv run` delete this venv and rebuild it on the .python-version interpreter.
-# Pointing uv at the venv's own interpreter keeps every later uv command on this venv.
-# Under make, the Makefile exports its own UV_PYTHON from PYTHON_VERSION instead.
-ENV UV_PYTHON="${UV_PROJECT_ENVIRONMENT}/bin/python"
-# CI runs `make` in this image. The Makefile turns PYTHON_VERSION into UV_PYTHON and the
-# -pyXY image suffix, so this keeps make's uv commands and image names on the minor the venv
-# above was built on. The Makefile falls back to .python-version when it is empty.
-ENV PYTHON_VERSION=${PYTHON_VERSION}
 RUN bash ./requirements/install_scala_deps.sh
 
 WORKDIR /

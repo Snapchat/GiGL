@@ -173,26 +173,25 @@ make install_dev_deps
 
 GiGL publishes every Docker image and KFP pipeline once per supported Python minor, with a `-py311`, `-py312` or
 `-py313` suffix: for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`. There is no unsuffixed
-ref. The values in `gigl/dep_vars.env` are the stems, and `gigl.common.constants` appends the suffix of the Python
-running it, so the default images and pipeline always match the launching interpreter. That matters because Ray requires
-every node in a cluster to run the same Python version, and Dataflow requires the worker container's Python minor to
-match the launching environment's.
+ref. `gigl/dep_vars.env` lists each image and the pipeline once per minor, under keys ending in `_PY311`, `_PY312` and
+`_PY313`, and `gigl.common.constants` picks the running interpreter's, so the default images and pipeline always match
+the launching interpreter. That matters because Ray requires every node in a cluster to run the same Python version, and
+Dataflow requires the worker container's Python minor to match the launching environment's.
 
-The images for the `.python-version` minor (currently `-py311`) run the exact patch that file pins. The images for the
-other minors run the newest patch of their minor that GiGL's pinned uv version installs when the images are built.
+Each image runs the exact Python version listed for its minor in the matrix of
+`.github/workflows/build-base-docker-images.yml` (currently 3.11.14, 3.12.14 and 3.13.15); the 3.11 entry equals
+`.python-version`.
 
-To build your own base images, pass the minor, or a full version such as `3.12.9`, as `PYTHON_VERSION`; without it, the
-bases use `.python-version`. The images are built for `linux/amd64` only, because tensorflow-data-validation publishes
-no aarch64 Linux wheel.
+To build your own base images, pass the full Python version as `PYTHON_VERSION`; it is required. The images are built
+for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.
 
 ```bash
 for image in cpu cuda dataflow; do
   docker build --platform linux/amd64 -f "containers/Dockerfile.${image}.base" \
-    --build-arg PYTHON_VERSION=3.12 -t "gigl-${image}-base:dev-py312" .
+    --build-arg PYTHON_VERSION=3.12.14 -t "gigl-${image}-base:dev-py312" .
 done
 ```
 
 Build src images on those bases with `--build-arg BASE_IMAGE=...` to `containers/Dockerfile.src` (CPU and CUDA) or
-`containers/Dockerfile.dataflow.src`. `scripts/build_and_push_docker_image.py` instead reads the `DOCKER_LATEST_BASE_*`
-stems from `gigl/dep_vars.env` and adds the running interpreter's suffix, so it builds on the published base for that
-minor.
+`containers/Dockerfile.dataflow.src`. `scripts/build_and_push_docker_image.py` instead builds on the published base for
+the running interpreter's minor, the `DOCKER_LATEST_BASE_*` key for it in `gigl/dep_vars.env`.

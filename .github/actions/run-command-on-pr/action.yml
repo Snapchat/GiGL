@@ -48,9 +48,7 @@ inputs:
     required: false
     default: ""
   python_version:
-    description: |
-      Python major.minor (e.g. "3.13") to run the command with. With Cloud Run it selects that minor's
-      builder image; otherwise it is exported as PYTHON_VERSION. Empty keeps the default.
+    description: "Python major.minor, e.g. 3.13, forwarded to run-cloud-run-command-on-active-checkout. Only used with use_cloud_run."
     required: false
     default: ""
 
@@ -65,7 +63,11 @@ runs:
 
     - name: Set up workflow URL
       shell: bash
-      run: echo "WORKFLOW_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_ENV
+      env:
+        SERVER_URL: ${{ github.server_url }}
+        REPOSITORY: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+      run: echo "WORKFLOW_URL=${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" >> $GITHUB_ENV
 
     - name: Commment workflow started
       if: ${{ inputs.should_leave_progress_comments == 'true' }}
@@ -95,13 +97,7 @@ runs:
     - name: Run specified command on the PR branch
       if: ${{ inputs.use_cloud_run == 'false' }}
       shell: bash
-      env:
-        PYTHON_VERSION_INPUT: ${{ inputs.python_version }}
-      run: |
-        if [[ -n "${PYTHON_VERSION_INPUT}" ]]; then
-          export PYTHON_VERSION="${PYTHON_VERSION_INPUT}"
-        fi
-        ${{ inputs.command }}
+      run: ${{ inputs.command }}
 
     - name: Run specified command on the PR branch using Cloud Run
       if: ${{ inputs.use_cloud_run == 'true' }}

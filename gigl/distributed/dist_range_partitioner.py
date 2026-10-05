@@ -57,7 +57,12 @@ class DistRangePartitioner(DistPartitioner):
 
         self._edge_types = sorted(input_edge_index.keys())
 
-        self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
+        self._edge_index = {
+            edge_type: convert_to_tensor(
+                edge_index, dtype=self._edge_index_dtype(edge_type)
+            )
+            for edge_type, edge_index in input_edge_index.items()
+        }
 
         # Logging information about number of edges across the machines
 

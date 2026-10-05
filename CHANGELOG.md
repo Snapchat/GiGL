@@ -16,14 +16,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   bitmap distinct-count in CPU graph init replacing `at::_unique`'s ~3x transient allocation, int32 CSR column-id
   support in the CPU samplers, and shared-memory queue unpin/cleanup on teardown. `verify_glt_patches.py` gates the
   build on the patches being live in the installed wheel by @dsaini2 in https://github.com/Snapchat/GiGL/pull/761
+- Replace `coo_to_csr` on the dataset's graph-build path with a memory-lean two-pass counting sort
+  (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
+  edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
+  drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 
 ### Changed
 
+- The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
+  its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/786
+
 - Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
   by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
-  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. The `-py311` images use that pinned patch from
-    `.python-version`; the `-py312` and `-py313` images use the newest 3.12 and 3.13 patch that GiGL's pinned uv version
-    installs when the images are built.
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
+    `.python-version` value), 3.12.14 or 3.13.15.
   - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
     `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
     release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline

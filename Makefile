@@ -3,17 +3,17 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
-# Python interpreter for every uv command, e.g. `make unit_test PYTHON_VERSION=3.13`.
-# Defaults to .python-version, the same request uv makes without UV_PYTHON. An empty value
-# also falls back, because the builder image sets PYTHON_VERSION from a build arg that may
-# be empty, and an empty UV_PYTHON is not a valid interpreter request.
-override PYTHON_VERSION := $(or $(PYTHON_VERSION),$(shell cat .python-version))
+# Python for every uv command and for the -pyXY image suffix, e.g. `make unit_test PYTHON_VERSION=3.13`.
+# Defaults to UV_PYTHON when the environment sets it (GiGL's images set it to the version their venv is
+# built on), otherwise to .python-version. Must be a version (X.Y or X.Y.Z), not an interpreter path.
+PYTHON_VERSION ?= $(or $(UV_PYTHON),$(shell cat .python-version))
 export UV_PYTHON := $(PYTHON_VERSION)
 # major.minor of PYTHON_VERSION; ty accepts only X.Y.
 PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subst ., ,$(PYTHON_VERSION)))
-# Every GiGL image is published per Python minor under this tag suffix, e.g. -py313;
-# see gigl/dep_vars.env.
+# Every GiGL image is published once per Python minor under this tag suffix, e.g. -py313.
 PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
+# dep_vars.env key suffix for this minor, e.g. PY313; see gigl/dep_vars.env.
+PY_KEY := PY$(subst .,,$(PYTHON_MINOR_VERSION))
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -240,7 +240,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image: compile_jars
-	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}${PYTHON_IMAGE_SUFFIX}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 # Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
 # that the e2e test can use it.
@@ -329,6 +329,14 @@ run_all_e2e_tests:
 # CI runs these on the non-default Python minors.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
 run_glt_e2e_tests: run_all_e2e_tests
+
+# Compiles and uploads the released KFP pipeline for this Python minor on the release src images
+# dep_vars.env lists for it (create_release.yml runs this once per minor).
+release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_KEY))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_KEY))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_KEY))
+release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_KEY))
+release_kfp_pipeline: compile_gigl_kubeflow_pipeline
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path
