@@ -30,15 +30,15 @@ def get_help_text():
                         "if" in job_config
                         and "contains(github.event.comment.body," in job_config["if"]
                     ):
-                        # Extract the commands from the if condition
+                        # Extract the command from the if condition
                         # Searching for lines like: "contains(github.event.comment.body,'/unit_test')"
                         # and extracting the '/unit_test'
-                        matches = re.findall(
+                        match = re.search(
                             r"contains\(github\.event\.comment\.body,\s*'([^']+)'\)",
                             job_config["if"],
                         )
-                        if matches:
-                            command = "`, `".join(dict.fromkeys(matches))
+                        if match:
+                            command = match.group(1)
 
                             # Get description from the first step's name, or fallback to job name
                             description = f"Run {job_name.replace('-', ' ')} workflow"
