@@ -82,6 +82,26 @@ jobs:
           --bump_type ${{ steps.set_vars.outputs.bump_type }} \
           --project ${{ vars.GCP_PROJECT_ID }}
 
+    # bump_version rewrites the gigl and gigl-core versions but not the lockfiles; this step re-locks both and the
+    # commit step below picks them up. This workflow also runs nightly, and any other pin that moves here would ship
+    # untested, so the step fails on any change beyond the two versions.
+    - name: Re-lock after the version bump (versions only)
+      run: |
+        # Both lockfiles, whole, minus the `version =` line of the gigl and gigl-core entries: the only lines a
+        # version bump may change. Comparing whole files covers every extra, the cu128 fork included.
+        locks_without_versions() {
+          awk '/^name = "gigl(-core)?"$/ { print; skip = 1; next }
+               skip && /^version = / { skip = 0; next }
+               { skip = 0; print }' uv.lock gigl-core/uv.lock
+        }
+        locks_without_versions > "${RUNNER_TEMP}/locks_before.txt"
+        # Separate commands: `bash -e` does not exit on a failure inside an && list.
+        uv lock
+        (cd gigl-core && uv lock)
+        locks_without_versions > "${RUNNER_TEMP}/locks_after.txt"
+        # A diff means a pin moved during re-lock; bump it deliberately in a PR instead.
+        diff -u "${RUNNER_TEMP}/locks_before.txt" "${RUNNER_TEMP}/locks_after.txt"
+
     # Capture new version and create release branch name
     - name: Get new version
       id: get_new_version
