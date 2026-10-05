@@ -14,6 +14,8 @@ PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subs
 # Every GiGL image is published per Python minor under this tag suffix, e.g. -py313;
 # see gigl/dep_vars.env.
 PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
+# dep_vars.env key suffix for this minor, e.g. PY313; see gigl/dep_vars.env.
+PY_KEY := PY$(subst .,,$(PYTHON_MINOR_VERSION))
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -240,7 +242,7 @@ push_new_docker_images: push_cuda_docker_image push_cpu_docker_image push_datafl
 	@echo "All Docker images compiled and pushed"
 
 push_dev_workbench_docker_image: compile_jars
-	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}${PYTHON_IMAGE_SUFFIX}
+	@uv run python -m scripts.build_and_push_docker_image --predefined_type=dev_workbench --image_name=${DEFAULT_GIGL_RELEASE_DEV_WORKBENCH_IMAGE}
 
 # Set compiled_pipeline path so compile_gigl_kubeflow_pipeline knows where to save the pipeline to so
 # that the e2e test can use it.
@@ -322,6 +324,14 @@ run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+
+# Compiles and uploads the released KFP pipeline for this Python minor on the release src images
+# dep_vars.env lists for it (create_release.yml runs this once per minor).
+release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_KEY))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_KEY))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_KEY))
+release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_KEY))
+release_kfp_pipeline: compile_gigl_kubeflow_pipeline
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path

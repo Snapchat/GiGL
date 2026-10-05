@@ -156,36 +156,19 @@ jobs:
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
 
-    # The dep_vars.env release values are stems; this minor's refs add its -py3XX suffix,
-    # before .yaml for the pipeline path.
-    - name: Get release refs for this Python minor
-      id: release_refs
-      env:
-        PYTHON_MINOR: ${{ matrix.python }}
-      run: |
-        source gigl/dep_vars.env
-        SUFFIX="-py${PYTHON_MINOR//./}"
-        echo "dataflow=${DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU}${SUFFIX}" >> "$GITHUB_OUTPUT"
-        echo "cuda=${DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA}${SUFFIX}" >> "$GITHUB_OUTPUT"
-        echo "cpu=${DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU}${SUFFIX}" >> "$GITHUB_OUTPUT"
-        echo "pipeline=${DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH%.yaml}${SUFFIX}.yaml" >> "$GITHUB_OUTPUT"
-
     - name: Release GiGL KFP pipeline
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         python_version: ${{ matrix.python }}
         # The first line fails the leg unless the builder's venv runs this leg's minor. An action
         # that ignores python_version runs every leg in the default builder, and those legs would
-        # push default-minor content under this minor's refs. The cmd reaches Cloud Build as a
-        # comma-separated substitution inside double quotes, so it avoids `$`, `"` and `,`.
+        # push default-minor content under this minor's refs. The cmd reaches Cloud Build as one
+        # --substitutions value, which gcloud splits on `,`, and is pasted into the step's
+        # bash script inside double quotes, so it avoids `,` and `"`; a `$` in it is expanded by
+        # that bash step.
         cmd: |
             uv run --no-sync python --version | grep -F 'Python ${{ matrix.python }}.'
-            make \
-            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=${{ steps.release_refs.outputs.dataflow }} \
-            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=${{ steps.release_refs.outputs.cuda }} \
-            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=${{ steps.release_refs.outputs.cpu }} \
-            compiled_pipeline_path=${{ steps.release_refs.outputs.pipeline }} \
-            compile_gigl_kubeflow_pipeline
+            make release_kfp_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
