@@ -27,8 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
 
-### Changed
-
 - Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
   by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
   - 3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
