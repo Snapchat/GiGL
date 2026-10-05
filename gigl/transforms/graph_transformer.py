@@ -698,7 +698,8 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         ),
         torch.ones(batch_size, dtype=torch.float, device=device),
         size=(batch_size, num_nodes),
-    ).coalesce()
+        is_coalesced=True,
+    )
 
     adj = _binarize_sparse_tensor(
         sparse_tensor=to_torch_sparse_tensor(
@@ -751,7 +752,8 @@ def _empty_sparse_tensor_like(
         torch.zeros((2, 0), dtype=torch.long, device=device),
         torch.zeros(0, dtype=torch.float, device=device),
         size=sparse_tensor.shape,
-    ).coalesce()
+        is_coalesced=True,
+    )
 
 
 def _binarize_sparse_tensor(
@@ -772,7 +774,8 @@ def _filter_sparse_frontier_by_batch(
     active_batch_mask: Tensor,
     device: torch.device,
 ) -> Tensor:
-    frontier = frontier.coalesce()
+    if not frontier.is_coalesced():
+        frontier = frontier.coalesce()
     indices = frontier.indices()
     if indices.size(1) == 0:
         return frontier
@@ -786,7 +789,8 @@ def _filter_sparse_frontier_by_batch(
         kept_indices,
         torch.ones(kept_indices.size(1), dtype=torch.float, device=device),
         size=frontier.shape,
-    ).coalesce()
+        is_coalesced=True,
+    )
 
 
 def _append_frontier_tokens_to_sequences(
@@ -798,7 +802,8 @@ def _append_frontier_tokens_to_sequences(
     num_nodes: int,
     device: torch.device,
 ) -> tuple[Tensor, Tensor]:
-    frontier = frontier.coalesce()
+    if not frontier.is_coalesced():
+        frontier = frontier.coalesce()
     indices = frontier.indices()
     if indices.size(1) == 0:
         return visited_batch_node_keys, frontier
@@ -886,7 +891,8 @@ def _append_frontier_tokens_to_sequences(
         torch.stack([valid_batch_idx, valid_node_idx]),
         torch.ones(valid_node_idx.size(0), dtype=torch.float, device=device),
         size=frontier.shape,
-    ).coalesce()
+        is_coalesced=True,
+    )
     return (
         torch.cat([visited_batch_node_keys, valid_batch_node_keys]).sort()[0],
         valid_frontier,
@@ -1495,12 +1501,10 @@ def _get_k_hop_neighbors_sparse(
     batch_size = anchor_indices.size(0)
 
     # Build sparse adjacency matrix (binarized) - coalesce once
-    adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)).coalesce()
-    adj = torch.sparse_coo_tensor(
-        adj.indices(),
-        torch.ones(adj.indices().size(1), device=device, dtype=torch.float),
-        size=(num_nodes, num_nodes),
-    )  # No coalesce needed - indices already unique from previous coalesce
+    adj = _binarize_sparse_tensor(
+        sparse_tensor=to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)),
+        device=device,
+    )
 
     # Initialize: sparse matrix where row i has a 1 at column anchor_indices[i]
     reachable = torch.sparse_coo_tensor(
@@ -1512,7 +1516,8 @@ def _get_k_hop_neighbors_sparse(
         ),
         torch.ones(batch_size, device=device, dtype=torch.float),
         size=(batch_size, num_nodes),
-    )  # No coalesce needed - indices are unique
+        is_coalesced=True,
+    )
 
     current = reachable
 
@@ -1527,14 +1532,7 @@ def _get_k_hop_neighbors_sparse(
         reachable = reachable + current
 
     # Coalesce and binarize final result
-    reachable = reachable.coalesce()
-    reachable = torch.sparse_coo_tensor(
-        reachable.indices(),
-        torch.ones(reachable._nnz(), device=device, dtype=torch.float),
-        size=(batch_size, num_nodes),
-    ).coalesce()
-
-    return reachable
+    return _binarize_sparse_tensor(sparse_tensor=reachable, device=device)
 
 
 def _lookup_csr_values(
