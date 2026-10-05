@@ -282,7 +282,8 @@ class InitializeGraphTest(TestCase):
         dataset._initialize_graph(
             partitioned_edge_index={
                 _EDGE_TYPE: GraphPartitionData(
-                    edge_index=torch.tensor([[0], [3]]), edge_ids=None
+                    edge_index=torch.tensor([[0], [3]], dtype=torch.int32),
+                    edge_ids=None,
                 )
             },
             node_partition_book={NodeType("user"): book, NodeType("item"): book},
@@ -373,19 +374,22 @@ class SamplingParityTest(TestCase):
 
     @parameterized.expand(
         [
-            param("csr_out", layout="CSR"),
-            param("csc_in", layout="CSC"),
+            param("csr_out", layout="CSR", dtype=torch.int64),
+            param("csc_in", layout="CSC", dtype=torch.int64),
+            # What the partitioners produce when ids fit: int32 columns, read by GiGL's GLT build.
+            param("csr_out_int32", layout="CSR", dtype=torch.int32),
+            param("csc_in_int32", layout="CSC", dtype=torch.int32),
         ]
     )
     def test_full_fanout_sampling_matches_glt(
-        self, _name: str, layout: Literal["CSR", "CSC"]
+        self, _name: str, layout: Literal["CSR", "CSC"], dtype: torch.dtype
     ) -> None:
         from graphlearn_torch import py_graphlearn_torch as pywrap
 
         num_nodes = 500
         coo = _random_coo(num_nodes, 4_000, seed=11)
 
-        lean = Graph(CompactTopology(coo, layout=layout), "CPU", None)
+        lean = Graph(CompactTopology(coo.to(dtype), layout=layout), "CPU", None)
         lean.lazy_init()
 
         reference = Graph(Topology(edge_index=coo, layout=layout), "CPU", None)
@@ -394,8 +398,9 @@ class SamplingParityTest(TestCase):
         torch.testing.assert_close(
             lean.topo.indptr, reference.topo.indptr, rtol=0, atol=0
         )
+        self.assertEqual(lean.topo.indices.dtype, dtype)
         torch.testing.assert_close(
-            lean.topo.indices, reference.topo.indices, rtol=0, atol=0
+            lean.topo.indices.long(), reference.topo.indices, rtol=0, atol=0
         )
 
         # Seeds past the last row get no neighbours rather than reading out of bounds.

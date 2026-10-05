@@ -12,9 +12,9 @@ transients are bounded by chunk size rather than by edge count::
 
     peak = row + col + indices + 2 x (num_rows + 1) + O(chunk + max_degree)
 
-which is 2.0x one int64 array with int32 inputs. The ``max_degree`` term comes from the within-row
-sort, which cannot split a single row across blocks; it only matters for a graph whose largest row
-is a meaningful fraction of its edge count.
+which is 1.5x one int64 array with int32 inputs, since ``indices`` then stays int32. The
+``max_degree`` term comes from the within-row sort, which cannot split a single row across blocks;
+it only matters for a graph whose largest row is a meaningful fraction of its edge count.
 
 :class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
@@ -231,7 +231,7 @@ def build_csr_from_coo(
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: ``indptr`` of shape ``[num_rows + 1]``, always int64,
-        and ``indices`` of shape ``[num_edges]``, both int64.
+        and ``indices`` of shape ``[num_edges]``, int32 when ``col`` is int32 and int64 otherwise.
 
     Raises:
         ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
@@ -244,6 +244,8 @@ def build_csr_from_coo(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
     num_edges = row.numel()
+    # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
+    indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
     row_max = int(row.max().item()) if num_edges else -1
     if num_rows is None:
         num_rows = row_max + 1
@@ -256,14 +258,14 @@ def build_csr_from_coo(
     if num_edges == 0:
         # A rank can own no edges of some edge type.
         indptr.zero_()
-        return indptr, torch.empty(0, dtype=torch.int64)
+        return indptr, torch.empty(0, dtype=indices_dtype)
     indptr[0] = 0
     torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
     # take over if it lands on disk anyway.
-    indices = allocate_preshared((num_edges,), torch.int64, random_access=True)
+    indices = allocate_preshared((num_edges,), indices_dtype, random_access=True)
     _scatter_in_bands(
         row=row,
         col=col,

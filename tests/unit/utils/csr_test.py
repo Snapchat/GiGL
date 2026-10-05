@@ -55,9 +55,9 @@ class BuildCsrFromCooTest(TestCase):
         )
 
         torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(indices.long(), expected_indices, rtol=0, atol=0)
         self.assertEqual(indptr.dtype, torch.int64)
-        self.assertEqual(indices.dtype, torch.int64)
+        self.assertEqual(indices.dtype, dtype)
 
     def test_matches_upstream_with_mostly_empty_rows(self) -> None:
         generator = torch.Generator().manual_seed(11)
