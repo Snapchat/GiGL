@@ -148,7 +148,7 @@ jobs:
           {"python": "3.13", "target": "run_glt_e2e_tests"}]'
           || '[{"python": "3.11", "target": "run_all_e2e_tests"}]') }}
     steps:
-    - name: Run E2E Tests
+    - name: Run E2E Tests (`/e2e_test all` adds the GLT pipelines on every other Python minor)
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}

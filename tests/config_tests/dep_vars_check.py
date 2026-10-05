@@ -35,16 +35,24 @@ def check_ci_python_matrices() -> None:
     # integration-e2e-test picks its legs from the comment: `/e2e_test all` runs every minor,
     # `/e2e_test` only the default one.
     include = jobs["integration-e2e-test"]["strategy"]["matrix"]["include"]
+    assert include.startswith(
+        "${{ fromJSON(contains(github.event.comment.body, '/e2e_test all') &&"
+    ), include
     all_legs, default_legs = [
-        [leg["python"] for leg in json.loads(legs)]
-        for legs in re.findall(r"'(\[.*?\])'", include)
+        json.loads(legs) for legs in re.findall(r"'(\[.*?\])'", include)
     ]
-    assert all_legs == supported, (
+    assert [leg["python"] for leg in all_legs] == supported, (
         f"`/e2e_test all` runs {all_legs}, expected {supported}"
     )
-    assert default_legs == [default], (
+    assert [leg["python"] for leg in default_legs] == [default], (
         f"`/e2e_test` runs {default_legs}, expected {[default]}"
     )
+    # The default minor runs every pipeline; the other minors run only the in-memory (GLT) ones.
+    for leg in all_legs + default_legs:
+        expected_target = (
+            "run_all_e2e_tests" if leg["python"] == default else "run_glt_e2e_tests"
+        )
+        assert leg["target"] == expected_target, leg
 
 
 if __name__ == "__main__":
