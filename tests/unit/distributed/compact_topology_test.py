@@ -1,8 +1,7 @@
-"""The lean graph build must produce a graph indistinguishable from ``glt.Dataset.init_graph``.
+"""The compact build must sample the same neighbors as GLT for graphs without edge metadata.
 
-The consumer is a compiled extension that segfaults rather than raises on a malformed topology,
-so these compare sampled neighbourhoods against GLT's own build rather than asserting
-hand-written expectations.
+The consumer is a compiled extension, so these compare sampled neighbourhoods against GLT's
+own build rather than asserting hand-written expectations.
 """
 
 import weakref
@@ -169,11 +168,7 @@ class InitializeGraphTest(TestCase):
         self.assertIsInstance(dataset.graph, Graph)
 
     def test_registered_edge_features_keep_the_edge_ids_the_sampler_reads(self) -> None:
-        """Edge features are looked up by edge id, and the lean path does not materialize any.
-
-        GLT hands ``torch.empty(0)`` to the compiled graph when ``Topology.edge_ids`` is unset, so
-        taking the lean path here segfaults the sampler rather than raising.
-        """
+        """Edge-feature lookups need ids, which the compact path does not retain."""
         num_nodes = 40
         dataset = self._dataset()
 

@@ -48,9 +48,7 @@ def _has_per_edge_metadata(
     """Whether edges carry ids, weights, or features, which ``CompactTopology`` cannot hold.
 
     Ids and weights would have to be permuted alongside the columns, the expensive part of
-    ``coo_to_csr``. Features are read by edge id, which ``CompactTopology`` leaves unset:
-    ``Graph.lazy_init`` then hands ``torch.empty(0)`` to ``init_cpu_from_csr``, and GLT's compiled
-    sampler would crash (not raise) on the first lookup.
+    ``coo_to_csr``. Edge features are indexed by ids, which ``CompactTopology`` does not retain.
 
     Absent ids arrive as ``None``, or as a ``torch.empty(0)`` placeholder for an edge type with no
     edges on this rank, which the hash partitioner produces.
