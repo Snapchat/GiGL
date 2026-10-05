@@ -687,37 +687,28 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         size=(batch_size, num_nodes),
     ).coalesce()
 
+    anchor_batch_node_keys = (
+        torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
+        + anchor_indices
+    ).sort()[0]
+    visited_batch_node_keys = anchor_batch_node_keys
+
     if include_anchor_first and max_seq_len > 0:
         node_index_sequences[:, 0] = anchor_indices
         valid_mask[:, 0] = True
         next_positions.fill_(1)
-        visited_batch_node_keys = (
-            torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
-            + anchor_indices
-        ).sort()[0]
 
     if max_seq_len == 0 or (next_positions >= max_seq_len).all().item():
         return node_index_sequences, valid_mask
 
-    if not include_anchor_first:
-        visited_batch_node_keys, current_frontier = (
-            _append_frontier_tokens_to_sequences(
-                frontier=current_frontier,
-                visited_batch_node_keys=visited_batch_node_keys,
-                next_positions=next_positions,
-                node_index_sequences=node_index_sequences,
-                valid_mask=valid_mask,
-                num_nodes=num_nodes,
-                device=device,
-            )
-        )
-
     if hop_distance <= 0 or (next_positions >= max_seq_len).all().item():
         return node_index_sequences, valid_mask
 
-    adj = _build_binarized_sparse_adjacency(
-        edge_index=edge_index,
-        num_nodes=num_nodes,
+    adj = _binarize_sparse_tensor(
+        sparse_tensor=to_torch_sparse_tensor(
+            edge_index,
+            size=(num_nodes, num_nodes),
+        ),
         device=device,
     )
 
@@ -731,7 +722,7 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         if current_frontier._nnz() == 0:
             break
 
-        current_frontier = torch.sparse.mm(current_frontier, adj).coalesce()
+        current_frontier = torch.sparse.mm(current_frontier, adj)
         if current_frontier._nnz() == 0:
             break
         current_frontier = _binarize_sparse_tensor(
@@ -764,19 +755,6 @@ def _empty_sparse_tensor_like(
         torch.zeros((2, 0), dtype=torch.long, device=device),
         torch.zeros(0, dtype=torch.float, device=device),
         size=sparse_tensor.shape,
-    ).coalesce()
-
-
-def _build_binarized_sparse_adjacency(
-    edge_index: Tensor,
-    num_nodes: int,
-    device: torch.device,
-) -> Tensor:
-    adj = to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)).coalesce()
-    return torch.sparse_coo_tensor(
-        adj.indices(),
-        torch.ones(adj.indices().size(1), device=device, dtype=torch.float),
-        size=(num_nodes, num_nodes),
     ).coalesce()
 
 
