@@ -74,10 +74,9 @@ jobs:
     # --no-sync: a plain `uv run` would also install the default `dev` group, which the build does not use.
     - name: Assert the project environment is this job's minor and torch variant
       env:
-        PYTHON: ${{ matrix.python }}
         TORCH_VARIANT: ${{ matrix.torch-variant }}
       run: |
-        uv run --no-sync python scripts/smoke_test_image.py --python "${PYTHON}" --imports torch
+        uv run --no-sync python scripts/smoke_test_image.py --python "${UV_PYTHON}" --imports torch
         # install_py_deps.sh picks the torch variant from whether the runner has CUDA, not from the matrix.
         uv run --no-sync python -c 'import os, torch; v = os.environ["TORCH_VARIANT"]; assert torch.__version__.endswith("+" + v), torch.__version__; assert torch.version.cuda == ("12.8" if v == "cu128" else None), torch.version.cuda'
 
@@ -85,13 +84,12 @@ jobs:
     # so cmake can find torch from the ambient environment (not on PyPI).
     - name: Build gigl-core wheel
       env:
-        PYTHON: ${{ matrix.python }}
         TORCH_VARIANT: ${{ matrix.torch-variant }}
       run: |
         # Self-hosted runners keep the cmake cache and wheels from earlier runs.
         rm -rf gigl-core/.cache/cmake_build gigl-core/dist
         uv build --wheel gigl-core/
-        tag="cp$(echo "${PYTHON}" | tr -d .)"
+        tag="cp$(echo "${UV_PYTHON}" | tr -d .)"
         # dist/ was emptied above, so this is the job's only wheel; it must carry this job's ABI tag.
         ls gigl-core/dist/gigl_core-*-"${tag}-${tag}"-*.whl
         # The wheel writes the specifiers sorted (`<3.14,>=3.11`), so compare them as a set, not as a string.
@@ -112,14 +110,13 @@ jobs:
     - name: Validate the wheel in a clean venv of this minor
       env:
         TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu128' }}
-        PYTHON: ${{ matrix.python }}
       run: |
         # gigl-core declares no dependencies, but its extension links torch and gigl_core/__init__.py imports it
         # eagerly, so this variant's torch must be installed alongside it.
         # --clear: on self-hosted runners the venv survives from earlier jobs, and uv refuses to reuse it.
-        uv venv --clear --python "${PYTHON}" "${RUNNER_TEMP}/wheel-check"
+        uv venv --clear --python "${UV_PYTHON}" "${RUNNER_TEMP}/wheel-check"
         uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8.0 gigl-core/dist/*.whl
-        "${RUNNER_TEMP}/wheel-check/bin/python" -c 'import os, sys, torch, gigl_core; assert "%d.%d" % sys.version_info[:2] == os.environ["PYTHON"], sys.version; print(torch.__version__, gigl_core.__file__)'
+        "${RUNNER_TEMP}/wheel-check/bin/python" -c 'import os, sys, torch, gigl_core; assert "%d.%d" % sys.version_info[:2] == os.environ["UV_PYTHON"], sys.version; print(torch.__version__, gigl_core.__file__)'
 
     - uses: actions/upload-artifact@v4
       with:
