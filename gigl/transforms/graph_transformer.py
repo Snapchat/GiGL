@@ -673,9 +673,22 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         dtype=torch.bool,
         device=device,
     )
-    next_positions = torch.zeros(batch_size, dtype=torch.long, device=device)
-    visited_batch_node_keys = torch.empty(0, dtype=torch.long, device=device)
+    if max_seq_len == 0:
+        return node_index_sequences, valid_mask
 
+    next_positions = torch.zeros(batch_size, dtype=torch.long, device=device)
+    if include_anchor_first and max_seq_len > 0:
+        node_index_sequences[:, 0] = anchor_indices
+        valid_mask[:, 0] = True
+        next_positions.fill_(1)
+
+    if hop_distance <= 0 or (next_positions >= max_seq_len).all().item():
+        return node_index_sequences, valid_mask
+
+    visited_batch_node_keys = (
+        torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
+        + anchor_indices
+    ).sort()[0]
     current_frontier = torch.sparse_coo_tensor(
         torch.stack(
             [
@@ -686,23 +699,6 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         torch.ones(batch_size, dtype=torch.float, device=device),
         size=(batch_size, num_nodes),
     ).coalesce()
-
-    anchor_batch_node_keys = (
-        torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
-        + anchor_indices
-    ).sort()[0]
-    visited_batch_node_keys = anchor_batch_node_keys
-
-    if include_anchor_first and max_seq_len > 0:
-        node_index_sequences[:, 0] = anchor_indices
-        valid_mask[:, 0] = True
-        next_positions.fill_(1)
-
-    if max_seq_len == 0 or (next_positions >= max_seq_len).all().item():
-        return node_index_sequences, valid_mask
-
-    if hop_distance <= 0 or (next_positions >= max_seq_len).all().item():
-        return node_index_sequences, valid_mask
 
     adj = _binarize_sparse_tensor(
         sparse_tensor=to_torch_sparse_tensor(
