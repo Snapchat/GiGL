@@ -45,10 +45,10 @@ def _has_per_edge_metadata(
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     edge_features_registered: bool,
 ) -> bool:
-    """Whether edges carry ids, weights, or features, which ``CompactTopology`` cannot hold.
+    """Whether edges carry explicit ids, weights, or features.
 
-    Ids and weights would have to be permuted alongside the columns, the expensive part of
-    ``coo_to_csr``. Edge features are indexed by ids, which ``CompactTopology`` does not retain.
+    ``CompactTopology`` retains implicit COO-position IDs for sampling. Explicit IDs, weights,
+    and features require GLT's build to preserve their original indexing.
 
     Absent ids arrive as ``None``, or as a ``torch.empty(0)`` placeholder for an edge type with no
     edges on this rank, which the hash partitioner produces.
@@ -697,8 +697,8 @@ class DistDataset(glt.distributed.DistDataset):
             node_partition_book: Node partition book(s), used to size each topology when the
                 memory-lean build applies.
             edge_features_registered: Whether any edge features or quantized edge features were
-                partitioned. They are read by edge id, which the memory-lean build does not
-                materialize, so their presence forces GLT's build.
+                partitioned. They need explicit edge IDs rather than the compact build's
+                partition-local COO positions, so their presence forces GLT's build.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -806,22 +806,22 @@ class DistDataset(glt.distributed.DistDataset):
     ) -> dict[EdgeType, Graph]:
         """Build one GLT ``Graph`` per edge type, releasing each COO before starting the next.
 
-        Replaces ``glt.data.Dataset.init_graph`` for a graph with no edge ids and no edge weights.
+        Replaces ``glt.data.Dataset.init_graph`` when there are no explicit edge IDs or weights.
         Three things there are unaffordable at billion-edge scale:
 
         1. ``init_graph`` runs ``convert_to_tensor(edge_index, dtype=torch.int64)`` over the whole
            dict before its per-edge-type loop, so an int32 input exists as int32 and int64
            simultaneously for every edge type at once.
-        2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge ids are absent
-           and hands it to ``coo_to_csr``, which permutes it -- two full int64 arrays for values
-           that index nothing.
+        2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge IDs are absent
+           and hands it to ``coo_to_csr``, which permutes it. The compact builder writes those
+           implicit IDs directly into final CSR order.
         3. ``coo_to_csr`` peaks at 7.25x one int64 array (measured), because
            ``torch_sparse.SparseStorage`` holds row, col, a composite key, a permutation,
            ``index_sort``'s discarded sorted values, and both gathered outputs at once.
 
-        :class:`gigl.utils.csr.CompactTopology` holds the same ``(indptr, indices)`` as GLT's
-        ``Topology`` without allocating any of those copies. Edge types are processed
-        largest-first so the biggest COO is released first.
+        :class:`gigl.utils.csr.CompactTopology` holds the same ``(indptr, indices, edge_ids)``
+        as GLT's ``Topology`` without allocating those global conversion copies. Edge types are
+        processed largest-first so the biggest COO is released first.
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed

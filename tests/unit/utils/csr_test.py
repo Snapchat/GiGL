@@ -6,7 +6,7 @@ import torch
 from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
-from gigl.utils.csr import _scatter_in_bands, build_csr_from_coo
+from gigl.utils.csr import CompactTopology, _scatter_in_bands, build_csr_from_coo
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -352,6 +352,22 @@ class ScatterPlacementTest(TestCase):
             scattered.is_shared(), "and still pre-shared, or GLT duplicates it"
         )
 
+    def test_compact_edge_ids_are_not_copied_when_shared(self):
+        coo = torch.stack([torch.arange(2_000) % 20, torch.arange(2_000) % 30])
+        with (
+            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
+            self._shm_fits(),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
+            ),
+        ):
+            topology = CompactTopology(coo, layout="CSR")
+            edge_ids_ptr = topology.edge_ids.data_ptr()
+            self.assertTrue(topology.edge_ids.is_shared())
+            topology.share_memory_()
+            topology.share_memory_()
+        self.assertEqual(topology.edge_ids.data_ptr(), edge_ids_ptr)
+
     def test_it_falls_back_to_disk_when_memory_cannot_hold_it(self):
         with (
             self._spilling(),
@@ -388,6 +404,35 @@ class ScatterPlacementTest(TestCase):
         reference_indptr, reference_indices = _reference_csr(row, col, 64)
         torch.testing.assert_close(indptr, reference_indptr)
         torch.testing.assert_close(indices, reference_indices)
+
+    def test_banded_disk_outputs_keep_edge_ids_aligned(self):
+        order = torch.randperm(128, generator=torch.Generator().manual_seed(23))
+        row = (torch.arange(128) // 16)[order]
+        col = (torch.arange(128) % 16)[order]
+        with (
+            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="512"),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=128
+            ),
+        ):
+            edge_ids = allocate_preshared((128,), torch.int64, random_access=True)
+            indptr, indices = build_csr_from_coo(
+                row,
+                col,
+                num_rows=8,
+                chunk_size=17,
+                band_bytes=128,
+                edge_ids_out=edge_ids,
+            )
+
+        self.assertTrue(is_disk_backed(indices))
+        self.assertTrue(is_disk_backed(edge_ids))
+        expected_ptr, expected_col, expected_ids, _ = coo_to_csr(
+            row, col, edge_id=torch.arange(128), node_sizes=(8, 16)
+        )
+        torch.testing.assert_close(indptr, expected_ptr)
+        torch.testing.assert_close(indices, expected_col)
+        torch.testing.assert_close(edge_ids, expected_ids)
 
 
 if __name__ == "__main__":

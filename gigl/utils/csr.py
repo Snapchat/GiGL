@@ -10,11 +10,11 @@ This implementation is a two-pass counting sort: degrees give the exact output l
 so the output is allocated once and written in place, and the input is consumed in chunks so
 transients are bounded by chunk size rather than by edge count::
 
-    peak = row + col + indices + 2 x (num_rows + 1) + O(chunk + max_degree)
+    peak = row + col + indices + edge_ids + 2 x (num_rows + 1) + O(chunk + max_degree)
 
-which is 2.0x one int64 array with int32 inputs. The ``max_degree`` term comes from the within-row
-sort, which cannot split a single row across blocks; it only matters for a graph whose largest row
-is a meaningful fraction of its edge count.
+which is 3.0x one int64 array with int32 inputs when edge IDs are retained. The
+``max_degree`` term comes from within-row sorting; it matters when one row owns a meaningful
+fraction of the edges.
 
 :class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
@@ -45,6 +45,8 @@ def _place_chunk(
     col_chunk: torch.Tensor,
     cursor: torch.Tensor,
     indices: torch.Tensor,
+    edge_ids_out: Optional[torch.Tensor] = None,
+    edge_id_chunk: Optional[torch.Tensor] = None,
 ) -> None:
     """Write one chunk of edges into ``indices`` and advance ``cursor`` past them.
 
@@ -62,6 +64,9 @@ def _place_chunk(
     order = torch.argsort(row_chunk, stable=True)
     row_chunk = row_chunk[order]
     col_chunk = col_chunk[order]
+    if edge_ids_out is not None:
+        assert edge_id_chunk is not None
+        edge_id_chunk = edge_id_chunk[order]
     del order
 
     # [U] distinct rows in this chunk, and [U] edges for each.
@@ -78,6 +83,9 @@ def _place_chunk(
     )
     del offset_within_run
     indices[destination] = col_chunk.to(indices.dtype)
+    if edge_ids_out is not None:
+        assert edge_id_chunk is not None
+        edge_ids_out[destination] = edge_id_chunk
     # unique_rows are distinct, so this is a plain read-modify-write with no collisions.
     cursor[unique_rows] += counts
     del destination, col_chunk, unique_rows, counts
@@ -90,6 +98,7 @@ def _scatter_in_bands(
     indices: torch.Tensor,
     chunk_size: int,
     band_bytes: Optional[int],
+    edge_ids_out: Optional[torch.Tensor] = None,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
@@ -104,7 +113,14 @@ def _scatter_in_bands(
     band_elements = (
         num_edges
         if band_bytes is None
-        else max(band_bytes // indices.element_size(), 1)
+        else max(
+            band_bytes
+            // (
+                indices.element_size()
+                + (edge_ids_out.element_size() if edge_ids_out is not None else 0)
+            ),
+            1,
+        )
     )
     placed = 0
     bands = 0
@@ -131,6 +147,12 @@ def _scatter_in_bands(
                     col_chunk=col[start : start + chunk_size][in_band],
                     cursor=cursor,
                     indices=indices,
+                    edge_ids_out=edge_ids_out,
+                    edge_id_chunk=(
+                        torch.nonzero(in_band, as_tuple=True)[0] + start
+                        if edge_ids_out is not None
+                        else None
+                    ),
                 )
                 placed += int(selected_rows.numel())
                 del row_chunk, in_band, selected_rows
@@ -155,6 +177,7 @@ def _sort_within_rows(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     block_edges: int,
+    edge_ids_out: Optional[torch.Tensor] = None,
 ) -> None:
     """Sort each row's column slice ascending, in place.
 
@@ -190,11 +213,16 @@ def _sort_within_rows(
             del counts
             by_column = torch.argsort(indices[edge_start:edge_end])
             columns = indices[edge_start:edge_end][by_column]
+            if edge_ids_out is not None:
+                sorted_edge_ids = edge_ids_out[edge_start:edge_end][by_column]
             rows_expanded = rows_expanded[by_column]
             del by_column
             by_row = torch.argsort(rows_expanded, stable=True)
             del rows_expanded
             indices[edge_start:edge_end] = columns[by_row]
+            if edge_ids_out is not None:
+                edge_ids_out[edge_start:edge_end] = sorted_edge_ids[by_row]
+                del sorted_edge_ids
             del columns, by_row
         row_start = row_end
 
@@ -206,15 +234,16 @@ def build_csr_from_coo(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
+    edge_ids_out: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Convert a COO edge index to CSR without ever holding more than one int64 copy.
+    """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
     Drop-in replacement for the ``(rowptr, col)`` half of
-    ``graphlearn_torch.utils.coo_to_csr``, which is 7.25x more expensive at the peak.
+    ``graphlearn_torch.utils.coo_to_csr``, which builds full-size sorting temporaries.
 
-    Edge ids and edge weights are unsupported: permuting them is a large part of what makes the
-    upstream version expensive, and GiGL already declines to materialize edge ids when no edge
-    type carries features.
+    When ``edge_ids_out`` is supplied, write original COO positions in CSR order alongside
+    columns. The caller allocates the final int64 vector; no full-size input ID vector is needed.
+    Explicit edge IDs and edge weights are unsupported.
 
     To build CSC instead, pass the column indices as ``row`` and the row indices as ``col``.
 
@@ -228,6 +257,8 @@ def build_csr_from_coo(
             columns ascending as ``coo_to_csr`` does.
         band_bytes (int): Destination window for the scatter, used only when ``indices`` could
             not be placed in memory.
+        edge_ids_out (Optional[torch.Tensor]): Optional preallocated int64 output of length
+            ``num_edges`` for original COO positions in CSR order.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: ``indptr`` of shape ``[num_rows + 1]``, always int64,
@@ -244,6 +275,13 @@ def build_csr_from_coo(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
     num_edges = row.numel()
+    if edge_ids_out is not None:
+        if (
+            edge_ids_out.dtype != torch.int64
+            or edge_ids_out.dim() != 1
+            or edge_ids_out.numel() != num_edges
+        ):
+            raise ValueError("edge_ids_out must be 1-D int64 with one entry per edge")
     row_max = int(row.max().item()) if num_edges else -1
     if num_rows is None:
         num_rows = row_max + 1
@@ -270,10 +308,16 @@ def build_csr_from_coo(
         indptr=indptr,
         indices=indices,
         chunk_size=chunk_size,
-        band_bytes=band_bytes if is_disk_backed(indices) else None,
+        band_bytes=(
+            band_bytes
+            if is_disk_backed(indices)
+            or (edge_ids_out is not None and is_disk_backed(edge_ids_out))
+            else None
+        ),
+        edge_ids_out=edge_ids_out,
     )
     gc.collect()
-    _sort_within_rows(indptr, indices, sort_block_edges)
+    _sort_within_rows(indptr, indices, sort_block_edges, edge_ids_out)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
@@ -284,11 +328,11 @@ def build_csr_from_coo(
 
 
 class CompactTopology(Topology):
-    """A GLT ``Topology`` built by :func:`build_csr_from_coo`, with no edge ids or weights.
+    """A GLT ``Topology`` built by :func:`build_csr_from_coo`, with implicit edge IDs.
 
-    ``Topology.__init__`` is not called: it would fabricate ``torch.arange(num_edges)`` edge ids
-    and convert with ``coo_to_csr``, the two costs this class exists to avoid. Edge features are
-    read by edge id, so a graph that has them cannot use this class.
+    ``Topology.__init__`` is not called: it would fabricate a full ``torch.arange(num_edges)``
+    and convert with ``coo_to_csr``. Instead, the counting sort writes original COO positions
+    directly into final CSR order. Edge features need explicit IDs and cannot use this class.
 
     Args:
         edge_index (torch.Tensor): ``[2, num_edges]`` COO. int32 and int64 are used as they are;
@@ -310,8 +354,13 @@ class CompactTopology(Topology):
         # CSC compresses destinations, so it is the CSR of the reversed edges.
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         self._layout = layout
-        self._indptr, self._indices = build_csr_from_coo(
-            row=edge_index[compressed], col=edge_index[other], num_rows=num_rows
+        self._edge_ids = allocate_preshared(
+            (edge_index.size(1),), torch.int64, random_access=True
         )
-        self._edge_ids = None
+        self._indptr, self._indices = build_csr_from_coo(
+            row=edge_index[compressed],
+            col=edge_index[other],
+            num_rows=num_rows,
+            edge_ids_out=self._edge_ids,
+        )
         self._edge_weights = None

@@ -91,6 +91,20 @@ def _probe_cpu_random_missing_edge_ids(index_dtype: torch.dtype) -> None:
     else:
         raise AssertionError("sample_with_edge accepted a graph without edge ids")
 
+    empty_neighbors, empty_counts, empty_ids = sampler.sample_with_edge(seeds, 0)
+    if empty_neighbors.numel() or empty_counts.tolist() != [0] or empty_ids.numel():
+        raise AssertionError("zero-fanout sampling should not need edge ids")
+
+    empty_graph = build_cpu_csr_graph(
+        torch.tensor([0, 0], dtype=torch.int64),
+        torch.empty(0, dtype=index_dtype),
+    )
+    empty_neighbors, empty_counts, empty_ids = pywrap.CPURandomSampler(
+        empty_graph.graph_handler
+    ).sample_with_edge(seeds, 1)
+    if empty_neighbors.numel() or empty_counts.tolist() != [0] or empty_ids.numel():
+        raise AssertionError("empty-graph sampling should not need edge ids")
+
     edge_ids = torch.tensor([10, 11], dtype=torch.int64)
     graph_with_ids = build_cpu_csr_graph(indptr, indices, edge_ids)
     neighbors, counts, sampled_edge_ids = pywrap.CPURandomSampler(
@@ -105,7 +119,7 @@ def _probe_cpu_random_missing_edge_ids(index_dtype: torch.dtype) -> None:
 
 
 def verify_cpu_random_missing_edge_ids() -> bool:
-    """A missing edge-id request must raise without killing the verifier process."""
+    """Only nonempty ID-less samples must raise without killing the verifier process."""
     results: list[bool] = []
     for dtype_name in ("int32", "int64"):
         result = subprocess.run(

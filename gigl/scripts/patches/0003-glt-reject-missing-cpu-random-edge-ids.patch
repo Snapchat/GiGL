@@ -1,20 +1,24 @@
 Reject CPU random sampling with edge ids when the graph has none.
 
-Compact topologies intentionally omit edge ids. A caller requesting sampled edge ids
-would otherwise pass a null pointer into the CPU row-wise sampler and crash the process.
-Reject that request at the native entry point; ordinary neighbor sampling is unchanged.
+An ID-less graph with sampled edges would pass a null pointer into the CPU row-wise
+sampler and crash the process. Reject that request at the native entry point. Empty
+samples need no edge IDs and return normally; ordinary neighbor sampling is unchanged.
 
 diff --git a/graphlearn_torch/csrc/cpu/random_sampler.cc b/graphlearn_torch/csrc/cpu/random_sampler.cc
 --- a/graphlearn_torch/csrc/cpu/random_sampler.cc
 +++ b/graphlearn_torch/csrc/cpu/random_sampler.cc
-@@ -155,7 +155,10 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
-   int64_t bs = nodes.size(0);
-   const auto row_ptr = graph_->GetRowPtr();
-   const auto col_idx = graph_->GetColIdx();
-   const auto edge_ids = graph_->GetEdgeId();
+@@ -167,6 +167,14 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
+     nbrs_offset[i] = nbrs_offset[i - 1] + nbrs_num_ptr[i - 1];
+   }
+
++  if (edge_ids == nullptr && nbrs_offset[bs] == 0) {
++    return std::make_tuple(torch::empty(0, nodes.options()), nbrs_num,
++                           torch::empty(0, nodes.options()));
++  }
 +  TORCH_CHECK(edge_ids != nullptr,
 +              "CPURandomSampler::SampleWithEdge requires edge ids; initialize the graph "
 +              "with edge ids or call sample() when edge ids are not needed");
-   const auto row_count = graph_->GetRowCount();
-
-   torch::Tensor nbrs_num = torch::empty(bs, nodes.options());
++
+   torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
+   torch::Tensor out_eid = torch::empty(nbrs_offset[bs], nodes.options());
+   if (graph_->ColIsInt32()) {
