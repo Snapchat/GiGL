@@ -8,7 +8,10 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_partitioner import (
+    DistPartitioner,
+    _concatenate_partitioned_chunks,
+)
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
@@ -372,28 +375,32 @@ class DistRangePartitioner(DistPartitioner):
                 else None
             )
         else:
-            partitioned_edge_index = torch.stack(
-                (
-                    torch.cat([r[0] for r in res_list]),
-                    torch.cat([r[1] for r in res_list]),
-                ),
-                dim=0,
+            # All fields are copied in one pass so each chunk can be released as soon as it is copied.
+            output_fields: list[Union[int, tuple[int, ...]]] = [(0, 1)] + [
+                field_index
+                for field_index in (feat_idx, quantized_feat_idx, weight_idx)
+                if field_index is not None
+            ]
+            # Maps each output field to its concatenated tensor.
+            partitioned_tensors = dict(
+                zip(
+                    output_fields,
+                    _concatenate_partitioned_chunks(res_list, output_fields),
+                )
             )
+            partitioned_edge_index = partitioned_tensors[(0, 1)]
             partitioned_edge_features = (
-                torch.cat([r[feat_idx] for r in res_list])
-                if feat_idx is not None
-                else None
+                partitioned_tensors[feat_idx] if feat_idx is not None else None
             )
             partitioned_weights = (
-                torch.cat([r[weight_idx] for r in res_list])
-                if weight_idx is not None
-                else None
+                partitioned_tensors[weight_idx] if weight_idx is not None else None
             )
             partitioned_edge_quantized_features = (
-                torch.cat([r[quantized_feat_idx] for r in res_list])
+                partitioned_tensors[quantized_feat_idx]
                 if quantized_feat_idx is not None
                 else None
             )
+            del partitioned_tensors
 
         res_list.clear()
         gc.collect()
