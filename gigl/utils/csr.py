@@ -52,43 +52,57 @@ class CsrBuildResult:
     edge_ids: Optional[torch.Tensor] = None
 
 
-def _chunk_destinations(
+def _place_chunk(
     row_chunk: torch.Tensor,
+    col_chunk: torch.Tensor,
     cursor: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Find each edge's CSR slot and advance ``cursor`` past the chunk.
+    indices: torch.Tensor,
+    edge_ids: torch.Tensor | None = None,
+    edge_id_chunk: torch.Tensor | None = None,
+) -> None:
+    """Write one chunk of edges into ``indices`` and advance ``cursor`` past them.
 
     Args:
         row_chunk: ``[C]`` int64 row id of each edge, relative to ``cursor``'s first row.
-        cursor: ``[R]`` the CSR slot where each row's next edge goes. Starts as
+        col_chunk: ``[C]`` column id of each edge.
+        cursor: ``[R]`` the slot in ``indices`` where each row's next edge goes. Starts as
             ``indptr[:-1]`` and ends as ``indptr[1:]`` once every chunk is placed.
-
-    Returns:
-        CSR destinations and the stable row ordering to apply to columns and edge IDs.
+        indices: ``[E]`` the CSR column array being filled.
+        edge_ids: Optional ``[E]`` CSR edge ID array being filled.
+        edge_id_chunk: Optional ``[C]`` original COO positions for this chunk.
 
     Example: with ``cursor = [0, 2, 3]`` (row 0 owns slots 0-1, row 1 slot 2, row 2 slots 3-4),
-    the chunk ``row_chunk = [2, 0, 2]`` returns destinations ``[0, 3, 4]`` with
-    order ``[1, 0, 2]``, and leaves ``cursor = [1, 2, 5]``.
+    the chunk ``row_chunk = [2, 0, 2]``, ``col_chunk = [7, 8, 9]`` writes ``indices[0] = 8``,
+    ``indices[3] = 7`` and ``indices[4] = 9``, and leaves ``cursor = [1, 2, 5]``.
     """
     order = torch.argsort(row_chunk, stable=True)
     row_chunk = row_chunk[order]
+    col_chunk = col_chunk[order]
+    if edge_ids is not None:
+        assert edge_id_chunk is not None
+        edge_id_chunk = edge_id_chunk[order]
+    del order
 
     # [U] distinct rows in this chunk, and [U] edges for each.
     unique_rows, counts = torch.unique_consecutive(row_chunk, return_counts=True)
     del row_chunk
     run_starts = torch.cumsum(counts, dim=0) - counts
     offset_within_run = torch.arange(
-        order.numel(), dtype=torch.int64
+        col_chunk.numel(), dtype=torch.int64
     ) - torch.repeat_interleave(run_starts, counts)
     del run_starts
-    # [C] CSR slot for each edge: its row's cursor plus its rank within the row.
+    # [C] slot in `indices` for each edge: its row's cursor plus its rank within the row.
     destination = (
         torch.repeat_interleave(cursor[unique_rows], counts) + offset_within_run
     )
     del offset_within_run
+    indices[destination] = col_chunk.to(indices.dtype)
+    if edge_ids is not None:
+        assert edge_id_chunk is not None
+        edge_ids[destination] = edge_id_chunk
     # unique_rows are distinct, so this is a plain read-modify-write with no collisions.
     cursor[unique_rows] += counts
-    return destination, order
+    del destination, col_chunk, unique_rows, counts
 
 
 def _scatter_in_bands(
@@ -98,7 +112,7 @@ def _scatter_in_bands(
     indices: torch.Tensor,
     chunk_size: int,
     band_bytes: Optional[int],
-    edge_ids_out: Optional[torch.Tensor] = None,
+    edge_ids: torch.Tensor | None = None,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
@@ -111,8 +125,8 @@ def _scatter_in_bands(
     num_rows = indptr.numel() - 1
     num_edges = row.numel()
     bytes_per_edge = indices.element_size()
-    if edge_ids_out is not None:
-        bytes_per_edge += edge_ids_out.element_size()
+    if edge_ids is not None:
+        bytes_per_edge += edge_ids.element_size()
     band_elements = num_edges
     if band_bytes is not None:
         band_elements = max(band_bytes // bytes_per_edge, 1)
@@ -136,19 +150,25 @@ def _scatter_in_bands(
                     del row_chunk, in_band
                     continue
                 selected_rows = row_chunk[in_band].to(torch.int64) - first_row
-                destinations, order = _chunk_destinations(
-                    row_chunk=selected_rows,
-                    cursor=cursor,
-                )
-                indices[destinations] = col[start : start + chunk_size][in_band][
-                    order
-                ].to(indices.dtype)
-                if edge_ids_out is not None:
-                    edge_ids_out[destinations] = (
-                        torch.nonzero(in_band, as_tuple=True)[0][order] + start
+                if edge_ids is None:
+                    _place_chunk(
+                        row_chunk=selected_rows,
+                        col_chunk=col[start : start + chunk_size][in_band],
+                        cursor=cursor,
+                        indices=indices,
+                    )
+                else:
+                    # Keep input IDs scoped to the call so they do not survive the chunk write.
+                    _place_chunk(
+                        row_chunk=selected_rows,
+                        col_chunk=col[start : start + chunk_size][in_band],
+                        cursor=cursor,
+                        indices=indices,
+                        edge_ids=edge_ids,
+                        edge_id_chunk=torch.nonzero(in_band, as_tuple=True)[0] + start,
                     )
                 placed += int(selected_rows.numel())
-                del row_chunk, in_band, selected_rows, destinations, order
+                del row_chunk, in_band, selected_rows
             if not bool(torch.equal(cursor, indptr[first_row + 1 : last_row + 1])):
                 raise ValueError(
                     f"CSR scatter did not fill rows [{first_row}, {last_row}) exactly; "
@@ -170,7 +190,7 @@ def _sort_within_rows(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     block_edges: int,
-    edge_ids_out: Optional[torch.Tensor] = None,
+    edge_ids: torch.Tensor | None = None,
 ) -> None:
     """Sort each row's column slice ascending, in place.
 
@@ -206,15 +226,15 @@ def _sort_within_rows(
             del counts
             by_column = torch.argsort(indices[edge_start:edge_end])
             columns = indices[edge_start:edge_end][by_column]
-            if edge_ids_out is not None:
-                sorted_edge_ids = edge_ids_out[edge_start:edge_end][by_column]
+            if edge_ids is not None:
+                sorted_edge_ids = edge_ids[edge_start:edge_end][by_column]
             rows_expanded = rows_expanded[by_column]
             del by_column
             by_row = torch.argsort(rows_expanded, stable=True)
             del rows_expanded
             indices[edge_start:edge_end] = columns[by_row]
-            if edge_ids_out is not None:
-                edge_ids_out[edge_start:edge_end] = sorted_edge_ids[by_row]
+            if edge_ids is not None:
+                edge_ids[edge_start:edge_end] = sorted_edge_ids[by_row]
                 del sorted_edge_ids
             del columns, by_row
         row_start = row_end
@@ -313,7 +333,7 @@ def build_csr_from_coo(
         indices=indices,
         chunk_size=chunk_size,
         band_bytes=scatter_band_bytes,
-        edge_ids_out=edge_ids,
+        edge_ids=edge_ids,
     )
     gc.collect()
     _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
