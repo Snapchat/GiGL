@@ -47,8 +47,8 @@ def _has_per_edge_metadata(
 ) -> bool:
     """Whether edges carry explicit ids, weights, or features.
 
-    ``CompactTopology`` retains implicit COO-position IDs for sampling. Explicit IDs, weights,
-    and features require GLT's build to preserve their original indexing.
+    ``CompactTopology`` can omit implicit COO-position IDs when none are needed. Explicit IDs,
+    weights, and features require GLT's build to preserve their original indexing.
 
     Absent ids arrive as ``None``, or as a ``torch.empty(0)`` placeholder for an edge type with no
     edges on this rank, which the hash partitioner produces.
@@ -813,15 +813,15 @@ class DistDataset(glt.distributed.DistDataset):
            dict before its per-edge-type loop, so an int32 input exists as int32 and int64
            simultaneously for every edge type at once.
         2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge IDs are absent
-           and hands it to ``coo_to_csr``, which permutes it. The compact builder writes those
-           implicit IDs directly into final CSR order.
+           and hands it to ``coo_to_csr``, which permutes it. The compact builder omits IDs for
+           this featureless path.
         3. ``coo_to_csr`` peaks at 7.25x one int64 array (measured), because
            ``torch_sparse.SparseStorage`` holds row, col, a composite key, a permutation,
            ``index_sort``'s discarded sorted values, and both gathered outputs at once.
 
-        :class:`gigl.utils.csr.CompactTopology` holds the same ``(indptr, indices, edge_ids)``
-        as GLT's ``Topology`` without allocating those global conversion copies. Edge types are
-        processed largest-first so the biggest COO is released first.
+        :class:`gigl.utils.csr.CompactTopology` holds ``(indptr, indices)`` without allocating
+        those global conversion copies. Edge types are processed largest-first so the biggest
+        COO is released first.
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
@@ -868,7 +868,10 @@ class DistDataset(glt.distributed.DistDataset):
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
                 f"{num_rows:,} rows, input dtype {coo.dtype}"
             )
-            topology = CompactTopology(coo, layout=target_layout, num_rows=num_rows)
+            # The featureless loader config uses with_edge=False, so sampling never reads IDs.
+            topology = CompactTopology(
+                coo, layout=target_layout, num_rows=num_rows, retain_edge_ids=False
+            )
             del coo
             gc.collect()
             graph_for_type = Graph(topology, "CPU", None)
