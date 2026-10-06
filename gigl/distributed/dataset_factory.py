@@ -531,7 +531,6 @@ def build_dataset_from_task_config_uri(
     distributed_context: Optional[DistributedContext] = None,
     is_inference: bool = True,
     _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
-    retain_edge_ids: bool = True,
 ) -> DistDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
@@ -557,6 +556,8 @@ def build_dataset_from_task_config_uri(
         Slotted for refactor once this functionality is available in the transductive `splitter` directly.
     - max_labels_per_anchor_node (Optional[int]): Cap for how many labels to
       materialize per anchor node for ABLP label fetching.
+    - retain_edge_ids (bool): Retain implicit edge IDs for sampling, defaulting to True.
+      Set to False only when sampling with ``with_edge=False``.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -570,9 +571,6 @@ def build_dataset_from_task_config_uri(
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
         _tfrecord_uri_pattern (str): INTERNAL ONLY. Regex pattern for loading serialized tf records. Defaults to ".*-of-.*\.tfrecord(\.gz)?$".
-        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
-            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
-            and edge features remain available.
     """
 
     if distributed_context is not None:
@@ -651,6 +649,7 @@ def build_dataset_from_task_config_uri(
     should_load_tensors_in_parallel = bool(
         strtobool(args.get("should_load_tensors_in_parallel", "True"))
     )
+    retain_edge_ids = bool(strtobool(args.get("retain_edge_ids", "True")))
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
@@ -660,6 +659,9 @@ def build_dataset_from_task_config_uri(
     )
     logger.info(
         f"Inferred 'should_load_tensors_in_parallel' argument as : {should_load_tensors_in_parallel} from argument path {args_path}. To override, please provide 'should_load_tensors_in_parallel' flag."
+    )
+    logger.info(
+        f"Inferred 'retain_edge_ids' argument as : {retain_edge_ids} from argument path {args_path}. To override, please provide 'retain_edge_ids' flag."
     )
 
     # We use a `SerializedGraphMetadata` object to store and organize information for loading serialized TFRecords from disk into memory.

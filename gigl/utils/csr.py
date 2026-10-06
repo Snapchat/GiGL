@@ -57,8 +57,8 @@ def _place_chunk(
     col_chunk: torch.Tensor,
     cursor: torch.Tensor,
     indices: torch.Tensor,
-    edge_ids: torch.Tensor | None = None,
-    edge_id_chunk: torch.Tensor | None = None,
+    edge_ids: Optional[torch.Tensor] = None,
+    edge_id_chunk: Optional[torch.Tensor] = None,
 ) -> None:
     """Write one chunk of edges into ``indices`` and advance ``cursor`` past them.
 
@@ -112,7 +112,7 @@ def _scatter_in_bands(
     indices: torch.Tensor,
     chunk_size: int,
     band_bytes: Optional[int],
-    edge_ids: torch.Tensor | None = None,
+    edge_ids: Optional[torch.Tensor] = None,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
@@ -190,7 +190,7 @@ def _sort_within_rows(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     block_edges: int,
-    edge_ids: torch.Tensor | None = None,
+    edge_ids: Optional[torch.Tensor] = None,
 ) -> None:
     """Sort each row's column slice ascending, in place.
 
