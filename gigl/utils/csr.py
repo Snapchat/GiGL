@@ -22,7 +22,8 @@ fraction of the edges.
 """
 
 import gc
-from typing import Literal, Optional, Tuple
+from dataclasses import dataclass
+from typing import Literal, Optional
 
 import torch
 from graphlearn_torch.data import Topology
@@ -40,6 +41,15 @@ DEFAULT_SORT_BLOCK_EDGES = 1 << 25
 # Destination window for the scatter when `indices` could not be placed in memory. Small enough that a band's pages stay cached while being written, large enough that the
 # number of input passes stays low.
 DEFAULT_BAND_BYTES = 4 * 2**30
+
+
+@dataclass(frozen=True)
+class CsrBuildResult:
+    """CSR arrays and optional COO-position edge IDs in CSR order."""
+
+    indptr: torch.Tensor
+    indices: torch.Tensor
+    edge_ids: Optional[torch.Tensor] = None
 
 
 def _place_chunk(
@@ -236,15 +246,15 @@ def build_csr_from_coo(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
-    edge_ids_out: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    retain_edge_ids: bool = True,
+) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
-    Drop-in replacement for the ``(rowptr, col)`` half of
-    ``graphlearn_torch.utils.coo_to_csr``, which builds full-size sorting temporaries.
+    Produces the same CSR arrays as ``graphlearn_torch.utils.coo_to_csr`` without its
+    full-size sorting temporaries.
 
-    When ``edge_ids_out`` is supplied, write original COO positions in CSR order alongside
-    columns. The caller allocates the final int64 vector; no full-size input ID vector is needed.
+    When ``retain_edge_ids`` is true, write original COO positions in CSR order alongside
+    columns. The final int64 vector is allocated directly; no full-size input ID vector is needed.
     Explicit edge IDs and edge weights are unsupported.
 
     To build CSC instead, pass the column indices as ``row`` and the row indices as ``col``.
@@ -259,12 +269,15 @@ def build_csr_from_coo(
             columns ascending as ``coo_to_csr`` does.
         band_bytes (int): Destination window for the scatter, used only when ``indices`` could
             not be placed in memory.
-        edge_ids_out (Optional[torch.Tensor]): Optional preallocated int64 output of length
-            ``num_edges`` for original COO positions in CSR order.
+        retain_edge_ids (bool): Retain original COO positions in CSR order by default.
+            The int64 IDs cost 8 bytes per edge. Set to ``False`` when callers do not
+            sample edge IDs.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: ``indptr`` of shape ``[num_rows + 1]``, always int64,
-        and ``indices`` of shape ``[num_edges]``, both int64.
+        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]`` and ``indices`` of shape
+        ``[num_edges]``, both int64, plus optional int64 ``edge_ids`` of shape
+        ``[num_edges]`` in CSR order. Empty input returns an empty ID tensor when
+        retention is enabled and ``None`` otherwise.
 
     Raises:
         ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
@@ -277,13 +290,6 @@ def build_csr_from_coo(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
     num_edges = row.numel()
-    if edge_ids_out is not None:
-        if (
-            edge_ids_out.dtype != torch.int64
-            or edge_ids_out.dim() != 1
-            or edge_ids_out.numel() != num_edges
-        ):
-            raise ValueError("edge_ids_out must be 1-D int64 with one entry per edge")
     row_max = int(row.max().item()) if num_edges else -1
     if num_rows is None:
         num_rows = row_max + 1
@@ -296,7 +302,11 @@ def build_csr_from_coo(
     if num_edges == 0:
         # A rank can own no edges of some edge type.
         indptr.zero_()
-        return indptr, torch.empty(0, dtype=torch.int64)
+        return CsrBuildResult(
+            indptr=indptr,
+            indices=torch.empty(0, dtype=torch.int64),
+            edge_ids=torch.empty(0, dtype=torch.int64) if retain_edge_ids else None,
+        )
     indptr[0] = 0
     torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
     gc.collect()
@@ -304,6 +314,11 @@ def build_csr_from_coo(
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
     # take over if it lands on disk anyway.
     indices = allocate_preshared((num_edges,), torch.int64, random_access=True)
+    edge_ids = (
+        allocate_preshared((num_edges,), torch.int64, random_access=True)
+        if retain_edge_ids
+        else None
+    )
     _scatter_in_bands(
         row=row,
         col=col,
@@ -313,20 +328,20 @@ def build_csr_from_coo(
         band_bytes=(
             band_bytes
             if is_disk_backed(indices)
-            or (edge_ids_out is not None and is_disk_backed(edge_ids_out))
+            or (edge_ids is not None and is_disk_backed(edge_ids))
             else None
         ),
-        edge_ids_out=edge_ids_out,
+        edge_ids_out=edge_ids,
     )
     gc.collect()
-    _sort_within_rows(indptr, indices, sort_block_edges, edge_ids_out)
+    _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
         f"(indices {indices.numel() * indices.element_size() / 2**30:.1f} GiB as "
         f"{indices.dtype}, indptr {indptr.numel() * indptr.element_size() / 2**30:.1f} GiB)"
     )
-    return indptr, indices
+    return CsrBuildResult(indptr=indptr, indices=indices, edge_ids=edge_ids)
 
 
 class CompactTopology(Topology):
@@ -362,15 +377,15 @@ class CompactTopology(Topology):
         # CSC compresses destinations, so it is the CSR of the reversed edges.
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         self._layout = layout
-        self._edge_ids = (
-            allocate_preshared((edge_index.size(1),), torch.int64, random_access=True)
-            if retain_edge_ids
-            else None
-        )
-        self._indptr, self._indices = build_csr_from_coo(
+        csr = build_csr_from_coo(
             row=edge_index[compressed],
             col=edge_index[other],
             num_rows=num_rows,
-            edge_ids_out=self._edge_ids,
+            retain_edge_ids=retain_edge_ids,
+        )
+        self._indptr, self._indices, self._edge_ids = (
+            csr.indptr,
+            csr.indices,
+            csr.edge_ids,
         )
         self._edge_weights = None
