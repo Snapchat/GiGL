@@ -51,6 +51,22 @@ class CompactTopologyTest(TestCase):
             CompactTopology(coo, layout="CSR").edge_ids.tolist(), [3, 1, 2, 0]
         )
 
+    def test_implicit_edge_ids_can_be_omitted_when_sampling_neighbors(self) -> None:
+        from graphlearn_torch import py_graphlearn_torch as pywrap
+
+        coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
+        compact = Graph(
+            CompactTopology(coo, layout="CSR", retain_edge_ids=False), "CPU", None
+        )
+        compact.lazy_init()
+
+        self.assertIsNone(compact.topo.edge_ids)
+        neighbors, counts = pywrap.CPURandomSampler(compact.graph_handler).sample(
+            torch.tensor([0, 1]), 3
+        )
+        self.assertEqual(neighbors.tolist(), [4, 5, 6, 7])
+        self.assertEqual(counts.tolist(), [2, 2])
+
     def test_a_float_edge_index_is_cast_as_glt_does(self) -> None:
         coo = torch.tensor([[0.0, 2.0, 2.0], [1.0, 0.0, 1.0]])
         lean = CompactTopology(coo, layout="CSR")
@@ -204,10 +220,33 @@ class InitializeGraphTest(TestCase):
             ),
             node_partition_book=_ONE_PARTITION,
             edge_features_registered=True,
+            retain_edge_ids=False,
         )
 
         assert isinstance(dataset.graph, Graph)
         self.assertIsNotNone(dataset.graph.topo.edge_ids)
+
+    def test_build_can_omit_implicit_edge_ids(self) -> None:
+        book = RangePartitionBook(partition_ranges=[(0, 8)], partition_idx=0)
+        dataset = self._dataset()
+        partition_output = PartitionOutput(
+            node_partition_book=book,
+            edge_partition_book=None,
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+
+        dataset.build(partition_output, retain_edge_ids=False)
+
+        assert isinstance(dataset.graph, Graph)
+        self.assertIsNone(dataset.graph.topo.edge_ids)
 
     def test_a_heterogeneous_partition_builds_one_graph_per_edge_type(self) -> None:
         num_nodes = 40
@@ -363,11 +402,16 @@ class BuildReleasesEachCooTest(TestCase):
 
         alive_at_each_build: list[set[EdgeType]] = []
 
-        def recording_topology(edge_index, layout, num_rows):
+        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=True):
             alive_at_each_build.append(
                 {edge_type for edge_type, ref in refs.items() if ref() is not None}
             )
-            return CompactTopology(edge_index, layout=layout, num_rows=num_rows)
+            return CompactTopology(
+                edge_index,
+                layout=layout,
+                num_rows=num_rows,
+                retain_edge_ids=retain_edge_ids,
+            )
 
         class _EdgeSplitter:
             should_convert_labels_to_edges = False

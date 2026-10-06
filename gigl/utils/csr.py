@@ -10,9 +10,11 @@ This implementation is a two-pass counting sort: degrees give the exact output l
 so the output is allocated once and written in place, and the input is consumed in chunks so
 transients are bounded by chunk size rather than by edge count::
 
-    peak = row + col + indices + edge_ids + 2 x (num_rows + 1) + O(chunk + max_degree)
+    peak = row + col + indices + optional edge_ids + 2 x (num_rows + 1)
+           + O(chunk + max_degree)
 
-which is 3.0x one int64 array with int32 inputs when edge IDs are retained. The
+which is 2.0x one int64 array with int32 inputs when edge IDs are omitted, or 3.0x
+when they are retained. The
 ``max_degree`` term comes from within-row sorting; it matters when one row owns a meaningful
 fraction of the edges.
 
@@ -328,11 +330,12 @@ def build_csr_from_coo(
 
 
 class CompactTopology(Topology):
-    """A GLT ``Topology`` built by :func:`build_csr_from_coo`, with implicit edge IDs.
+    """A GLT ``Topology`` built by :func:`build_csr_from_coo`.
 
     ``Topology.__init__`` is not called: it would fabricate a full ``torch.arange(num_edges)``
     and convert with ``coo_to_csr``. Instead, the counting sort writes original COO positions
-    directly into final CSR order. Edge features need explicit IDs and cannot use this class.
+    directly into final CSR order when retained. Edge features need explicit IDs and cannot use
+    this class.
 
     Args:
         edge_index (torch.Tensor): ``[2, num_edges]`` COO. int32 and int64 are used as they are;
@@ -340,6 +343,9 @@ class CompactTopology(Topology):
         layout (Literal["CSR", "CSC"]): The layout GLT samples from.
         num_rows (Optional[int]): Size of the compressed dimension. Defaults to the largest
             compressed id + 1, as GLT's ``Topology`` does.
+        retain_edge_ids (bool): Retain COO-position IDs for edge sampling by default,
+            at a cost of 8 bytes per edge. Use ``False`` only when callers sample
+            without edge IDs.
     """
 
     def __init__(
@@ -347,6 +353,8 @@ class CompactTopology(Topology):
         edge_index: torch.Tensor,
         layout: Literal["CSR", "CSC"],
         num_rows: Optional[int] = None,
+        *,
+        retain_edge_ids: bool = True,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
@@ -354,8 +362,10 @@ class CompactTopology(Topology):
         # CSC compresses destinations, so it is the CSR of the reversed edges.
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         self._layout = layout
-        self._edge_ids = allocate_preshared(
-            (edge_index.size(1),), torch.int64, random_access=True
+        self._edge_ids = (
+            allocate_preshared((edge_index.size(1),), torch.int64, random_access=True)
+            if retain_edge_ids
+            else None
         )
         self._indptr, self._indices = build_csr_from_coo(
             row=edge_index[compressed],

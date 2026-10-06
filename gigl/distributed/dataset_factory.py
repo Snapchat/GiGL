@@ -68,6 +68,7 @@ def _load_and_build_partitioned_dataset(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    retain_edge_ids: bool = True,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -88,6 +89,9 @@ def _load_and_build_partitioned_dataset(
             sampling weights. The column is extracted from the feature tensor and registered separately via
             ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
             Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
+        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
+            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
+            and edge features remain available.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -242,6 +246,7 @@ def _load_and_build_partitioned_dataset(
     dataset.build(
         partition_output=partition_output,
         splitter=splitter,
+        retain_edge_ids=retain_edge_ids,
     )
 
     return dataset
@@ -263,6 +268,7 @@ def _build_dataset_process(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    retain_edge_ids: bool = True,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -345,6 +351,7 @@ def _build_dataset_process(
         splitter=splitter,
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
         weight_edge_feat_name=weight_edge_feat_name,
+        retain_edge_ids=retain_edge_ids,
     )
 
     output_dict["dataset"] = output_dataset
@@ -371,6 +378,7 @@ def build_dataset(
         int
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+    retain_edge_ids: bool = True,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -407,6 +415,9 @@ def build_dataset(
             as sampling weights. The column is extracted from the feature tensor and registered separately; it is
             removed from the feature matrix to avoid memory duplication. Supply a single string to apply to all
             edge types, or a per-edge-type dict. (default: ``None``)
+        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
+            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
+            and edge features remain available.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -502,6 +513,7 @@ def build_dataset(
             splitter,
             _ssl_positive_label_percentage,
             weight_edge_feat_name,
+            retain_edge_ids,
         ),
     )
 
@@ -519,6 +531,7 @@ def build_dataset_from_task_config_uri(
     distributed_context: Optional[DistributedContext] = None,
     is_inference: bool = True,
     _tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$",
+    retain_edge_ids: bool = True,
 ) -> DistDataset:
     """
     Builds a dataset from a provided `task_config_uri` as part of GiGL orchestration. Parameters to
@@ -557,6 +570,9 @@ def build_dataset_from_task_config_uri(
         is_inference (bool): Whether the run is for inference or training. If True, arguments will
             be read from inferenceArgs. Otherwise, arguments witll be read from trainerArgs.
         _tfrecord_uri_pattern (str): INTERNAL ONLY. Regex pattern for loading serialized tf records. Defaults to ".*-of-.*\.tfrecord(\.gz)?$".
+        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
+            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
+            and edge features remain available.
     """
 
     if distributed_context is not None:
@@ -672,6 +688,7 @@ def build_dataset_from_task_config_uri(
         partitioner_class=partitioner_class,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        retain_edge_ids=retain_edge_ids,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 
