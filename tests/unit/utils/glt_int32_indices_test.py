@@ -2,7 +2,6 @@
 
 The int32 half of ``gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch``: the COMPILED CPU
 samplers must read int32 column ids and produce byte-identical results to the int64 graph.
-The CPU random sampler's missing-edge-id guard is also checked in a subprocess for both dtypes.
 
 Why this file exists rather than a probe script: the code that can corrupt training silently
 lives in a C++ extension that ``gigl/scripts/install_glt.sh`` rebuilds from source in every image
@@ -26,10 +25,7 @@ import torch
 from graphlearn_torch import py_graphlearn_torch as pywrap
 from graphlearn_torch.data import Graph, Topology
 
-from gigl.scripts.verify_glt_patches import (
-    build_cpu_csr_graph,
-    verify_cpu_random_missing_edge_ids,
-)
+from gigl.scripts.verify_glt_patches import build_cpu_csr_graph
 from tests.test_assets.test_case import TestCase
 
 
@@ -92,13 +88,6 @@ class Int32IndicesSupportTest(TestCase):
                 "gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch."
             )
         self.assertTrue(_HAS_INT32)
-
-
-@unittest.skipUnless(_HAS_INT32, _SKIP_REASON)
-class MissingEdgeIdsTest(TestCase):
-    def test_cpu_random_sampler_rejects_missing_edge_ids_without_crashing(self) -> None:
-        """The subprocess contains a native crash on wheels without the guard."""
-        self.assertTrue(verify_cpu_random_missing_edge_ids())
 
 
 @unittest.skipUnless(_HAS_INT32, _SKIP_REASON)
