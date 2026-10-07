@@ -361,8 +361,8 @@ def main() -> int:
     results = {
         "0001-glt-csr-col-count-and-int32-indices (col_count)": verify_bitmap_col_count(),
         "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
+        "0001-glt-csr-col-count-and-int32-indices (missing edge ids)": verify_cpu_random_missing_edge_ids(),
         "0002-glt-unpin-shm-queue-on-teardown": verify_queue_teardown(),
-        "0003-glt-reject-missing-cpu-random-edge-ids": verify_cpu_random_missing_edge_ids(),
     }
     failed = [name for name, passed in results.items() if not passed]
     if failed:

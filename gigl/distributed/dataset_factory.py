@@ -93,6 +93,10 @@ def _load_and_build_partitioned_dataset(
             per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
             and edge features remain available.
 
+            Set this to ``False`` for graphs without edge features. GiGL loaders already
+            sample them with ``with_edge=False``, so the retained IDs only cost memory.
+            The default is ``True`` only for backwards compatibility.
+
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
 
@@ -419,6 +423,10 @@ def build_dataset(
             per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
             and edge features remain available.
 
+            Set this to ``False`` for graphs without edge features. GiGL loaders already
+            sample them with ``with_edge=False``, so the retained IDs only cost memory.
+            The default is ``True`` only for backwards compatibility.
+
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
     """
@@ -558,6 +566,8 @@ def build_dataset_from_task_config_uri(
       materialize per anchor node for ABLP label fetching.
     - retain_edge_ids (bool): Retain implicit edge IDs for sampling, defaulting to True.
       Set to False only when sampling with ``with_edge=False``.
+      Set this to False for graphs without edge features. GiGL loaders already sample them
+      with ``with_edge=False``. The default is True only for backwards compatibility.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
