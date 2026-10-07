@@ -1,8 +1,7 @@
-"""The lean graph build must produce a graph indistinguishable from ``glt.Dataset.init_graph``.
+"""The compact build must sample the same neighbors as GLT for graphs without edge metadata.
 
-The consumer is a compiled extension that segfaults rather than raises on a malformed topology,
-so these compare sampled neighbourhoods against GLT's own build rather than asserting
-hand-written expectations.
+The consumer is a compiled extension, so these compare sampled neighbourhoods against GLT's
+own build rather than asserting hand-written expectations.
 """
 
 import weakref
@@ -46,10 +45,27 @@ class CompactTopologyTest(TestCase):
             set(Topology(edge_index=coo, layout="CSR").__dict__),
         )
 
-    def test_no_edge_ids_are_fabricated(self) -> None:
-        """``Topology.__init__`` would allocate ``arange(num_edges)`` here; that is the point."""
-        coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
-        self.assertIsNone(CompactTopology(coo, layout="CSR").edge_ids)
+    def test_implicit_edge_ids_follow_original_coo_positions(self) -> None:
+        coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
+        self.assertEqual(
+            CompactTopology(coo, layout="CSR").edge_ids.tolist(), [3, 1, 2, 0]
+        )
+
+    def test_implicit_edge_ids_can_be_omitted_when_sampling_neighbors(self) -> None:
+        from graphlearn_torch import py_graphlearn_torch as pywrap
+
+        coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
+        compact = Graph(
+            CompactTopology(coo, layout="CSR", retain_edge_ids=False), "CPU", None
+        )
+        compact.lazy_init()
+
+        self.assertIsNone(compact.topo.edge_ids)
+        neighbors, counts = pywrap.CPURandomSampler(compact.graph_handler).sample(
+            torch.tensor([0, 1]), 3
+        )
+        self.assertEqual(neighbors.tolist(), [4, 5, 6, 7])
+        self.assertEqual(counts.tolist(), [2, 2])
 
     def test_a_float_edge_index_is_cast_as_glt_does(self) -> None:
         coo = torch.tensor([[0.0, 2.0, 2.0], [1.0, 0.0, 1.0]])
@@ -64,6 +80,8 @@ class CompactTopologyTest(TestCase):
 
         graph = Graph(CompactTopology(torch.empty((2, 0)), layout="CSC"), "CPU", None)
         graph.lazy_init()
+        self.assertEqual(graph.topo.edge_ids.dtype, torch.int64)
+        self.assertEqual(graph.topo.edge_ids.numel(), 0)
 
         neighbors, counts = pywrap.CPURandomSampler(graph.graph_handler).sample(
             torch.tensor([0, 7], dtype=torch.int64), 4
@@ -168,12 +186,31 @@ class InitializeGraphTest(TestCase):
 
         self.assertIsInstance(dataset.graph, Graph)
 
-    def test_registered_edge_features_keep_the_edge_ids_the_sampler_reads(self) -> None:
-        """Edge features are looked up by edge id, and the lean path does not materialize any.
+    def test_featureless_partition_can_sample_with_edge(self) -> None:
+        from graphlearn_torch import py_graphlearn_torch as pywrap
 
-        GLT hands ``torch.empty(0)`` to the compiled graph when ``Topology.edge_ids`` is unset, so
-        taking the lean path here segfaults the sampler rather than raising.
-        """
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset._initialize_graph(
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]]),
+                edge_ids=None,
+            ),
+            node_partition_book=RangePartitionBook(
+                partition_ranges=[(0, 8)], partition_idx=0
+            ),
+            edge_features_registered=False,
+        )
+
+        assert isinstance(dataset.graph, Graph)
+        neighbors, counts, edge_ids = pywrap.CPURandomSampler(
+            dataset.graph.graph_handler
+        ).sample_with_edge(torch.tensor([0, 1]), 3)
+        self.assertEqual(neighbors.tolist(), [4, 5, 6, 7])
+        self.assertEqual(counts.tolist(), [2, 2])
+        self.assertEqual(edge_ids.tolist(), [3, 1, 2, 0])
+
+    def test_registered_edge_features_keep_the_edge_ids_the_sampler_reads(self) -> None:
+        """Edge-feature lookups need explicit IDs, not partition-local COO positions."""
         num_nodes = 40
         dataset = self._dataset()
 
@@ -183,10 +220,33 @@ class InitializeGraphTest(TestCase):
             ),
             node_partition_book=_ONE_PARTITION,
             edge_features_registered=True,
+            retain_edge_ids=False,
         )
 
         assert isinstance(dataset.graph, Graph)
         self.assertIsNotNone(dataset.graph.topo.edge_ids)
+
+    def test_build_can_omit_implicit_edge_ids(self) -> None:
+        book = RangePartitionBook(partition_ranges=[(0, 8)], partition_idx=0)
+        dataset = self._dataset()
+        partition_output = PartitionOutput(
+            node_partition_book=book,
+            edge_partition_book=None,
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+
+        dataset.build(partition_output, retain_edge_ids=False)
+
+        assert isinstance(dataset.graph, Graph)
+        self.assertIsNone(dataset.graph.topo.edge_ids)
 
     def test_a_heterogeneous_partition_builds_one_graph_per_edge_type(self) -> None:
         num_nodes = 40
@@ -343,11 +403,16 @@ class BuildReleasesEachCooTest(TestCase):
 
         alive_at_each_build: list[set[EdgeType]] = []
 
-        def recording_topology(edge_index, layout, num_rows):
+        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=True):
             alive_at_each_build.append(
                 {edge_type for edge_type, ref in refs.items() if ref() is not None}
             )
-            return CompactTopology(edge_index, layout=layout, num_rows=num_rows)
+            return CompactTopology(
+                edge_index,
+                layout=layout,
+                num_rows=num_rows,
+                retain_edge_ids=retain_edge_ids,
+            )
 
         class _EdgeSplitter:
             should_convert_labels_to_edges = False
@@ -370,7 +435,63 @@ class BuildReleasesEachCooTest(TestCase):
 
 
 class SamplingParityTest(TestCase):
-    """A graph built the lean way must sample identically to one built by GLT."""
+    """Compact graphs preserve GLT sampling outputs and original edge identity."""
+
+    @parameterized.expand(
+        [
+            param("csr_int32", layout="CSR", dtype=torch.int32),
+            param("csr_int64", layout="CSR", dtype=torch.int64),
+            param("csc_int32", layout="CSC", dtype=torch.int32),
+            param("csc_int64", layout="CSC", dtype=torch.int64),
+        ]
+    )
+    def test_unsorted_coo_with_edge_matches_glt(
+        self, _name: str, layout: Literal["CSR", "CSC"], dtype: torch.dtype
+    ) -> None:
+        from graphlearn_torch import py_graphlearn_torch as pywrap
+
+        coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=dtype)
+        seeds = torch.tensor([0, 1] if layout == "CSR" else [4, 5, 6, 7])
+        compact = Graph(CompactTopology(coo, layout=layout), "CPU", None)
+        reference = Graph(Topology(edge_index=coo, layout=layout), "CPU", None)
+        compact.lazy_init()
+        reference.lazy_init()
+
+        actual = pywrap.CPURandomSampler(compact.graph_handler).sample_with_edge(
+            seeds, 3
+        )
+        expected = pywrap.CPURandomSampler(reference.graph_handler).sample_with_edge(
+            seeds, 3
+        )
+        for actual_tensor, expected_tensor in zip(actual, expected):
+            torch.testing.assert_close(actual_tensor, expected_tensor, rtol=0, atol=0)
+        self.assertEqual(actual[2].tolist(), [3, 1, 2, 0])
+
+        isolated = pywrap.CPURandomSampler(compact.graph_handler).sample_with_edge(
+            torch.tensor([2 if layout == "CSR" else 0]), 3
+        )
+        self.assertEqual([tensor.numel() for tensor in isolated], [0, 1, 0])
+        self.assertEqual(isolated[1].tolist(), [0])
+
+    @parameterized.expand(["CSR", "CSC"])
+    def test_duplicate_edges_keep_distinct_coo_id_pairings(
+        self, layout: Literal["CSR", "CSC"]
+    ) -> None:
+        coo = torch.tensor(
+            [[1, 0, 1, 0] + [0] * 32, [7, 5, 6, 4] + [5] * 32],
+            dtype=torch.int64,
+        )
+        topology = CompactTopology(coo, layout=layout)
+        self.assertEqual(sorted(topology.edge_ids.tolist()), list(range(coo.size(1))))
+        compressed, other = (0, 1) if layout == "CSR" else (1, 0)
+        for row in range(topology.indptr.numel() - 1):
+            start, end = int(topology.indptr[row]), int(topology.indptr[row + 1])
+            for neighbor, edge_id in zip(
+                topology.indices[start:end].tolist(),
+                topology.edge_ids[start:end].tolist(),
+            ):
+                self.assertEqual(int(coo[compressed, edge_id]), row)
+                self.assertEqual(int(coo[other, edge_id]), neighbor)
 
     @parameterized.expand(
         [

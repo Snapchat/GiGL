@@ -6,7 +6,7 @@ import torch
 from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
-from gigl.utils.csr import _scatter_in_bands, build_csr_from_coo
+from gigl.utils.csr import CompactTopology, _scatter_in_bands, build_csr_from_coo
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -50,14 +50,34 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (50_000,), generator=generator).to(dtype)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        indptr, indices = build_csr_from_coo(
-            row, col, num_rows=num_rows, chunk_size=chunk_size
-        )
+        result = build_csr_from_coo(row, col, num_rows=num_rows, chunk_size=chunk_size)
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices.long(), expected_indices, rtol=0, atol=0)
-        self.assertEqual(indptr.dtype, torch.int64)
-        self.assertEqual(indices.dtype, dtype)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indices.long(), expected_indices, rtol=0, atol=0
+        )
+        self.assertEqual(result.indptr.dtype, torch.int64)
+        self.assertEqual(result.indices.dtype, dtype)
+        edge_ids = result.edge_ids
+        assert edge_ids is not None
+        self.assertEqual(edge_ids.dtype, torch.int64)
+        self.assertEqual(edge_ids.numel(), row.numel())
+
+    def test_edge_ids_are_original_coo_positions_in_csr_order(self) -> None:
+        row = torch.tensor([1, 0, 1, 0], dtype=torch.int64)
+        col = torch.tensor([3, 5, 1, 2], dtype=torch.int64)
+
+        result = build_csr_from_coo(row, col, num_rows=2)
+
+        self.assertIsNotNone(result.edge_ids)
+        torch.testing.assert_close(result.indptr, torch.tensor([0, 2, 4]))
+        torch.testing.assert_close(result.indices, torch.tensor([2, 5, 1, 3]))
+        torch.testing.assert_close(result.edge_ids, torch.tensor([3, 1, 2, 0]))
+
+        omitted = build_csr_from_coo(row, col, num_rows=2, retain_edge_ids=False)
+        self.assertIsNone(omitted.edge_ids)
+        torch.testing.assert_close(omitted.indptr, result.indptr)
+        torch.testing.assert_close(omitted.indices, result.indices)
 
     def test_matches_upstream_with_mostly_empty_rows(self) -> None:
         generator = torch.Generator().manual_seed(11)
@@ -66,10 +86,10 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (200,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        indptr, indices = build_csr_from_coo(row, col, num_rows=num_rows)
+        result = build_csr_from_coo(row, col, num_rows=num_rows)
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_row_larger_than_sort_block(self) -> None:
         """A single row exceeding ``sort_block_edges`` must still terminate and be correct.
@@ -85,12 +105,12 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (20_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        indptr, indices = build_csr_from_coo(
+        result = build_csr_from_coo(
             row, col, num_rows=num_rows, chunk_size=512, sort_block_edges=64
         )
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_when_sort_blocks_are_capped_by_rows(self) -> None:
         """Blocks crossing long runs of empty rows are cut by row count as well as by edges."""
@@ -100,12 +120,10 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (400,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        indptr, indices = build_csr_from_coo(
-            row, col, num_rows=num_rows, sort_block_edges=7
-        )
+        result = build_csr_from_coo(row, col, num_rows=num_rows, sort_block_edges=7)
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_duplicate_edges(self) -> None:
         generator = torch.Generator().manual_seed(17)
@@ -113,23 +131,23 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, 3, (10_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, 4)
-        indptr, indices = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
+        result = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_trailing_rows_beyond_max_row_id_are_empty(self) -> None:
         generator = torch.Generator().manual_seed(19)
         row = torch.randint(0, 100, (5_000,), generator=generator)
         col = torch.randint(0, 100, (5_000,), generator=generator)
 
-        indptr, indices = build_csr_from_coo(row, col, num_rows=4096)
+        result = build_csr_from_coo(row, col, num_rows=4096)
 
-        self.assertEqual(indptr.numel(), 4097)
-        self.assertEqual(int(indptr[-1]), 5_000)
+        self.assertEqual(result.indptr.numel(), 4097)
+        self.assertEqual(int(result.indptr[-1]), 5_000)
         # Every row above the largest observed row id has zero degree.
-        self.assertEqual(int((indptr[101:] - indptr[100:-1]).sum()), 0)
-        self.assertEqual(indices.numel(), 5_000)
+        self.assertEqual(int((result.indptr[101:] - result.indptr[100:-1]).sum()), 0)
+        self.assertEqual(result.indices.numel(), 5_000)
 
     def test_columns_ascend_within_every_row_across_huge_id_ranges(self) -> None:
         """Columns must ascend within each row even when one sort block spans many rows.
@@ -154,14 +172,14 @@ class BuildCsrFromCooTest(TestCase):
         ]
         col = torch.randint(0, num_rows, (4_000,), generator=generator)
 
-        indptr, indices = build_csr_from_coo(
+        result = build_csr_from_coo(
             row, col, num_rows=num_rows, sort_block_edges=1 << 30
         )
 
         for row_id in occupied.tolist():
-            start, end = int(indptr[row_id]), int(indptr[row_id + 1])
+            start, end = int(result.indptr[row_id]), int(result.indptr[row_id + 1])
             self.assertGreater(end, start, f"row {row_id} should have edges")
-            slice_ = indices[start:end]
+            slice_ = result.indices[start:end]
             self.assertTrue(
                 bool(torch.all(slice_[1:] >= slice_[:-1])),
                 f"columns not ascending within row {row_id}",
@@ -179,20 +197,26 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (20_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(col, row, num_rows)
-        indptr, indices = build_csr_from_coo(col, row, num_rows=num_rows)
+        result = build_csr_from_coo(col, row, num_rows=num_rows)
 
-        torch.testing.assert_close(indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_empty_input(self) -> None:
         empty = torch.empty(0, dtype=torch.int64)
 
-        indptr, indices = build_csr_from_coo(empty, empty, num_rows=10)
+        result = build_csr_from_coo(empty, empty, num_rows=10)
 
-        self.assertEqual(indptr.numel(), 11)
-        self.assertEqual(int(indptr.sum()), 0)
-        self.assertEqual(indices.numel(), 0)
-        self.assertEqual(indices.dtype, torch.int64)
+        self.assertEqual(result.indptr.numel(), 11)
+        self.assertEqual(int(result.indptr.sum()), 0)
+        self.assertEqual(result.indices.numel(), 0)
+        self.assertEqual(result.indices.dtype, torch.int64)
+        edge_ids = result.edge_ids
+        assert edge_ids is not None
+        self.assertEqual(edge_ids.numel(), 0)
+        self.assertIsNone(
+            build_csr_from_coo(empty, empty, retain_edge_ids=False).edge_ids
+        )
 
     def test_row_id_beyond_num_rows_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -306,7 +330,7 @@ class ScatterPlacementTest(TestCase):
     ):
         row, col = self._random_coo(rows, edges)
         row, col = row.to(dtype), col.to(dtype)
-        indptr, _ = build_csr_from_coo(row=row, col=col, num_rows=rows)
+        indptr = build_csr_from_coo(row=row, col=col, num_rows=rows).indptr
 
         torch.testing.assert_close(
             self._scatter(row, col, indptr, chunk_size=7, band_bytes=band_bytes),
@@ -317,7 +341,7 @@ class ScatterPlacementTest(TestCase):
         """A supernode cannot be split, so its band is oversized by design."""
         row = torch.cat([torch.zeros(300, dtype=torch.int64), torch.arange(1, 20)])
         col = torch.arange(row.numel(), dtype=torch.int64) % 19
-        indptr, _ = build_csr_from_coo(row=row, col=col, num_rows=20)
+        indptr = build_csr_from_coo(row=row, col=col, num_rows=20).indptr
 
         torch.testing.assert_close(
             # A couple of elements at most: forces a band per row.
@@ -340,7 +364,13 @@ class ScatterPlacementTest(TestCase):
 
     def test_a_scattered_destination_prefers_memory_even_when_spilling_is_on(self):
         """Disk-first is right for a streamed write, wrong for a scatter."""
-        with self._spilling(), self._shm_fits():
+        with (
+            self._spilling(),
+            self._shm_fits(),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
+            ),
+        ):
             streamed = allocate_preshared((200_000,), torch.int64)
             scattered = allocate_preshared((200_000,), torch.int64, random_access=True)
 
@@ -351,6 +381,22 @@ class ScatterPlacementTest(TestCase):
         self.assertTrue(
             scattered.is_shared(), "and still pre-shared, or GLT duplicates it"
         )
+
+    def test_compact_edge_ids_are_not_copied_when_shared(self):
+        coo = torch.stack([torch.arange(2_000) % 20, torch.arange(2_000) % 30])
+        with (
+            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
+            self._shm_fits(),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
+            ),
+        ):
+            topology = CompactTopology(coo, layout="CSR")
+            edge_ids_ptr = topology.edge_ids.data_ptr()
+            self.assertTrue(topology.edge_ids.is_shared())
+            topology.share_memory_()
+            topology.share_memory_()
+        self.assertEqual(topology.edge_ids.data_ptr(), edge_ids_ptr)
 
     def test_it_falls_back_to_disk_when_memory_cannot_hold_it(self):
         with (
@@ -380,14 +426,41 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1024
             ),
         ):
-            indptr, indices = build_csr_from_coo(
-                row=row, col=col, num_rows=64, band_bytes=256
+            result = build_csr_from_coo(row=row, col=col, num_rows=64, band_bytes=256)
+
+        self.assertTrue(is_disk_backed(result.indices))
+        reference_indptr, reference_indices = _reference_csr(row, col, 64)
+        torch.testing.assert_close(result.indptr, reference_indptr)
+        torch.testing.assert_close(result.indices, reference_indices)
+
+    def test_banded_disk_outputs_keep_edge_ids_aligned(self):
+        order = torch.randperm(128, generator=torch.Generator().manual_seed(23))
+        row = (torch.arange(128) // 16)[order]
+        col = (torch.arange(128) % 16)[order]
+        with (
+            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="512"),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=128
+            ),
+        ):
+            result = build_csr_from_coo(
+                row,
+                col,
+                num_rows=8,
+                chunk_size=17,
+                band_bytes=128,
             )
 
-        self.assertTrue(is_disk_backed(indices))
-        reference_indptr, reference_indices = _reference_csr(row, col, 64)
-        torch.testing.assert_close(indptr, reference_indptr)
-        torch.testing.assert_close(indices, reference_indices)
+        edge_ids = result.edge_ids
+        assert edge_ids is not None
+        self.assertTrue(is_disk_backed(result.indices))
+        self.assertTrue(is_disk_backed(edge_ids))
+        expected_ptr, expected_col, expected_ids, _ = coo_to_csr(
+            row, col, edge_id=torch.arange(128), node_sizes=(8, 16)
+        )
+        torch.testing.assert_close(result.indptr, expected_ptr)
+        torch.testing.assert_close(result.indices, expected_col)
+        torch.testing.assert_close(edge_ids, expected_ids)
 
 
 if __name__ == "__main__":
