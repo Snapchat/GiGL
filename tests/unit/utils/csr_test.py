@@ -364,7 +364,13 @@ class ScatterPlacementTest(TestCase):
 
     def test_a_scattered_destination_prefers_memory_even_when_spilling_is_on(self):
         """Disk-first is right for a streamed write, wrong for a scatter."""
-        with self._spilling(), self._shm_fits():
+        with (
+            self._spilling(),
+            self._shm_fits(),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
+            ),
+        ):
             streamed = allocate_preshared((200_000,), torch.int64)
             scattered = allocate_preshared((200_000,), torch.int64, random_access=True)
 
