@@ -53,9 +53,11 @@ class BuildCsrFromCooTest(TestCase):
         result = build_csr_from_coo(row, col, num_rows=num_rows, chunk_size=chunk_size)
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
-        torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indices.long(), expected_indices, rtol=0, atol=0
+        )
         self.assertEqual(result.indptr.dtype, torch.int64)
-        self.assertEqual(result.indices.dtype, torch.int64)
+        self.assertEqual(result.indices.dtype, dtype)
         edge_ids = result.edge_ids
         assert edge_ids is not None
         self.assertEqual(edge_ids.dtype, torch.int64)

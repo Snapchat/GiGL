@@ -13,10 +13,9 @@ transients are bounded by chunk size rather than by edge count::
     peak = row + col + indices + optional edge_ids + 2 x (num_rows + 1)
            + O(chunk + max_degree)
 
-which is 2.0x one int64 array with int32 inputs when edge IDs are omitted, or 3.0x
-when they are retained. The
-``max_degree`` term comes from within-row sorting; it matters when one row owns a meaningful
-fraction of the edges.
+which is 1.5x one int64 array with int32 inputs when edge IDs are omitted, since ``indices``
+then stays int32, or 2.5x when the int64 edge IDs are retained. The ``max_degree`` term comes
+from within-row sorting; it matters when one row owns a meaningful fraction of the edges.
 
 :class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
@@ -275,10 +274,10 @@ def build_csr_from_coo(
             sample edge IDs.
 
     Returns:
-        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]`` and ``indices`` of shape
-        ``[num_edges]``, both int64, plus optional int64 ``edge_ids`` of shape
-        ``[num_edges]`` in CSR order. Empty input returns an empty ID tensor when
-        retention is enabled and ``None`` otherwise.
+        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
+        of shape ``[num_edges]``, int32 when ``col`` is int32 and int64 otherwise, plus optional
+        int64 ``edge_ids`` of shape ``[num_edges]`` in CSR order. Empty input returns an empty
+        ID tensor when retention is enabled and ``None`` otherwise.
 
     Raises:
         ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
@@ -291,6 +290,8 @@ def build_csr_from_coo(
             f"row and col must be the same length, got {row.numel()} and {col.numel()}"
         )
     num_edges = row.numel()
+    # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
+    indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
     row_max = -1
     if num_edges:
         row_max = int(row.max().item())
@@ -310,7 +311,7 @@ def build_csr_from_coo(
             edge_ids = torch.empty(0, dtype=torch.int64)
         return CsrBuildResult(
             indptr=indptr,
-            indices=torch.empty(0, dtype=torch.int64),
+            indices=torch.empty(0, dtype=indices_dtype),
             edge_ids=edge_ids,
         )
     indptr[0] = 0
@@ -319,7 +320,7 @@ def build_csr_from_coo(
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
     # take over if it lands on disk anyway.
-    indices = allocate_preshared((num_edges,), torch.int64, random_access=True)
+    indices = allocate_preshared((num_edges,), indices_dtype, random_access=True)
     edge_ids = None
     if retain_edge_ids:
         edge_ids = allocate_preshared((num_edges,), torch.int64, random_access=True)

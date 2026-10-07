@@ -17,4 +17,5 @@ runs:
     shell: bash
     env:
       GH_TOKEN: ${{ inputs.github-token }}
-    run: gh pr checkout ${{ inputs.pr_number }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+    run: gh pr checkout "${PR_NUMBER}"

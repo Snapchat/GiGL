@@ -26,6 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
+- The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
+  directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/788
 
 ### Fixed
 
