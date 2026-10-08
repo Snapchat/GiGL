@@ -430,7 +430,7 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 item = NodeType("item")
                 friends = EdgeType(user, Relation("friends"), user)
                 engages = EdgeType(item, Relation("engages"), user)
-                # (source_type, source_id, target_type, target_id) for in-edges.
+                # (source_id, target_id) pairs, written as in-edges.
                 friend_edges = [(2, 0), (1, 2), (3, 1)]
                 engage_edges = [(0, 2), (0, 1)]
                 if direction == "out":
@@ -470,8 +470,8 @@ class TestHeteroToGraphTransformerInput(TestCase):
                         for b, q, k, r in relation_indices.tolist()
                     }
 
-                # "in": query is the edge target; "out": query is the source of
-                # the reversed edge, so the same token pairs appear either way.
+                # "in": query is the edge target. "out" reverses every edge, so the
+                # same token pairs appear with query and key swapped.
                 expected = {
                     (0, 0, 2, 0),  # user2 -> user0 into hop 0
                     (0, 2, 1, 0),  # user1 -> user2 into hop 1

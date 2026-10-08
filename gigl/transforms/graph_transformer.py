@@ -214,14 +214,14 @@ def heterodata_to_graph_transformer_input(
             by hop depth before truncating to ``max_seq_len``. The default False
             preserves existing homogeneous-node-id ordering.
         relation_edges_within_sampled_frontier: If True, k-hop relation indices
-            keep only edges whose expanded endpoint (the target for
-            ``sampling_direction="in"``, the source for ``"out"``) is fewer than
-            ``hop_distance`` hops from the anchor. These are the edges the
-            anchor's own k-hop sample contains. Edges into last-hop tokens exist
-            only because another seed in the batch expanded that node; in
-            link-prediction batches that seed is often the anchor's positive
-            label, so keeping them leaks the label. If False, every batch edge
-            between two tokens becomes a relation. Has no effect with
+            keep only the edges the anchor's own k-hop sample contains: those
+            whose expanded endpoint (the target for ``sampling_direction="in"``,
+            the source for ``"out"``) is fewer than ``hop_distance`` hops from
+            the anchor. Edges into last-hop tokens exist only because another
+            seed in the batch expanded that node; in link-prediction batches
+            that seed is often the anchor's positive label, so keeping them
+            leaks the label. If False, every batch edge between two tokens
+            becomes a relation. Has no effect with
             ``sequence_construction_method="ppr"``. (default: True)
 
     Returns:
@@ -1463,9 +1463,9 @@ def _lookup_pairwise_relation_indices(
     orientation.
 
     If ``frontier_batch_node_keys`` is given (sorted ``batch_idx * num_nodes +
-    node_idx`` keys), an edge is kept only when its expanded endpoint, the
-    target for ``sampling_direction="in"`` and the source for ``"out"``, is in
-    that anchor's frontier.
+    node_idx`` keys), an edge is kept only when its expanded endpoint is in
+    that anchor's frontier. See ``relation_edges_within_sampled_frontier`` in
+    ``heterodata_to_graph_transformer_input``.
     """
     if not relation_edge_types:
         return None

@@ -1174,14 +1174,12 @@ class GraphTransformerEncoder(nn.Module):
             with ``relation_attention_mode="none"`` keeps the dense attention
             bias broadcastable (no per-layer (seq, seq) bias materialization).
         relation_edges_within_sampled_frontier: If True (default), k-hop
-            relation attention and messages use only sampled edges into tokens
-            fewer than ``hop_distance`` hops from the anchor, i.e. the edges the
-            anchor's own k-hop sample contains. This keeps an anchor's
-            embedding independent of the other seeds in its batch; without it,
-            a link-prediction batch that also seeds the positive label exposes
-            the label's sampled in-edges. Set False to use every sampled edge
-            between two tokens. Has no effect with
-            ``sequence_construction_method="ppr"``.
+            relation attention and messages use only the edges the anchor's own
+            k-hop sample contains. This keeps an anchor's embedding independent
+            of the other seeds in its batch; without it, a link-prediction batch
+            that also seeds the positive label exposes the label's sampled
+            in-edges. Set False to use every sampled edge between two tokens.
+            Has no effect with ``sequence_construction_method="ppr"``.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
