@@ -12,6 +12,7 @@ from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
 
@@ -372,25 +373,18 @@ class DistRangePartitioner(DistPartitioner):
                 else None
             )
         else:
-            partitioned_edge_index = torch.stack(
-                (
-                    torch.cat([r[0] for r in res_list]),
-                    torch.cat([r[1] for r in res_list]),
-                ),
-                dim=0,
+            partitioned_tensors = concatenate_chunks(
+                res_list, [(0, 1), feat_idx, weight_idx, quantized_feat_idx]
             )
+            partitioned_edge_index = partitioned_tensors[(0, 1)]
             partitioned_edge_features = (
-                torch.cat([r[feat_idx] for r in res_list])
-                if feat_idx is not None
-                else None
+                partitioned_tensors[feat_idx] if feat_idx is not None else None
             )
             partitioned_weights = (
-                torch.cat([r[weight_idx] for r in res_list])
-                if weight_idx is not None
-                else None
+                partitioned_tensors[weight_idx] if weight_idx is not None else None
             )
             partitioned_edge_quantized_features = (
-                torch.cat([r[quantized_feat_idx] for r in res_list])
+                partitioned_tensors[quantized_feat_idx]
                 if quantized_feat_idx is not None
                 else None
             )

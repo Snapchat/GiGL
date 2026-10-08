@@ -1,6 +1,8 @@
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, Union
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
@@ -32,7 +34,12 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import FeatureQuantizationMetadata
+from gigl.utils.share_memory import share_memory
 from tests.test_assets.test_case import TestCase
+
+# Lowers the preshare threshold so a small test tensor goes through the shared-memory path.
+_SMALL_PRESHARE_ENV = {"GIGL_TENSOR_SPILL_MIN_BYTES": "64"}
+
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
     "node_id": tf.io.FixedLenFeature([], tf.int64),
@@ -99,6 +106,36 @@ class TFRecordDataLoaderTest(TestCase):
     def tearDown(self):
         super().tearDown()
         self.temp_dir.cleanup()
+
+    def test_load_as_torch_tensors_allocates_outputs_in_shared_memory(self) -> None:
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        with mock.patch.dict(os.environ, _SMALL_PRESHARE_ENV):
+            loaded = loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                    feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
+                    feature_keys=["feature_0"],
+                    feature_dim=1,
+                    entity_key="node_id",
+                    label_keys=["label_0"],
+                    tfrecord_uri_pattern="100.tfrecord",
+                ),
+                # Several batches, so the outputs are built from more than one chunk.
+                tf_dataset_options=TFDatasetOptions(batch_size=30, deterministic=True),
+            )
+
+        assert loaded.features is not None and loaded.labels is not None
+        assert_close(loaded.ids, torch.arange(100))
+        assert_close(
+            loaded.features, torch.arange(100, dtype=torch.float32)[:, None] * 10
+        )
+        assert_close(loaded.labels, (torch.arange(100) % 2).float()[:, None])
+        for tensor in (loaded.ids, loaded.features, loaded.labels):
+            self.assertTrue(tensor.is_shared())
+            # Already shared, so sharing it again must not copy it to a new block.
+            data_ptr = tensor.data_ptr()
+            share_memory(tensor)
+            self.assertEqual(tensor.data_ptr(), data_ptr)
 
     @parameterized.expand(
         [

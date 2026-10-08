@@ -22,6 +22,7 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
 
@@ -1158,7 +1159,10 @@ class DistPartitioner:
 
         # Since the unpartitioned node ids, features and labels are large, we would like to delete them when
         # they are no longer needed to free memory.
+        input_parts.clear()
         del (
+            input_parts,
+            input_data,
             node_ids,
             num_nodes,
             max_node_ids,
@@ -1171,7 +1175,11 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
-            partitioned_ids = torch.cat([r[-1] for r in partitioned_results])
+            partitioned_tensors = concatenate_chunks(
+                partitioned_results,
+                [-1, node_feature_ind, node_quantized_feature_ind, node_label_ind],
+            )
+            partitioned_ids = partitioned_tensors[-1]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
@@ -1183,7 +1191,7 @@ class DistPartitioner:
             if has_node_features:
                 assert node_feature_ind is not None
                 node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_feature_ind] for r in partitioned_results]),
+                    feats=partitioned_tensors[node_feature_ind],
                     ids=partitioned_ids,
                 )
 
@@ -1193,9 +1201,7 @@ class DistPartitioner:
             if has_node_quantized_features:
                 assert node_quantized_feature_ind is not None
                 node_quantized_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat(
-                        [r[node_quantized_feature_ind] for r in partitioned_results]
-                    ),
+                    feats=partitioned_tensors[node_quantized_feature_ind],
                     ids=partitioned_ids,
                 )
 
@@ -1205,7 +1211,7 @@ class DistPartitioner:
             if has_node_labels:
                 assert node_label_ind is not None
                 node_label_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_label_ind] for r in partitioned_results]),
+                    feats=partitioned_tensors[node_label_ind],
                     ids=partitioned_ids,
                 )
 
@@ -1608,13 +1614,9 @@ class DistPartitioner:
         if len(partitioned_chunks) == 0:
             partitioned_label_edge_index = torch.empty((2, 0))
         else:
-            partitioned_label_edge_index = torch.stack(
-                [
-                    torch.cat([src_ids for src_ids, _ in partitioned_chunks]),
-                    torch.cat([dst_ids for _, dst_ids in partitioned_chunks]),
-                ],
-                dim=0,
-            )
+            partitioned_label_edge_index = concatenate_chunks(
+                partitioned_chunks, [(0, 1)]
+            )[(0, 1)]
 
         partitioned_chunks.clear()
 

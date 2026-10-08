@@ -15,6 +15,7 @@ from gigl.common.utils.decorator import tf_on_cpu
 from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
 
@@ -481,20 +482,21 @@ class TFRecordDataLoader:
 
         start_time = time.perf_counter()
         num_entities_processed = 0
-        id_tensors: list[torch.Tensor] = []
-        feature_tensors: list[torch.Tensor] = []
-        quantized_feature_tensors: list[tf.Tensor] = []
-        label_tensors: list[torch.Tensor] = []
+        # One-field chunks, the shape concatenate_chunks takes.
+        id_tensors: list[tuple[tf.Tensor]] = []
+        feature_tensors: list[tuple[tf.Tensor]] = []
+        quantized_feature_tensors: list[tuple[tf.Tensor]] = []
+        label_tensors: list[tuple[tf.Tensor]] = []
         for idx, batch in enumerate(dataset):
-            id_tensors.append(proccess_id_tensor(batch))
+            id_tensors.append((proccess_id_tensor(batch),))
             if feature_keys or label_keys:
                 feature_tensor, label_tensor = _concatenate_features_by_names(
                     batch, feature_keys, label_keys
                 )
                 if feature_tensor is not None:
-                    feature_tensors.append(feature_tensor)
+                    feature_tensors.append((feature_tensor,))
                 if label_tensor is not None:
-                    label_tensors.append(label_tensor)
+                    label_tensors.append((label_tensor,))
             if packed_feature_key is not None:
                 quantized_feature_tensor = tf.io.decode_raw(
                     batch[packed_feature_key], tf.uint8
@@ -503,11 +505,11 @@ class TFRecordDataLoader:
                     quantized_feature_tensor,
                     [-1, serialized_tf_record_info.packed_feature_dim],
                 )
-                quantized_feature_tensors.append(quantized_feature_tensor)
+                quantized_feature_tensors.append((quantized_feature_tensor,))
             num_entities_processed += (
-                id_tensors[-1].shape[0]
+                id_tensors[-1][0].shape[0]
                 if entity_type == FeatureTypes.NODE
-                else id_tensors[-1].shape[1]
+                else id_tensors[-1][0].shape[1]
             )
             if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
                 logger.info(
@@ -518,24 +520,23 @@ class TFRecordDataLoader:
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
         )
         start = time.perf_counter()
-        id_tensor = _tf_tensor_to_torch_tensor(
-            tf.concat(id_tensors, axis=id_concat_axis)
+        # Presharing lets the later share_memory_() keep these outputs in place instead of copying them.
+        concatenate = partial(
+            concatenate_chunks,
+            fields=[0],
+            convert=_tf_tensor_to_torch_tensor,
+            preshare=True,
         )
+        id_tensor = concatenate(id_tensors, axis=id_concat_axis)[0]
         output_feature_tensor: Optional[torch.Tensor] = None
         output_quantized_feature_tensor: Optional[torch.Tensor] = None
         output_label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
-            output_feature_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(feature_tensors, axis=0)
-            )
+            output_feature_tensor = concatenate(feature_tensors)[0]
         if quantized_feature_tensors:
-            output_quantized_feature_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(quantized_feature_tensors, axis=0)
-            )
+            output_quantized_feature_tensor = concatenate(quantized_feature_tensors)[0]
         if label_tensors:
-            output_label_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(label_tensors, axis=0)
-            )
+            output_label_tensor = concatenate(label_tensors)[0]
 
         if output_feature_tensor is not None and output_label_tensor is not None:
             assert output_feature_tensor.size(0) == output_label_tensor.size(0), (
