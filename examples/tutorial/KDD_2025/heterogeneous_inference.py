@@ -32,7 +32,10 @@ from pathlib import Path
 import fastavro
 import pandas as pd
 import torch
-import torch.multiprocessing.spawn
+
+# Import the function explicitly: `torch.multiprocessing.spawn` resolves to the
+# submodule of the same name, which type checkers reject as non-callable.
+from torch.multiprocessing.spawn import spawn
 
 from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import Uri, UriFactory
@@ -161,7 +164,7 @@ if __name__ == "__main__":
     logger.info(f"Using saved model URI: {model_uri}")
     # Spawn processes for distributed inference
     inference_port = get_free_port()
-    torch.multiprocessing.spawn(
+    spawn(
         inference,
         args=(
             int(args.local_world_size),  # local_world_size
@@ -173,7 +176,7 @@ if __name__ == "__main__":
         ),
         nprocs=int(args.local_world_size),
         join=True,
-    )  # ty: ignore[call-non-callable] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+    )
 
     # Now let's load the embeddings to a dataframe
     # Note in a "production" setting we have `gigl.common.data.export.load_embeddings_to_bigquery`
