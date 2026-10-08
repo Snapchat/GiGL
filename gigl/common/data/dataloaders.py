@@ -214,10 +214,9 @@ def _concatenate_tf_tensors_to_torch(
 ) -> torch.Tensor:
     """Concatenate TensorFlow batches into one preallocated PyTorch tensor.
 
-    The input list is consumed so each source batch can be released immediately
-    after it is copied. This keeps peak host memory near the output size plus one
-    batch instead of retaining every input alongside a second full-size
-    ``tf.concat`` output.
+    The input list is consumed: each batch is released right after it is copied, so
+    peak host memory stays near the output size plus one batch, not every input plus
+    a second full-size ``tf.concat`` output.
 
     A CPU output is allocated with :func:`gigl.utils.share_memory.allocate_preshared`, so a large
     output lands directly in shared memory and the ``share_memory_()`` that later hands it to other

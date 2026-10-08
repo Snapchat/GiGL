@@ -50,7 +50,8 @@ def _concatenate_partitioned_chunks(
         The output tensors, in the order of ``output_fields``.
 
     Raises:
-        ValueError: If ``partitioned_chunks`` is empty, or a field's dtype or trailing shape differs across chunks.
+        ValueError: If ``partitioned_chunks`` is empty, or a field's dtype or trailing shape
+            differs across chunks.
     """
     if not partitioned_chunks:
         raise ValueError("Expected at least one partitioned chunk to concatenate.")
@@ -1264,7 +1265,7 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
-            # All fields are copied in one pass so each chunk can be released as soon as it is copied.
+            # One call for every field: the helper consumes the chunks, so it cannot be called per field.
             output_fields = [node_id_ind] + [
                 field_index
                 for field_index in (
@@ -1274,7 +1275,6 @@ class DistPartitioner:
                 )
                 if field_index is not None
             ]
-            # Maps each field index in the chunks to its concatenated tensor.
             partitioned_tensors = dict(
                 zip(
                     output_fields,

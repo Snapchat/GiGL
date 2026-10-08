@@ -375,13 +375,12 @@ class DistRangePartitioner(DistPartitioner):
                 else None
             )
         else:
-            # All fields are copied in one pass so each chunk can be released as soon as it is copied.
+            # One call for every field: the helper consumes the chunks, so it cannot be called per field.
             output_fields: list[Union[int, tuple[int, ...]]] = [(0, 1)] + [
                 field_index
                 for field_index in (feat_idx, quantized_feat_idx, weight_idx)
                 if field_index is not None
             ]
-            # Maps each output field to its concatenated tensor.
             partitioned_tensors = dict(
                 zip(
                     output_fields,

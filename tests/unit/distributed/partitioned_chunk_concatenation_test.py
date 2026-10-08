@@ -8,7 +8,12 @@ from tests.test_assets.test_case import TestCase
 def _random_chunk(
     num_rows: int, generator: torch.Generator
 ) -> tuple[torch.Tensor, ...]:
-    # (src, dst, features, packed uint8 features, weights), matching the edge partitioning layout.
+    # Fields follow the edge partitioning layout:
+    #   0: src ids
+    #   1: dst ids
+    #   2: features
+    #   3: packed uint8 features
+    #   4: weights
     return (
         torch.randint(0, 1000, (num_rows,), dtype=torch.int64, generator=generator),
         torch.randint(0, 1000, (num_rows,), dtype=torch.int64, generator=generator),
