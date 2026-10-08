@@ -1,6 +1,9 @@
+import multiprocessing as mp
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, Union
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
@@ -33,7 +36,18 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import FeatureQuantizationMetadata
+from gigl.utils.share_memory import share_memory
 from tests.test_assets.test_case import TestCase
+
+# Lowers the preshare threshold so a small test tensor goes through the shared-memory path.
+_SMALL_PRESHARE_ENV = {"GIGL_TENSOR_SPILL_MIN_BYTES": "64"}
+
+
+def _concatenate_in_child(output_dict) -> None:
+    """Runs in a spawned child, the same way the TFRecord loader process hands back its tensors."""
+    tensors = [tf.ones((3, 4)) * 2.0, tf.ones((5, 4)) * 3.0]
+    output_dict["features"] = _concatenate_tf_tensors_to_torch(tensors)
+
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
     "node_id": tf.io.FixedLenFeature([], tf.int64),
@@ -138,6 +152,39 @@ class TFRecordDataLoaderTest(TestCase):
         self.assertEmpty(tensors)
         self.assertEqual(result.dtype, torch.int64)
         assert_close(result, torch.tensor([[0, 1, 2], [10, 11, 12]]))
+
+    def test_concatenate_tf_tensors_to_torch_allocates_in_shared_memory(self) -> None:
+        tensors = [
+            tf.reshape(tf.range(12.0), (3, 4)),
+            tf.reshape(tf.range(20.0), (5, 4)),
+        ]
+        expected = torch.cat([torch.from_numpy(t.numpy()) for t in tensors])
+
+        with mock.patch.dict(os.environ, _SMALL_PRESHARE_ENV):
+            result = _concatenate_tf_tensors_to_torch(tensors)
+
+        self.assertTrue(result.is_shared())
+        assert_close(result, expected)
+        # Already shared, so sharing it again must not copy it to a new block.
+        data_ptr = result.data_ptr()
+        share_memory(result)
+        self.assertEqual(result.data_ptr(), data_ptr)
+
+    def test_concatenate_tf_tensors_to_torch_survives_spawn_child_exit(self) -> None:
+        with mock.patch.dict(os.environ, _SMALL_PRESHARE_ENV):
+            ctx = mp.get_context("spawn")
+            with ctx.Manager() as manager:
+                output_dict = manager.dict()
+                child = ctx.Process(target=_concatenate_in_child, args=(output_dict,))
+                child.start()
+                child.join()
+                self.assertEqual(child.exitcode, 0)
+                result = output_dict["features"]
+
+        self.assertTrue(result.is_shared())
+        assert_close(
+            result, torch.cat([torch.full((3, 4), 2.0), torch.full((5, 4), 3.0)])
+        )
 
     def test_concatenate_tf_tensors_to_torch_rejects_empty_input(self) -> None:
         with self.assertRaises(ValueError):

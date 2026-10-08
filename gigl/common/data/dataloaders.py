@@ -16,6 +16,7 @@ from gigl.common.utils.decorator import tf_on_cpu
 from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
+from gigl.utils.share_memory import allocate_preshared
 
 logger = Logger()
 
@@ -218,6 +219,10 @@ def _concatenate_tf_tensors_to_torch(
     batch instead of retaining every input alongside a second full-size
     ``tf.concat`` output.
 
+    A CPU output is allocated with :func:`gigl.utils.share_memory.allocate_preshared`, so a large
+    output lands directly in shared memory and the ``share_memory_()`` that later hands it to other
+    processes does not copy it. Small outputs stay plain tensors.
+
     Args:
         tf_tensors: Non-empty list of tensors that match on every dimension except ``axis``.
         axis: The dimension to concatenate along.
@@ -238,11 +243,14 @@ def _concatenate_tf_tensors_to_torch(
     first_tensor = _tf_tensor_to_torch_tensor(pending_tensors.popleft())
     output_shape = list(first_tensor.shape)
     output_shape[axis] = total_rows
-    output = torch.empty(
-        output_shape,
-        dtype=first_tensor.dtype,
-        device=first_tensor.device,
-    )
+    if first_tensor.device.type == "cpu":
+        output = allocate_preshared(tuple(output_shape), first_tensor.dtype)
+    else:
+        output = torch.empty(
+            output_shape,
+            dtype=first_tensor.dtype,
+            device=first_tensor.device,
+        )
     next_row = first_tensor.shape[axis]
     output.narrow(axis, 0, next_row).copy_(first_tensor)
     del first_tensor
