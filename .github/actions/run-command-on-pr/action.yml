@@ -59,7 +59,11 @@ runs:
 
     - name: Set up workflow URL
       shell: bash
-      run: echo "WORKFLOW_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_ENV
+      env:
+        SERVER_URL: ${{ github.server_url }}
+        REPOSITORY: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+      run: echo "WORKFLOW_URL=${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}" >> $GITHUB_ENV
 
     - name: Commment workflow started
       if: ${{ inputs.should_leave_progress_comments == 'true' }}

@@ -31,6 +31,7 @@ extensions = [
     "sphinx_design", # Needed by themes
     "myst_nb", # Support for rendering Jupyter Notebooks: https://myst-nb.readthedocs.io/en/v1.2.0/
     "sphinx_copybutton", # Support for copying code snippets: https://sphinx-copybutton.readthedocs.io/
+    "sphinxcontrib.mermaid", # Support for Mermaid diagrams in MyST and GitHub Markdown.
 ]
 
 autoapi_type = 'python'
@@ -61,6 +62,7 @@ autoapi_member_order = "groupwise" # Group members by class, functions, properti
 myst_enable_extensions = [
     "html_image", # Convert <img> tags in markdown files; https://myst-parser.readthedocs.io/en/latest/syntax/optional.html#html-images
 ]
+myst_fence_as_directive = ["mermaid"]
 
 include_patterns = [
     "docs/**",

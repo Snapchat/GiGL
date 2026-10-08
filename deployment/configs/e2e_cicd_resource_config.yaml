@@ -23,5 +23,4 @@ trainer_config:
 inferencer_config:
   num_workers: 1
   max_num_workers: 256
-  machine_type: "c2d-highmem-32"
-  disk_size_gb: 100
+  machine_type: "e2-standard-8"
