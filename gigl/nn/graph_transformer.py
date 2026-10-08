@@ -1173,6 +1173,13 @@ class GraphTransformerEncoder(nn.Module):
             matches ``"none"``. Composes with ``relation_attention_mode``, and
             with ``relation_attention_mode="none"`` keeps the dense attention
             bias broadcastable (no per-layer (seq, seq) bias materialization).
+        relation_edges_within_sampled_frontier: If True (default), k-hop
+            relation attention and messages use only the edges the anchor's own
+            k-hop sample contains. This keeps an anchor's embedding independent
+            of the other seeds in its batch; without it, a link-prediction batch
+            that also seeds the positive label exposes the label's sampled
+            in-edges. Set False to use every sampled edge between two tokens.
+            Has no effect with ``sequence_construction_method="ppr"``.
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -1238,6 +1245,7 @@ class GraphTransformerEncoder(nn.Module):
             "edge_type_linear",
             "edge_type_attention",
         ] = "none",
+        relation_edges_within_sampled_frontier: bool = True,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -1359,6 +1367,9 @@ class GraphTransformerEncoder(nn.Module):
         self._num_heads = num_heads
         self._relation_attention_mode = relation_attention_mode
         self._relation_message_mode = relation_message_mode
+        self._relation_edges_within_sampled_frontier = (
+            relation_edges_within_sampled_frontier
+        )
         self._edge_type_to_feat_dim_map = {
             edge_type: edge_type_to_feat_dim_map[edge_type]
             for edge_type in sorted(edge_type_to_feat_dim_map.keys())
@@ -1620,6 +1631,7 @@ class GraphTransformerEncoder(nn.Module):
                 or self._relation_message_mode != "none"
                 else None
             ),
+            relation_edges_within_sampled_frontier=self._relation_edges_within_sampled_frontier,
         )
 
         # Free memory after sequences are built

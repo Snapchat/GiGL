@@ -154,6 +154,7 @@ def heterodata_to_graph_transformer_input(
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
     prioritize_hop_order: bool = False,
+    relation_edges_within_sampled_frontier: bool = True,
 ) -> tuple[
     Float[Tensor, "anchors sequence feature_dim"],
     Bool[Tensor, "anchors sequence"],
@@ -212,6 +213,16 @@ def heterodata_to_graph_transformer_input(
         prioritize_hop_order: If True, k-hop sequence construction fills tokens
             by hop depth before truncating to ``max_seq_len``. The default False
             preserves existing homogeneous-node-id ordering.
+        relation_edges_within_sampled_frontier: If True, k-hop relation indices
+            keep only the edges the anchor's own k-hop sample contains: those
+            whose expanded endpoint (the target for ``sampling_direction="in"``,
+            the source for ``"out"``) is fewer than ``hop_distance`` hops from
+            the anchor. Edges into last-hop tokens exist only because another
+            seed in the batch expanded that node; in link-prediction batches
+            that seed is often the anchor's positive label, so keeping them
+            leaks the label. If False, every batch edge between two tokens
+            becomes a relation. Has no effect with
+            ``sequence_construction_method="ppr"``. (default: True)
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -337,10 +348,19 @@ def heterodata_to_graph_transformer_input(
 
     ppr_weight_sequences: Optional[Tensor] = None
     ppr_relation_feature_sequences: Optional[Tensor] = None
+    frontier_batch_node_keys: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
         if sampling_direction == "in":
             homo_edge_index = homo_edge_index.flip(0)
+        if relation_edge_types and relation_edges_within_sampled_frontier:
+            frontier_batch_node_keys = _get_sampled_frontier_batch_node_keys(
+                anchor_indices=anchor_indices,
+                edge_index=homo_edge_index,
+                num_nodes=num_nodes,
+                hop_distance=hop_distance,
+                device=device,
+            )
         if prioritize_hop_order:
             node_index_sequences, valid_mask = (
                 _build_hop_ordered_sequence_layout_from_sparse_edges(
@@ -482,6 +502,8 @@ def heterodata_to_graph_transformer_input(
         node_type_offsets=node_type_offsets,
         num_nodes=num_nodes,
         device=device,
+        frontier_batch_node_keys=frontier_batch_node_keys,
+        sampling_direction=sampling_direction,
     )
 
     anchor_bias_features = _compose_anchor_feature_tensor(
@@ -1431,12 +1453,19 @@ def _lookup_pairwise_relation_indices(
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
+    frontier_batch_node_keys: Optional[Tensor] = None,
+    sampling_direction: Literal["in", "out"] = "out",
 ) -> Optional[Tensor]:
     """Build sparse relation coordinates for valid token pairs.
 
     For a directed edge ``source -> target``, attention uses ``query=target`` and
     ``key=source`` so relation-aware attention follows message-passing
     orientation.
+
+    If ``frontier_batch_node_keys`` is given (sorted ``batch_idx * num_nodes +
+    node_idx`` keys), an edge is kept only when its expanded endpoint is in
+    that anchor's frontier. See ``relation_edges_within_sampled_frontier`` in
+    ``heterodata_to_graph_transformer_input``.
     """
     if not relation_edge_types:
         return None
@@ -1478,6 +1507,23 @@ def _lookup_pairwise_relation_indices(
             num_nodes=num_nodes,
             device=device,
         )
+        if frontier_batch_node_keys is not None:
+            expanded_positions = (
+                relation_query_positions
+                if sampling_direction == "in"
+                else relation_key_positions
+            )
+            expanded_batch_node_keys = (
+                relation_batch_indices * num_nodes
+                + node_index_sequences[relation_batch_indices, expanded_positions]
+            )
+            in_frontier = _sorted_contains(
+                sorted_values=frontier_batch_node_keys,
+                values=expanded_batch_node_keys,
+            )
+            relation_batch_indices = relation_batch_indices[in_frontier]
+            relation_query_positions = relation_query_positions[in_frontier]
+            relation_key_positions = relation_key_positions[in_frontier]
         if relation_batch_indices.numel() == 0:
             continue
 
@@ -1500,6 +1546,44 @@ def _lookup_pairwise_relation_indices(
     if not relation_index_parts:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     return torch.cat(relation_index_parts, dim=0)
+
+
+def _get_sampled_frontier_batch_node_keys(
+    anchor_indices: Tensor,
+    edge_index: Tensor,
+    num_nodes: int,
+    hop_distance: int,
+    device: torch.device,
+) -> Tensor:
+    """Return sorted ``batch_idx * num_nodes + node_idx`` keys for nodes fewer
+    than ``hop_distance`` hops from each anchor.
+
+    These are the nodes a k-hop sampler expands for that anchor, so their
+    sampled edges match the anchor's own sample. ``edge_index`` must already
+    point in the traversal direction.
+    """
+    if hop_distance <= 0:
+        return torch.zeros((0,), dtype=torch.long, device=device)
+    frontier = _get_k_hop_neighbors_sparse(
+        anchor_indices=anchor_indices,
+        edge_index=edge_index,
+        num_nodes=num_nodes,
+        k=hop_distance - 1,
+        device=device,
+    )
+    batch_idx, node_idx = frontier.indices()
+    # Coalesced COO indices are row-major sorted, so the keys are sorted too.
+    return batch_idx * num_nodes + node_idx
+
+
+def _sorted_contains(sorted_values: Tensor, values: Tensor) -> Tensor:
+    """Return a bool mask of which ``values`` appear in ``sorted_values``."""
+    if sorted_values.numel() == 0:
+        return torch.zeros_like(values, dtype=torch.bool)
+    positions = torch.searchsorted(sorted_values, values).clamp(
+        max=sorted_values.numel() - 1
+    )
+    return sorted_values[positions] == values
 
 
 def _build_token_occurrence_index(

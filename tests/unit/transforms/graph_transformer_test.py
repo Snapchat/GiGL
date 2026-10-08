@@ -415,6 +415,79 @@ class TestHeteroToGraphTransformerInput(TestCase):
         self.assertFalse((pairwise_relation_indices[:, 1:3] == 3).any().item())
         self.assertFalse((pairwise_relation_indices[:, 3] == 2).any().item())
 
+    def test_relation_indices_exclude_edges_into_last_hop_tokens(self):
+        """Relations into the last hop come from other seeds and are dropped.
+
+        Batch of seeds user0 (anchor) and user1 (its positive), sampled two hops
+        over in-edges. user1 sits at hop 2 of user0's sequence; its in-edges
+        (user3 -> user1, item0 -> user1) exist only because user1 is also a seed.
+        For "out" every edge is reversed and the same relations must result.
+        """
+        for sampling_direction in ["in", "out"]:
+            with self.subTest(sampling_direction=sampling_direction):
+                direction = cast(Literal["in", "out"], sampling_direction)
+                user = NodeType("user")
+                item = NodeType("item")
+                friends = EdgeType(user, Relation("friends"), user)
+                engages = EdgeType(item, Relation("engages"), user)
+                # (source_id, target_id) pairs, written as in-edges.
+                friend_edges = [(2, 0), (1, 2), (3, 1)]
+                engage_edges = [(0, 2), (0, 1)]
+                if direction == "out":
+                    engages = EdgeType(user, Relation("engages"), item)
+                    friend_edges = [(dst, src) for src, dst in friend_edges]
+                    engage_edges = [(dst, src) for src, dst in engage_edges]
+
+                data = HeteroData()
+                # Item first so user nodes get a nonzero homogeneous offset.
+                # Each feature is a unique node id: items 10.., users 0...
+                data["item"].x = torch.tensor([[10.0]])
+                data["user"].x = torch.arange(4, dtype=torch.float).unsqueeze(1)
+                data[friends.tuple_repr()].edge_index = torch.tensor(friend_edges).t()
+                data[engages.tuple_repr()].edge_index = torch.tensor(engage_edges).t()
+
+                def relation_node_triples(
+                    within_frontier: bool,
+                ) -> set[tuple[int, int, int, int]]:
+                    sequences, _, auxiliary_data = (
+                        heterodata_to_graph_transformer_input(
+                            data=data,
+                            batch_size=2,
+                            max_seq_len=6,
+                            anchor_node_type="user",
+                            hop_distance=2,
+                            sampling_direction=direction,
+                            relation_edge_types=[friends, engages],
+                            relation_edges_within_sampled_frontier=within_frontier,
+                        )
+                    )
+                    relation_indices = auxiliary_data["pairwise_relation_indices"]
+                    assert relation_indices is not None
+                    node_ids = sequences[..., 0].long()
+                    # (anchor, query node id, key node id, relation index)
+                    return {
+                        (b, int(node_ids[b, q]), int(node_ids[b, k]), r)
+                        for b, q, k, r in relation_indices.tolist()
+                    }
+
+                # "in": query is the edge target. "out" reverses every edge, so the
+                # same token pairs appear with query and key swapped.
+                expected = {
+                    (0, 0, 2, 0),  # user2 -> user0 into hop 0
+                    (0, 2, 1, 0),  # user1 -> user2 into hop 1
+                    (0, 2, 10, 1),  # item0 -> user2 into hop 1
+                    (1, 1, 3, 0),  # user3 -> user1 into user1's own anchor
+                    (1, 1, 10, 1),  # item0 -> user1 into user1's own anchor
+                }
+                if direction == "out":
+                    expected = {(b, k, q, r) for b, q, k, r in expected}
+                leaked = (0, 1, 10, 1) if direction == "in" else (0, 10, 1, 1)
+
+                self.assertEqual(relation_node_triples(True), expected)
+                # user3 is hop 3 from user0, so only item0 -> user1 adds a
+                # relation into user0's last-hop token user1.
+                self.assertEqual(relation_node_triples(False), expected | {leaked})
+
     def test_sampling_direction_defaults_to_out(self):
         """Out sampling preserves existing k-hop reachability."""
         data = create_directed_chain_data()

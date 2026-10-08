@@ -32,6 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
+  tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
+  they leaked the label at train time and made embeddings depend on batch composition.
+  `relation_edges_within_sampled_frontier=False` restores the previous behavior
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
   a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/761
