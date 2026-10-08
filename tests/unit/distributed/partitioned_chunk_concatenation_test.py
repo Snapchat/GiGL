@@ -59,6 +59,26 @@ class PartitionedChunkConcatenationTest(TestCase):
         self.assertEqual(actual.shape, expected.shape)
         self.assertTrue(torch.equal(actual, expected))
 
+    def test_all_zero_row_chunks_match_cat_and_stack(self) -> None:
+        # A rank that receives nothing for a type gets only zero-row chunks, so the outputs are
+        # shaped from the first chunk rather than from a chunk with rows.
+        generator = torch.Generator().manual_seed(0)
+        chunks = [_random_chunk(0, generator) for _ in range(2)]
+        expected_edge_index = torch.stack(
+            (torch.cat([c[0] for c in chunks]), torch.cat([c[1] for c in chunks])),
+            dim=0,
+        )
+        expected_features = torch.cat([c[2] for c in chunks])
+
+        edge_index, features = _concatenate_partitioned_chunks(
+            chunks, output_fields=[(0, 1), 2]
+        )
+
+        self.assertEqual(edge_index.shape, expected_edge_index.shape)
+        self.assertEqual(edge_index.dtype, expected_edge_index.dtype)
+        self.assertEqual(features.shape, expected_features.shape)
+        self.assertEqual(features.dtype, expected_features.dtype)
+
     def test_raises_on_mismatched_chunks(self) -> None:
         with self.assertRaises(ValueError):
             _concatenate_partitioned_chunks([], output_fields=[0])

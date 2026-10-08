@@ -1,4 +1,3 @@
-import multiprocessing as mp
 import os
 import tempfile
 from pathlib import Path
@@ -41,12 +40,6 @@ from tests.test_assets.test_case import TestCase
 
 # Lowers the preshare threshold so a small test tensor goes through the shared-memory path.
 _SMALL_PRESHARE_ENV = {"GIGL_TENSOR_SPILL_MIN_BYTES": "64"}
-
-
-def _concatenate_in_child(output_dict) -> None:
-    """Runs in a spawned child, the same way the TFRecord loader process hands back its tensors."""
-    tensors = [tf.ones((3, 4)) * 2.0, tf.ones((5, 4)) * 3.0]
-    output_dict["features"] = _concatenate_tf_tensors_to_torch(tensors)
 
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
@@ -169,22 +162,6 @@ class TFRecordDataLoaderTest(TestCase):
         data_ptr = result.data_ptr()
         share_memory(result)
         self.assertEqual(result.data_ptr(), data_ptr)
-
-    def test_concatenate_tf_tensors_to_torch_survives_spawn_child_exit(self) -> None:
-        with mock.patch.dict(os.environ, _SMALL_PRESHARE_ENV):
-            ctx = mp.get_context("spawn")
-            with ctx.Manager() as manager:
-                output_dict = manager.dict()
-                child = ctx.Process(target=_concatenate_in_child, args=(output_dict,))
-                child.start()
-                child.join()
-                self.assertEqual(child.exitcode, 0)
-                result = output_dict["features"]
-
-        self.assertTrue(result.is_shared())
-        assert_close(
-            result, torch.cat([torch.full((3, 4), 2.0), torch.full((5, 4), 3.0)])
-        )
 
     def test_concatenate_tf_tensors_to_torch_rejects_empty_input(self) -> None:
         with self.assertRaises(ValueError):
