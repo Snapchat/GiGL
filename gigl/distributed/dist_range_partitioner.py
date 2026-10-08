@@ -8,13 +8,11 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_partitioner import (
-    DistPartitioner,
-    _concatenate_partitioned_chunks,
-)
+from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
 
@@ -375,17 +373,8 @@ class DistRangePartitioner(DistPartitioner):
                 else None
             )
         else:
-            # One call for every field: the helper consumes the chunks, so it cannot be called per field.
-            output_fields: list[Union[int, tuple[int, ...]]] = [(0, 1)] + [
-                field_index
-                for field_index in (feat_idx, quantized_feat_idx, weight_idx)
-                if field_index is not None
-            ]
-            partitioned_tensors = dict(
-                zip(
-                    output_fields,
-                    _concatenate_partitioned_chunks(res_list, output_fields),
-                )
+            partitioned_tensors = concatenate_chunks(
+                res_list, [(0, 1), feat_idx, weight_idx, quantized_feat_idx]
             )
             partitioned_edge_index = partitioned_tensors[(0, 1)]
             partitioned_edge_features = (
@@ -399,7 +388,6 @@ class DistRangePartitioner(DistPartitioner):
                 if quantized_feat_idx is not None
                 else None
             )
-            del partitioned_tensors
 
         res_list.clear()
         gc.collect()

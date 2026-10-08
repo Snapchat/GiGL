@@ -16,7 +16,6 @@ from gigl.common.data.dataloaders import (
     SerializedTFRecordInfo,
     TFDatasetOptions,
     TFRecordDataLoader,
-    _concatenate_tf_tensors_to_torch,
     _get_labels_from_features,
 )
 from gigl.common.data.load_torch_tensors import (
@@ -108,64 +107,35 @@ class TFRecordDataLoaderTest(TestCase):
         super().tearDown()
         self.temp_dir.cleanup()
 
-    def test_concatenate_tf_tensors_to_torch_preserves_values_and_consumes_inputs(
-        self,
-    ) -> None:
-        tensors = [
-            tf.constant([[1.0, 2.0], [3.0, 4.0]]),
-            tf.constant([[5.0, 6.0]]),
-            tf.constant([[7.0, 8.0], [9.0, 10.0]]),
-        ]
-        result = _concatenate_tf_tensors_to_torch(tensors)
-
-        self.assertEmpty(tensors)
-        self.assertEqual(result.shape, (5, 2))
-        self.assertEqual(result.dtype, torch.float32)
-        assert_close(
-            result,
-            torch.tensor(
-                [
-                    [1.0, 2.0],
-                    [3.0, 4.0],
-                    [5.0, 6.0],
-                    [7.0, 8.0],
-                    [9.0, 10.0],
-                ]
-            ),
-        )
-
-    def test_concatenate_tf_tensors_to_torch_along_axis_1(self) -> None:
-        # Edge ids load as (2, num_edges) batches, so they concatenate along axis 1.
-        tensors = [
-            tf.constant([[0, 1], [10, 11]], dtype=tf.int64),
-            tf.constant([[2], [12]], dtype=tf.int64),
-        ]
-        result = _concatenate_tf_tensors_to_torch(tensors, axis=1)
-
-        self.assertEmpty(tensors)
-        self.assertEqual(result.dtype, torch.int64)
-        assert_close(result, torch.tensor([[0, 1, 2], [10, 11, 12]]))
-
-    def test_concatenate_tf_tensors_to_torch_allocates_in_shared_memory(self) -> None:
-        tensors = [
-            tf.reshape(tf.range(12.0), (3, 4)),
-            tf.reshape(tf.range(20.0), (5, 4)),
-        ]
-        expected = torch.cat([torch.from_numpy(t.numpy()) for t in tensors])
-
+    def test_load_as_torch_tensors_allocates_outputs_in_shared_memory(self) -> None:
+        loader = TFRecordDataLoader(rank=0, world_size=1)
         with mock.patch.dict(os.environ, _SMALL_PRESHARE_ENV):
-            result = _concatenate_tf_tensors_to_torch(tensors)
+            loaded = loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+                    feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
+                    feature_keys=["feature_0"],
+                    feature_dim=1,
+                    entity_key="node_id",
+                    label_keys=["label_0"],
+                    tfrecord_uri_pattern="100.tfrecord",
+                ),
+                # Several batches, so the outputs are built from more than one chunk.
+                tf_dataset_options=TFDatasetOptions(batch_size=30, deterministic=True),
+            )
 
-        self.assertTrue(result.is_shared())
-        assert_close(result, expected)
-        # Already shared, so sharing it again must not copy it to a new block.
-        data_ptr = result.data_ptr()
-        share_memory(result)
-        self.assertEqual(result.data_ptr(), data_ptr)
-
-    def test_concatenate_tf_tensors_to_torch_rejects_empty_input(self) -> None:
-        with self.assertRaises(ValueError):
-            _concatenate_tf_tensors_to_torch([])
+        assert loaded.features is not None and loaded.labels is not None
+        assert_close(loaded.ids, torch.arange(100))
+        assert_close(
+            loaded.features, torch.arange(100, dtype=torch.float32)[:, None] * 10
+        )
+        assert_close(loaded.labels, (torch.arange(100) % 2).float()[:, None])
+        for tensor in (loaded.ids, loaded.features, loaded.labels):
+            self.assertTrue(tensor.is_shared())
+            # Already shared, so sharing it again must not copy it to a new block.
+            data_ptr = tensor.data_ptr()
+            share_memory(tensor)
+            self.assertEqual(tensor.data_ptr(), data_ptr)
 
     @parameterized.expand(
         [

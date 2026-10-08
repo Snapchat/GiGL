@@ -1,7 +1,7 @@
 import gc
 import time
-from collections import abc, defaultdict, deque
-from typing import Callable, Optional, Sequence, Tuple, Union
+from collections import abc, defaultdict
+from typing import Callable, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -22,98 +22,9 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
-
-
-def _concatenate_partitioned_chunks(
-    partitioned_chunks: list[Tuple[torch.Tensor, ...]],
-    output_fields: Sequence[Union[int, Tuple[int, ...]]],
-) -> list[torch.Tensor]:
-    """Concatenates fields of partitioned chunks into preallocated tensors.
-
-    Gives the same result as ``torch.cat([chunk[i] for chunk in partitioned_chunks])`` for
-    each requested field, or ``torch.stack`` of those concatenations for a tuple of fields,
-    without holding a second full-size copy of the inputs. The input list is consumed: each
-    chunk is released right after it is copied, so peak memory stays near the output size
-    plus one chunk.
-
-    Args:
-        partitioned_chunks: Non-empty list of chunks. Each chunk is a tuple of tensors that all
-            have the same number of rows, and each field has the same dtype and trailing
-            dimensions across chunks.
-        output_fields: One entry per output tensor. An int ``i`` concatenates field ``i`` along
-            dim 0. A tuple ``(i, j, ...)`` concatenates each of those fields and stacks the
-            results along a new leading dim, e.g. ``(0, 1)`` builds a ``(2, num_rows)`` edge index.
-
-    Returns:
-        The output tensors, in the order of ``output_fields``.
-
-    Raises:
-        ValueError: If ``partitioned_chunks`` is empty, or a field's dtype or trailing shape
-            differs across chunks.
-    """
-    if not partitioned_chunks:
-        raise ValueError("Expected at least one partitioned chunk to concatenate.")
-
-    num_rows = sum(chunk[0].size(0) for chunk in partitioned_chunks)
-    # torch.cat ignores legacy 1-D empty tensors, and a rank with nothing to send can return those. So shape the
-    # outputs from the first chunk that has rows, and skip zero-row chunks below.
-    first_chunk = next(
-        (chunk for chunk in partitioned_chunks if chunk[0].size(0) > 0),
-        partitioned_chunks[0],
-    )
-    outputs: list[torch.Tensor] = []
-    # Pairs of (field index in each chunk, destination tensor for that field).
-    destinations: list[Tuple[int, torch.Tensor]] = []
-    for output_field in output_fields:
-        field_indices = (
-            (output_field,) if isinstance(output_field, int) else output_field
-        )
-        template = first_chunk[field_indices[0]]
-        shape = (num_rows, *template.shape[1:])
-        if isinstance(output_field, int):
-            output = torch.empty(shape, dtype=template.dtype, device=template.device)
-            destinations.append((output_field, output))
-        else:
-            output = torch.empty(
-                (len(field_indices), *shape),
-                dtype=template.dtype,
-                device=template.device,
-            )
-            destinations.extend(
-                (field_index, output[row])
-                for row, field_index in enumerate(field_indices)
-            )
-        outputs.append(output)
-    del first_chunk, template
-
-    pending_chunks = deque(partitioned_chunks)
-    # The list may also be referenced elsewhere (e.g. by the partition manager), so clear it
-    # to make the deque the only owner of each chunk.
-    partitioned_chunks.clear()
-    next_row = 0
-    while pending_chunks:
-        chunk = pending_chunks.popleft()
-        chunk_num_rows = chunk[0].size(0)
-        if chunk_num_rows == 0:
-            continue
-        for field_index, destination in destinations:
-            field = chunk[field_index]
-            # copy_ would silently cast or broadcast where torch.cat would promote or fail.
-            if (
-                field.dtype != destination.dtype
-                or field.shape[1:] != destination.shape[1:]
-            ):
-                raise ValueError(
-                    f"Expected chunk field {field_index} with dtype {destination.dtype} and trailing shape "
-                    f"{tuple(destination.shape[1:])}, got dtype {field.dtype} and shape {tuple(field.shape)}."
-                )
-            destination.narrow(0, next_row, chunk_num_rows).copy_(field)
-        next_row += chunk_num_rows
-        del chunk
-
-    return outputs
 
 
 class _DistLinkPredicitonPartitionManager(DistPartitionManager):
@@ -1216,7 +1127,6 @@ class DistPartitioner:
             raise ValueError(
                 f"Found no node features, quantized node features, or node labels to partition for node type {node_type}"
             )
-        node_id_ind = len(input_parts)
         input_parts.append(node_ids)
         input_data: Tuple[torch.Tensor, ...] = tuple(input_parts)
 
@@ -1265,23 +1175,11 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
-            # One call for every field: the helper consumes the chunks, so it cannot be called per field.
-            output_fields = [node_id_ind] + [
-                field_index
-                for field_index in (
-                    node_feature_ind,
-                    node_quantized_feature_ind,
-                    node_label_ind,
-                )
-                if field_index is not None
-            ]
-            partitioned_tensors = dict(
-                zip(
-                    output_fields,
-                    _concatenate_partitioned_chunks(partitioned_results, output_fields),
-                )
+            partitioned_tensors = concatenate_chunks(
+                partitioned_results,
+                [-1, node_feature_ind, node_quantized_feature_ind, node_label_ind],
             )
-            partitioned_ids = partitioned_tensors[node_id_ind]
+            partitioned_ids = partitioned_tensors[-1]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
@@ -1716,9 +1614,9 @@ class DistPartitioner:
         if len(partitioned_chunks) == 0:
             partitioned_label_edge_index = torch.empty((2, 0))
         else:
-            (partitioned_label_edge_index,) = _concatenate_partitioned_chunks(
-                partitioned_chunks, output_fields=[(0, 1)]
-            )
+            partitioned_label_edge_index = concatenate_chunks(
+                partitioned_chunks, [(0, 1)]
+            )[(0, 1)]
 
         partitioned_chunks.clear()
 

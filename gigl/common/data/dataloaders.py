@@ -1,5 +1,4 @@
 import time
-from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
@@ -16,7 +15,7 @@ from gigl.common.utils.decorator import tf_on_cpu
 from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
-from gigl.utils.share_memory import allocate_preshared
+from gigl.utils.concat import concatenate_chunks
 
 logger = Logger()
 
@@ -206,60 +205,6 @@ def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
         torch.Tensor: The converted PyTorch tensor.
     """
     return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))  # ty: ignore[possibly-missing-submodule] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
-
-
-def _concatenate_tf_tensors_to_torch(
-    tf_tensors: list[tf.Tensor],
-    axis: int = 0,
-) -> torch.Tensor:
-    """Concatenate TensorFlow batches into one preallocated PyTorch tensor.
-
-    The input list is consumed: each batch is released right after it is copied, so
-    peak host memory stays near the output size plus one batch, not every input plus
-    a second full-size ``tf.concat`` output.
-
-    A CPU output is allocated with :func:`gigl.utils.share_memory.allocate_preshared`, so a large
-    output lands directly in shared memory and the ``share_memory_()`` that later hands it to other
-    processes does not copy it. Small outputs stay plain tensors.
-
-    Args:
-        tf_tensors: Non-empty list of tensors that match on every dimension except ``axis``.
-        axis: The dimension to concatenate along.
-
-    Returns:
-        The tensors concatenated along ``axis``.
-
-    Raises:
-        ValueError: If ``tf_tensors`` is empty.
-    """
-    if not tf_tensors:
-        raise ValueError("Expected at least one TensorFlow tensor to concatenate.")
-
-    total_rows = sum(int(tf_tensor.shape[axis]) for tf_tensor in tf_tensors)
-    pending_tensors = deque(tf_tensors)
-    tf_tensors.clear()
-
-    first_tensor = _tf_tensor_to_torch_tensor(pending_tensors.popleft())
-    output_shape = list(first_tensor.shape)
-    output_shape[axis] = total_rows
-    if first_tensor.device.type == "cpu":
-        output = allocate_preshared(tuple(output_shape), first_tensor.dtype)
-    else:
-        output = torch.empty(
-            output_shape,
-            dtype=first_tensor.dtype,
-            device=first_tensor.device,
-        )
-    next_row = first_tensor.shape[axis]
-    output.narrow(axis, 0, next_row).copy_(first_tensor)
-    del first_tensor
-
-    while pending_tensors:
-        tensor = _tf_tensor_to_torch_tensor(pending_tensors.popleft())
-        output.narrow(axis, next_row, tensor.shape[axis]).copy_(tensor)
-        next_row += tensor.shape[axis]
-
-    return output
 
 
 def _build_example_parser(
@@ -537,20 +482,21 @@ class TFRecordDataLoader:
 
         start_time = time.perf_counter()
         num_entities_processed = 0
-        id_tensors: list[tf.Tensor] = []
-        feature_tensors: list[tf.Tensor] = []
-        quantized_feature_tensors: list[tf.Tensor] = []
-        label_tensors: list[tf.Tensor] = []
+        # One-field chunks, the shape concatenate_chunks takes.
+        id_tensors: list[tuple[tf.Tensor]] = []
+        feature_tensors: list[tuple[tf.Tensor]] = []
+        quantized_feature_tensors: list[tuple[tf.Tensor]] = []
+        label_tensors: list[tuple[tf.Tensor]] = []
         for idx, batch in enumerate(dataset):
-            id_tensors.append(proccess_id_tensor(batch))
+            id_tensors.append((proccess_id_tensor(batch),))
             if feature_keys or label_keys:
                 feature_tensor, label_tensor = _concatenate_features_by_names(
                     batch, feature_keys, label_keys
                 )
                 if feature_tensor is not None:
-                    feature_tensors.append(feature_tensor)
+                    feature_tensors.append((feature_tensor,))
                 if label_tensor is not None:
-                    label_tensors.append(label_tensor)
+                    label_tensors.append((label_tensor,))
             if packed_feature_key is not None:
                 quantized_feature_tensor = tf.io.decode_raw(
                     batch[packed_feature_key], tf.uint8
@@ -559,11 +505,11 @@ class TFRecordDataLoader:
                     quantized_feature_tensor,
                     [-1, serialized_tf_record_info.packed_feature_dim],
                 )
-                quantized_feature_tensors.append(quantized_feature_tensor)
+                quantized_feature_tensors.append((quantized_feature_tensor,))
             num_entities_processed += (
-                id_tensors[-1].shape[0]
+                id_tensors[-1][0].shape[0]
                 if entity_type == FeatureTypes.NODE
-                else id_tensors[-1].shape[1]
+                else id_tensors[-1][0].shape[1]
             )
             if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
                 logger.info(
@@ -574,18 +520,23 @@ class TFRecordDataLoader:
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
         )
         start = time.perf_counter()
-        id_tensor = _concatenate_tf_tensors_to_torch(id_tensors, axis=id_concat_axis)
+        # Presharing lets the later share_memory_() keep these outputs in place instead of copying them.
+        concatenate = partial(
+            concatenate_chunks,
+            fields=[0],
+            convert=_tf_tensor_to_torch_tensor,
+            preshare=True,
+        )
+        id_tensor = concatenate(id_tensors, axis=id_concat_axis)[0]
         output_feature_tensor: Optional[torch.Tensor] = None
         output_quantized_feature_tensor: Optional[torch.Tensor] = None
         output_label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
-            output_feature_tensor = _concatenate_tf_tensors_to_torch(feature_tensors)
+            output_feature_tensor = concatenate(feature_tensors)[0]
         if quantized_feature_tensors:
-            output_quantized_feature_tensor = _concatenate_tf_tensors_to_torch(
-                quantized_feature_tensors
-            )
+            output_quantized_feature_tensor = concatenate(quantized_feature_tensors)[0]
         if label_tensors:
-            output_label_tensor = _concatenate_tf_tensors_to_torch(label_tensors)
+            output_label_tensor = concatenate(label_tensors)[0]
 
         if output_feature_tensor is not None and output_label_tensor is not None:
             assert output_feature_tensor.size(0) == output_label_tensor.size(0), (
