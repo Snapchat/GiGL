@@ -2265,5 +2265,117 @@ class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
         self.assertFalse(torch.isnan(result).any())
 
 
+class TestGraphTransformerEncoderRelationFrontier(TestCase):
+    """Relation edges must not make an anchor's embedding depend on its batch."""
+
+    def setUp(self) -> None:
+        self._user = NodeType("user")
+        self._item = NodeType("item")
+        self._friends = EdgeType(self._user, Relation("friends"), self._user)
+        self._engages = EdgeType(self._item, Relation("engages"), self._user)
+        self._device = torch.device("cpu")
+
+    def _build_graph(
+        self,
+        user_x: Tensor,
+        item_x: Tensor,
+        friend_edges: list[tuple[int, int]],
+        engage_edges: list[tuple[int, int]],
+        user_order: list[int],
+        item_order: list[int],
+    ) -> HeteroData:
+        """Build a sampled batch whose local ids follow ``*_order``."""
+        user_local = {node: i for i, node in enumerate(user_order)}
+        item_local = {node: i for i, node in enumerate(item_order)}
+        data = HeteroData()
+        data["user"].x = user_x[user_order]
+        data["item"].x = item_x[item_order]
+        data[self._friends.tuple_repr()].edge_index = torch.tensor(
+            [[user_local[src], user_local[dst]] for src, dst in friend_edges]
+        ).t()
+        data[self._engages.tuple_repr()].edge_index = torch.tensor(
+            [[item_local[src], user_local[dst]] for src, dst in engage_edges]
+        ).t()
+        return data
+
+    def test_anchor_embedding_matches_solo_sample_when_positive_is_seeded(
+        self,
+    ) -> None:
+        torch.manual_seed(0)
+        user_x = torch.randn(5, 8)
+        item_x = torch.randn(2, 8)
+        # Two-hop in-edge sample of anchor user0 alone: in-edges of user0 and of
+        # its in-neighbors user2, user4, item1.
+        solo_friend_edges = [(2, 0), (4, 0), (1, 2), (3, 4)]
+        solo_engage_edges = [(1, 0), (0, 2)]
+        # Seeding positive user1 also expands user1 and its in-neighbor user3,
+        # both last-hop tokens of user0's sequence.
+        merged_friend_edges = solo_friend_edges + [(3, 1), (4, 1), (2, 3)]
+        merged_engage_edges = solo_engage_edges + [(0, 1), (1, 3)]
+        merged = self._build_graph(
+            user_x=user_x,
+            item_x=item_x,
+            friend_edges=merged_friend_edges,
+            engage_edges=merged_engage_edges,
+            user_order=[0, 1, 2, 3, 4],
+            item_order=[0, 1],
+        )
+        solo = self._build_graph(
+            user_x=user_x,
+            item_x=item_x,
+            friend_edges=solo_friend_edges,
+            engage_edges=solo_engage_edges,
+            user_order=[0, 2, 4, 1, 3],
+            item_order=[1, 0],
+        )
+
+        def encode_anchor(within_frontier: bool) -> tuple[Tensor, Tensor]:
+            torch.manual_seed(0)
+            encoder = GraphTransformerEncoder(
+                node_type_to_feat_dim_map={self._user: 8, self._item: 8},
+                edge_type_to_feat_dim_map={self._friends: 0, self._engages: 0},
+                hid_dim=16,
+                out_dim=8,
+                num_layers=2,
+                num_heads=2,
+                max_seq_len=10,
+                hop_distance=2,
+                sampling_direction="in",
+                dropout_rate=0.0,
+                attention_dropout_rate=0.0,
+                relation_attention_mode="edge_type_hgt",
+                relation_message_mode="edge_type_attention",
+                relation_edges_within_sampled_frontier=within_frontier,
+            )
+            encoder.eval()
+            with torch.no_grad():
+                # Relation message weights start at zero; randomize every weight
+                # so relation edges change the output.
+                for parameter in encoder.parameters():
+                    parameter.normal_(std=0.5)
+                merged_embeddings = encoder(
+                    data=merged,
+                    anchor_node_type=self._user,
+                    device=self._device,
+                    anchor_node_ids=torch.tensor([0, 1]),
+                )
+                solo_embeddings = encoder(
+                    data=solo,
+                    anchor_node_type=self._user,
+                    device=self._device,
+                    anchor_node_ids=torch.tensor([0]),
+                )
+            return merged_embeddings[0], solo_embeddings[0]
+
+        merged_anchor, solo_anchor = encode_anchor(within_frontier=True)
+        torch.testing.assert_close(merged_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
+
+        leaky_merged_anchor, leaky_solo_anchor = encode_anchor(within_frontier=False)
+        torch.testing.assert_close(leaky_solo_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
+        self.assertFalse(
+            torch.allclose(leaky_merged_anchor, solo_anchor, atol=1e-3, rtol=1e-3)
+        )
+
+
 if __name__ == "__main__":
     absltest.main()
