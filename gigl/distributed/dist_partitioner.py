@@ -1158,7 +1158,12 @@ class DistPartitioner:
 
         # Since the unpartitioned node ids, features and labels are large, we would like to delete them when
         # they are no longer needed to free memory.
+        # `input_parts` and `input_data` also reference them, so they must go too, or nothing is freed until
+        # this function returns.
+        input_parts.clear()
         del (
+            input_parts,
+            input_data,
             node_ids,
             num_nodes,
             max_node_ids,
