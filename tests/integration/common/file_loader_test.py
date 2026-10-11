@@ -218,7 +218,7 @@ class FileLoaderTest(TestCase):
         local_files = ["a.txt", "b.txt", "c.txt", "d.txt"]
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         gcs_dst_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "dst"
+            self.gcs_test_asset_directory, self.test_asset_directory.uri, "dst"
         )
 
         local_file_paths_src: list[LocalUri] = [
@@ -243,7 +243,7 @@ class FileLoaderTest(TestCase):
             self.assertTrue(self.gcs_utils.does_gcs_file_exist(gcs_path=gcs_file))
         self.gcs_utils.delete_files_in_bucket_dir(
             gcs_path=GcsUri.join(
-                self.gcs_test_asset_directory, self.test_asset_directory
+                self.gcs_test_asset_directory, self.test_asset_directory.uri
             )
         )
 
@@ -251,7 +251,7 @@ class FileLoaderTest(TestCase):
         local_files = ["a.txt", "b.txt", "c.txt", "d.txt"]
         local_src_dir: LocalUri = LocalUri.join(self.test_asset_directory, "src")
         gcs_src_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "src"
+            self.gcs_test_asset_directory, self.test_asset_directory.uri, "src"
         )
         local_dst_dir: LocalUri = LocalUri.join(self.test_asset_directory, "dst")
 
@@ -294,16 +294,16 @@ class FileLoaderTest(TestCase):
             self.assertTrue(local_fs.does_path_exist(file))
         self.gcs_utils.delete_files_in_bucket_dir(
             gcs_path=GcsUri.join(
-                self.gcs_test_asset_directory, self.test_asset_directory
+                self.gcs_test_asset_directory, self.test_asset_directory.uri
             )
         )
 
     def test_gcs_to_gcs_dir(self):
         gcs_src_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "src"
+            self.gcs_test_asset_directory, self.test_asset_directory.uri, "src"
         )
         gcs_dst_dir: GcsUri = GcsUri.join(
-            self.gcs_test_asset_directory, self.test_asset_directory, "dst"
+            self.gcs_test_asset_directory, self.test_asset_directory.uri, "dst"
         )
         dir_uri_map: dict[Uri, Uri] = {gcs_src_dir: gcs_dst_dir}
 

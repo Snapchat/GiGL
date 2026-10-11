@@ -10,8 +10,7 @@ class HttpUri(Uri):
     """Represents an HTTP URI."""
 
     def __init__(self, uri: Union[str, Path, HttpUri]) -> None:
-        self._has_valid_prefix(uri=uri)
-        self._has_no_backslash(uri=uri)
+        self.is_valid(uri=self._token_to_string(uri), raise_exception=True)
         super().__init__(uri=uri)
 
     @classmethod
