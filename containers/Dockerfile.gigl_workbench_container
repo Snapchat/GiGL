@@ -5,7 +5,9 @@ SHELL ["/bin/bash", "-c"]
 
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ARG ENVIRONMENT_NAME="gigl"
-ARG PYTHON_VERSION="3.9"
+# RUN steps see this ARG as an environment variable, and the Makefile reads PYTHON_VERSION to
+# pick the interpreter for `make install_deps`, so it must name a supported minor.
+ARG PYTHON_VERSION="3.11"
 RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
 
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from distutils.util import strtobool
 from typing import Optional
 
 from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.parse import str_to_bool
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.dataset_metadata import DatasetMetadataPbWrapper
@@ -529,7 +529,7 @@ class GbmlConfigPbWrapper:
         """
 
         return bool(
-            strtobool(
+            str_to_bool(
                 dict(self.gbml_config_pb.feature_flags).get(
                     "should_run_glt_backend", "False"
                 )
@@ -550,7 +550,7 @@ class GbmlConfigPbWrapper:
             bool: Whether to populate predictions path in the InferenceOutput for each entity type
         """
         return bool(
-            strtobool(
+            str_to_bool(
                 dict(self.gbml_config_pb.feature_flags).get(
                     "should_populate_predictions_path", "False"
                 )
@@ -570,7 +570,7 @@ class GbmlConfigPbWrapper:
             bool: Whether to populate embeddings path in the InferenceOutput for each entity type
         """
         return bool(
-            strtobool(
+            str_to_bool(
                 dict(self.gbml_config_pb.feature_flags).get(
                     "should_populate_embeddings_path", "True"
                 )
