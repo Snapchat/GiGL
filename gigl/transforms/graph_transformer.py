@@ -85,7 +85,7 @@ PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
 # The CSR lookup scans a dense (queries, longest row) workspace. Bound the
 # number of cells allocated per chunk so a single high-degree row cannot make
 # every query share an unbounded temporary. The largest simultaneous
-# temporaries use about 26 bytes per cell, so this budget is roughly 800 MiB.
+# temporaries use about 30 bytes per cell, so this budget is roughly 1 GiB.
 _CSR_LOOKUP_CELLS_PER_CHUNK: Final[int] = 32_000_000
 
 
