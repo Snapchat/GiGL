@@ -81,6 +81,7 @@ class SequenceAuxiliaryData(TypedDict):
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
+PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"
 
 
 def _validate_reserved_anchor_feature_usage(
@@ -337,6 +338,7 @@ def heterodata_to_graph_transformer_input(
 
     ppr_weight_sequences: Optional[Tensor] = None
     ppr_relation_feature_sequences: Optional[Tensor] = None
+    ppr_expanded_token_mask: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
         if sampling_direction == "in":
@@ -425,6 +427,48 @@ def heterodata_to_graph_transformer_input(
                 PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
             ),
         )
+        # Drop relation edges whose source token the anchor did not expand.
+        # With include_sampled_edges, a co-seeded ABLP positive enters the
+        # anchor's sequence as a residual top-up node the anchor never expanded;
+        # its own push then supplies edges the anchor's solo sample never would.
+        # The per-edge ppr_is_expanded flag marks which tokens the anchor pushed.
+        ppr_edge_is_expanded_parts = [
+            getattr(data[et], PPR_EXPANDED_FEATURE_NAME, None) for et in ppr_edge_types
+        ]
+        if all(part is not None for part in ppr_edge_is_expanded_parts):
+            ppr_edge_is_expanded = torch.cat(
+                [part.to(device=device) for part in ppr_edge_is_expanded_parts], dim=0
+            ).to(torch.bool)
+            anchor_batch_by_homo_idx = torch.full(
+                (num_nodes,), -1, dtype=torch.long, device=device
+            )
+            anchor_batch_by_homo_idx[anchor_indices] = torch.arange(
+                anchor_indices.size(0), device=device
+            )
+            edge_anchor_batch = anchor_batch_by_homo_idx[ppr_homo_data.edge_index[0]]
+            anchored = edge_anchor_batch >= 0
+            # Membership via searchsorted over sorted (anchor, node) edge keys,
+            # avoiding a dense (batch * num_nodes) scratch tensor.
+            edge_keys = (
+                edge_anchor_batch[anchored] * num_nodes
+                + ppr_homo_data.edge_index[1][anchored]
+            )
+            sorted_edge_keys, edge_sort_perm = torch.sort(edge_keys)
+            sorted_edge_vals = ppr_edge_is_expanded[anchored][edge_sort_perm]
+            ppr_expanded_token_mask = torch.zeros_like(valid_mask)
+            token_batch, token_pos = torch.nonzero(valid_mask, as_tuple=True)
+            token_nodes = node_index_sequences[token_batch, token_pos]
+            if sorted_edge_keys.numel() > 0:
+                token_keys = token_batch * num_nodes + token_nodes
+                search = torch.searchsorted(sorted_edge_keys, token_keys).clamp(
+                    max=sorted_edge_keys.numel() - 1
+                )
+                matched = sorted_edge_keys[search] == token_keys
+                token_expanded = torch.zeros_like(token_keys, dtype=torch.bool)
+                token_expanded[matched] = sorted_edge_vals[search[matched]]
+                ppr_expanded_token_mask[token_batch, token_pos] = token_expanded
+            if include_anchor_first and max_seq_len > 0:
+                ppr_expanded_token_mask[:, 0] = valid_mask[:, 0]
     else:
         raise ValueError(
             "sequence_construction_method must be one of ['khop', 'ppr'], "
@@ -482,6 +526,7 @@ def heterodata_to_graph_transformer_input(
         node_type_offsets=node_type_offsets,
         num_nodes=num_nodes,
         device=device,
+        expanded_token_mask=ppr_expanded_token_mask,
     )
 
     anchor_bias_features = _compose_anchor_feature_tensor(
@@ -1431,6 +1476,7 @@ def _lookup_pairwise_relation_indices(
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
+    expanded_token_mask: Optional[Tensor] = None,
 ) -> Optional[Tensor]:
     """Build sparse relation coordinates for valid token pairs.
 
@@ -1480,6 +1526,18 @@ def _lookup_pairwise_relation_indices(
         )
         if relation_batch_indices.numel() == 0:
             continue
+
+        if expanded_token_mask is not None:
+            # Keep a relation only when its source token (the key position for
+            # query=target/key=source) was expanded by this anchor's own push.
+            source_expanded = expanded_token_mask[
+                relation_batch_indices, relation_key_positions
+            ]
+            relation_batch_indices = relation_batch_indices[source_expanded]
+            relation_query_positions = relation_query_positions[source_expanded]
+            relation_key_positions = relation_key_positions[source_expanded]
+            if relation_batch_indices.numel() == 0:
+                continue
 
         relation_indices = torch.stack(
             [

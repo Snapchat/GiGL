@@ -26,6 +26,7 @@ struct PPRExtractTensors {
     torch::Tensor ids;         // int64 node IDs, flattened across seeds
     torch::Tensor weights;     // double feature matrix / edge_attr
     torch::Tensor validCounts; // int64 selected-node count per seed
+    torch::Tensor isExpanded;  // int64 1 if the node was pushed (expanded) for this seed, else 0
 };
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 

@@ -44,6 +44,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import (
     PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_EXPANDED_METADATA_KEY,
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
@@ -1040,11 +1041,16 @@ class BaseDistLoader(DistLoader):
             # Hetero PPR (including labeled-homogeneous): prefixed edge-type keys.
             matched, metadata = extract_edge_type_metadata(
                 metadata=metadata,
-                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+                prefixes=[
+                    PPR_EDGE_INDEX_METADATA_KEY,
+                    PPR_WEIGHT_METADATA_KEY,
+                    PPR_EXPANDED_METADATA_KEY,
+                ],
             )
             ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
-            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
+            ppr_is_expanded = matched[PPR_EXPANDED_METADATA_KEY]
+            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights, ppr_is_expanded)
             if isinstance(data, HeteroData):
                 edge_types_to_keep = set(ppr_edge_indices.keys())
                 if self._sampler_options.include_sampled_edges:

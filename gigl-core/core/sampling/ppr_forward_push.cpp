@@ -918,6 +918,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
         std::vector<int64_t> flatIds;
         std::vector<double> flatFeatureValues;
         std::vector<int64_t> validCounts;
+        std::vector<int64_t> flatIsExpanded;
 
         for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
             const auto& nodeTypeState = _state[seedIdx][nodeTypeId];
@@ -942,6 +943,9 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
                 flatIds.push_back(static_cast<int64_t>(nodeId));
                 flatFeatureValues.push_back(score);
                 flatFeatureValues.push_back(getNodeHopProximity(nodeTypeState, nodeId));
+                const auto pprScoreIt = nodeTypeState.pprScores.find(nodeId);
+                flatIsExpanded.push_back(
+                    (pprScoreIt != nodeTypeState.pprScores.end() && pprScoreIt->second > 0.0) ? 1 : 0);
             }
             validCounts.push_back(static_cast<int64_t>(selectedPairs.size()));
         }
@@ -949,7 +953,8 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
         auto flatWeights = torch::tensor(flatFeatureValues, torch::kDouble)
                                .reshape({static_cast<int64_t>(flatIds.size()), /*numEdgeAttrFeatures=*/2});
         extractedPPRByNodeTypeId[nodeTypeId] = {
-            torch::tensor(flatIds, torch::kLong), flatWeights, torch::tensor(validCounts, torch::kLong)};
+            torch::tensor(flatIds, torch::kLong), flatWeights, torch::tensor(validCounts, torch::kLong),
+            torch::tensor(flatIsExpanded, torch::kLong)};
     }
     return extractedPPRByNodeTypeId;
 }
@@ -999,6 +1004,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
         std::vector<int64_t> flatIds;
         std::vector<double> flatFeatureValues;
         std::vector<int64_t> validCounts;
+        std::vector<int64_t> flatIsExpanded;
 
         for (int32_t seedIdx = 0; seedIdx < batchSize; ++seedIdx) {
             std::unordered_map<int32_t, std::vector<double>> outputScores;
@@ -1034,6 +1040,16 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                 flatIds.push_back(static_cast<int64_t>(nodeId));
                 const auto& features = outputScores.at(nodeId);
                 flatFeatureValues.insert(flatFeatureValues.end(), features.begin(), features.end());
+                bool expandedInAnyChannel = false;
+                for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
+                    const auto& channelState = states[channelIndex]->_state[seedIdx][nodeTypeId];
+                    const auto channelPprIt = channelState.pprScores.find(nodeId);
+                    if (channelPprIt != channelState.pprScores.end() && channelPprIt->second > 0.0) {
+                        expandedInAnyChannel = true;
+                        break;
+                    }
+                }
+                flatIsExpanded.push_back(expandedInAnyChannel ? 1 : 0);
             }
 
             validCounts.push_back(static_cast<int64_t>(selectedNodeCount));
@@ -1046,6 +1062,7 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
             torch::tensor(flatIds, torch::kLong),
             flatWeights,
             torch::tensor(validCounts, torch::kLong),
+            torch::tensor(flatIsExpanded, torch::kLong),
         };
     }
 

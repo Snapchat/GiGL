@@ -1318,5 +1318,51 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
             )
 
 
+class TestPprRelationExpandedSourceFilter(TestCase):
+    """PPR relation edges whose source token the anchor did not expand are
+    dropped, so a co-seeded ABLP positive's residual-top-up edges cannot leak
+    into the anchor's relation channel."""
+
+    def _build(self, with_expanded_flag):
+        user = NodeType("user")
+        likes = EdgeType(user, Relation("likes"), user)
+        data = HeteroData()
+        # 0 = anchor A, 1 = shared neighbour n (expanded), 2 = positive P (top-up).
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        # A's PPR neighbourhood: A->n (0.9), A->P (0.6) -> sequence [A@0, n@1, P@2].
+        data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data["user", "ppr", "user"].edge_attr = torch.tensor([0.9, 0.6])
+        if with_expanded_flag:
+            # n is finalized/expanded by A's push; P entered via residual top-up.
+            data["user", "ppr", "user"].ppr_is_expanded = torch.tensor([True, False])
+        likes_store = data[likes.tuple_repr()]
+        likes_store.edge_index = torch.tensor([[0, 2], [1, 1]])  # A->n, P->n
+        return data, [likes]
+
+    def _coords(self, with_expanded_flag):
+        data, rel = self._build(with_expanded_flag)
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            relation_edge_types=rel,
+        )
+        idx = aux["pairwise_relation_indices"]
+        assert idx is not None
+        return {tuple(c) for c in idx.tolist()}
+
+    def test_leak_present_without_expanded_flag(self):
+        coords = self._coords(with_expanded_flag=False)
+        self.assertIn((0, 1, 0, 0), coords)  # A -> n
+        self.assertIn((0, 1, 2, 0), coords)  # P -> n leaks (no provenance to filter)
+
+    def test_leak_removed_with_expanded_flag(self):
+        coords = self._coords(with_expanded_flag=True)
+        self.assertIn((0, 1, 0, 0), coords)  # A -> n kept (source A expanded)
+        self.assertNotIn((0, 1, 2, 0), coords)  # P -> n dropped (source P is top-up)
+
+
 if __name__ == "__main__":
     absltest.main()
