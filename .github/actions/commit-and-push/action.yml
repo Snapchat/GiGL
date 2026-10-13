@@ -36,6 +36,16 @@ runs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+        # Disable git hooks and fsmonitor for EVERY git invocation in this step. PR-authored code
+        # that ran earlier in the job (e.g. the image-ref update script) could plant a hook under
+        # .git/hooks or set core.hooksPath / core.fsmonitor in .git/config; any of those would
+        # execute during `git commit` / `git push` below with GITHUB_TOKEN in the environment.
+        # Environment config takes precedence over .git/config, so a planted core.hooksPath
+        # cannot re-enable them. (GIT_CONFIG_COUNT/KEY/VALUE are supported since git 2.31.)
+        export GIT_CONFIG_COUNT=2
+        export GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null
+        export GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
+
         # Build an inline auth header (same scheme actions/checkout uses) and pass it only on
         # the push commands via `git -c`, so it is not persisted to .git/config. Note this
         # keeps the token off disk but does NOT fully isolate it from PR-authored code that ran

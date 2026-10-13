@@ -21,8 +21,11 @@ credentials.
    job before any PR code runs.
 4. **Least privilege + token kept off disk.** `checkout-pr-branch` always checks out PR code with
    `persist-credentials: false`, and `commit-and-push` supplies its own push token via `git -c` rather than persisting
-   it to `.git/config`. This keeps the token off disk; note it does **not** fully isolate the token from PR-authored
-   code that ran earlier in the same writeback job (a lingering background process could read git's argv/env during the
+   it to `.git/config`. `commit-and-push` also disables git hooks and `core.fsmonitor` (via `GIT_CONFIG_*` environment
+   config, which overrides anything planted in `.git/config` or `.git/hooks`) for every git call it makes, so a hook
+   planted by PR-authored code earlier in the writeback job cannot run during `git commit` / `git push` with the token
+   in its environment. This keeps the token off disk; note it does **not** fully isolate the token from PR-authored code
+   that ran earlier in the same writeback job (a lingering background process could read git's argv/env during the
    push). That residual is bounded by the maintainer-reviewed `commit_sha` pin; full isolation would require pushing
    from a separate job. Jobs also declare scoped `permissions`.
 5. **Fail-closed authorization.** `actions/assert-is-collaborator` now denies on any result other than an explicit 204
