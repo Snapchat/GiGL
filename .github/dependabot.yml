@@ -1,13 +1,12 @@
 # Keeps the commit-SHA pins on third-party GitHub Actions current.
-# All action bumps are grouped into a single PR. The automatic interval is deliberately
-# infrequent; the intended cadence is to trigger "Check for updates" manually as part of
-# each release (see RELEASING.md), with the quarterly run as a safety net.
+# Checks daily; all action bumps are grouped into a single PR, and no PR is opened when
+# everything is already current.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: quarterly
+      interval: daily
     groups:
       github-actions:
         patterns: ["*"]

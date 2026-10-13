@@ -48,16 +48,13 @@ Once both workflows succeed, merge the PR opened by **Create Release** to bring 
 
 ## Refreshing pinned CI dependencies
 
-Third-party GitHub Actions under `.github/` are pinned to full commit SHAs (with the release tag in a trailing comment),
-and the Cloud Build helper image `multiarch/qemu-user-static` is pinned by digest. Dependabot (`.github/dependabot.yml`)
-opens one grouped PR for action bumps, but only quarterly on its own. As part of each release, trigger a check manually:
+Third-party GitHub Actions under `.github/` are pinned to full commit SHAs (with the release tag in a trailing comment).
+Dependabot (`.github/dependabot.yml`) checks daily and opens one grouped PR when any pinned action has a newer release;
+review and merge it like any other PR.
 
-1. Go to **Insights → Dependency graph → Dependabot** in the GitHub repository.
-2. Open the `github-actions` entry and click **Check for updates**.
-3. Review and merge the grouped PR it opens, if any.
-
-Dependabot does not cover the `qemu-user-static` digest. To refresh it, look up the current digest and update it in
-`.github/cloud_builder/run_command_on_active_checkout.yaml`:
+Dependabot does not cover the Cloud Build helper image `multiarch/qemu-user-static`, which is pinned by digest in
+`.github/cloud_builder/run_command_on_active_checkout.yaml`. To refresh it, look up the current digest and update it
+there:
 
 ```sh
 docker buildx imagetools inspect multiarch/qemu-user-static:latest
