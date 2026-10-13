@@ -56,8 +56,12 @@ opens one grouped PR for action bumps, but only quarterly on its own. As part of
 2. Open the `github-actions` entry and click **Check for updates**.
 3. Review and merge the grouped PR it opens, if any.
 
-Dependabot does not cover the `qemu-user-static` digest. To refresh it, run `docker buildx imagetools inspect
-multiarch/qemu-user-static:latest` and update the digest in `.github/cloud_builder/run_command_on_active_checkout.yaml`.
+Dependabot does not cover the `qemu-user-static` digest. To refresh it, look up the current digest and update it in
+`.github/cloud_builder/run_command_on_active_checkout.yaml`:
+
+```sh
+docker buildx imagetools inspect multiarch/qemu-user-static:latest
+```
 
 ## Nightly releases
 
