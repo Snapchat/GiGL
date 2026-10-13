@@ -1,12 +1,15 @@
 # Keeps the commit-SHA pins on third-party GitHub Actions current.
 # Checks daily; all action bumps are grouped into a single PR, and no PR is opened when
-# everything is already current.
+# everything is already current. The cooldown delays proposing a newly published version so
+# a compromised release that is yanked within days is never offered for merge.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: daily
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
