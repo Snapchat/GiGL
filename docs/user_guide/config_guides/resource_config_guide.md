@@ -4,6 +4,9 @@ GiGL Resource Config is a yaml file that is passed in at runtime and specifies t
 configurations for each component in the GiGL. The proto definition for GiGL Resource Config can be seen
 [here](https://github.com/Snapchat/GiGL/blob/main/proto/snapchat/research/gbml/gigl_resource_config.proto)
 
+Resource configs can be split into Hydra config groups. See
+[composing task and resource configs with Hydra](./hydra_composition.md).
+
 ## Prerequisites
 
 If you don't have cloud assets already setup i.e. a GCP project. See [guide](../getting_started/cloud_setup_guide.md)
@@ -143,6 +146,11 @@ Training.
 
 - **Local Trainer Config**: The `local_trainer_config` field of the trainer config just requires `num_workers` which can
   be used for data loaders.
+
+### Custom Launcher Config
+
+`custom_trainer_config` and `custom_inferencer_config` delegate component execution to a launcher command. The custom
+launcher owns resource compatibility for its component, including whether its graph store configuration is supported.
 
 **[Inferencer](../overview/components/inferencer.md) Config**
 

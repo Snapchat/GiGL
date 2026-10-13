@@ -2,6 +2,7 @@
 
 import copy
 from typing import Callable, Literal, cast
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -287,6 +288,46 @@ class TestGraphTransformerEncoder(TestCase):
                 sequence_construction_method="ppr",
                 sampling_direction="in",
             )
+
+    def test_prioritize_hop_order_requires_khop(self) -> None:
+        with self.assertRaisesRegex(ValueError, "prioritize_hop_order"):
+            self._create_encoder(
+                sequence_construction_method="ppr",
+                prioritize_hop_order=True,
+            )
+
+    def test_prioritize_hop_order_passes_to_transform(self) -> None:
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder(
+            num_layers=0,
+            readout_mode="anchor_only",
+            prioritize_hop_order=True,
+        )
+        encoder.eval()
+
+        sequences = torch.zeros((3, 10, self._hid_dim), dtype=torch.float)
+        valid_mask = torch.zeros((3, 10), dtype=torch.bool)
+        valid_mask[:, 0] = True
+        sequence_auxiliary_data = {
+            "anchor_bias": None,
+            "pairwise_bias": None,
+            "pairwise_relation_indices": None,
+            "pairwise_nonmissing_indices": None,
+            "token_input": None,
+        }
+
+        with patch(
+            "gigl.nn.graph_transformer.heterodata_to_graph_transformer_input",
+            return_value=(sequences, valid_mask, sequence_auxiliary_data),
+        ) as mock_transform:
+            with torch.no_grad():
+                encoder(
+                    data=data,
+                    anchor_node_type=self._user_node_type,
+                    device=self._device,
+                )
+
+        self.assertTrue(mock_transform.call_args.kwargs["prioritize_hop_order"])
 
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
         """Test anchor-only readout returns the post-norm anchor token."""

@@ -1,8 +1,8 @@
 """
 Compatibility checks between GbmlConfig (template config) and GiglResourceConfig (resource config).
 
-These checks ensure that graph store mode configurations are consistent across both configs.
-If graph store mode is set up for trainer or inferencer in one config, it must be set up in the other.
+These checks ensure that built-in graph store mode configurations are consistent across both configs.
+Custom launchers own graph store resource compatibility for their component.
 """
 
 from typing import Literal
@@ -74,17 +74,22 @@ def check_trainer_graph_store_compatibility(
     """
     Check that trainer graph store mode is consistently configured across both configs.
 
-    If graph_store_storage_config is set in GbmlConfig.trainer_config, then
-    VertexAiGraphStoreConfig must be set in GiglResourceConfig.trainer_resource_config,
-    and vice versa. Also validates that storage_command is set when graph store mode is enabled.
+    For built-in launchers, graph_store_storage_config in GbmlConfig.trainer_config
+    requires a built-in graph store resource config in GiglResourceConfig.trainer_resource_config,
+    and vice versa. A custom launcher owns compatibility for its trainer resource config.
 
     Args:
         gbml_config_pb_wrapper: The GbmlConfig wrapper (template config).
         resource_config_wrapper: The GiglResourceConfig wrapper (resource config).
 
     Raises:
-        AssertionError: If graph store configurations are not compatible or storage_command is missing.
+        AssertionError: If built-in graph store configurations are not compatible.
     """
+    if isinstance(
+        resource_config_wrapper.trainer_config,
+        gigl_resource_config_pb2.CustomLauncherConfig,
+    ):
+        return
     logger.info(
         "Config validation check: trainer graph store compatibility between template and resource configs."
     )
@@ -109,17 +114,22 @@ def check_inferencer_graph_store_compatibility(
     """
     Check that inferencer graph store mode is consistently configured across both configs.
 
-    If graph_store_storage_config is set in GbmlConfig.inferencer_config, then
-    VertexAiGraphStoreConfig must be set in GiglResourceConfig.inferencer_resource_config,
-    and vice versa. Also validates that storage_command is set when graph store mode is enabled.
+    For built-in launchers, graph_store_storage_config in GbmlConfig.inferencer_config
+    requires a built-in graph store resource config in GiglResourceConfig.inferencer_resource_config,
+    and vice versa. A custom launcher owns compatibility for its inferencer resource config.
 
     Args:
         gbml_config_pb_wrapper: The GbmlConfig wrapper (template config).
         resource_config_wrapper: The GiglResourceConfig wrapper (resource config).
 
     Raises:
-        AssertionError: If graph store configurations are not compatible or storage_command is missing.
+        AssertionError: If built-in graph store configurations are not compatible.
     """
+    if isinstance(
+        resource_config_wrapper.inferencer_config,
+        gigl_resource_config_pb2.CustomLauncherConfig,
+    ):
+        return
     logger.info(
         "Config validation check: inferencer graph store compatibility between template and resource configs."
     )

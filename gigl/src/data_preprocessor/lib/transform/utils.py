@@ -5,14 +5,11 @@ import pyarrow as pa
 import tensorflow_data_validation as tfdv
 import tensorflow_data_validation.utils.display_util
 import tensorflow_transform
-import tfx_bsl
-import tfx_bsl.tfxio.tensor_adapter
-import tfx_bsl.tfxio.tf_example_record
 from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
-from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
+from tfx_bsl.public import tfxio
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
@@ -98,7 +95,7 @@ class IngestRawFeatures(beam.PTransform):
         data_reference: DataReference,
         feature_spec: FeatureSpecDict,
         schema: schema_pb2.Schema,
-        beam_record_tfxio: RecordBasedTFXIO,
+        beam_record_tfxio: tfxio.TFExampleBeamRecord,
     ):
         self.data_reference = data_reference
         self.feature_spec = feature_spec
@@ -177,7 +174,7 @@ class ReadExistingTFTransformFn(beam.PTransform):
 class AnalyzeAndBuildTFTransformFn(beam.PTransform):
     def __init__(
         self,
-        tensor_adapter_config: tfx_bsl.tfxio.tensor_adapter.TensorAdapterConfig,
+        tensor_adapter_config: tfxio.TensorAdapterConfig,
         preprocessing_fn: Callable[[TFTensorDict], TFTensorDict],
     ):
         self.tensor_adapter_config = tensor_adapter_config
@@ -285,7 +282,7 @@ def get_load_data_and_transform_pipeline_component(
             raw_feature_spec
         )
 
-        beam_record_tfxio = tfx_bsl.tfxio.tf_example_record.TFExampleBeamRecord(
+        beam_record_tfxio = tfxio.TFExampleBeamRecord(
             physical_format="tfrecord", schema=raw_data_schema
         )
 

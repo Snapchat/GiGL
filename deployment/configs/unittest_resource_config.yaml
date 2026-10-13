@@ -28,13 +28,11 @@ preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
     max_num_workers: 128
-    machine_type: "n2d-highmem-32"
-    disk_size_gb: 300
+    machine_type: "e2-standard-8"
   node_preprocessor_config:
     num_workers: 1
     max_num_workers: 128
-    machine_type: "n2d-highmem-64"
-    disk_size_gb: 300
+    machine_type: "e2-standard-8"
 # Kept in step with e2e_cicd_resource_config.yaml: n2 rather than n2d, since n2d
 # stocks out in us-central1. Same vCPU and memory.
 subgraph_sampler_config:
@@ -54,5 +52,4 @@ trainer_config:
 inferencer_config:
   num_workers: 1
   max_num_workers: 256
-  machine_type: "c3-standard-22"
-  disk_size_gb: 100
+  machine_type: "e2-standard-8"

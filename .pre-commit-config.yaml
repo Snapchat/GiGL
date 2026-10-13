@@ -44,4 +44,6 @@ repos:
     rev: v4.0.1
     hooks:
       - id: end-of-file-fixer
+        alias: whitespace
       - id: trailing-whitespace
+        alias: whitespace
