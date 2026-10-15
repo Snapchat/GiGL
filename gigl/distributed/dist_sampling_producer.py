@@ -47,6 +47,10 @@ from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
+from gigl.distributed.utils.sampling_stats import (
+    sampling_worker_num_rpc_threads_override,
+    sampling_worker_torch_threads_override,
+)
 
 logger = Logger()
 
@@ -103,11 +107,22 @@ def _sampling_worker_loop(
             num_rpc_threads = min(data.num_partitions, 16)
         else:
             num_rpc_threads = worker_options.num_rpc_threads
+        rpc_threads_override = sampling_worker_num_rpc_threads_override()
+        if rpc_threads_override is not None:
+            num_rpc_threads = rpc_threads_override
+        torch_threads = sampling_worker_torch_threads_override() or (
+            num_rpc_threads + 1
+        )
+        if rpc_threads_override is not None or torch_threads != num_rpc_threads + 1:
+            logger.info(
+                f"sampling worker {rank}: num_rpc_threads={num_rpc_threads} "
+                f"torch_num_threads={torch_threads} (environment override)"
+            )
 
         current_device = worker_options.worker_devices[rank]
 
         _set_worker_signal_handlers()
-        torch.set_num_threads(num_rpc_threads + 1)
+        torch.set_num_threads(torch_threads)
 
         init_rpc(
             master_addr=worker_options.master_addr,
