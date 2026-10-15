@@ -88,6 +88,7 @@ def _flush() -> None:
 
 def _build_ppr_relation_channel_masks(
     sampler_options: SamplerOptions,
+    edge_dir: str,
 ) -> Optional[dict]:
     """Per-relation-edge-type channel bitmask for typed PPR, else ``None``.
 
@@ -110,8 +111,15 @@ def _build_ppr_relation_channel_masks(
     for channel_index, edge_type_group in enumerate(typed_channel_groups):
         bit = 1 << channel_index
         for edge_type in edge_type_group:
-            for key in (tuple(edge_type), tuple(reverse_edge_type(edge_type))):
-                channel_masks[key] = channel_masks.get(key, 0) | bit
+            # Key by the single orientation that appears in the batch: GLT emits
+            # the reverse edge type for edge_dir="out" and the forward type for
+            # "in". Keying only that orientation keeps opposite-direction channels
+            # distinct -- keying both would OR their bits and collapse the mask.
+            batch_edge_type = (
+                reverse_edge_type(edge_type) if edge_dir == "out" else edge_type
+            )
+            key = tuple(batch_edge_type)
+            channel_masks[key] = channel_masks.get(key, 0) | bit
     return channel_masks
 
 
@@ -286,9 +294,6 @@ class BaseDistLoader(DistLoader):
         self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
-        self._ppr_relation_channel_masks = _build_ppr_relation_channel_masks(
-            sampler_options
-        )
         # Sampled-edge PPR output requires a final HeteroData batch so virtual
         # PPR edges and original sampled edges can live under separate edge
         # types. Pure homogeneous graphs and labeled-homogeneous ABLP both
@@ -325,6 +330,9 @@ class BaseDistLoader(DistLoader):
         self.with_weight = sampling_config.with_weight
         self.collect_features = sampling_config.collect_features
         self.edge_dir = sampling_config.edge_dir
+        self._ppr_relation_channel_masks = _build_ppr_relation_channel_masks(
+            sampler_options, self.edge_dir
+        )
         self.sampling_config = sampling_config
         self.to_device = device
         self.worker_options = worker_options

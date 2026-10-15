@@ -1596,9 +1596,7 @@ class GraphTransformerEncoder(nn.Module):
         # Typed-PPR per-edge-type channel masks (graph-level) drive the
         # relation filter in the transform; carry them through the projection.
         if hasattr(data, "ppr_relation_channel_masks"):
-            projected_data.ppr_relation_channel_masks = (
-                data.ppr_relation_channel_masks
-            )
+            projected_data.ppr_relation_channel_masks = data.ppr_relation_channel_masks
 
         # 2. Build sequences and run transformer
         # If anchor_node_ids provided, use those; otherwise use first batch_size nodes

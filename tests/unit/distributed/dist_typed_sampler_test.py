@@ -83,6 +83,35 @@ class DistTypedSamplerTest(TestCase):
                 node_types=node_types,
             )
 
+    def test_parse_typed_channel_ratios_rejects_more_than_63_channels(
+        self,
+    ) -> None:
+        # The per-node pushed-channel flag packs one bit per channel into a signed
+        # int64, so channel index 63 would overflow; the parser must reject it.
+        ratios = {(f"n{i}", "to", f"m{i}"): 1.0 / 64 for i in range(64)}
+        with self.assertRaisesRegex(ValueError, "at most 63 channels"):
+            parse_typed_channel_ratio_groups(ratios)
+
+    def test_channel_masks_keep_reverse_direction_pair_distinct(self) -> None:
+        # Opposite-direction channels (a forward edge type and its reverse) must
+        # keep distinct single bits. Keying both orientations OR'd them into 0b11
+        # and reopened the leak for separate-direction channels.
+        from graphlearn_torch.utils import reverse_edge_type
+
+        from gigl.distributed.base_dist_loader import (
+            _build_ppr_relation_channel_masks,
+        )
+        from gigl.distributed.sampler_options import PPRSamplerOptions
+
+        forward = USER_TO_STORY
+        reverse = tuple(reverse_edge_type(forward))
+        options = PPRSamplerOptions(
+            typed_channel_ratios={forward: 0.5, reverse: 0.5},
+            include_sampled_edges=True,
+        )
+        masks = _build_ppr_relation_channel_masks(options, edge_dir="out")
+        self.assertEqual(sorted(masks.values()), [0b01, 0b10])
+
 
 if __name__ == "__main__":
     absltest.main()
