@@ -4,19 +4,25 @@ Each thread owns a range of rows, scans the whole edge list and writes only its 
 are no atomics or write collisions. Columns match the torch path exactly; edge ids of duplicate
 edges keep input order, which the torch path does not guarantee. Ranges are balanced by edge count
 through ``indptr``.
+
+The kernels run on numba's OpenMP threading layer, which is not fork safe: a process that has run a
+kernel must not ``fork()`` a child that runs one. GiGL builds datasets in ``mp.spawn`` children.
 """
 
-from functools import cache
-from typing import Optional
+from typing import Optional, no_type_check
 
 import numba
 import numpy as np
 import torch
 from numba import njit, prange
 
+# @no_type_check keeps the unit launcher's jaxtyping hook from wrapping the kernels: numba's cache
+# cannot pickle the wrapper's closure, so every cached call would fail under `make unit_test_py`.
 
+
+@no_type_check
 @njit(cache=True, parallel=True)
-def _degrees_kernel(row, num_rows, num_ranges):
+def _degrees_kernel(row: np.ndarray, num_rows: int, num_ranges: int) -> np.ndarray:
     # Equal-width row ranges: there is no indptr yet to balance by.
     counts = np.zeros(num_rows, dtype=np.int64)
     per_range = (num_rows + num_ranges - 1) // num_ranges
@@ -30,8 +36,17 @@ def _degrees_kernel(row, num_rows, num_ranges):
     return counts
 
 
+@no_type_check
 @njit(cache=True, parallel=True)
-def _scatter_kernel(row, col, indptr, indices, edge_ids, row_bounds, write_edge_ids):
+def _scatter_kernel(
+    row: np.ndarray,
+    col: np.ndarray,
+    indptr: np.ndarray,
+    indices: np.ndarray,
+    edge_ids: np.ndarray,
+    row_bounds: np.ndarray,
+    write_edge_ids: bool,
+) -> np.ndarray:
     # Returns edges placed per range, -1 where degrees and edges disagree. The check runs
     # before each write: an overfull row's cursor points into the next range's slice.
     num_ranges = row_bounds.shape[0] - 1
@@ -61,8 +76,15 @@ def _scatter_kernel(row, col, indptr, indices, edge_ids, row_bounds, write_edge_
     return placed
 
 
+@no_type_check
 @njit(cache=True, parallel=True)
-def _sort_rows_kernel(indptr, indices, edge_ids, row_bounds, write_edge_ids):
+def _sort_rows_kernel(
+    indptr: np.ndarray,
+    indices: np.ndarray,
+    edge_ids: np.ndarray,
+    row_bounds: np.ndarray,
+    write_edge_ids: bool,
+) -> None:
     for range_index in prange(row_bounds.shape[0] - 1):
         for row_id in range(row_bounds[range_index], row_bounds[range_index + 1]):
             start = indptr[row_id]
@@ -77,16 +99,13 @@ def _sort_rows_kernel(indptr, indices, edge_ids, row_bounds, write_edge_ids):
                 indices[start:end].sort()
 
 
-@cache
-def _no_edge_ids() -> np.ndarray:
-    return np.empty(0, dtype=np.int64)
-
-
 def _edge_balanced_row_bounds(indptr: np.ndarray, num_ranges: int) -> np.ndarray:
-    bounds = np.searchsorted(indptr, np.linspace(0, indptr[-1], num_ranges + 1))
+    # int64 keys: float keys would make searchsorted copy all of indptr to compare.
+    keys = np.arange(num_ranges + 1, dtype=np.int64) * int(indptr[-1]) // num_ranges
+    bounds = np.searchsorted(indptr, keys)
     bounds[0] = 0
     bounds[-1] = indptr.shape[0] - 1
-    return np.unique(bounds.astype(np.int64))
+    return np.unique(bounds)
 
 
 def parallel_degrees(row: torch.Tensor, num_rows: int) -> torch.Tensor:
@@ -105,6 +124,13 @@ def parallel_scatter(
 ) -> None:
     """Place every edge in its row of ``indices`` (and its COO position in ``edge_ids``).
 
+    Args:
+        row: Source node id of each edge.
+        col: Destination node id of each edge.
+        indptr: CSR row pointers built from the degrees of ``row``.
+        indices: Output column ids, one slot per edge; written in place.
+        edge_ids: Output COO position of each edge, written in place, or ``None`` to skip them.
+
     Raises:
         ValueError: If the edges do not fill every row exactly.
     """
@@ -114,7 +140,7 @@ def parallel_scatter(
         col.numpy(),
         indptr_np,
         indices.numpy(),
-        _no_edge_ids() if edge_ids is None else edge_ids.numpy(),
+        np.empty(0, dtype=np.int64) if edge_ids is None else edge_ids.numpy(),
         _edge_balanced_row_bounds(indptr_np, numba.get_num_threads()),
         edge_ids is not None,
     )
@@ -125,13 +151,20 @@ def parallel_scatter(
 def parallel_sort_within_rows(
     indptr: torch.Tensor, indices: torch.Tensor, edge_ids: Optional[torch.Tensor]
 ) -> None:
-    """Sort each row's columns ascending in place, permuting ``edge_ids`` alongside."""
+    """Sort each row's columns ascending in place, permuting ``edge_ids`` alongside.
+
+    Args:
+        indptr: CSR row pointers.
+        indices: Column ids to sort within each row; sorted in place.
+        edge_ids: Edge ids to permute with ``indices``, or ``None``. A stable sort keeps
+            duplicate edges in input order.
+    """
     indptr_np = indptr.numpy()
     # More ranges than threads: long rows sort slower, and finer ranges balance them.
     _sort_rows_kernel(
         indptr_np,
         indices.numpy(),
-        _no_edge_ids() if edge_ids is None else edge_ids.numpy(),
+        np.empty(0, dtype=np.int64) if edge_ids is None else edge_ids.numpy(),
         _edge_balanced_row_bounds(indptr_np, numba.get_num_threads() * 8),
         edge_ids is not None,
     )
