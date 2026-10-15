@@ -154,7 +154,6 @@ def heterodata_to_graph_transformer_input(
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
     prioritize_hop_order: bool = False,
-    relation_edges_within_sampled_frontier: bool = True,
 ) -> tuple[
     Float[Tensor, "anchors sequence feature_dim"],
     Bool[Tensor, "anchors sequence"],
@@ -213,16 +212,6 @@ def heterodata_to_graph_transformer_input(
         prioritize_hop_order: If True, k-hop sequence construction fills tokens
             by hop depth before truncating to ``max_seq_len``. The default False
             preserves existing homogeneous-node-id ordering.
-        relation_edges_within_sampled_frontier: If True, k-hop relation indices
-            keep only the edges the anchor's own k-hop sample contains: those
-            whose expanded endpoint (the target for ``sampling_direction="in"``,
-            the source for ``"out"``) is fewer than ``hop_distance`` hops from
-            the anchor. Edges into last-hop tokens exist only because another
-            seed in the batch expanded that node; in link-prediction batches
-            that seed is often the anchor's positive label, so keeping them
-            leaks the label. If False, every batch edge between two tokens
-            becomes a relation. Has no effect with
-            ``sequence_construction_method="ppr"``. (default: True)
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -353,7 +342,14 @@ def heterodata_to_graph_transformer_input(
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
         if sampling_direction == "in":
             homo_edge_index = homo_edge_index.flip(0)
-        if relation_edge_types and relation_edges_within_sampled_frontier:
+        if relation_edge_types:
+            # Keep only the relation edges the anchor's own k-hop sample
+            # contains: those whose expanded endpoint (the target for
+            # sampling_direction="in", the source for "out") is fewer than
+            # hop_distance hops from the anchor. Edges into last-hop tokens
+            # exist only because another seed in the batch expanded that node.
+            # In link-prediction batches that seed is often the anchor's
+            # positive label, so keeping them would leak the label.
             frontier_batch_node_keys = _get_sampled_frontier_batch_node_keys(
                 anchor_indices=anchor_indices,
                 edge_index=homo_edge_index,
@@ -1464,8 +1460,8 @@ def _lookup_pairwise_relation_indices(
 
     If ``frontier_batch_node_keys`` is given (sorted ``batch_idx * num_nodes +
     node_idx`` keys), an edge is kept only when its expanded endpoint is in
-    that anchor's frontier. See ``relation_edges_within_sampled_frontier`` in
-    ``heterodata_to_graph_transformer_input``.
+    that anchor's frontier. K-hop sequences pass this so relation edges match
+    the anchor's own sample; PPR sequences pass ``None``.
     """
     if not relation_edge_types:
         return None

@@ -446,29 +446,23 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 data[friends.tuple_repr()].edge_index = torch.tensor(friend_edges).t()
                 data[engages.tuple_repr()].edge_index = torch.tensor(engage_edges).t()
 
-                def relation_node_triples(
-                    within_frontier: bool,
-                ) -> set[tuple[int, int, int, int]]:
-                    sequences, _, auxiliary_data = (
-                        heterodata_to_graph_transformer_input(
-                            data=data,
-                            batch_size=2,
-                            max_seq_len=6,
-                            anchor_node_type="user",
-                            hop_distance=2,
-                            sampling_direction=direction,
-                            relation_edge_types=[friends, engages],
-                            relation_edges_within_sampled_frontier=within_frontier,
-                        )
-                    )
-                    relation_indices = auxiliary_data["pairwise_relation_indices"]
-                    assert relation_indices is not None
-                    node_ids = sequences[..., 0].long()
-                    # (anchor, query node id, key node id, relation index)
-                    return {
-                        (b, int(node_ids[b, q]), int(node_ids[b, k]), r)
-                        for b, q, k, r in relation_indices.tolist()
-                    }
+                sequences, _, auxiliary_data = heterodata_to_graph_transformer_input(
+                    data=data,
+                    batch_size=2,
+                    max_seq_len=6,
+                    anchor_node_type="user",
+                    hop_distance=2,
+                    sampling_direction=direction,
+                    relation_edge_types=[friends, engages],
+                )
+                relation_indices = auxiliary_data["pairwise_relation_indices"]
+                assert relation_indices is not None
+                node_ids = sequences[..., 0].long()
+                # (anchor, query node id, key node id, relation index)
+                relation_node_triples = {
+                    (b, int(node_ids[b, q]), int(node_ids[b, k]), r)
+                    for b, q, k, r in relation_indices.tolist()
+                }
 
                 # "in": query is the edge target. "out" reverses every edge, so the
                 # same token pairs appear with query and key swapped.
@@ -481,12 +475,10 @@ class TestHeteroToGraphTransformerInput(TestCase):
                 }
                 if direction == "out":
                     expected = {(b, k, q, r) for b, q, k, r in expected}
-                leaked = (0, 1, 10, 1) if direction == "in" else (0, 10, 1, 1)
 
-                self.assertEqual(relation_node_triples(True), expected)
-                # user3 is hop 3 from user0, so only item0 -> user1 adds a
-                # relation into user0's last-hop token user1.
-                self.assertEqual(relation_node_triples(False), expected | {leaked})
+                # item0 -> user1 is a sampled edge into user0's last-hop token
+                # user1 and must not appear as a relation for anchor user0.
+                self.assertEqual(relation_node_triples, expected)
 
     def test_sampling_direction_defaults_to_out(self):
         """Out sampling preserves existing k-hop reachability."""

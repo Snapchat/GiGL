@@ -2329,7 +2329,8 @@ class TestGraphTransformerEncoderRelationFrontier(TestCase):
             item_order=[1, 0],
         )
 
-        def encode_anchor(within_frontier: bool) -> tuple[Tensor, Tensor]:
+        def encode_anchor(data: HeteroData, anchor_node_ids: Tensor) -> Tensor:
+            # Same seed so both encoders have identical weights.
             torch.manual_seed(0)
             encoder = GraphTransformerEncoder(
                 node_type_to_feat_dim_map={self._user: 8, self._item: 8},
@@ -2345,7 +2346,6 @@ class TestGraphTransformerEncoderRelationFrontier(TestCase):
                 attention_dropout_rate=0.0,
                 relation_attention_mode="edge_type_hgt",
                 relation_message_mode="edge_type_attention",
-                relation_edges_within_sampled_frontier=within_frontier,
             )
             encoder.eval()
             with torch.no_grad():
@@ -2353,28 +2353,17 @@ class TestGraphTransformerEncoderRelationFrontier(TestCase):
                 # so relation edges change the output.
                 for parameter in encoder.parameters():
                     parameter.normal_(std=0.5)
-                merged_embeddings = encoder(
-                    data=merged,
+                embeddings = encoder(
+                    data=data,
                     anchor_node_type=self._user,
                     device=self._device,
-                    anchor_node_ids=torch.tensor([0, 1]),
+                    anchor_node_ids=anchor_node_ids,
                 )
-                solo_embeddings = encoder(
-                    data=solo,
-                    anchor_node_type=self._user,
-                    device=self._device,
-                    anchor_node_ids=torch.tensor([0]),
-                )
-            return merged_embeddings[0], solo_embeddings[0]
+            return embeddings[0]
 
-        merged_anchor, solo_anchor = encode_anchor(within_frontier=True)
+        merged_anchor = encode_anchor(merged, anchor_node_ids=torch.tensor([0, 1]))
+        solo_anchor = encode_anchor(solo, anchor_node_ids=torch.tensor([0]))
         torch.testing.assert_close(merged_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
-
-        leaky_merged_anchor, leaky_solo_anchor = encode_anchor(within_frontier=False)
-        torch.testing.assert_close(leaky_solo_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
-        self.assertFalse(
-            torch.allclose(leaky_merged_anchor, solo_anchor, atol=1e-3, rtol=1e-3)
-        )
 
 
 if __name__ == "__main__":
