@@ -16,8 +16,10 @@ from contextlib import contextmanager
 from typing import Callable, Final, Optional
 
 import torch
+from graphlearn_torch.distributed.dist_feature import DistFeature
 
 from gigl.common.logger import Logger
+from gigl.env.constants import is_env_flag_enabled
 
 logger = Logger()
 
@@ -27,6 +29,10 @@ SAMPLING_STATS_EVERY_N_BATCHES_ENV: Final[str] = "GIGL_SAMPLING_STATS_EVERY_N_BA
 # worker's torch intra-op thread count (default ``num_rpc_threads + 1``).
 SAMPLING_WORKER_NUM_RPC_THREADS_ENV: Final[str] = "GIGL_SAMPLING_WORKER_NUM_RPC_THREADS"
 SAMPLING_WORKER_TORCH_THREADS_ENV: Final[str] = "GIGL_SAMPLING_WORKER_TORCH_THREADS"
+
+# When set to 1/true, loaders sample without edge ids and skip edge-feature collection even
+# if the dataset has edge features (for models that never read ``edge_attr``).
+SAMPLING_SKIP_EDGE_FEATURES_ENV: Final[str] = "GIGL_SAMPLING_SKIP_EDGE_FEATURES"
 
 
 def _non_negative_int_from_env(name: str) -> Optional[int]:
@@ -59,6 +65,11 @@ def sampling_worker_torch_threads_override() -> Optional[int]:
     """Per-worker torch intra-op thread count from the environment, or ``None`` for the default."""
     value = _non_negative_int_from_env(SAMPLING_WORKER_TORCH_THREADS_ENV)
     return value if value else None
+
+
+def sampling_skip_edge_features() -> bool:
+    """Whether ``GIGL_SAMPLING_SKIP_EDGE_FEATURES`` asks loaders to leave edge features out."""
+    return is_env_flag_enabled(SAMPLING_SKIP_EDGE_FEATURES_ENV)
 
 
 def tensor_map_bytes(tensors: dict) -> int:
@@ -172,7 +183,9 @@ class SamplingStats:
         return " ".join(fields)
 
 
-def instrument_dist_feature(feature: object, stats: SamplingStats, name: str) -> None:
+def instrument_dist_feature(
+    feature: DistFeature, stats: SamplingStats, name: str
+) -> None:
     """Times a GLT ``DistFeature`` instance's remote issue, RPC wait, local gather, and stitch.
 
     GLT builds its ``DistFeature`` objects inside ``DistNeighborSampler.__init__`` and registers
@@ -186,9 +199,9 @@ def instrument_dist_feature(feature: object, stats: SamplingStats, name: str) ->
         stats: Accumulator to report into.
         name: Key prefix, e.g. ``nfeat``.
     """
-    remote_get = feature._remote_selecting_get  # type: ignore[attr-defined]
-    local_get = feature._local_selecting_get  # type: ignore[attr-defined]
-    stitch = feature._stitch  # type: ignore[attr-defined]
+    remote_get = feature._remote_selecting_get
+    local_get = feature._local_selecting_get
+    stitch = feature._stitch
 
     def timed_remote_get(ids: torch.Tensor, input_type=None) -> torch.futures.Future:
         issue_start = time.perf_counter()

@@ -21,7 +21,10 @@ from gigl.distributed.sampler import (
 )
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
-from gigl.distributed.utils.sampling_stats import SAMPLING_STATS_EVERY_N_BATCHES_ENV
+from gigl.distributed.utils.sampling_stats import (
+    SAMPLING_SKIP_EDGE_FEATURES_ENV,
+    SAMPLING_STATS_EVERY_N_BATCHES_ENV,
+)
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -1132,6 +1135,20 @@ class WithEdgeDerivationTest(TestCase):
             num_neighbors=[2, 2], dataset_schema=schema
         )
         self.assertTrue(config.with_edge)
+
+    def test_env_flag_skips_edge_features_even_when_present(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=FeatureInfo(dim=4, dtype=torch.float32),
+            edge_dir="out",
+        )
+        with mock.patch.dict(os.environ, {SAMPLING_SKIP_EDGE_FEATURES_ENV: "1"}):
+            config = BaseDistLoader.create_sampling_config(
+                num_neighbors=[2, 2], dataset_schema=schema
+            )
+        self.assertFalse(config.with_edge)
 
     def test_config_with_edge_true_for_heterogeneous_edge_feature_dict(self) -> None:
         schema = DatasetSchema(

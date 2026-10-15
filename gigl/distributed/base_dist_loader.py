@@ -72,6 +72,7 @@ from gigl.distributed.utils.neighborloader import (
 )
 from gigl.distributed.utils.sampling_stats import (
     SamplingStats,
+    sampling_skip_edge_features,
     sampling_stats_every_n_batches,
     tensor_map_bytes,
 )
@@ -526,7 +527,8 @@ class BaseDistLoader(DistLoader):
             with_edge=(
                 dataset_schema.edge_feature_info is not None
                 or dataset_schema.edge_quantization_metadata is not None
-            ),
+            )
+            and not sampling_skip_edge_features(),
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
