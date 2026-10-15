@@ -1,6 +1,8 @@
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, Union
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
@@ -32,6 +34,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import FeatureQuantizationMetadata
+from gigl.utils.share_memory import is_disk_backed
 from tests.test_assets.test_case import TestCase
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
@@ -315,6 +318,52 @@ class TFRecordDataLoaderTest(TestCase):
         self.assertIsNone(loaded.quantized_features)
 
         assert_close(loaded.labels, expected_label_tensor)
+
+    def test_load_as_torch_tensors_assembles_into_spilled_destination(self) -> None:
+        """With tensor spilling on, assembled tensors are disk-backed and byte-identical.
+
+        Exercises the ``allocate_disk_backed`` assembly path in ``load_as_torch_tensors``: the
+        loaded tensors must equal the in-memory (``tf.concat``) result, and the assembled tensors
+        must be backed by a spill file rather than anonymous memory.
+        """
+        info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+            feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
+            feature_keys=["feature_0", "feature_1"],
+            feature_dim=2,
+            entity_key="node_id",
+            label_keys=["label_0"],
+            tfrecord_uri_pattern="100.tfrecord",
+        )
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        opts = TFDatasetOptions(deterministic=True)
+
+        in_memory = loader.load_as_torch_tensors(info, tf_dataset_options=opts)
+        assert in_memory.features is not None  # narrow Optional for is_disk_backed
+        self.assertFalse(is_disk_backed(in_memory.ids))
+        self.assertFalse(is_disk_backed(in_memory.features))
+
+        spill_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(spill_dir.cleanup)
+        # A 1-byte threshold forces even these tiny fixtures down the disk-backed path.
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GIGL_TENSOR_SPILL_DIR": spill_dir.name,
+                "GIGL_TENSOR_SPILL_MIN_BYTES": "1",
+            },
+        ):
+            spilled = loader.load_as_torch_tensors(info, tf_dataset_options=opts)
+        assert spilled.features is not None and spilled.labels is not None
+
+        # Values, dtypes and shapes match the in-memory assembly ...
+        assert_close(spilled.ids, in_memory.ids)
+        assert_close(spilled.features, in_memory.features)
+        assert_close(spilled.labels, in_memory.labels)
+        # ... but the assembled tensors now live in spill files, not anonymous memory.
+        self.assertTrue(is_disk_backed(spilled.ids))
+        self.assertTrue(is_disk_backed(spilled.features))
+        self.assertTrue(is_disk_backed(spilled.labels))
 
     def test_load_as_torch_tensors_decodes_packed_node_features(self) -> None:
         packed_feature_values = [[1, 2], [254, 255]]
