@@ -54,6 +54,17 @@ _PPR_HOMOGENEOUS_EDGE_TYPE = (
 )
 
 PPRTensorOutput = Union[torch.Tensor, dict[NodeType, torch.Tensor]]
+
+
+@dataclass(frozen=True)
+class PPRExtractionArrays:
+    """Flattened PPR top-k extraction arrays for one seed type. Homogeneous
+    graphs use tensors; heterogeneous graphs use node-type-keyed dicts."""
+
+    node_ids: PPRTensorOutput
+    weights: PPRTensorOutput
+    valid_counts: PPRTensorOutput
+    is_expanded: PPRTensorOutput
 PPRCacheState = Optional[Union[PPRForwardPush, list[PPRForwardPush]]]
 
 
@@ -467,12 +478,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _extract_ppr_state_top_k(
         self,
         ppr_state,
-    ) -> tuple[
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-        Union[torch.Tensor, dict[NodeType, torch.Tensor]],
-    ]:
+    ) -> PPRExtractionArrays:
         """Extract PPR neighbors from a completed C++ Forward Push state.
 
         The C++ kernel indexes node types by compact integer IDs for speed.
@@ -502,18 +508,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         ) = self._translate_top_k_extraction_results(extracted_results)
 
         if self._is_homogeneous:
-            return (
-                node_type_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                node_type_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                node_type_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-                node_type_to_is_expanded[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            return PPRExtractionArrays(
+                node_ids=node_type_to_flat_ids[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                weights=node_type_to_flat_weights[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                valid_counts=node_type_to_valid_counts[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                is_expanded=node_type_to_is_expanded[DEFAULT_HOMOGENEOUS_NODE_TYPE],
             )
         else:
-            return (
-                node_type_to_flat_ids,
-                node_type_to_flat_weights,
-                node_type_to_valid_counts,
-                node_type_to_is_expanded,
+            return PPRExtractionArrays(
+                node_ids=node_type_to_flat_ids,
+                weights=node_type_to_flat_weights,
+                valid_counts=node_type_to_valid_counts,
+                is_expanded=node_type_to_is_expanded,
             )
 
     def _translate_top_k_extraction_results(
@@ -547,19 +553,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self,
         ppr_states,
         typed_ppr_channel_target_counts: list[int],
-    ) -> tuple[
-        dict[NodeType, torch.Tensor],
-        dict[NodeType, torch.Tensor],
-        dict[NodeType, torch.Tensor],
-        dict[NodeType, torch.Tensor],
-    ]:
+    ) -> PPRExtractionArrays:
         """Extract typed PPR results and translate C++ node-type IDs."""
         extracted_results = extract_typed_top_k_with_residual_top_up(
             ppr_states,
             typed_ppr_channel_target_counts,
             self._enable_residual_topup,
         )
-        return self._translate_top_k_extraction_results(extracted_results)
+        translated = self._translate_top_k_extraction_results(extracted_results)
+        return PPRExtractionArrays(
+            node_ids=translated[0],
+            weights=translated[1],
+            valid_counts=translated[2],
+            is_expanded=translated[3],
+        )
 
     async def _compute_ppr_scores(
         self,
@@ -673,16 +680,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 fetched_by_edge_type_id,
             )
 
-        node_ids, weights, valid_counts, is_expanded = await loop.run_in_executor(
+        arrays = await loop.run_in_executor(
             None,
             self._extract_ppr_state_top_k,
             ppr_state,
         )
         return PPRResult(
-            node_ids=node_ids,
-            weights=weights,
-            valid_counts=valid_counts,
-            is_expanded=is_expanded,
+            node_ids=arrays.node_ids,
+            weights=arrays.weights,
+            valid_counts=arrays.valid_counts,
+            is_expanded=arrays.is_expanded,
             cache_state=ppr_state if self._include_sampled_edges else None,
         )
 
@@ -794,17 +801,17 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             ]
             await asyncio.gather(*push_tasks)
 
-        node_ids, weights, valid_counts, is_expanded = await loop.run_in_executor(
+        arrays = await loop.run_in_executor(
             None,
             self._extract_typed_ppr_state_top_k,
             ppr_states,
             typed_ppr_channel_target_counts,
         )
         return PPRResult(
-            node_ids=node_ids,
-            weights=weights,
-            valid_counts=valid_counts,
-            is_expanded=is_expanded,
+            node_ids=arrays.node_ids,
+            weights=arrays.weights,
+            valid_counts=arrays.valid_counts,
+            is_expanded=arrays.is_expanded,
             cache_state=ppr_states if self._include_sampled_edges else None,
         )
 

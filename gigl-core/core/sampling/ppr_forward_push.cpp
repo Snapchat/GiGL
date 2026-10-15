@@ -1040,16 +1040,18 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
                 flatIds.push_back(static_cast<int64_t>(nodeId));
                 const auto& features = outputScores.at(nodeId);
                 flatFeatureValues.insert(flatFeatureValues.end(), features.begin(), features.end());
-                bool expandedInAnyChannel = false;
+                // Bitmask of channels that pushed (expanded) this node, so the
+                // transform can keep an edge of type et only when the anchor
+                // pushed the owner in a channel whose allowlist contains et.
+                int64_t pushedChannelMask = 0;
                 for (int32_t channelIndex = 0; channelIndex < numChannels; ++channelIndex) {
                     const auto& channelState = states[channelIndex]->_state[seedIdx][nodeTypeId];
                     const auto channelPprIt = channelState.pprScores.find(nodeId);
                     if (channelPprIt != channelState.pprScores.end() && channelPprIt->second > 0.0) {
-                        expandedInAnyChannel = true;
-                        break;
+                        pushedChannelMask |= (static_cast<int64_t>(1) << channelIndex);
                     }
                 }
-                flatIsExpanded.push_back(expandedInAnyChannel ? 1 : 0);
+                flatIsExpanded.push_back(pushedChannelMask);
             }
 
             validCounts.push_back(static_cast<int64_t>(selectedNodeCount));

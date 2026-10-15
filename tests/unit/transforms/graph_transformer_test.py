@@ -1319,15 +1319,20 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
 
 
 class TestPprRelationExpandedSourceFilter(TestCase):
-    """PPR relation edges whose source token the anchor did not expand are
-    dropped, so a co-seeded ABLP positive's residual-top-up edges cannot leak
-    into the anchor's relation channel."""
+    """A relation edge is kept for an anchor only when the anchor's own PPR push
+    expanded the edge's OWNER -- the node whose adjacency row was fetched, which
+    ``ppr_is_expanded`` describes. GLT reverses sampled edges during collation, so
+    in the batch the owner is the target (``edge_index[1]``) and the fetched
+    neighbour is the source (``edge_index[0]``). A co-seeded ABLP positive reaches
+    the anchor's sequence as a residual top-up node the anchor never expanded, so
+    edges owned by it must be dropped.
+    """
 
-    def _build(self, with_expanded_flag):
+    def _build(self, with_expanded_flag: bool) -> tuple[HeteroData, list[EdgeType]]:
         user = NodeType("user")
         likes = EdgeType(user, Relation("likes"), user)
         data = HeteroData()
-        # 0 = anchor A, 1 = shared neighbour n (expanded), 2 = positive P (top-up).
+        # 0 = anchor A, 1 = shared neighbour n (A expanded), 2 = positive P (top-up).
         data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
         # A's PPR neighbourhood: A->n (0.9), A->P (0.6) -> sequence [A@0, n@1, P@2].
         data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0], [1, 2]])
@@ -1335,11 +1340,14 @@ class TestPprRelationExpandedSourceFilter(TestCase):
         if with_expanded_flag:
             # n is finalized/expanded by A's push; P entered via residual top-up.
             data["user", "ppr", "user"].ppr_is_expanded = torch.tensor([True, False])
-        likes_store = data[likes.tuple_repr()]
-        likes_store.edge_index = torch.tensor([[0, 2], [1, 1]])  # A->n, P->n
+        # Sampled relation edges in collated [neighbour, owner] orientation
+        # (edge_index[0]=neighbour/source, edge_index[1]=owner/target):
+        #   column 0 (n -> P): owner P, from P's row -- A never expanded P (leak).
+        #   column 1 (P -> n): owner n, from n's row -- A expanded n (legitimate).
+        data[likes.tuple_repr()].edge_index = torch.tensor([[1, 2], [2, 1]])
         return data, [likes]
 
-    def _coords(self, with_expanded_flag):
+    def _coords(self, with_expanded_flag: bool) -> set[tuple[int, int, int, int]]:
         data, rel = self._build(with_expanded_flag)
         _, _, aux = heterodata_to_graph_transformer_input(
             data=data,
@@ -1353,15 +1361,51 @@ class TestPprRelationExpandedSourceFilter(TestCase):
         assert idx is not None
         return {tuple(c) for c in idx.tolist()}
 
-    def test_leak_present_without_expanded_flag(self):
+    def test_leak_present_without_expanded_flag(self) -> None:
         coords = self._coords(with_expanded_flag=False)
-        self.assertIn((0, 1, 0, 0), coords)  # A -> n
-        self.assertIn((0, 1, 2, 0), coords)  # P -> n leaks (no provenance to filter)
+        # (batch, query=target/owner pos, key=source/neighbour pos, relation_idx).
+        self.assertIn((0, 1, 2, 0), coords)  # owner n (query@1): legitimate
+        self.assertIn(
+            (0, 2, 1, 0), coords
+        )  # owner P (query@2): leaks, nothing to filter
 
-    def test_leak_removed_with_expanded_flag(self):
+    def test_leak_removed_with_expanded_flag(self) -> None:
         coords = self._coords(with_expanded_flag=True)
-        self.assertIn((0, 1, 0, 0), coords)  # A -> n kept (source A expanded)
-        self.assertNotIn((0, 1, 2, 0), coords)  # P -> n dropped (source P is top-up)
+        self.assertIn((0, 1, 2, 0), coords)  # owner n expanded by A -> kept
+        self.assertNotIn((0, 2, 1, 0), coords)  # owner P not expanded by A -> dropped
+
+    def test_typed_channel_mask_drops_edge_type_not_fetched(self) -> None:
+        # Typed PPR: the owner's ppr_is_expanded is a per-node *channel* bitmask.
+        # Here A pushed owner n only in channel 0 (bit 0b01). A relation edge is
+        # kept only if its edge type is covered by a channel A pushed n in.
+        user = NodeType("user")
+        r0 = EdgeType(user, Relation("r0"), user)  # covered by channel 0
+        r1 = EdgeType(user, Relation("r1"), user)  # covered by channel 1 only
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data["user", "ppr", "user"].edge_attr = torch.tensor([0.9, 0.6])
+        # Channel bitmask: n pushed in channel 0 (0b01); P not pushed by A (0b00).
+        data["user", "ppr", "user"].ppr_is_expanded = torch.tensor([1, 0])
+        # Both relation edges have owner n (edge_index[1] = 1), neighbour A.
+        data[r0.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[r1.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data.ppr_relation_channel_masks = {
+            r0.tuple_repr(): 0b01,  # fetched by channel 0 (which pushed n)
+            r1.tuple_repr(): 0b10,  # fetched only by channel 1 (A never pushed n there)
+        }
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            relation_edge_types=[r0, r1],
+        )
+        coords = {tuple(c) for c in aux["pairwise_relation_indices"].tolist()}
+        # owner n at query@1; r0 is relation_idx 0, r1 is relation_idx 1.
+        self.assertIn((0, 1, 0, 0), coords)  # r0 kept: n pushed in channel 0
+        self.assertNotIn((0, 1, 0, 1), coords)  # r1 dropped: n not pushed in channel 1
 
 
 if __name__ == "__main__":

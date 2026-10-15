@@ -30,6 +30,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
@@ -58,6 +59,9 @@ from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.channel import MonitoredShmChannel
+from gigl.distributed.utils.dist_typed_sampler import (
+    parse_typed_channel_ratio_groups,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -80,6 +84,35 @@ DEFAULT_NUM_CPU_THREADS = 2
 def _flush() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
+
+
+def _build_ppr_relation_channel_masks(
+    sampler_options: SamplerOptions,
+) -> Optional[dict]:
+    """Per-relation-edge-type channel bitmask for typed PPR, else ``None``.
+
+    Bit ``c`` is set for an edge type when typed-PPR channel ``c`` traverses it.
+    The graph-transformer relation filter ANDs this with a token's per-node
+    pushed-channel bitmask (``ppr_is_expanded``) so an edge is kept only when the
+    anchor pushed the edge's owner in a channel that fetches that edge type.
+    Keyed in both edge orientations because GLT reverses sampled edges in
+    collation. Untyped PPR returns ``None`` (the filter then keeps any pushed
+    owner).
+    """
+    if not isinstance(sampler_options, PPRSamplerOptions):
+        return None
+    typed_channel_groups, _ = parse_typed_channel_ratio_groups(
+        sampler_options.typed_channel_ratios
+    )
+    if not typed_channel_groups:
+        return None
+    channel_masks: dict = {}
+    for channel_index, edge_type_group in enumerate(typed_channel_groups):
+        bit = 1 << channel_index
+        for edge_type in edge_type_group:
+            for key in (tuple(edge_type), tuple(reverse_edge_type(edge_type))):
+                channel_masks[key] = channel_masks.get(key, 0) | bit
+    return channel_masks
 
 
 @dataclass(frozen=True)
@@ -253,6 +286,9 @@ class BaseDistLoader(DistLoader):
         self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
 
         self._sampler_options = sampler_options
+        self._ppr_relation_channel_masks = _build_ppr_relation_channel_masks(
+            sampler_options
+        )
         # Sampled-edge PPR output requires a final HeteroData batch so virtual
         # PPR edges and original sampled edges can live under separate edge
         # types. Pure homogeneous graphs and labeled-homogeneous ABLP both
@@ -1051,6 +1087,8 @@ class BaseDistLoader(DistLoader):
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
             ppr_is_expanded = matched[PPR_EXPANDED_METADATA_KEY]
             attach_ppr_outputs(data, ppr_edge_indices, ppr_weights, ppr_is_expanded)
+            if self._ppr_relation_channel_masks is not None:
+                data.ppr_relation_channel_masks = self._ppr_relation_channel_masks
             if isinstance(data, HeteroData):
                 edge_types_to_keep = set(ppr_edge_indices.keys())
                 if self._sampler_options.include_sampled_edges:
