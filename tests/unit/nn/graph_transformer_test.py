@@ -1,13 +1,14 @@
 """Tests for GraphTransformerEncoder."""
 
 import copy
-from typing import Callable, Literal, cast
+from typing import Callable, Literal, Optional, cast
 from unittest.mock import patch
 
 import torch
 import torch.nn as nn
 from absl.testing import absltest
 from omegaconf import ListConfig, OmegaConf
+from parameterized import param, parameterized
 from torch import Tensor
 from torch_geometric.data import HeteroData
 
@@ -17,6 +18,7 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoderLayer,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from tests.test_assets.test_case import TestCase
 
 
@@ -2381,6 +2383,153 @@ class TestGraphTransformerEncoderRelationFrontier(TestCase):
         merged_anchor = encode_anchor(merged, anchor_node_ids=torch.tensor([0, 1]))
         solo_anchor = encode_anchor(solo, anchor_node_ids=torch.tensor([0]))
         torch.testing.assert_close(merged_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
+
+
+def _create_variable_length_graph() -> HeteroData:
+    """A homogeneous batch whose 8 anchors have k-hop sequences of 1 to 10 tokens.
+
+    Anchor ``i`` links to ``i`` of the 16 non-anchor nodes, and every non-anchor
+    node links to two others, so 2-hop sequence lengths grow with ``i``.
+    """
+    generator = torch.Generator().manual_seed(0)
+    edges = [
+        (anchor, 8 + (anchor * j) % 16) for anchor in range(8) for j in range(anchor)
+    ]
+    edges += [(node, 8 + (node * 3 + 1) % 16) for node in range(8, 24)]
+    edges += [(node, 8 + (node * 5 + 2) % 16) for node in range(8, 24)]
+    data = HeteroData()
+    data["user"].x = torch.randn(24, 4, generator=generator)
+    data["user"].batch_size = 8
+    data["user", "to", "user"].edge_index = torch.tensor(edges).t()
+    return AddHeteroHopDistanceEncoding(h_max=2)(data)
+
+
+class TestGraphTransformerEncoderLengthBuckets(TestCase):
+    """Length buckets trim padding without changing embeddings or gradients."""
+
+    def setUp(self) -> None:
+        self._user = NodeType("user")
+        self._edge_type = EdgeType(self._user, Relation("to"), self._user)
+        self._data = _create_variable_length_graph()
+
+    def _encoder_pair(
+        self, **kwargs: object
+    ) -> tuple[GraphTransformerEncoder, GraphTransformerEncoder]:
+        """An unbucketed encoder and a bucketed copy with the same random weights."""
+        encoder_kwargs: dict = dict(
+            node_type_to_feat_dim_map={self._user: 4},
+            edge_type_to_feat_dim_map={self._edge_type: 0},
+            hid_dim=8,
+            out_dim=6,
+            num_layers=2,
+            num_heads=2,
+            max_seq_len=10,
+            hop_distance=2,
+            dropout_rate=0.0,
+            attention_dropout_rate=0.0,
+        )
+        encoder_kwargs.update(kwargs)
+        torch.manual_seed(0)
+        reference = GraphTransformerEncoder(**encoder_kwargs)
+        with torch.no_grad():
+            # Materialize lazy modules, then randomize every weight so relation
+            # channels (zero-initialized) affect the output.
+            reference(data=self._data, anchor_node_type=self._user)
+            for parameter in reference.parameters():
+                parameter.normal_(std=0.3)
+        # Unsorted, with a duplicate: bounds are deduplicated and sorted.
+        bucketed = GraphTransformerEncoder(**encoder_kwargs, length_buckets=[5, 2, 2])
+        bucketed.load_state_dict(reference.state_dict())
+        return reference, bucketed
+
+    @parameterized.expand(
+        [
+            param("anchor_only", encoder_kwargs=dict(readout_mode="anchor_only")),
+            param(
+                "anchor_neighbor_attention_with_biases_and_token_input",
+                encoder_kwargs=dict(
+                    anchor_based_attention_bias_attr_names=["hop_distance"],
+                    pairwise_attention_bias_attr_names=["hop_distance"],
+                    anchor_based_input_attr_names=["hop_distance"],
+                ),
+            ),
+            param(
+                "relation_attention_and_messages",
+                encoder_kwargs=dict(
+                    relation_attention_mode="edge_type_hgt",
+                    relation_message_mode="edge_type_attention",
+                    readout_mode="anchor_only",
+                ),
+            ),
+            param("hop_ordered", encoder_kwargs=dict(prioritize_hop_order=True)),
+            # Lengths are not monotone in anchor order, so outputs must be
+            # scattered back to it.
+            param(
+                "permuted_anchors_with_relations",
+                encoder_kwargs=dict(
+                    relation_attention_mode="edge_type_hgt",
+                    relation_message_mode="edge_type_attention",
+                ),
+                anchor_node_ids=torch.tensor([6, 0, 3, 1, 7, 2, 5, 4]),
+            ),
+            param(
+                "permuted_anchors_with_pairwise_bias",
+                encoder_kwargs=dict(
+                    pairwise_attention_bias_attr_names=["hop_distance"],
+                    anchor_based_input_attr_names=["hop_distance"],
+                ),
+                anchor_node_ids=torch.tensor([7, 2, 0, 5, 1]),
+            ),
+        ]
+    )
+    def test_bucketed_forward_matches_unbucketed(
+        self, _: str, encoder_kwargs: dict, anchor_node_ids: Optional[Tensor] = None
+    ) -> None:
+        reference, bucketed = self._encoder_pair(**encoder_kwargs)
+        reference_embeddings = reference(
+            data=self._data,
+            anchor_node_type=self._user,
+            anchor_node_ids=anchor_node_ids,
+        )
+        bucketed_embeddings = bucketed(
+            data=self._data,
+            anchor_node_type=self._user,
+            anchor_node_ids=anchor_node_ids,
+        )
+        torch.testing.assert_close(bucketed_embeddings, reference_embeddings)
+
+        reference_embeddings.square().sum().backward()
+        bucketed_embeddings.square().sum().backward()
+        bucketed_parameters = dict(bucketed.named_parameters())
+        for name, parameter in reference.named_parameters():
+            self.assertIsNotNone(parameter.grad, name)
+            torch.testing.assert_close(
+                bucketed_parameters[name].grad, parameter.grad, msg=name
+            )
+
+    def test_empty_anchor_batch(self) -> None:
+        reference, bucketed = self._encoder_pair()
+        no_anchors = torch.empty(0, dtype=torch.long)
+        with torch.no_grad():
+            expected = reference(
+                data=self._data, anchor_node_type=self._user, anchor_node_ids=no_anchors
+            )
+            actual = bucketed(
+                data=self._data, anchor_node_type=self._user, anchor_node_ids=no_anchors
+            )
+        self.assertEqual(actual.shape, (0, 6))
+        torch.testing.assert_close(actual, expected)
+
+    def test_rejects_invalid_length_buckets(self) -> None:
+        # max_seq_len defaults to 128.
+        for length_buckets in ([], [0, 4], [4, 129], [4.5], [True]):
+            with self.assertRaises(ValueError):
+                GraphTransformerEncoder(
+                    node_type_to_feat_dim_map={self._user: 4},
+                    edge_type_to_feat_dim_map={self._edge_type: 0},
+                    hid_dim=8,
+                    length_buckets=cast(list[int], length_buckets),
+                )
 
 
 if __name__ == "__main__":

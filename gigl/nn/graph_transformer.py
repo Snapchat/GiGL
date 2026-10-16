@@ -1047,6 +1047,69 @@ class GraphTransformerEncoderLayer(nn.Module):
         return messages
 
 
+def _select_sequence_inputs(
+    sequences: Tensor,
+    valid_mask: Tensor,
+    sequence_auxiliary_data: SequenceAuxiliaryData,
+    anchor_idx: Tensor,
+    seq_len: int,
+) -> tuple[Tensor, Tensor, SequenceAuxiliaryData]:
+    """Selects a subset of anchors and trims the sequence dim to ``seq_len``.
+
+    Every per-token tensor (``[B, L, ...]``) and pairwise tensor
+    (``[B, L, L, ...]``) is sliced the same way, and sparse ``(anchor, ...)``
+    index rows are kept for the selected anchors with the anchor renumbered.
+
+    Callers must ensure no selected anchor has a valid position at or past
+    ``seq_len``.
+    """
+    num_anchors = valid_mask.size(0)
+
+    def per_token(tensor: Tensor) -> Tensor:
+        return tensor[anchor_idx, :seq_len]
+
+    def pairwise(tensor: Optional[Tensor]) -> Optional[Tensor]:
+        if tensor is None:
+            return None
+        return tensor[anchor_idx, :seq_len, :seq_len]
+
+    def sparse(indices: Optional[Tensor]) -> Optional[Tensor]:
+        # Rows are (anchor, query, key[, relation]). Every valid token lies
+        # within ``seq_len``, so only the anchor column needs renumbering.
+        if indices is None:
+            return None
+        new_anchor_by_old = torch.full(
+            (num_anchors,), -1, dtype=torch.long, device=indices.device
+        )
+        new_anchor_by_old[anchor_idx.to(indices.device)] = torch.arange(
+            anchor_idx.numel(), device=indices.device
+        )
+        new_anchor = new_anchor_by_old[indices[:, 0]]
+        keep = new_anchor >= 0
+        indices = indices[keep].clone()
+        indices[:, 0] = new_anchor[keep]
+        return indices
+
+    anchor_bias = sequence_auxiliary_data["anchor_bias"]
+    token_input = sequence_auxiliary_data["token_input"]
+    selected_auxiliary_data: SequenceAuxiliaryData = {
+        "anchor_bias": None if anchor_bias is None else per_token(anchor_bias),
+        "pairwise_bias": pairwise(sequence_auxiliary_data["pairwise_bias"]),
+        "pairwise_relation_indices": sparse(
+            sequence_auxiliary_data["pairwise_relation_indices"]
+        ),
+        "pairwise_nonmissing_indices": sparse(
+            sequence_auxiliary_data["pairwise_nonmissing_indices"]
+        ),
+        "token_input": (
+            None
+            if token_input is None
+            else {name: per_token(value) for name, value in token_input.items()}
+        ),
+    }
+    return per_token(sequences), per_token(valid_mask), selected_auxiliary_data
+
+
 class GraphTransformerEncoder(nn.Module):
     """Graph Transformer encoder for heterogeneous graphs.
 
@@ -1173,6 +1236,32 @@ class GraphTransformerEncoder(nn.Module):
             matches ``"none"``. Composes with ``relation_attention_mode``, and
             with ``relation_attention_mode="none"`` keeps the dense attention
             bias broadcastable (no per-layer (seq, seq) bias materialization).
+        length_buckets: Optional sequence-length bounds, e.g.
+            ``[64, 128, 192]``, each an int in ``[1, max_seq_len]``; order and
+            duplicates do not matter. Anchors are grouped by valid sequence
+            length (up to their last valid token), and each group runs the
+            encoder layers on sequences trimmed to the smallest bound that fits
+            it, or to ``max_seq_len``. Trimmed positions are padding, so
+            embeddings and gradients match the untrimmed forward up to float
+            error (with dropout off) while attention and FFNs skip most padded
+            tokens.
+
+            Costs per batch:
+
+            - One host sync for the group sizes.
+            - Per non-empty group, the host syncs of selecting that group's
+              rows of sparse relation and pairwise-bias indices, when those are
+              used.
+            - Under ``torch.compile``, each group runs at its own
+              ``(num_anchors, bound)`` shape. With the default ``dynamic``
+              setting, the sequence dim turns dynamic after the first new shape
+              and size-1 groups specialize. On CUDA, compiled layers with a
+              dynamic sequence dim can hit pytorch#163876 for a group of one
+              anchor (fixed in torch 2.11); compiling the layers with
+              ``dynamic=False`` and marking only the batch dim dynamic
+              (``torch._dynamo.mark_dynamic(x, 0)``) avoids it.
+
+            (default: None)
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -1238,6 +1327,7 @@ class GraphTransformerEncoder(nn.Module):
             "edge_type_linear",
             "edge_type_attention",
         ] = "none",
+        length_buckets: Optional[list[int]] = None,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -1258,6 +1348,26 @@ class GraphTransformerEncoder(nn.Module):
         self._hid_dim = hid_dim
         self._out_dim = out_dim
         self._max_seq_len = max_seq_len
+        self._length_bucket_bounds: Optional[list[int]] = None
+        if length_buckets is not None:
+            if not length_buckets or any(
+                isinstance(bound, bool)
+                or not isinstance(bound, int)
+                or not 1 <= bound <= max_seq_len
+                for bound in length_buckets
+            ):
+                raise ValueError(
+                    "length_buckets must be a non-empty list of ints in "
+                    f"[1, max_seq_len={max_seq_len}], got {list(length_buckets)}"
+                )
+            # Bounds are host constants, so the bucket loop needs no device
+            # unique; the device copy is a buffer so no batch pays an HtoD copy.
+            self._length_bucket_bounds = sorted(set(length_buckets) | {max_seq_len})
+            self.register_buffer(
+                "_length_bucket_bounds_tensor",
+                torch.tensor(self._length_bucket_bounds, dtype=torch.long),
+                persistent=False,
+            )
         self._hop_distance = hop_distance
         self._readout_mode = readout_mode
         if sequence_construction_method not in {"khop", "ppr"}:
@@ -1636,6 +1746,32 @@ class GraphTransformerEncoder(nn.Module):
                 f"got {sequences.size(-1)}."
             )
 
+        if self._length_bucket_bounds is None:
+            embeddings = self._encode_sequences(
+                sequences=sequences,
+                valid_mask=valid_mask,
+                sequence_auxiliary_data=sequence_auxiliary_data,
+            )
+        else:
+            embeddings = self._encode_sequences_by_length_bucket(
+                sequences=sequences,
+                valid_mask=valid_mask,
+                sequence_auxiliary_data=sequence_auxiliary_data,
+            )
+        embeddings = self._output_projection(embeddings)
+
+        if self._should_l2_normalize_embedding_layer_output:
+            embeddings = F.normalize(embeddings, p=2, dim=-1)
+
+        return embeddings
+
+    def _encode_sequences(
+        self,
+        sequences: Tensor,
+        valid_mask: Tensor,
+        sequence_auxiliary_data: SequenceAuxiliaryData,
+    ) -> Tensor:
+        """Adds token inputs and positional encodings, then encodes and reads out."""
         token_input_features = sequence_auxiliary_data["token_input"]
         if token_input_features is not None:
             sequences = sequences + self._build_token_input_contribution(
@@ -1657,7 +1793,7 @@ class GraphTransformerEncoder(nn.Module):
             attention_bias_data=sequence_auxiliary_data,
         )
 
-        embeddings = self._encode_and_readout(
+        return self._encode_and_readout(
             sequences=sequences,
             valid_mask=valid_mask,
             attn_bias=attn_bias,
@@ -1665,12 +1801,67 @@ class GraphTransformerEncoder(nn.Module):
                 "pairwise_relation_indices"
             ],
         )
-        embeddings = self._output_projection(embeddings)
 
-        if self._should_l2_normalize_embedding_layer_output:
-            embeddings = F.normalize(embeddings, p=2, dim=-1)
+    def _encode_sequences_by_length_bucket(
+        self,
+        sequences: Tensor,
+        valid_mask: Tensor,
+        sequence_auxiliary_data: SequenceAuxiliaryData,
+    ) -> Tensor:
+        """Encodes anchors grouped by valid length, each group trimmed to its bound.
 
-        return embeddings
+        Outputs are scattered back to the original anchor order.
+        """
+        assert self._length_bucket_bounds is not None
+        if valid_mask.size(0) == 0:
+            return self._encode_sequences(
+                sequences=sequences,
+                valid_mask=valid_mask,
+                sequence_auxiliary_data=sequence_auxiliary_data,
+            )
+        bounds = self._length_bucket_bounds
+        positions = torch.arange(1, valid_mask.size(1) + 1, device=valid_mask.device)
+        # Length up to and including the last valid token; at least 1.
+        anchor_lengths = (valid_mask.long() * positions).amax(dim=1).clamp(min=1)
+        anchor_buckets = torch.bucketize(
+            anchor_lengths, cast(Tensor, self._length_bucket_bounds_tensor)
+        )
+        # A stable sort keeps anchors in ascending order within each bucket; the
+        # bucket sizes are the one host read.
+        anchor_order = torch.argsort(anchor_buckets, stable=True)
+        bucket_counts = torch.zeros(
+            len(bounds), dtype=torch.long, device=anchor_lengths.device
+        ).index_add_(0, anchor_buckets, torch.ones_like(anchor_buckets))
+        outputs: Optional[Tensor] = None
+        start = 0
+        for bound, count in zip(bounds, bucket_counts.tolist()):
+            if count == 0:
+                continue
+            anchor_idx = anchor_order[start : start + count]
+            start += count
+            (
+                bucket_sequences,
+                bucket_valid_mask,
+                bucket_auxiliary_data,
+            ) = _select_sequence_inputs(
+                sequences=sequences,
+                valid_mask=valid_mask,
+                sequence_auxiliary_data=sequence_auxiliary_data,
+                anchor_idx=anchor_idx,
+                seq_len=bound,
+            )
+            bucket_outputs = self._encode_sequences(
+                sequences=bucket_sequences,
+                valid_mask=bucket_valid_mask,
+                sequence_auxiliary_data=bucket_auxiliary_data,
+            )
+            if outputs is None:
+                outputs = bucket_outputs.new_empty(
+                    (valid_mask.size(0),) + bucket_outputs.shape[1:]
+                )
+            outputs[anchor_idx] = bucket_outputs
+        assert outputs is not None
+        return outputs
 
     def _get_sequence_positional_encoding(
         self,
