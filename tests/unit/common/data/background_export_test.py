@@ -434,6 +434,28 @@ class TestBackgroundExporter(TestCase):
             [r["emb"][0] for r in records], [float(i // 4) for i in range(80)]
         )
 
+    @absltest.skipUnless(torch.cuda.device_count() >= 2, "requires 2 CUDA devices")
+    @_guard(240)
+    def test_cuda_tensors_on_a_non_current_device_are_snapshotted(self):
+        out = self.root / "out"
+        torch.cuda.set_device(0)
+        with EmbeddingExporter(LocalUri(str(out)), in_background=True) as exporter:
+            for i in range(50):
+                with torch.cuda.device(1):
+                    ids = torch.arange(i * 4, i * 4 + 4, device="cuda:1")
+                    embeddings = torch.full((4, _DIM), float(i), device="cuda:1")
+                    torch.cuda._sleep(
+                        2_000_000
+                    )  # Keep the copy queued behind busy work.
+                exporter.add_embedding(ids, embeddings, "user")
+                ids.zero_()
+                embeddings.fill_(-1.0)
+        records = _read_records(out)
+        self.assertEqual([r["node_id"] for r in records], list(range(200)))
+        self.assertEqual(
+            [r["emb"][0] for r in records], [float(i // 4) for i in range(200)]
+        )
+
 
 if __name__ == "__main__":
     absltest.main()
