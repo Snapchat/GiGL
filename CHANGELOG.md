@@ -29,6 +29,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
+- Cache built GraphLearn-Torch wheels per machine (`~/.cache/gigl/glt-wheels/`, override with
+  `GIGL_GLT_WHEEL_CACHE_DIR`) in `install_glt.sh`, keyed on the pinned commit, patch contents, CPU/CUDA variant, torch
+  version and python version, so only the first environment on a machine compiles GLT. Ninja for the build now comes
+  from the PyPI `ninja` package (`glt-build-backend` dependency group) instead of `apt` by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
+- Add `SKIP_SCALA=1` to `make install_dev_deps` to skip the Scala toolchain download, and document the git worktree
+  workflow in `CLAUDE.md` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
 
 ### Fixed
 
