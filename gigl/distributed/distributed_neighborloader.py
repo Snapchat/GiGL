@@ -174,9 +174,11 @@ class DistNeighborLoader(BaseDistLoader):
                 for background on pinned memory and non-blocking transfers.
             include_edge_features (bool): Whether to sample edge ids and fetch edge features when
                 the dataset has them. Set to ``False`` for models that never read ``edge_attr``: the
-                per-batch edge-feature requests are skipped, which raises sampling throughput, and
-                ``edge_attr`` is returned empty. Must be the same on every rank sharing a sampling
-                backend in Graph Store mode. (default: ``True``).
+                per-batch edge-feature requests and the sampled edge ids (``data.edge``) are skipped,
+                which raises sampling throughput, and ``edge_attr`` is returned empty (shape
+                ``[0, edge_dim]``), so layers that consume ``edge_attr`` will fail with shape
+                mismatches. Must be the same on every rank sharing a sampling backend in Graph Store
+                mode. (default: ``True``).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,

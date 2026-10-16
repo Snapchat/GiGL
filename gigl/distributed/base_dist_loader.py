@@ -12,7 +12,7 @@ import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 import torch
 from graphlearn_torch.channel import SampleMessage, ShmChannel
@@ -30,6 +30,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
@@ -66,7 +67,12 @@ from gigl.distributed.utils.neighborloader import (
 )
 from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+    FeatureInfo,
+    FeatureQuantizationMetadata,
+)
 from gigl.utils.share_memory import share_memory
 
 logger = Logger()
@@ -79,6 +85,31 @@ DEFAULT_NUM_CPU_THREADS = 2
 def _flush() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
+
+
+def _full_width_edge_feature_info(
+    dataset_schema: DatasetSchema,
+) -> Union[FeatureInfo, dict[EdgeType, FeatureInfo]]:
+    """Edge feature info whose width is the dequantized feature dimension."""
+    metadata = dataset_schema.edge_quantization_metadata
+    assert metadata is not None
+    if isinstance(metadata, dict):
+        per_edge_type = cast(dict[EdgeType, FeatureQuantizationMetadata], metadata)
+        return {
+            edge_type: FeatureInfo(dim=md.feature_dim, dtype=torch.float32)
+            for edge_type, md in per_edge_type.items()
+        }
+    feature_info = FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
+    if dataset_schema.is_homogeneous_with_labeled_edge_type:
+        # Sampled as heterogeneous (to carry label edges) and converted back afterwards; GLT
+        # names the output edge type by sampling direction.
+        output_edge_type = (
+            reverse_edge_type(DEFAULT_HOMOGENEOUS_EDGE_TYPE)
+            if dataset_schema.edge_dir == "out"
+            else DEFAULT_HOMOGENEOUS_EDGE_TYPE
+        )
+        return {output_edge_type: feature_info}
+    return feature_info
 
 
 @dataclass(frozen=True)
@@ -250,6 +281,14 @@ class BaseDistLoader(DistLoader):
         self._edge_feature_info = dataset_schema.edge_feature_info
         self._node_quantization_metadata = dataset_schema.node_quantization_metadata
         self._edge_quantization_metadata = dataset_schema.edge_quantization_metadata
+        if (
+            not sampling_config.with_edge
+            and dataset_schema.edge_quantization_metadata is not None
+        ):
+            # Edge features are neither sampled nor packed, so there is nothing to
+            # materialize; the empty ``edge_attr`` takes the full (dequantized) width.
+            self._edge_feature_info = _full_width_edge_feature_info(dataset_schema)
+            self._edge_quantization_metadata = None
 
         self._sampler_options = sampler_options
         # Sampled-edge PPR output requires a final HeteroData batch so virtual
@@ -415,8 +454,8 @@ class BaseDistLoader(DistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         with_weight: bool = False,
-        include_edge_features: bool = True,
         seed: Optional[int] = None,
+        include_edge_features: bool = True,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
 
@@ -434,13 +473,13 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
-            include_edge_features: Whether to sample edge ids and fetch edge features when the
-                dataset has them. Pass ``False`` for models that never read ``edge_attr``: the
-                per-batch edge-feature RPCs and edge ids are skipped and ``edge_attr`` comes back
-                empty.
             seed: Sampling RNG seed. Leave unset unless you want to pin sampling
                 deliberately; an unset seed is derived per sampling worker at sampler
                 construction, in ``gigl.distributed.utils.dist_sampler.create_dist_sampler``.
+            include_edge_features: Whether to sample edge ids and fetch edge features when the
+                dataset has them. Pass ``False`` for models that never read ``edge_attr``: the
+                per-batch edge-feature requests and the sampled edge ids (``data.edge``) are
+                skipped, and ``edge_attr`` comes back empty.
 
         Returns:
             A fully configured SamplingConfig.

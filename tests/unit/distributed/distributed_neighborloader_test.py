@@ -433,22 +433,67 @@ def _run_edge_attr_rows(
     _,
     dataset: DistDataset,
     include_edge_features: bool,
+    loader_kwargs: dict,
     holder: MutableMapping,
 ):
+    """Iterates one epoch and records, per batch, the rows and widths of every ``edge_attr``."""
     create_test_process_group()
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-        include_edge_features=include_edge_features,
-    )
-    edge_attr_rows = 0
-    for datum in loader:
-        assert isinstance(datum, Data)
-        edge_attr_rows += datum.edge_attr.shape[0]
-    holder["edge_attr_rows"] = edge_attr_rows
-    holder["edge_attr_dim"] = datum.edge_attr.shape[1]
+    try:
+        loader = DistNeighborLoader(
+            dataset=dataset,
+            num_neighbors=[2, 2],
+            pin_memory_device=torch.device("cpu"),
+            include_edge_features=include_edge_features,
+            **loader_kwargs,
+        )
+        rows = 0
+        dims: set[int] = set()
+        sampled_edge_ids = False
+        batches = 0
+        for datum in loader:
+            batches += 1
+            stores = (
+                [datum]
+                if isinstance(datum, Data)
+                else [datum[edge_type] for edge_type in datum.edge_types]
+            )
+            for store in stores:
+                if getattr(store, "edge_attr", None) is not None:
+                    rows += store.edge_attr.shape[0]
+                    dims.add(store.edge_attr.shape[1])
+                if getattr(store, "edge", None) is not None:
+                    sampled_edge_ids = True
+        holder["result"] = {
+            "batches": batches,
+            "edge_attr_rows": rows,
+            "edge_attr_dims": sorted(dims),
+            "sampled_edge_ids": sampled_edge_ids,
+        }
+    except Exception as e:
+        holder["error"] = f"{type(e).__name__}: {e}"
     shutdown_rpc()
+
+
+def _loader_edge_attr_summary(
+    dataset: DistDataset, include_edge_features: bool, **loader_kwargs
+) -> dict:
+    """Runs ``_run_edge_attr_rows`` in a child process; fails with its error if it did not finish."""
+    manager = mp.Manager()
+    holder: MutableMapping = manager.dict()
+    proc = mp.spawn(
+        fn=_run_edge_attr_rows,
+        args=(dataset, include_edge_features, loader_kwargs, holder),
+        join=False,
+    )
+    proc.join(timeout=120)
+    if "error" in holder:
+        raise AssertionError(f"loader process failed: {holder['error']}")
+    if "result" not in holder:
+        raise AssertionError("loader process produced no result (crashed or timed out)")
+    result = dict(holder["result"])
+    if result["batches"] == 0:
+        raise AssertionError("loader yielded no batches")
+    return result
 
 
 def _run_quantized_feature_neighbor_loader(
@@ -1132,7 +1177,7 @@ class WithEdgeDerivationTest(TestCase):
             param("excluded", include_edge_features=False),
         ]
     )
-    def test_loader_returns_edge_attr_only_when_included(
+    def test_homogeneous_raw_edge_features(
         self, _, include_edge_features: bool
     ) -> None:
         num_edges = 5
@@ -1157,19 +1202,57 @@ class WithEdgeDerivationTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        manager = mp.Manager()
-        holder: MutableMapping = manager.dict()
-        proc = mp.spawn(
-            fn=_run_edge_attr_rows,
-            args=(dataset, include_edge_features, holder),
-            join=False,
+        summary = _loader_edge_attr_summary(dataset, include_edge_features)
+        self.assertEqual(summary["edge_attr_dims"], [edge_dim])
+        self.assertEqual(summary["sampled_edge_ids"], include_edge_features)
+        self.assertEqual(summary["edge_attr_rows"] > 0, include_edge_features)
+
+    @parameterized.expand(
+        [
+            param("included", include_edge_features=True),
+            param("excluded", include_edge_features=False),
+        ]
+    )
+    def test_homogeneous_quantized_edge_features(
+        self, _, include_edge_features: bool
+    ) -> None:
+        num_edges = 5
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(5),
+            edge_partition_book=torch.zeros(num_edges),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
+                edge_ids=torch.arange(num_edges),
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(5, 2), ids=torch.arange(5)
+            ),
+            partitioned_edge_features=None,
+            partitioned_edge_quantized_features=FeaturePartitionData(
+                feats=torch.full((num_edges, 1), 48, dtype=torch.uint8),
+                ids=torch.arange(num_edges),
+            ),
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
         )
-        proc.join(timeout=120)
-        self.assertEqual(holder["edge_attr_dim"], edge_dim)
-        if include_edge_features:
-            self.assertGreater(holder["edge_attr_rows"], 0)
-        else:
-            self.assertEqual(holder["edge_attr_rows"], 0)
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=2,
+                quantized_feature_indices=(0, 1),
+                clip_min=0.0,
+                clip_max=3.0,
+            ),
+        )
+        dataset.build(partition_output=partition_output)
+
+        summary = _loader_edge_attr_summary(dataset, include_edge_features)
+        self.assertEqual(summary["edge_attr_dims"], [2])
+        self.assertEqual(summary["edge_attr_rows"] > 0, include_edge_features)
 
     def test_featureless_dataset_produces_batches_without_edge_ids(self) -> None:
         # Homogeneous dataset with node features but no edge features: the loader
@@ -1480,6 +1563,68 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
             fn=_run_heterogeneous_partially_quantized_edge_feature_neighbor_loader,
             args=(dataset, expected_edge_features),
         )
+
+    @parameterized.expand(
+        [
+            param("included", include_edge_features=True),
+            param("excluded", include_edge_features=False),
+        ]
+    )
+    def test_heterogeneous_raw_and_quantized_edge_features(
+        self, _, include_edge_features: bool
+    ) -> None:
+        partition_output = PartitionOutput(
+            node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
+            edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
+            partitioned_edge_index={
+                _USER_TO_STORY: GraphPartitionData(
+                    edge_index=torch.tensor([[0], [0]]), edge_ids=None
+                )
+            },
+            partitioned_node_features=None,
+            partitioned_edge_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.tensor([[10.0]]), ids=torch.tensor([0])
+                ),
+            },
+            partitioned_edge_quantized_features={
+                _USER_TO_STORY: FeaturePartitionData(
+                    feats=torch.tensor([[0]], dtype=torch.uint8),
+                    ids=torch.tensor([0]),
+                )
+            },
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            edge_quantization_metadata={
+                _USER_TO_STORY: FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=2,
+                    quantized_feature_indices=(0,),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                )
+            },
+        )
+        dataset.build(partition_output=partition_output)
+
+        summary = _loader_edge_attr_summary(
+            dataset,
+            include_edge_features,
+            input_nodes=(_USER, torch.tensor([0])),
+            batch_size=1,
+        )
+        # The full dequantized width is 2; the edge type without features gets an empty
+        # tensor of the raw width when edge features are included.
+        self.assertIn(2, summary["edge_attr_dims"])
+        if not include_edge_features:
+            self.assertEqual(summary["edge_attr_dims"], [2])
+        self.assertEqual(summary["edge_attr_rows"] > 0, include_edge_features)
 
     def test_incoming_edges_reverse_feature_metadata_and_output_stores(self) -> None:
         partition_output = PartitionOutput(
