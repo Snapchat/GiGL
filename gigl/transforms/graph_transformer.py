@@ -1537,11 +1537,42 @@ def _lookup_pairwise_relation_indices(
             ],
             dim=1,
         )
-        relation_index_parts.append(torch.unique(relation_indices, dim=0))
+        relation_index_parts.append(_unique_rows(relation_indices))
 
     if not relation_index_parts:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     return torch.cat(relation_index_parts, dim=0)
+
+
+def _unique_rows(rows: Tensor) -> Tensor:
+    """Return the sorted unique rows of a ``[N, C]`` integer tensor.
+
+    Equivalent to ``torch.unique(rows, dim=0)`` (lexicographic row order), but
+    packs each row into one int64 key and runs a 1-D ``torch.unique``, which is
+    much faster than ``dim=0``. Falls back to ``dim=0`` when the rows contain
+    negative values or the packed key could overflow int64.
+    """
+    if rows.numel() == 0:
+        return rows
+    if rows.min() < 0:
+        return torch.unique(rows, dim=0)
+    radices = [int(m) + 1 for m in rows.amax(dim=0).tolist()]
+    packed_range = 1
+    for radix in radices:
+        packed_range *= radix
+    if packed_range > torch.iinfo(torch.long).max:
+        return torch.unique(rows, dim=0)
+
+    keys = torch.zeros(rows.size(0), dtype=torch.long, device=rows.device)
+    for column, radix in enumerate(radices):
+        keys = keys * radix + rows[:, column]
+    unique_keys = torch.unique(keys)
+
+    columns: list[Tensor] = []
+    for radix in reversed(radices):
+        columns.append(unique_keys % radix)
+        unique_keys = torch.div(unique_keys, radix, rounding_mode="floor")
+    return torch.stack(columns[::-1], dim=1).to(rows.dtype)
 
 
 def _get_sampled_frontier_batch_node_keys(

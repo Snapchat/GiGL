@@ -12,6 +12,7 @@ from torch_geometric.data import HeteroData
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
+    _unique_rows,
     heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
@@ -285,6 +286,50 @@ class TestGetKHopNeighborsSparse(TestCase):
         mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertEqual(nodes_reached, [0])
+
+
+class TestUniqueRows(TestCase):
+    def _assert_matches_unique_dim0(self, rows: torch.Tensor) -> None:
+        expected = torch.unique(rows, dim=0)
+        actual = _unique_rows(rows)
+        self.assertEqual(actual.dtype, expected.dtype)
+        self.assertTrue(torch.equal(actual, expected), f"{actual} != {expected}")
+
+    def test_random_rows_with_duplicates_match_unique_dim0(self) -> None:
+        generator = torch.Generator().manual_seed(0)
+        for num_columns, high in [(2, 5), (3, 50), (4, 1000)]:
+            rows = torch.randint(0, high, (2000, num_columns), generator=generator)
+            self._assert_matches_unique_dim0(rows)
+
+    def test_constant_column_and_degenerate_inputs_match_unique_dim0(self) -> None:
+        generator = torch.Generator().manual_seed(1)
+        rows = torch.randint(0, 20, (500, 4), generator=generator)
+        rows[:, 3] = 7
+        for case in [
+            rows,
+            torch.zeros((0, 4), dtype=torch.long),
+            torch.tensor([[3, 1, 2, 0]]),
+            torch.zeros((10, 4), dtype=torch.long),
+            torch.tensor([[1, 2, 3, 0]] * 5),
+        ]:
+            self._assert_matches_unique_dim0(case)
+
+    def test_values_near_packing_limit_match_unique_dim0(self) -> None:
+        int64_max = torch.iinfo(torch.long).max
+        # Packed range is exactly int64 max (still packable) vs. one past it
+        # (must fall back to dim=0).
+        for second_max in [int64_max // 4 - 1, int64_max // 4, int64_max // 4 + 1]:
+            rows = torch.tensor(
+                [[3, second_max], [0, 0], [3, second_max], [1, second_max], [0, 0]]
+            )
+            self._assert_matches_unique_dim0(rows)
+        self._assert_matches_unique_dim0(
+            torch.tensor([[int64_max, int64_max], [0, 0], [int64_max, int64_max]])
+        )
+
+    def test_negative_values_match_unique_dim0(self) -> None:
+        rows = torch.tensor([[-1, 2], [0, 1], [-1, 2], [-5, 0], [0, -1]])
+        self._assert_matches_unique_dim0(rows)
 
 
 class TestHeteroToGraphTransformerInput(TestCase):
