@@ -1554,9 +1554,13 @@ def _unique_rows(rows: Tensor) -> Tensor:
     """
     if rows.numel() == 0:
         return rows
-    if rows.min() < 0:
+    # One host sync fetches both the negativity check and the per-column radices.
+    column_mins, column_maxes = torch.stack(
+        (rows.amin(dim=0), rows.amax(dim=0))
+    ).tolist()
+    if min(column_mins) < 0:
         return torch.unique(rows, dim=0)
-    radices = [int(m) + 1 for m in rows.amax(dim=0).tolist()]
+    radices = [int(m) + 1 for m in column_maxes]
     packed_range = 1
     for radix in radices:
         packed_range *= radix
