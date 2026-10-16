@@ -99,6 +99,7 @@ class DistABLPLoader(BaseDistLoader):
         local_process_world_size: Optional[int] = None,  # TODO: (svij) Deprecate this
         non_blocking_transfers: bool = True,
         use_label_edge_index_output: bool = False,
+        include_edge_features: bool = True,
     ) -> None:
         """
         Neighbor loader for Anchor Based Link Prediction (ABLP) tasks.
@@ -237,6 +238,11 @@ class DistABLPLoader(BaseDistLoader):
                 tensors instead of the deprecated ragged dictionaries. Row 0
                 contains local anchor indices and row 1 contains local label-node
                 indices. Defaults to ``False`` for backward compatibility.
+            include_edge_features (bool): Whether to sample edge ids and fetch edge features when
+                the dataset has them. Set to ``False`` for models that never read ``edge_attr``: the
+                per-batch edge-feature requests are skipped, which raises sampling throughput, and
+                ``edge_attr`` is returned empty. Must be the same on every rank sharing a sampling
+                backend in Graph Store mode. (default: ``True``).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -384,6 +390,7 @@ class DistABLPLoader(BaseDistLoader):
             shuffle=shuffle,
             drop_last=drop_last,
             with_weight=with_weight,
+            include_edge_features=include_edge_features,
         )
 
         producer: Optional[DistSamplingProducer] = None

@@ -89,6 +89,7 @@ class DistNeighborLoader(BaseDistLoader):
         with_weight: bool = False,
         sampler_options: Optional[SamplerOptions] = None,
         non_blocking_transfers: bool = True,
+        include_edge_features: bool = True,
     ) -> None:
         """
         Distributed Neighbor Loader.
@@ -171,6 +172,11 @@ class DistNeighborLoader(BaseDistLoader):
                 is used instead.
                 See https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html
                 for background on pinned memory and non-blocking transfers.
+            include_edge_features (bool): Whether to sample edge ids and fetch edge features when
+                the dataset has them. Set to ``False`` for models that never read ``edge_attr``: the
+                per-batch edge-feature requests are skipped, which raises sampling throughput, and
+                ``edge_attr`` is returned empty. Must be the same on every rank sharing a sampling
+                backend in Graph Store mode. (default: ``True``).
         """
 
         # Set self._shutdowned right away, that way if we throw here, and __del__ is called,
@@ -269,6 +275,7 @@ class DistNeighborLoader(BaseDistLoader):
             shuffle=shuffle,
             drop_last=drop_last,
             with_weight=with_weight,
+            include_edge_features=include_edge_features,
         )
 
         producer: Optional[DistSamplingProducer] = None

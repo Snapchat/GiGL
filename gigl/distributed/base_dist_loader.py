@@ -415,6 +415,7 @@ class BaseDistLoader(DistLoader):
         shuffle: bool = False,
         drop_last: bool = False,
         with_weight: bool = False,
+        include_edge_features: bool = True,
         seed: Optional[int] = None,
     ) -> SamplingConfig:
         """Creates a SamplingConfig with patched fanout.
@@ -433,6 +434,10 @@ class BaseDistLoader(DistLoader):
             with_weight: Whether to use edge weights for sampling. Requires that
                 edge weights were registered during dataset construction via
                 ``DistPartitioner.register_edge_weights()``.
+            include_edge_features: Whether to sample edge ids and fetch edge features when the
+                dataset has them. Pass ``False`` for models that never read ``edge_attr``: the
+                per-batch edge-feature RPCs and edge ids are skipped and ``edge_attr`` comes back
+                empty.
             seed: Sampling RNG seed. Leave unset unless you want to pin sampling
                 deliberately; an unset seed is derived per sampling worker at sampler
                 construction, in ``gigl.distributed.utils.dist_sampler.create_dist_sampler``.
@@ -461,7 +466,8 @@ class BaseDistLoader(DistLoader):
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
-            with_edge=(
+            with_edge=include_edge_features
+            and (
                 dataset_schema.edge_feature_info is not None
                 or dataset_schema.edge_quantization_metadata is not None
             ),

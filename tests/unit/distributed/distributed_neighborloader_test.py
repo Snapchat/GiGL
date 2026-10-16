@@ -429,6 +429,28 @@ def _run_featureless_edge_ids_absent(
     shutdown_rpc()
 
 
+def _run_edge_attr_rows(
+    _,
+    dataset: DistDataset,
+    include_edge_features: bool,
+    holder: MutableMapping,
+):
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+        include_edge_features=include_edge_features,
+    )
+    edge_attr_rows = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        edge_attr_rows += datum.edge_attr.shape[0]
+    holder["edge_attr_rows"] = edge_attr_rows
+    holder["edge_attr_dim"] = datum.edge_attr.shape[1]
+    shutdown_rpc()
+
+
 def _run_quantized_feature_neighbor_loader(
     _: int,
     dataset: DistDataset,
@@ -1090,6 +1112,64 @@ class WithEdgeDerivationTest(TestCase):
             num_neighbors=[2, 2], dataset_schema=schema
         )
         self.assertTrue(config.with_edge)
+
+    def test_config_with_edge_false_when_edge_features_excluded(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=FeatureInfo(dim=4, dtype=torch.float32),
+            edge_dir="out",
+        )
+        config = BaseDistLoader.create_sampling_config(
+            num_neighbors=[2, 2], dataset_schema=schema, include_edge_features=False
+        )
+        self.assertFalse(config.with_edge)
+
+    @parameterized.expand(
+        [
+            param("included", include_edge_features=True),
+            param("excluded", include_edge_features=False),
+        ]
+    )
+    def test_loader_returns_edge_attr_only_when_included(
+        self, _, include_edge_features: bool
+    ) -> None:
+        num_edges = 5
+        edge_dim = 3
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(5),
+            edge_partition_book=torch.zeros(num_edges),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
+                edge_ids=torch.arange(num_edges),
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(5, 2), ids=torch.arange(5)
+            ),
+            partitioned_edge_features=FeaturePartitionData(
+                feats=torch.ones(num_edges, edge_dim), ids=torch.arange(num_edges)
+            ),
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        holder: MutableMapping = manager.dict()
+        proc = mp.spawn(
+            fn=_run_edge_attr_rows,
+            args=(dataset, include_edge_features, holder),
+            join=False,
+        )
+        proc.join(timeout=120)
+        self.assertEqual(holder["edge_attr_dim"], edge_dim)
+        if include_edge_features:
+            self.assertGreater(holder["edge_attr_rows"], 0)
+        else:
+            self.assertEqual(holder["edge_attr_rows"], 0)
 
     def test_featureless_dataset_produces_batches_without_edge_ids(self) -> None:
         # Homogeneous dataset with node features but no edge features: the loader
