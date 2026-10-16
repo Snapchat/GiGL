@@ -16,6 +16,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+import torch
+
 # Plain imports so this works both as `python gigl/scripts/post_install.py` and as the
 # `gigl-post-install` entry point.
 sys.path.insert(0, str(Path(__file__).parent))
@@ -100,8 +102,6 @@ def main():
     if platform.system() == "Darwin":
         print("Skipping install of GraphLearn-Torch on Mac")
         return 0
-
-    import torch
 
     variant = f"cuda{GLT_CUDA_ARCH_LIST}" if has_cuda() else "cpu"
     cache_key = compute_cache_key(
