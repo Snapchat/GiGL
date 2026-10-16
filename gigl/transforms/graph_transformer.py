@@ -437,7 +437,12 @@ def heterodata_to_graph_transformer_input(
         ]
         if all(part is not None for part in ppr_edge_is_expanded_parts):
             ppr_edge_is_expanded = torch.cat(
-                [part.to(device=device) for part in ppr_edge_is_expanded_parts], dim=0
+                [
+                    part.to(device=device)
+                    for part in ppr_edge_is_expanded_parts
+                    if part is not None
+                ],
+                dim=0,
             ).to(torch.long)
             anchor_batch_by_homo_idx = torch.full(
                 (num_nodes,), -1, dtype=torch.long, device=device

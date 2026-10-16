@@ -110,6 +110,7 @@ class DistTypedSamplerTest(TestCase):
             include_sampled_edges=True,
         )
         masks = _build_ppr_relation_channel_masks(options, edge_dir="out")
+        assert masks is not None
         self.assertEqual(sorted(masks.values()), [0b01, 0b10])
 
 

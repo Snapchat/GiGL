@@ -1402,7 +1402,9 @@ class TestPprRelationExpandedSourceFilter(TestCase):
             sequence_construction_method="ppr",
             relation_edge_types=[r0, r1],
         )
-        coords = {tuple(c) for c in aux["pairwise_relation_indices"].tolist()}
+        indices = aux["pairwise_relation_indices"]
+        assert indices is not None
+        coords = {tuple(c) for c in indices.tolist()}
         # owner n at query@1; r0 is relation_idx 0, r1 is relation_idx 1.
         self.assertIn((0, 1, 0, 0), coords)  # r0 kept: n pushed in channel 0
         self.assertNotIn((0, 1, 0, 1), coords)  # r1 dropped: n not pushed in channel 1
