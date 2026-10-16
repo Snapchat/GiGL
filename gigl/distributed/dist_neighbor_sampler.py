@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Union
 
 import torch
@@ -110,7 +111,12 @@ class DistNeighborSampler(BaseDistNeighborSampler):
 
                 if len(nbr_dict) == 0:
                     continue
+                induce_start = time.perf_counter()
                 nodes_dict, rows_dict, cols_dict = inducer.induce_next(nbr_dict)
+                if self._stats is not None:
+                    self._stats.add(
+                        "induce_ms", (time.perf_counter() - induce_start) * 1e3
+                    )
                 merge_dict(nodes_dict, out_nodes_hetero)
                 merge_dict(rows_dict, out_rows_hetero)
                 merge_dict(cols_dict, out_cols_hetero)
@@ -160,9 +166,14 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 output = await self._sample_one_hop(srcs, req_num, None)
                 if output.nbr.numel() == 0:
                     break
+                induce_start = time.perf_counter()
                 nodes, rows, cols = inducer.induce_next(
                     srcs, output.nbr, output.nbr_num
                 )
+                if self._stats is not None:
+                    self._stats.add(
+                        "induce_ms", (time.perf_counter() - induce_start) * 1e3
+                    )
                 out_nodes.append(nodes)
                 out_edges.append((rows, cols, output.edge))
                 num_sampled_nodes.append(nodes.size(0))
@@ -199,4 +210,13 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 )
 
         self.inducer_pool.put(inducer)
+        if self._stats is not None:
+            if isinstance(sample_output, HeteroSamplerOutput):
+                num_nodes = sum(n.numel() for n in sample_output.node.values())
+                num_edges = sum(c.numel() for c in sample_output.col.values())
+            else:
+                num_nodes = sample_output.node.numel()
+                num_edges = sample_output.col.numel()
+            self._stats.add("nodes_per_batch", num_nodes)
+            self._stats.add("edges_per_batch", num_edges)
         return sample_output
