@@ -7,7 +7,6 @@ from tensorflow_metadata.proto.v0.schema_pb2 import Feature
 
 from gigl.common.logger import Logger
 from gigl.common.utils.tensorflow_schema import get_feature_len_from_fixed_len_feature
-from gigl.src.common.utils.data.training import filter_features
 from gigl.src.data_preprocessor.lib.types import FeatureSchema
 
 logger = Logger()
@@ -18,6 +17,8 @@ class FeatureEmbeddingLayer(nn.Module):
     Pass selected features through an embedding layer,
     then concat back with original features set
     """
+
+    _non_embed_index: torch.Tensor
 
     def __init__(
         self,
@@ -123,19 +124,31 @@ class FeatureEmbeddingLayer(nn.Module):
             )
             self.__out_dim += emb_dim - feat_dim  # adjust out_dim based on emb_dim
 
+        # Column positions are fixed by the schema, so resolve them once here rather than on every
+        # forward call. The index lives in a non-persistent buffer so it follows `.to(device)` and
+        # does not change the state_dict.
+        self.__embed_slices = {
+            feature: self.__feature_schema.feature_index[feature]
+            for feature in self.__features_to_embed
+        }
+        non_embed_columns: list[int] = []
+        for feature in self.__non_embed_features:
+            start, end = self.__feature_schema.feature_index[feature]
+            non_embed_columns.extend(range(start, end))
+        self.register_buffer(
+            "_non_embed_index",
+            torch.tensor(non_embed_columns, dtype=torch.long),
+            persistent=False,
+        )
+
     def forward(
         self, x: Float[torch.Tensor, "nodes input_dim"]
     ) -> Float[torch.Tensor, "nodes output_dim"]:
-        x_non_embed = filter_features(
-            feature_schema=self.__feature_schema,
-            feature_names=list(self.__non_embed_features),
-            x=x,
-        )
+        x_non_embed = x.index_select(1, self._non_embed_index)
         x_emb = [x_non_embed]
         for feature in self.__features_to_embed:
-            x_to_emb = filter_features(
-                feature_schema=self.__feature_schema, feature_names=[feature], x=x
-            ).long()  # embedding layer takes LongTensor
+            start, end = self.__embed_slices[feature]
+            x_to_emb = x[:, start:end].long()  # embedding layer takes LongTensor
             if self.__plus_one:
                 x_to_emb = x_to_emb + 1
             emb_layer = self.__feature_embedding_layers[feature]
