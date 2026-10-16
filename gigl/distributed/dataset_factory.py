@@ -40,7 +40,10 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
-from gigl.distributed.utils.lossless_codecs import derive_node_lossless_codecs
+from gigl.distributed.utils.lossless_codecs import (
+    derive_edge_lossless_codecs,
+    derive_node_lossless_codecs,
+)
 from gigl.distributed.utils.lossless_compression import compress_loaded_features
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
@@ -48,7 +51,10 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from gigl.types.graph import (
+    DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+    DEFAULT_HOMOGENEOUS_NODE_TYPE,
+)
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -75,6 +81,9 @@ def _load_and_build_partitioned_dataset(
     retain_edge_ids: bool = True,
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
+    ] = None,
+    edge_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
     ] = None,
     strict_lossless_compression: bool = False,
 ) -> DistDataset:
@@ -104,7 +113,7 @@ def _load_and_build_partitioned_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        node_lossless_codecs, strict_lossless_compression: See ``build_dataset``.
+        node_lossless_codecs, edge_lossless_codecs, strict_lossless_compression: See ``build_dataset``.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -150,6 +159,22 @@ def _load_and_build_partitioned_dataset(
                 serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
             ),
             default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            strict=strict_lossless_compression,
+        )
+    if edge_lossless_codecs is not None:
+        (
+            loaded_graph_tensors.edge_features,
+            loaded_graph_tensors.edge_quantized_features,
+            edge_quantization_metadata,
+        ) = compress_loaded_features(
+            features=loaded_graph_tensors.edge_features,
+            quantized_features=loaded_graph_tensors.edge_quantized_features,
+            metadata=edge_quantization_metadata,
+            declared=edge_lossless_codecs,
+            is_homogeneous=isinstance(
+                serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo
+            ),
+            default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
             strict=strict_lossless_compression,
         )
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
@@ -303,6 +328,9 @@ def _build_dataset_process(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None,
+    edge_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
+    ] = None,
     strict_lossless_compression: bool = False,
 ) -> None:
     """
@@ -388,6 +416,7 @@ def _build_dataset_process(
         weight_edge_feat_name=weight_edge_feat_name,
         retain_edge_ids=retain_edge_ids,
         node_lossless_codecs=node_lossless_codecs,
+        edge_lossless_codecs=edge_lossless_codecs,
         strict_lossless_compression=strict_lossless_compression,
     )
 
@@ -418,6 +447,9 @@ def build_dataset(
     retain_edge_ids: bool = True,
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
+    ] = None,
+    edge_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
     ] = None,
     strict_lossless_compression: bool = False,
 ) -> DistDataset:
@@ -477,6 +509,10 @@ def build_dataset(
             Use ``derive_node_lossless_codecs`` to declare codecs from the feature schemas. Peak host memory while
             compressing is the loaded node features plus the remaining raw columns plus the packed rows, until the loaded
             tensors are released. Disabled by default.
+        edge_lossless_codecs (Optional[Union[FeatureCodec, dict[EdgeType, FeatureCodec]]]): The same for the edge
+            features of (main) edge types: one codec for a homogeneous graph, a dict with one codec per edge type
+            otherwise. The columns exclude the sampling-weight feature, if any. Use ``derive_edge_lossless_codecs`` to
+            declare codecs from the feature schemas.
         strict_lossless_compression (bool): Raise instead of leaving a declared integer column as float32 when its
             data does not fit.
 
@@ -576,6 +612,7 @@ def build_dataset(
             weight_edge_feat_name,
             retain_edge_ids,
             node_lossless_codecs,
+            edge_lossless_codecs,
             strict_lossless_compression,
         ),
     )
@@ -625,8 +662,9 @@ def build_dataset_from_task_config_uri(
       with ``with_edge=False``. The default is True only for backwards compatibility.
     - compress_node_features (bool): Losslessly compress categorical id node feature columns declared with an
       ``int_domain`` in the feature schema (see ``node_lossless_codecs`` of ``build_dataset``), defaulting to False.
-    - compress_features_strict (bool): With ``compress_node_features``, raise instead of leaving a declared id
-      column as float32 when its data does not fit its declared range, defaulting to False.
+    - compress_edge_features (bool): The same for main edge features, defaulting to False.
+    - compress_features_strict (bool): With ``compress_node_features`` or ``compress_edge_features``, raise instead
+      of leaving a declared id column as float32 when its data does not fit its declared range, defaulting to False.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -746,18 +784,32 @@ def build_dataset_from_task_config_uri(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None
+    edge_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
+    ] = None
     should_compress_node_features = bool(
         strtobool(args.get("compress_node_features", "False"))
     )
     strict_lossless_compression = bool(
         strtobool(args.get("compress_features_strict", "False"))
     )
-    if strict_lossless_compression and not should_compress_node_features:
+    should_compress_edge_features = bool(
+        strtobool(args.get("compress_edge_features", "False"))
+    )
+    if strict_lossless_compression and not (
+        should_compress_node_features or should_compress_edge_features
+    ):
         raise ValueError(
-            "'compress_features_strict' requires 'compress_node_features' to be enabled"
+            "'compress_features_strict' requires 'compress_node_features' or 'compress_edge_features' to be enabled"
         )
     if should_compress_node_features:
         node_lossless_codecs = derive_node_lossless_codecs(
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
+            gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+            serialized_graph_metadata,
+        )
+    if should_compress_edge_features:
+        edge_lossless_codecs = derive_edge_lossless_codecs(
             gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
             serialized_graph_metadata,
@@ -781,6 +833,7 @@ def build_dataset_from_task_config_uri(
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,
         node_lossless_codecs=node_lossless_codecs,
+        edge_lossless_codecs=edge_lossless_codecs,
         strict_lossless_compression=strict_lossless_compression,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node

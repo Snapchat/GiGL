@@ -1399,7 +1399,8 @@ def _run_incoming_heterogeneous_quantized_edge_feature_neighbor_loader(
     assert isinstance(edge_quantization_metadata, dict)
     assert set(edge_feature_info) == {_USER_TO_STORY}
     assert set(edge_quantization_metadata) == {_USER_TO_STORY}
-    assert edge_feature_info[_USER_TO_STORY].dim == 2
+    # The dataset describes the logical width: two raw columns plus two packed ones.
+    assert edge_feature_info[_USER_TO_STORY].dim == 4
     assert edge_quantization_metadata[_USER_TO_STORY].feature_dim == 4
 
     batch = next(iter(loader))

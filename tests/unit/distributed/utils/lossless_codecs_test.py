@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, cast
 
 import tensorflow as tf
 from absl.testing import absltest
@@ -8,13 +8,14 @@ from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.utils.lossless_codecs import (
     codec_from_feature_schema,
+    derive_edge_lossless_codecs,
     derive_node_lossless_codecs,
     exclude_quantized_columns,
 )
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
@@ -31,6 +32,7 @@ from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
 _STORY = NodeType("story")
+_USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 
 
 def _schema(*features: tuple[str, int, Optional[tuple[int, int]]]) -> FeatureSchema:
@@ -123,6 +125,38 @@ class DeriveNodeLosslessCodecsTest(TestCase):
                 _USER: FeatureCodec(("float32",) * 2),
                 _STORY: FeatureCodec(("float32",) * 2),
             },
+        )
+
+    def test_edge_codecs_cover_the_logical_columns_and_exclude_the_weight_feature(
+        self,
+    ) -> None:
+        config = _config(HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO)
+        preprocessed = config.preprocessed_metadata_pb_wrapper
+        graph = config.graph_metadata_pb_wrapper
+        condensed = graph.edge_type_to_condensed_edge_type_map[_USER_TO_STORY]
+        weight_name = preprocessed.condensed_edge_type_to_feature_keys_map[condensed][0]
+
+        unweighted = cast(
+            dict[EdgeType, FeatureCodec],
+            derive_edge_lossless_codecs(
+                preprocessed, graph, _serialized_metadata(preprocessed, graph)
+            ),
+        )
+        weighted = cast(
+            dict[EdgeType, FeatureCodec],
+            derive_edge_lossless_codecs(
+                preprocessed,
+                graph,
+                _serialized_metadata(preprocessed, graph),
+                weight_edge_feat_name={_USER_TO_STORY: weight_name},
+            ),
+        )
+
+        self.assertEqual(unweighted[_USER_TO_STORY].num_columns, 2)
+        self.assertEqual(weighted[_USER_TO_STORY].num_columns, 1)
+        self.assertEqual(
+            {e: c for e, c in weighted.items() if e != _USER_TO_STORY},
+            {e: c for e, c in unweighted.items() if e != _USER_TO_STORY},
         )
 
     def test_graph_without_node_features_gets_no_codec(self) -> None:

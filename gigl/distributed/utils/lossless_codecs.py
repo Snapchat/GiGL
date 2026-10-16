@@ -7,13 +7,16 @@ column from the feature schema's ``int_domain``.
 
 from typing import Optional, Sequence, Union
 
-from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
+from gigl.common.data.load_torch_tensors import (
+    SerializedGraphMetadata,
+    remove_sampling_weight_from_edge_quantization_metadata,
+)
 from gigl.common.utils.feature_quantization.lossless import (
     FeatureCodec,
     kind_holding_domain,
 )
 from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
-from gigl.src.common.types.graph_data import NodeType
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
 from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
@@ -110,3 +113,63 @@ def derive_node_lossless_codecs(
     if graph_metadata_pb_wrapper.is_heterogeneous:
         return codecs
     return codecs[graph_metadata_pb_wrapper.homogeneous_node_type]
+
+
+def derive_edge_lossless_codecs(
+    preprocessed_metadata_pb_wrapper: PreprocessedMetadataPbWrapper,
+    graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
+    serialized_graph_metadata: SerializedGraphMetadata,
+    weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
+) -> Optional[Union[FeatureCodec, dict[EdgeType, FeatureCodec]]]:
+    """Declares a ``FeatureCodec`` over the logical edge feature columns of each (main) edge type.
+
+    The sampling-weight feature, if any, is excluded: it is removed from the edge features when they are loaded.
+
+    Args:
+        preprocessed_metadata_pb_wrapper: Preprocessed metadata holding the feature schemas and feature keys.
+        graph_metadata_pb_wrapper: Graph metadata mapping edge types to their condensed types.
+        serialized_graph_metadata: The graph's serialized metadata; edge columns that preprocessing quantized are left
+            uncompressed.
+        weight_edge_feat_name: The ``weight_edge_feat_name`` passed to ``build_dataset``.
+
+    Returns:
+        A codec for a homogeneous graph, or a dict with a codec for every edge type that has features otherwise;
+        ``None`` if no edge type has features.
+    """
+    schemas = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_schema_map
+    keys = preprocessed_metadata_pb_wrapper.condensed_edge_type_to_feature_keys_map
+    edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+        serialized_graph_metadata, weight_edge_feat_name
+    )
+    quantization_by_type = (
+        {}
+        if edge_quantization_metadata is None
+        else (
+            {
+                graph_metadata_pb_wrapper.homogeneous_edge_type: edge_quantization_metadata
+            }
+            if isinstance(edge_quantization_metadata, FeatureQuantizationMetadata)
+            else edge_quantization_metadata
+        )
+    )
+    codecs: dict[EdgeType, FeatureCodec] = {}
+    for (
+        edge_type,
+        condensed,
+    ) in graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map.items():
+        weight_name = (
+            weight_edge_feat_name
+            if isinstance(weight_edge_feat_name, str)
+            else (weight_edge_feat_name or {}).get(edge_type)
+        )
+        edge_keys = [key for key in keys[condensed] if key != weight_name]
+        if edge_keys:
+            codecs[edge_type] = exclude_quantized_columns(
+                codec_from_feature_schema(schemas[condensed], edge_keys),
+                quantization_by_type.get(edge_type),
+            )
+    if not codecs:
+        return None
+    if graph_metadata_pb_wrapper.is_heterogeneous:
+        return codecs
+    return codecs[graph_metadata_pb_wrapper.homogeneous_edge_type]

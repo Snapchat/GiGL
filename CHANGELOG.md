@@ -33,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so
   sampling, RPC and the host-to-device copy move fewer bytes. Declared columns are checked against the data on every
   rank, and columns that do not fit stay float32 by @kmontemayor2-sc
+- Extend lossless feature compression to main edge features: `build_dataset(edge_lossless_codecs=...)` and the
+  `compress_edge_features` task-config arg, with `derive_edge_lossless_codecs` declaring codecs from the feature schema
+  (the sampling-weight feature, if any, is excluded); `build_storage_dataset` accepts the node and edge codecs too by
+  @kmontemayor2-sc
 
 ### Changed
 
