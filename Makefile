@@ -78,11 +78,15 @@ check_if_valid_env:
 	@command -v gsutil >/dev/null 2>&1 || { echo >&2 "gsutil is required but it's not installed.  Aborting."; exit 1; }
 
 # if developing, you need to install dev deps instead
+# The Scala toolchain (Spark, sbt, coursier, scalapbc) only serves the legacy Scala
+# components; `make install_dev_deps SKIP_SCALA=1` skips downloading it, e.g. for a
+# worktree that only touches Python.
+SKIP_SCALA?=0
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./gigl-core/requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
-	bash ./requirements/install_scala_deps.sh
+	@if [ "$(SKIP_SCALA)" = "1" ]; then echo "SKIP_SCALA=1: skipping Scala deps"; else bash ./requirements/install_scala_deps.sh; fi
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 

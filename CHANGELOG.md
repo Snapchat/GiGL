@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   cloning and building it in a post-install script. `gigl-post-install` and `gigl/scripts/install_glt.sh` are removed;
   `requirements/install_py_deps.sh --skip-glt-post-install` is now `--skip-glt-install` by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING
+- Add `make install_dev_deps SKIP_SCALA=1` to skip the Scala toolchain download, and document the `.worktrees/` workflow
+  in `CLAUDE.md` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
 
 ### Removed
 

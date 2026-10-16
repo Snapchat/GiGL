@@ -36,6 +36,7 @@ gigl/deps/
 _autosummary/
 graphlearn_torch/
 graphlearn_torch.egg-info/
+.worktrees/
 .git/
 .ipynb_checkpoints/
 
