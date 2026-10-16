@@ -12,15 +12,22 @@ narrowest (4-byte, 2-byte, 1-byte) so every group starts at an offset aligned to
 size and can be read with ``Tensor.view(dtype)`` on a byte slice. The row is zero-padded to a
 multiple of four bytes so that row strides stay aligned for any row subset.
 
-Real-valued columns can be stored as ``float32`` (exact) or ``bfloat16`` (lossy), and every id kind is exact for
-the values its range holds; ``encode`` raises on any value a column's kind cannot represent.
+Which columns are stored as narrow integers is declared by the caller (see ``gigl.distributed.utils.lossless_codecs``
+for deriving a declaration from a feature schema) and then checked against the data (``ColumnStats``,
+``FeatureCodec.fitted_to``): a column whose values do not fit its declared range, or that is not integral, stays float32
+unless the caller asks for strict mode. A fitted codec is therefore lossless for the data it was fitted to, except that
+real-valued columns may optionally be rounded to bfloat16.
 """
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Optional
+from typing import Final, Iterable, Optional, Sequence
 
 import torch
+
+from gigl.common.logger import Logger
+
+logger = Logger()
 
 # kind -> (storage dtype, bias, inclusive range of representable column values).
 # float32 cannot represent 2**31 - 1, so the int32 upper bound is the largest float32 below 2**31.
@@ -58,6 +65,75 @@ def kind_holding_domain(low: int, high: int) -> Optional[str]:
 
 
 @dataclass(frozen=True)
+class ColumnStats:
+    """Per-column facts about a float32 ``[N, D]`` matrix that decide which columns can be packed.
+
+    Attributes:
+        minimum: ``[D]`` column minimums (NaN if the column holds a NaN).
+        maximum: ``[D]`` column maximums (NaN if the column holds a NaN).
+        integral: ``[D]`` bool, True where every value is a whole number (False for fractional
+            values and NaN).
+    """
+
+    minimum: torch.Tensor
+    maximum: torch.Tensor
+    integral: torch.Tensor
+
+    @classmethod
+    def empty(cls, width: int) -> "ColumnStats":
+        """Statistics of zero rows, the identity of ``merge``."""
+        return cls(
+            torch.full((width,), float("inf")),
+            torch.full((width,), float("-inf")),
+            torch.ones(width, dtype=torch.bool),
+        )
+
+    @classmethod
+    def from_features(
+        cls, features: torch.Tensor, columns: Optional[Sequence[int]] = None
+    ) -> "ColumnStats":
+        """Scans ``features`` (only ``columns`` if given) in row chunks, so the scan needs no full-size temporaries."""
+        if features.dim() != 2:
+            raise ValueError(f"Expected a [N, D] matrix, got {tuple(features.shape)}")
+        stats = cls.empty(features.shape[1] if columns is None else len(columns))
+        minimum, maximum, integral = stats.minimum, stats.maximum, stats.integral
+        for start in range(0, features.shape[0], _CHUNK_ROWS):
+            chunk = features[start : start + _CHUNK_ROWS]
+            if columns is not None:
+                chunk = chunk[:, columns]
+            chunk = chunk.to(torch.float32)
+            chunk_min, chunk_max = torch.aminmax(chunk, dim=0)
+            minimum = torch.minimum(minimum, chunk_min)
+            maximum = torch.maximum(maximum, chunk_max)
+            integral &= (chunk == chunk.floor()).all(dim=0)
+        return cls(minimum, maximum, integral)
+
+    @classmethod
+    def merge(cls, stats: Iterable[Optional["ColumnStats"]]) -> "ColumnStats":
+        """Combines the stats of several partitions (``None`` entries, e.g. empty partitions, are skipped)."""
+        present = [entry for entry in stats if entry is not None]
+        if not present:
+            raise ValueError("Cannot merge zero ColumnStats")
+        merged = present[0]
+        for entry in present[1:]:
+            merged = cls(
+                torch.minimum(merged.minimum, entry.minimum),
+                torch.maximum(merged.maximum, entry.maximum),
+                merged.integral & entry.integral,
+            )
+        return merged
+
+    def holds(self, column: int, kind: str) -> bool:
+        """Whether every value seen in ``column`` is representable in the integer ``kind``."""
+        low, high = _KINDS[kind][2]
+        return bool(
+            self.integral[column]
+            and self.minimum[column] >= low
+            and self.maximum[column] <= high
+        )
+
+
+@dataclass(frozen=True)
 class _Group:
     kind: str
     dtype: torch.dtype
@@ -89,6 +165,44 @@ class FeatureCodec:
         unknown = set(self.column_dtypes) - set(_KINDS)
         if unknown:
             raise ValueError(f"Unknown column kinds {sorted(unknown)}")
+
+    def fitted_to(self, stats: ColumnStats, strict: bool = False) -> "FeatureCodec":
+        """Returns this codec with every integer column the data does not fit demoted to float32.
+
+        A column fits if all its values in ``stats`` are whole numbers inside the integer kind's
+        range. Demoted columns are logged, so a wrong declaration costs memory, not correctness.
+
+        Args:
+            stats: Statistics of the data that will be packed, merged over every partition.
+            strict: Raise instead of demoting.
+
+        Raises:
+            ValueError: If the width differs from the data's, or (when ``strict``) a column does
+                not fit.
+        """
+        if stats.minimum.numel() != self.num_columns:
+            raise ValueError(
+                f"Codec has {self.num_columns} columns but the data has {stats.minimum.numel()}"
+            )
+        kinds = list(self.column_dtypes)
+        unfit = [
+            column
+            for column, kind in enumerate(kinds)
+            if kind not in _DENSE_KINDS and not stats.holds(column, kind)
+        ]
+        if unfit and strict:
+            raise ValueError(
+                f"Columns {unfit} are declared as integer ids but their data does not fit "
+                "the declared storage kind (or is not integral)"
+            )
+        if unfit:
+            logger.warning(
+                f"Columns {unfit} are declared as integer ids but their data does not fit the "
+                "declared storage kind (or is not integral); storing them as float32"
+            )
+        for column in unfit:
+            kinds[column] = "float32"
+        return FeatureCodec(tuple(kinds))
 
     @property
     def num_columns(self) -> int:

@@ -4,8 +4,10 @@ from typing import Optional
 
 import torch
 from absl.testing import absltest
+from parameterized import parameterized
 
 from gigl.common.utils.feature_quantization.lossless import (
+    ColumnStats,
     FeatureCodec,
     kind_holding_domain,
 )
@@ -68,6 +70,14 @@ def _declared(dense_dtype: str = "float32") -> FeatureCodec:
     return FeatureCodec(tuple(kinds))
 
 
+def _fit(
+    features: torch.Tensor, dense_dtype: str = "float32", strict: bool = False
+) -> FeatureCodec:
+    return _declared(dense_dtype).fitted_to(
+        ColumnStats.from_features(features), strict=strict
+    )
+
+
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
     return torch.equal(left.view(torch.int32), right.view(torch.int32))
 
@@ -76,7 +86,7 @@ class FeatureCodecTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
         self.features = _features(1000, seed=0)
-        self.codec = _declared()
+        self.codec = _fit(self.features)
 
     def test_narrowest_kind_is_chosen_per_column_and_rows_shrink(self) -> None:
         self.assertEqual(list(self.codec.column_dtypes), _EXPECTED_KINDS)
@@ -104,7 +114,7 @@ class FeatureCodecTest(TestCase):
         features[:, column] = torch.tensor(
             [-1.0, 0.0, 255.0, 256.0, 65535.0, 65536.0, 265771.0, -1.0]
         )
-        codec = _declared()
+        codec = _fit(features)
         self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
 
     def test_gathered_subset_of_rows_decodes_to_the_same_rows(self) -> None:
@@ -130,11 +140,61 @@ class FeatureCodecTest(TestCase):
         decoded = self.codec.decode(self.codec.encode(empty))
         self.assertEqual(decoded.shape, (0, _NUM_COLUMNS))
 
-    def test_hand_written_spec_round_trips_every_kind(self) -> None:
+    @parameterized.expand(
+        [
+            ("fractional", 6, 1.5),
+            ("nan", 6, float("nan")),
+            ("above_storage_range", 6, 200.0),
+            ("below_storage_range", 11, -2.0),
+        ]
+    )
+    def test_column_that_does_not_fit_stays_float32(
+        self, _: str, column: int, bad_value: float
+    ) -> None:
+        features = _features(50, seed=2)
+        features[7, column] = bad_value
+        codec = _fit(features)
+        expected = list(_EXPECTED_KINDS)
+        expected[column] = "float32"
+        self.assertEqual(list(codec.column_dtypes), expected)
+        self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
+
+    def test_feature_without_domain_stays_dense_even_if_integral(self) -> None:
+        features = _features(50, seed=3)
+        features[:, 0] = 3.0  # dense_a looks like an id but declares no domain
+        self.assertEqual(_fit(features).column_dtypes[0], "float32")
+
+    def test_strict_mode_raises_for_a_column_that_does_not_fit(self) -> None:
+        features = _features(50, seed=4)
+        features[7, 6] = 1.5
+        with self.assertRaises(ValueError):
+            _fit(features, strict=True)
+
+    def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
+        first, second = _features(50, seed=5), _features(50, seed=6)
+        second[3, 6] = 1000.0  # does not fit int8
+        declared = _declared()
+        merged = declared.fitted_to(
+            ColumnStats.merge(
+                [ColumnStats.from_features(first), ColumnStats.from_features(second)]
+            )
+        )
+        alone = declared.fitted_to(ColumnStats.from_features(first))
+        self.assertEqual(merged.column_dtypes[6], "float32")
+        self.assertEqual(alone.column_dtypes[6], "int8")
+        # Both partitions round-trip through the merged codec.
+        for features in (first, second):
+            self.assertTrue(
+                _same_bits(merged.decode(merged.encode(features)), features)
+            )
+
+    def test_hand_written_spec_packs_without_any_schema(self) -> None:
         codec = FeatureCodec(("float32", "int8", "uint8", "int16", "uint8_bias1"))
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
         )
+        fitted = codec.fitted_to(ColumnStats.from_features(features), strict=True)
+        self.assertEqual(fitted, codec)
         self.assertEqual(
             codec.row_bytes, 12
         )  # 9 bytes of columns, padded to a multiple of 4
@@ -143,7 +203,7 @@ class FeatureCodecTest(TestCase):
     def test_bfloat16_dense_columns_round_to_bfloat16_and_ids_stay_exact(
         self,
     ) -> None:
-        codec = _declared("bfloat16")
+        codec = _fit(self.features, dense_dtype="bfloat16")
         decoded = codec.decode(codec.encode(self.features))
         dense = [c for c, kind in enumerate(codec.column_dtypes) if kind == "bfloat16"]
         ids = [c for c in range(_NUM_COLUMNS) if c not in dense]
@@ -154,11 +214,11 @@ class FeatureCodecTest(TestCase):
             torch.equal(torch.nan_to_num(decoded[:, dense]), torch.nan_to_num(expected))
         )
         self.assertTrue(torch.equal(decoded[:, ids], self.features[:, ids]))
-        self.assertLess(codec.row_bytes, self.codec.row_bytes)
+        self.assertLess(codec.row_bytes, _fit(self.features).row_bytes)
 
     def test_encode_refuses_values_the_codec_cannot_represent(self) -> None:
         features = self.features.clone()
-        features[0, 6] = 300.0  # the codec declares int8 for this column
+        features[0, 6] = 300.0  # codec was fitted with int8 for this column
         with self.assertRaises(ValueError):
             self.codec.encode(features)
         with self.assertRaises(ValueError):
@@ -185,6 +245,10 @@ class FeatureCodecTest(TestCase):
         interleaved = torch.stack([packed, packed], dim=-1)[:, :, 0]
         self.assertNotEqual(interleaved.stride(1), 1)
         self.assertTrue(_same_bits(self.codec.decode(interleaved), self.features[:10]))
+
+    def test_codec_with_a_different_width_than_the_data_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            _declared().fitted_to(ColumnStats.from_features(self.features[:, :-1]))
 
     @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     def test_decode_on_cuda_matches_cpu_decode(self) -> None:

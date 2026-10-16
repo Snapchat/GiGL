@@ -367,6 +367,9 @@ def _materialize_quantized_features(
         packed_features, metadata=quantization_metadata
     )
     raw_features = getattr(store, feature_attribute, None)
+    if raw_features is not None and raw_features.size(0) == 0 and dequantized.size(0):
+        # A zero-row tensor standing in for a feature matrix the sampler had no raw columns for.
+        raw_features = None
     materialized_features = dequantized.new_empty(
         (dequantized.size(0), quantization_metadata.feature_dim)
     )
