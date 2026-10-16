@@ -1523,60 +1523,45 @@ def _lookup_pairwise_relation_indices(
         if relation_batch_indices.numel() == 0:
             continue
 
-        relation_indices = torch.stack(
-            [
-                relation_batch_indices,
-                relation_query_positions,
-                relation_key_positions,
-                torch.full(
-                    (relation_batch_indices.size(0),),
-                    relation_idx,
-                    dtype=torch.long,
-                    device=device,
-                ),
-            ],
-            dim=1,
+        relation_index_parts.append(
+            _unique_relation_indices(
+                batch_indices=relation_batch_indices,
+                query_positions=relation_query_positions,
+                key_positions=relation_key_positions,
+                relation_idx=relation_idx,
+                sequence_length=node_index_sequences.size(1),
+            )
         )
-        relation_index_parts.append(_unique_rows(relation_indices))
 
     if not relation_index_parts:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     return torch.cat(relation_index_parts, dim=0)
 
 
-def _unique_rows(rows: Tensor) -> Tensor:
-    """Return the sorted unique rows of a ``[N, C]`` integer tensor.
+def _unique_relation_indices(
+    batch_indices: Tensor,
+    query_positions: Tensor,
+    key_positions: Tensor,
+    relation_idx: int,
+    sequence_length: int,
+) -> Tensor:
+    """Return the sorted unique ``[batch, query, key, relation_idx]`` rows.
 
-    Equivalent to ``torch.unique(rows, dim=0)`` (lexicographic row order), but
-    packs each row into one int64 key and runs a 1-D ``torch.unique``, which is
-    much faster than ``dim=0``. Falls back to ``dim=0`` when the rows contain
-    negative values or the packed key could overflow int64.
+    Equivalent to ``torch.unique(torch.stack(...), dim=0)`` but packs
+    ``(batch, query, key)`` into one int64 key and runs a 1-D ``torch.unique``,
+    which is much faster. Positions are below ``sequence_length``, so the key
+    cannot overflow for any realistic batch size.
     """
-    if rows.numel() == 0:
-        return rows
-    # One host sync fetches both the negativity check and the per-column radices.
-    column_mins, column_maxes = torch.stack(
-        (rows.amin(dim=0), rows.amax(dim=0))
-    ).tolist()
-    if min(column_mins) < 0:
-        return torch.unique(rows, dim=0)
-    radices = [int(m) + 1 for m in column_maxes]
-    packed_range = 1
-    for radix in radices:
-        packed_range *= radix
-    if packed_range > torch.iinfo(torch.long).max:
-        return torch.unique(rows, dim=0)
-
-    keys = torch.zeros(rows.size(0), dtype=torch.long, device=rows.device)
-    for column, radix in enumerate(radices):
-        keys = keys * radix + rows[:, column]
-    unique_keys = torch.unique(keys)
-
-    columns: list[Tensor] = []
-    for radix in reversed(radices):
-        columns.append(unique_keys % radix)
-        unique_keys = torch.div(unique_keys, radix, rounding_mode="floor")
-    return torch.stack(columns[::-1], dim=1).to(rows.dtype)
+    keys = (batch_indices * sequence_length + query_positions) * sequence_length
+    unique_keys = torch.unique(keys + key_positions)
+    key_out = unique_keys % sequence_length
+    unique_keys = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    query_out = unique_keys % sequence_length
+    batch_out = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    return torch.stack(
+        [batch_out, query_out, key_out, torch.full_like(batch_out, relation_idx)],
+        dim=1,
+    )
 
 
 def _get_sampled_frontier_batch_node_keys(
