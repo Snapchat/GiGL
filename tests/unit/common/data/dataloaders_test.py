@@ -781,6 +781,57 @@ class TFRecordDataLoaderTest(TestCase):
             ),
         )
 
+    def test_sampling_weight_removal_shifts_lossless_feature_indices(self) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "raw_embedding": tf.io.FixedLenFeature([2], tf.float32),
+                    "weight": tf.io.FixedLenFeature([], tf.float32),
+                },
+                feature_keys=["raw_embedding", "weight"],
+                feature_dim=3,
+                entity_key=("src_id", "dst_id"),
+            ),
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=5,
+                quantized_feature_indices=(4,),
+                clip_min=0.0,
+                clip_max=3.0,
+                lossless_feature_indices=(3,),
+                lossless_column_kinds=("int8",),
+            ),
+        )
+
+        adjusted_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name="weight",
+        )
+
+        self.assertEqual(
+            adjusted_metadata,
+            FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=4,
+                quantized_feature_indices=(3,),
+                clip_min=0.0,
+                clip_max=3.0,
+                lossless_feature_indices=(2,),
+                lossless_column_kinds=("int8",),
+            ),
+        )
+
     def test_sampling_weight_removal_rejects_scalar_name_for_multiple_edge_types(
         self,
     ) -> None:

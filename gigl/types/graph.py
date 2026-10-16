@@ -10,6 +10,7 @@ from graphlearn_torch.partition import PartitionBook
 from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 
 # TODO(kmonte) - we should move gigl.src.common.types.graph_data to this file.
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -120,7 +121,7 @@ class FeatureInfo:
 
 @dataclass(frozen=True)
 class FeatureQuantizationIndexTensors:
-    """Device-local indices used to scatter dequantized and raw features."""
+    """Device-local indices used to scatter decoded packed and raw features."""
 
     quantized: torch.Tensor
     raw: torch.Tensor
@@ -128,48 +129,112 @@ class FeatureQuantizationIndexTensors:
 
 @dataclass(frozen=True)
 class FeatureQuantizationMetadata:
-    """Metadata needed to unpack/dequantize/scatter packed features."""
+    """Metadata needed to unpack/decode/scatter packed features.
 
-    bits: int
+    The packed ``uint8`` row of an entity holds up to two regions, in this order:
+
+    1. ``quantized_feature_indices`` columns, n-bit quantized and packed ``8 // bits`` per byte (lossy). Padded to a
+       multiple of four bytes when a lossless region follows.
+    2. ``lossless_feature_indices`` columns, stored as the narrow types in ``lossless_column_kinds`` (see
+       ``gigl.common.utils.feature_quantization.lossless.FeatureCodec``; lossless except for ``bfloat16``).
+
+    Every other logical column stays in the raw float matrix.
+
+    Attributes:
+        bits: Bit width of the quantized region; ``None`` when there are no quantized columns.
+        feature_dim: Number of logical feature columns.
+        quantized_feature_indices: Logical columns of the quantized region, in storage order.
+        clip_min: Clipping range of multi-bit quantization.
+        clip_max: Clipping range of multi-bit quantization.
+        neg_mean: Reconstruction value of 1-bit quantization.
+        pos_mean: Reconstruction value of 1-bit quantization.
+        lossless_feature_indices: Logical columns of the lossless region, in storage order.
+        lossless_column_kinds: Storage kind of each lossless column, aligned with ``lossless_feature_indices``.
+    """
+
+    bits: Optional[int]
     feature_dim: int
     quantized_feature_indices: tuple[int, ...] = ()
     clip_min: Optional[float] = None
     clip_max: Optional[float] = None
     neg_mean: Optional[float] = None
     pos_mean: Optional[float] = None
+    lossless_feature_indices: tuple[int, ...] = ()
+    lossless_column_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.bits not in SUPPORTED_QUANTIZATION_BITS:
+        if self.bits is None:
+            if self.quantized_feature_indices:
+                raise ValueError("Quantized feature indices require a bit width")
+        elif self.bits not in SUPPORTED_QUANTIZATION_BITS:
             raise ValueError(
                 f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}"
             )
-        if any(i < 0 or i >= self.feature_dim for i in self.quantized_feature_indices):
+        if self.lossless_column_kinds:
+            # Fails on an unknown kind now instead of when a batch is first decoded.
+            FeatureCodec(self.lossless_column_kinds)
+        if len(self.lossless_feature_indices) != len(self.lossless_column_kinds):
             raise ValueError(
-                f"quantized_feature_indices must be in [0, {self.feature_dim}), got {self.quantized_feature_indices}"
+                "lossless_feature_indices and lossless_column_kinds must have the same length"
             )
-        if len(set(self.quantized_feature_indices)) != len(
-            self.quantized_feature_indices
-        ):
+        packed_indices = self.packed_feature_indices
+        if any(i < 0 or i >= self.feature_dim for i in packed_indices):
             raise ValueError(
-                f"quantized_feature_indices contains duplicates: {self.quantized_feature_indices}"
+                f"packed feature indices must be in [0, {self.feature_dim}), got {packed_indices}"
+            )
+        if len(set(packed_indices)) != len(packed_indices):
+            raise ValueError(
+                f"packed feature indices contain duplicates: {packed_indices}"
             )
 
     @property
     def quantized_feature_dim(self) -> int:
-        """Number of logical features stored in packed quantized form."""
+        """Number of logical features stored in n-bit quantized form."""
         return len(self.quantized_feature_indices)
 
     @property
-    def packed_feature_dim(self) -> int:
-        """Number of uint8 columns needed for the packed features."""
+    def lossless_feature_dim(self) -> int:
+        """Number of logical features stored in the lossless region."""
+        return len(self.lossless_feature_indices)
+
+    @cached_property
+    def lossless_codec(self) -> Optional[FeatureCodec]:
+        """Codec of the lossless region, or ``None`` if there is none."""
+        if not self.lossless_feature_indices:
+            return None
+        return FeatureCodec(self.lossless_column_kinds)
+
+    @property
+    def quantized_packed_dim(self) -> int:
+        """Number of uint8 columns taken by the quantized region (before alignment padding)."""
+        if self.bits is None:
+            return 0
         per_byte = 8 // self.bits
         return (self.quantized_feature_dim + per_byte - 1) // per_byte
+
+    @property
+    def lossless_byte_offset(self) -> int:
+        """Byte offset of the lossless region; the quantized region is padded to a multiple of four."""
+        return (self.quantized_packed_dim + 3) // 4 * 4
+
+    @property
+    def packed_feature_dim(self) -> int:
+        """Number of uint8 columns of a packed row."""
+        codec = self.lossless_codec
+        if codec is None:
+            return self.quantized_packed_dim
+        return self.lossless_byte_offset + codec.row_bytes
+
+    @property
+    def packed_feature_indices(self) -> tuple[int, ...]:
+        """Logical positions of every packed column, in decode order (quantized, then lossless)."""
+        return self.quantized_feature_indices + self.lossless_feature_indices
 
     @cached_property
     def raw_feature_indices(self) -> tuple[int, ...]:
         """Logical feature positions that remain in raw form."""
-        quantized_indices = set(self.quantized_feature_indices)
-        return tuple(i for i in range(self.feature_dim) if i not in quantized_indices)
+        packed_indices = set(self.packed_feature_indices)
+        return tuple(i for i in range(self.feature_dim) if i not in packed_indices)
 
     @property
     def raw_feature_dim(self) -> int:
@@ -183,9 +248,9 @@ class FeatureQuantizationMetadata:
     ) -> FeatureQuantizationIndexTensors:
         """Device-local scatter indices for the single-device hot path."""
         # The logical indices never change across batches, so cache their
-        # device-local tensors for repeated quantized/raw feature scatter writes.
+        # device-local tensors for repeated packed/raw feature scatter writes.
         quantized = torch.tensor(
-            self.quantized_feature_indices, dtype=torch.long, device=device
+            self.packed_feature_indices, dtype=torch.long, device=device
         )
         raw = torch.tensor(self.raw_feature_indices, dtype=torch.long, device=device)
         return FeatureQuantizationIndexTensors(quantized=quantized, raw=raw)

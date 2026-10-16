@@ -9,6 +9,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
@@ -867,6 +868,68 @@ class DistributedNeighborLoaderTest(TestCase):
             ),
         )
         dataset.build(partition_output=partition_output)
+
+        mp.spawn(
+            fn=_run_quantized_feature_neighbor_loader,
+            args=(dataset, expected_features),
+        )
+
+    def test_distributed_neighbor_loader_materializes_lossless_packed_node_features(
+        self,
+    ) -> None:
+        raw_node_features = torch.tensor([[10.0, 20.0], [30.0, 40.0]])
+        lossless_codec = FeatureCodec(("int16", "uint8_bias1"))
+        lossless_columns = torch.tensor([[-1.0, 254.0], [300.0, -1.0]])
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=6,
+            quantized_feature_indices=(0, 2),
+            clip_min=0.0,
+            clip_max=3.0,
+            lossless_feature_indices=(4, 5),
+            lossless_column_kinds=lossless_codec.column_dtypes,
+        )
+        # The two-bit region (codes [0, 3] and [2, 1], see the test above) is padded to the
+        # start of the lossless region, which holds the id columns as narrow integers.
+        quantized_region = torch.tensor([[48], [144]], dtype=torch.uint8)
+        packed = torch.cat(
+            [
+                torch.nn.functional.pad(
+                    quantized_region,
+                    (0, metadata.lossless_byte_offset - quantized_region.shape[1]),
+                ),
+                lossless_codec.encode(lossless_columns),
+            ],
+            dim=1,
+        )
+        expected_features = torch.tensor(
+            [[0.0, 10.0, 3.0, 20.0, -1.0, 254.0], [2.0, 30.0, 1.0, 40.0, 300.0, -1.0]]
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=metadata,
+        )
+        dataset.build(
+            partition_output=PartitionOutput(
+                node_partition_book=torch.zeros(2),
+                edge_partition_book=torch.zeros(2),
+                partitioned_edge_index=GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1], [1, 0]]), edge_ids=None
+                ),
+                partitioned_node_features=FeaturePartitionData(
+                    feats=raw_node_features, ids=torch.arange(2)
+                ),
+                partitioned_node_quantized_features=FeaturePartitionData(
+                    feats=packed, ids=torch.arange(2)
+                ),
+                partitioned_edge_features=None,
+                partitioned_positive_labels=None,
+                partitioned_negative_labels=None,
+                partitioned_node_labels=None,
+            )
+        )
 
         mp.spawn(
             fn=_run_quantized_feature_neighbor_loader,

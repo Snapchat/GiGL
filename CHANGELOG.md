@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fetch a node or edge type's raw float features and its packed quantized features with one request per partition
   instead of two (`FusedFeatureStore` / `FusedDistFeature`, used by the samplers when a type has both stores), which
   halves the feature RPCs of datasets that mix raw and quantized columns by @kmontemayor2-sc
+- Extend the packed feature sidecar used by feature quantization with a lossless region: `FeatureQuantizationMetadata`
+  can describe categorical id columns stored as `int8`/`uint8`/`int16`/`int32`
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`) after the n-bit quantized columns, and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry them without further changes by
+  @kmontemayor2-sc
 
 ### Changed
 
