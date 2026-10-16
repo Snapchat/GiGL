@@ -1549,8 +1549,8 @@ def _unique_relation_indices(
 
     Equivalent to ``torch.unique(torch.stack(...), dim=0)`` but packs
     ``(batch, query, key)`` into one int64 key and runs a 1-D ``torch.unique``,
-    which is much faster. Positions are below ``sequence_length``, so the key
-    cannot overflow for any realistic batch size.
+    which is much faster. Positions are below ``sequence_length``, so the keys
+    are below ``batch_size * sequence_length**2`` and cannot overflow int64.
     """
     keys = (batch_indices * sequence_length + query_positions) * sequence_length
     unique_keys = torch.unique(keys + key_positions)
