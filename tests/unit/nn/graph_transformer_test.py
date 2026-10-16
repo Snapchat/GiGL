@@ -127,6 +127,23 @@ class TestGraphTransformerEncoder(TestCase):
         self.assertFalse(torch.isnan(user_embeddings).any())
         self.assertFalse(torch.isnan(item_embeddings).any())
 
+    def test_compiled_forward_matches_eager(self) -> None:
+        """``torch.compile`` of the whole encoder runs on a HeteroData batch.
+
+        The sparse k-hop layout still breaks the graph; this checks that
+        tracing succeeds and matches eager.
+        """
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = torch.compile(encoder)(
+                data=data, anchor_node_type=self._user_node_type
+            )
+
+        torch.testing.assert_close(actual, expected)
+
     def test_forward_with_l2_normalization(self) -> None:
         """Test that L2 normalization produces unit-length embeddings."""
         data = _create_simple_hetero_data()
@@ -317,7 +334,7 @@ class TestGraphTransformerEncoder(TestCase):
         }
 
         with patch(
-            "gigl.nn.graph_transformer.heterodata_to_graph_transformer_input",
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
             return_value=(sequences, valid_mask, sequence_auxiliary_data),
         ) as mock_transform:
             with torch.no_grad():

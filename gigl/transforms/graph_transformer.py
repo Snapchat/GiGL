@@ -28,6 +28,10 @@ Example Usage:
     >>> # sequences: (batch_size, max_seq_len, feature_dim)
     >>> # valid_mask: (batch_size, max_seq_len)
 
+    ``tensors_to_graph_transformer_input`` takes the same arguments with the
+    batch's ``x_dict`` / ``edge_index_dict`` (and optional ``edge_attr_dict``,
+    ``graph_attr_dict``) instead of a ``HeteroData``.
+
     With Relative Encodings:
     Relative encodings stored as sparse graph-level attributes can be returned as
     raw attention-bias features:
@@ -62,8 +66,8 @@ from typing import Literal, NamedTuple, Optional, TypedDict
 import torch
 from jaxtyping import Bool, Float, Int64
 from torch import Tensor
-from torch_geometric.data import Data, HeteroData
-from torch_geometric.typing import NodeType
+from torch_geometric.data import HeteroData
+from torch_geometric.typing import EdgeType, NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
 from gigl.src.common.types.graph_data import EdgeType as GiGLEdgeType
@@ -237,23 +241,166 @@ def heterodata_to_graph_transformer_input(
         ValueError: If node types have different feature dimensions.
         ValueError: If no node features exist in the data.
     """
-    # Check each node type for valid features
-    feature_dims: dict[str, int] = {}
+    x_dict: dict[NodeType, Tensor] = {}
     for nt in data.node_types:
         if not hasattr(data[nt], "x") or data[nt].x is None:
             raise ValueError(
                 f"Node type '{nt}' has no features (x is None or missing). "
                 "Graph Transformer input requires node features for all node types."
             )
-        if data[nt].x.dim() < 2:
+        x_dict[nt] = data[nt].x
+    edge_index_dict: dict[EdgeType, Tensor] = {}
+    edge_attr_dict: dict[EdgeType, Tensor] = {}
+    for edge_type in data.edge_types:
+        edge_store = data[edge_type]
+        if "edge_index" not in edge_store:
+            continue
+        edge_index_dict[edge_type] = edge_store.edge_index
+        if getattr(edge_store, "edge_attr", None) is not None:
+            edge_attr_dict[edge_type] = edge_store.edge_attr
+    graph_attr_names = set(anchor_based_attention_bias_attr_names or [])
+    graph_attr_names.update(anchor_based_input_attr_names or [])
+    graph_attr_names.update(pairwise_attention_bias_attr_names or [])
+    graph_attr_dict = {
+        attr_name: getattr(data, attr_name)
+        for attr_name in sorted(graph_attr_names)
+        if hasattr(data, attr_name)
+    }
+    return tensors_to_graph_transformer_input(
+        x_dict=x_dict,
+        edge_index_dict=edge_index_dict,
+        edge_attr_dict=edge_attr_dict,
+        graph_attr_dict=graph_attr_dict,
+        batch_size=batch_size,
+        max_seq_len=max_seq_len,
+        anchor_node_type=anchor_node_type,
+        anchor_node_ids=anchor_node_ids,
+        hop_distance=hop_distance,
+        sequence_construction_method=sequence_construction_method,
+        include_anchor_first=include_anchor_first,
+        padding_value=padding_value,
+        anchor_based_attention_bias_attr_names=anchor_based_attention_bias_attr_names,
+        anchor_based_input_attr_names=anchor_based_input_attr_names,
+        pairwise_attention_bias_attr_names=pairwise_attention_bias_attr_names,
+        relation_edge_types=relation_edge_types,
+        sampling_direction=sampling_direction,
+        prioritize_hop_order=prioritize_hop_order,
+    )
+
+
+def tensors_to_graph_transformer_input(
+    x_dict: dict[NodeType, Tensor],
+    edge_index_dict: dict[EdgeType, Tensor],
+    batch_size: int,
+    max_seq_len: int,
+    anchor_node_type: NodeType,
+    edge_attr_dict: Optional[dict[EdgeType, Tensor]] = None,
+    graph_attr_dict: Optional[dict[str, Tensor]] = None,
+    anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
+    hop_distance: int = 2,
+    sequence_construction_method: Literal["khop", "ppr"] = "khop",
+    include_anchor_first: bool = True,
+    padding_value: float = 0.0,
+    anchor_based_attention_bias_attr_names: Optional[list[str]] = None,
+    anchor_based_input_attr_names: Optional[list[str]] = None,
+    pairwise_attention_bias_attr_names: Optional[list[str]] = None,
+    relation_edge_types: Optional[list[GiGLEdgeType]] = None,
+    sampling_direction: Literal["in", "out"] = "out",
+    prioritize_hop_order: bool = False,
+) -> tuple[
+    Float[Tensor, "anchors sequence feature_dim"],
+    Bool[Tensor, "anchors sequence"],
+    SequenceAuxiliaryData,
+]:
+    """Transform a batch's tensors to Graph Transformer sequence input.
+
+    Same as ``heterodata_to_graph_transformer_input``, but takes the tensors a
+    ``HeteroData`` batch holds instead of the batch itself, so ``torch.compile``
+    can trace it without building PyG containers.
+
+    Homogeneous node ids follow ``x_dict``'s key order and edges follow
+    ``edge_index_dict``'s key order, matching ``HeteroData.to_homogeneous`` for a
+    batch with the same node and edge type order.
+
+    Example:
+        >>> sequences, valid_mask, attention_bias_data = tensors_to_graph_transformer_input(
+        ...     x_dict={"user": user_x},
+        ...     edge_index_dict={("user", "to", "user"): edge_index},
+        ...     batch_size=32,
+        ...     max_seq_len=128,
+        ...     anchor_node_type="user",
+        ... )
+
+    Args:
+        x_dict: Node features per node type, in the batch's node type order.
+            All node types must have the same feature dimension.
+        edge_index_dict: Edge indices per edge type, in the batch's edge type order.
+        edge_attr_dict: Edge attributes per edge type. Only PPR sequences read
+            them. (default: None)
+        graph_attr_dict: Graph-level sparse relative-encoding matrices, by
+            attribute name (e.g. ``"hop_distance"``). (default: None)
+        batch_size: Number of anchor nodes (first batch_size nodes of anchor_node_type).
+            Ignored if anchor_node_ids is provided.
+        max_seq_len: Maximum sequence length (neighbors beyond this are truncated).
+        anchor_node_type: The node type of anchor nodes.
+        anchor_node_ids: Optional tensor of local node indices within anchor_node_type
+            to use as anchors. If None, uses first batch_size nodes. (default: None)
+        hop_distance: Number of hops to consider for neighborhood when
+            ``sequence_construction_method="khop"``. (default: 2)
+        sequence_construction_method: Strategy used to build per-anchor sequences.
+            ``"khop"`` performs the existing k-hop expansion over the sampled graph.
+            ``"ppr"`` uses outgoing ``(anchor_type, "ppr", neighbor_type)`` edges,
+            sorted by descending PPR weight from ``edge_attr``. (default: ``"khop"``)
+        include_anchor_first: If True, anchor node is always first in sequence.
+        padding_value: Value to use for padding (default: 0.0).
+        anchor_based_attention_bias_attr_names: List of anchor-relative feature
+            names used as attention bias. Sparse graph-level attributes are
+            looked up from ``graph_attr_dict`` and the reserved name
+            ``"ppr_weight"`` resolves to PPR edge weights in PPR sequence mode.
+            Example: ['hop_distance', 'ppr_weight'].
+        anchor_based_input_attr_names: List of anchor-relative attribute names
+            returned as token-aligned model-input features. Sparse graph-level
+            attributes are looked up from ``graph_attr_dict`` and
+            ``"ppr_weight"`` resolves to PPR edge weights in PPR sequence mode.
+            Example: ['hop_distance', 'ppr_weight'].
+        pairwise_attention_bias_attr_names: List of pairwise feature names used
+            as attention bias. These must correspond to sparse graph-level
+            entries of ``graph_attr_dict``. Example: ['pairwise_distance'].
+        relation_edge_types: Optional ordered edge types used to materialize sparse
+            relation coordinates. Each output relation index corresponds to one
+            edge type in this list. Directed edges are stored as
+            ``(batch_idx, query_pos=dst_token, key_pos=src_token, relation_idx)``.
+        sampling_direction: Direction used for token construction.
+            ``"out"`` preserves the existing k-hop reachability expansion.
+            ``"in"`` expands over reversed edges and is supported only
+            with ``sequence_construction_method="khop"``. Directed relative
+            encodings such as ``"hop_distance"`` should be computed with the
+            same direction.
+        prioritize_hop_order: If True, k-hop sequence construction fills tokens
+            by hop depth before truncating to ``max_seq_len``. The default False
+            preserves existing homogeneous-node-id ordering.
+
+    Returns:
+        (sequences, valid_mask, attention_bias_data); see
+        ``heterodata_to_graph_transformer_input``.
+
+    Raises:
+        ValueError: If node types have different feature dimensions.
+    """
+    edge_attr_dict = edge_attr_dict or {}
+    graph_attr_dict = graph_attr_dict or {}
+    # Check each node type for valid features
+    feature_dims: dict[str, int] = {}
+    for nt, x in x_dict.items():
+        if x.dim() < 2:
             raise ValueError(
-                f"Node type '{nt}' has invalid feature shape {data[nt].x.shape}. "
+                f"Node type '{nt}' has invalid feature shape {x.shape}. "
                 "Expected 2D tensor (num_nodes, feature_dim)."
             )
-        feat_dim = data[nt].x.size(1)
+        feat_dim = x.size(1)
         if feat_dim == 0:
             raise ValueError(
-                f"Node type '{nt}' has zero feature dimension (shape {data[nt].x.shape}). "
+                f"Node type '{nt}' has zero feature dimension (shape {x.shape}). "
                 "Graph Transformer input requires non-zero feature dimension."
             )
         feature_dims[nt] = feat_dim
@@ -305,22 +452,14 @@ def heterodata_to_graph_transformer_input(
         )
 
     if sequence_construction_method == "ppr":
-        _validate_ppr_sequence_input(data)
+        _validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
 
-    device = data[anchor_node_type].x.device
+    device = x_dict[anchor_node_type].device
 
-    # Convert to homogeneous for easier neighborhood extraction
-    homo_data = data.to_homogeneous()
-    homo_x = homo_data.x  # (total_nodes, feature_dim)
-
-    num_nodes = homo_data.num_nodes
-
-    # Match the node-type ordering used by to_homogeneous() so homogeneous
-    # indices line up with homo_x / homo_edge_index.
-    node_type_order = list(getattr(homo_data, "_node_type_names", data.node_types))
-    node_type_offsets = _get_node_type_offsets(
-        data=data, node_type_order=node_type_order
-    )
+    # Concatenate into one homogeneous id space for neighborhood extraction.
+    node_type_offsets = _get_node_type_offsets(x_dict)
+    homo_x = _concat_tensors(list(x_dict.values()), dim=0)
+    num_nodes = homo_x.size(0)
 
     # Find offset for anchor_node_type in homogeneous graph
     # Nodes are ordered by the homogeneous node-type order, then by original index.
@@ -339,7 +478,11 @@ def heterodata_to_graph_transformer_input(
     ppr_relation_feature_sequences: Optional[Tensor] = None
     frontier_batch_node_keys: Optional[Tensor] = None
     if sequence_construction_method == "khop":
-        homo_edge_index = homo_data.edge_index  # (2, num_edges)
+        homo_edge_index = _to_homogeneous_edge_index(
+            edge_index_dict=edge_index_dict,
+            node_type_offsets=node_type_offsets,
+            device=device,
+        )  # (2, num_edges)
         if sampling_direction == "in":
             homo_edge_index = homo_edge_index.flip(0)
         if relation_edge_types:
@@ -395,39 +538,33 @@ def heterodata_to_graph_transformer_input(
         # _lookup_pairwise_relation_indices and must not leak into the sequence.
         #
         # Gather just the "ppr" edges and remap their endpoints with the SAME
-        # node_type_offsets used for homo_data, so the indices line up with
-        # anchor_indices and num_nodes (both computed over the full graph).
-        # NB: data.edge_type_subgraph(ppr_edge_types).to_homogeneous() must NOT be
-        # used here -- it drops node types absent from PPR edges and renumbers the
-        # rest, silently shifting indices out of sync with anchor_indices.
-        ppr_edge_types = [et for et in data.edge_types if et[1] == "ppr"]
+        # node_type_offsets used for homo_x, so the indices line up with
+        # anchor_indices and num_nodes (both computed over every node type).
+        ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
         ppr_source_indices: list[Tensor] = []
         ppr_target_indices: list[Tensor] = []
         ppr_edge_features: list[Tensor] = []
         for ppr_edge_type in ppr_edge_types:
-            edge_store = data[ppr_edge_type]
-            edge_index = edge_store.edge_index.to(device=device, dtype=torch.long)
+            edge_index = edge_index_dict[ppr_edge_type].to(
+                device=device, dtype=torch.long
+            )
             ppr_source_indices.append(
                 edge_index[0] + node_type_offsets[ppr_edge_type[0]]
             )
             ppr_target_indices.append(
                 edge_index[1] + node_type_offsets[ppr_edge_type[2]]
             )
-            ppr_edge_features.append(edge_store.edge_attr.to(device))
-        ppr_homo_data = Data(
-            edge_index=torch.stack(
-                [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
-            ),
-            edge_attr=torch.cat(ppr_edge_features, dim=0),
-            num_nodes=num_nodes,
-        )
+            ppr_edge_features.append(edge_attr_dict[ppr_edge_type].to(device))
         (
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
             ppr_relation_feature_sequences,
         ) = _build_sequence_layout_from_ppr_edges(
-            homo_data=ppr_homo_data,
+            edge_index=torch.stack(
+                [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
+            ),
+            edge_attr=torch.cat(ppr_edge_features, dim=0),
             anchor_indices=anchor_indices,
             max_seq_len=max_seq_len,
             include_anchor_first=include_anchor_first,
@@ -455,13 +592,13 @@ def heterodata_to_graph_transformer_input(
         }
     )
     anchor_based_matrices = _get_sparse_feature_matrices(
-        data=data,
+        graph_attr_dict=graph_attr_dict,
         attr_names=anchor_matrix_attr_names,
         missing_attr_error_prefix="Anchor-based attribute",
     )
 
     pairwise_pe_matrices = _get_sparse_feature_matrices(
-        data=data,
+        graph_attr_dict=graph_attr_dict,
         attr_names=pairwise_bias_attr_names,
         missing_attr_error_prefix="Pairwise PE attribute",
     )
@@ -491,7 +628,7 @@ def heterodata_to_graph_transformer_input(
         )
     )
     pairwise_relation_indices = _lookup_pairwise_relation_indices(
-        data=data,
+        edge_index_dict=edge_index_dict,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
         relation_edge_types=relation_edge_types,
@@ -530,31 +667,62 @@ def heterodata_to_graph_transformer_input(
     )
 
 
-def _get_node_type_offsets(
-    data: HeteroData,
-    node_type_order: list[NodeType],
-) -> dict[NodeType, int]:
+def _get_node_type_offsets(x_dict: dict[NodeType, Tensor]) -> dict[NodeType, int]:
     offsets: dict[NodeType, int] = {}
     offset = 0
-    for node_type in node_type_order:
+    for node_type, x in x_dict.items():
         offsets[node_type] = offset
-        offset += data[node_type].num_nodes
+        offset += x.size(0)
     return offsets
 
 
-def _validate_ppr_sequence_input(data: HeteroData) -> None:
+def _concat_tensors(parts: list[Tensor], dim: int) -> Tensor:
+    """``torch.cat`` that returns a single part as is, without a copy."""
+    return parts[0] if len(parts) == 1 else torch.cat(parts, dim=dim)
+
+
+def _to_homogeneous_edge_index(
+    edge_index_dict: dict[EdgeType, Tensor],
+    node_type_offsets: dict[NodeType, int],
+    device: torch.device,
+) -> Tensor:
+    """Concatenates edge indices the way ``HeteroData.to_homogeneous`` does.
+
+    Each edge type's ids are shifted by its node type offsets, and edge types
+    keep ``edge_index_dict``'s order.
+
+    Returns:
+        ``[2, num_edges]`` edge index; ``[2, 0]`` if there are no edges.
+    """
+    edge_index_parts: list[Tensor] = []
+    for (src_type, _, dst_type), edge_index in edge_index_dict.items():
+        src_offset = node_type_offsets[src_type]
+        dst_offset = node_type_offsets[dst_type]
+        if src_offset or dst_offset:
+            edge_index = torch.stack(
+                [edge_index[0] + src_offset, edge_index[1] + dst_offset]
+            )
+        edge_index_parts.append(edge_index)
+    if not edge_index_parts:
+        return torch.zeros((2, 0), dtype=torch.long, device=device)
+    return _concat_tensors(edge_index_parts, dim=1)
+
+
+def _validate_ppr_sequence_input(
+    edge_index_dict: dict[EdgeType, Tensor],
+    edge_attr_dict: dict[EdgeType, Tensor],
+) -> None:
     # The batch may also contain original relation edge types when
     # include_sampled_edges is on (they feed the relation-message channel via
     # _lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
-    ppr_edge_types = [et for et in data.edge_types if et[1] == "ppr"]
+    ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
     if not ppr_edge_types:
         raise ValueError(
             "sequence_construction_method='ppr' requires at least one PPR edge type."
         )
 
     for edge_type in ppr_edge_types:
-        edge_store = data[edge_type]
-        if not hasattr(edge_store, "edge_attr") or edge_store.edge_attr is None:
+        if edge_type not in edge_attr_dict:
             raise ValueError(
                 "sequence_construction_method='ppr' requires every PPR edge type to "
                 f"have edge_attr weights, but {edge_type} is missing them."
@@ -562,18 +730,18 @@ def _validate_ppr_sequence_input(data: HeteroData) -> None:
 
 
 def _get_sparse_feature_matrices(
-    data: HeteroData,
+    graph_attr_dict: dict[str, Tensor],
     attr_names: Optional[list[str]],
     missing_attr_error_prefix: str,
 ) -> list[Tensor]:
     matrices: list[Tensor] = []
     for attr_name in attr_names or []:
-        if not hasattr(data, attr_name):
+        if attr_name not in graph_attr_dict:
             raise ValueError(
                 f"{missing_attr_error_prefix} '{attr_name}' not found in data. "
                 "Make sure to apply the corresponding transform first."
             )
-        matrices.append(getattr(data, attr_name))
+        matrices.append(graph_attr_dict[attr_name])
     return matrices
 
 
@@ -1023,7 +1191,8 @@ def _append_frontier_tokens_to_sequences(
 
 
 def _build_sequence_layout_from_ppr_edges(
-    homo_data: Data,
+    edge_index: Tensor,
+    edge_attr: Tensor,
     anchor_indices: Tensor,
     max_seq_len: int,
     include_anchor_first: bool,
@@ -1075,12 +1244,7 @@ def _build_sequence_layout_from_ppr_edges(
             ppr_relation_feature_sequences,
         )
 
-    if not hasattr(homo_data, "edge_attr") or homo_data.edge_attr is None:
-        raise ValueError(
-            "sequence_construction_method='ppr' requires homogeneous edge_attr weights."
-        )
-
-    edge_features = homo_data.edge_attr.float()
+    edge_features = edge_attr.float()
     if edge_features.dim() == 1:
         edge_features = edge_features.unsqueeze(1)
     elif edge_features.dim() != 2:
@@ -1113,8 +1277,8 @@ def _build_sequence_layout_from_ppr_edges(
         batch_size, device=device
     )
 
-    src_idx = homo_data.edge_index[0]
-    dst_idx = homo_data.edge_index[1]
+    src_idx = edge_index[0]
+    dst_idx = edge_index[1]
     anchor_batch_idx = anchor_batch_index_by_homo_idx[src_idx]
     keep = anchor_batch_idx >= 0
     if not keep.any():
@@ -1232,18 +1396,27 @@ def _gather_sequences_from_node_indices(
     batch_size, max_seq_len = node_index_sequences.shape
     feature_dim = node_features.size(-1)
 
-    sequences = torch.full(
-        (batch_size, max_seq_len, feature_dim),
-        padding_value,
-        dtype=node_features.dtype,
-        device=node_features.device,
+    if feature_dim == 0 or node_features.size(0) == 0:
+        return torch.full(
+            (batch_size, max_seq_len, feature_dim),
+            padding_value,
+            dtype=node_features.dtype,
+            device=node_features.device,
+        )
+
+    # A masked gather instead of bool-mask indexing: no nonzero, no host sync.
+    # Padding positions read rows spread over the whole table rather than one
+    # row, so the gather's backward does not pile every padding gradient (all
+    # zero) onto a single row.
+    spread_indices = (
+        torch.arange(batch_size * max_seq_len, device=node_index_sequences.device)
+        .view(batch_size, max_seq_len)
+        .remainder(node_features.size(0))
     )
-
-    if feature_dim == 0 or not valid_mask.any():
-        return sequences
-
-    sequences[valid_mask] = node_features[node_index_sequences[valid_mask]]
-    return sequences
+    gathered = node_features[
+        torch.where(valid_mask, node_index_sequences, spread_indices)
+    ]
+    return gathered.masked_fill(~valid_mask.unsqueeze(-1), padding_value)
 
 
 def _lookup_anchor_relative_features(
@@ -1442,7 +1615,7 @@ def _lookup_pairwise_relative_features(
 
 
 def _lookup_pairwise_relation_indices(
-    data: HeteroData,
+    edge_index_dict: dict[EdgeType, Tensor],
     node_index_sequences: Tensor,
     valid_mask: Tensor,
     relation_edge_types: Optional[list[GiGLEdgeType]],
@@ -1478,10 +1651,10 @@ def _lookup_pairwise_relation_indices(
     relation_index_parts: list[Tensor] = []
     for relation_idx, edge_type in enumerate(relation_edge_types):
         edge_type_tuple = edge_type.tuple_repr()
-        if edge_type_tuple not in data.edge_types:
+        if edge_type_tuple not in edge_index_dict:
             continue
 
-        edge_index = data[edge_type_tuple].edge_index.to(
+        edge_index = edge_index_dict[edge_type_tuple].to(
             device=device,
             dtype=torch.long,
         )
