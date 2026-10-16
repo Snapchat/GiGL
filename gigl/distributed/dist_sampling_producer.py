@@ -170,6 +170,7 @@ def _sampling_worker_loop(
                         drop_last=sampling_config.drop_last,
                     )
 
+                dist_sampler.start_stats_window()
                 if sampling_config.sampling_type == SamplingType.NODE:
                     for index in loader:
                         dist_sampler.sample_from_nodes(sampler_input[index])
@@ -181,6 +182,7 @@ def _sampling_worker_loop(
                         dist_sampler.subgraph(sampler_input[index])
 
                 dist_sampler.wait_all()
+                dist_sampler.flush_stats()
 
                 with sampling_completed_worker_count.get_lock():
                     sampling_completed_worker_count.value += (

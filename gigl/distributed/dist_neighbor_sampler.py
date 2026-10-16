@@ -111,7 +111,7 @@ class DistNeighborSampler(BaseDistNeighborSampler):
 
                 if len(nbr_dict) == 0:
                     continue
-                induce_start = time.perf_counter()
+                induce_start = time.perf_counter() if self._stats is not None else 0.0
                 nodes_dict, rows_dict, cols_dict = inducer.induce_next(nbr_dict)
                 if self._stats is not None:
                     self._stats.add(
@@ -166,7 +166,7 @@ class DistNeighborSampler(BaseDistNeighborSampler):
                 output = await self._sample_one_hop(srcs, req_num, None)
                 if output.nbr.numel() == 0:
                     break
-                induce_start = time.perf_counter()
+                induce_start = time.perf_counter() if self._stats is not None else 0.0
                 nodes, rows, cols = inducer.induce_next(
                     srcs, output.nbr, output.nbr_num
                 )

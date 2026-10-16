@@ -4,6 +4,7 @@ import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from itertools import count
 from typing import Optional, Union
 
 import torch
@@ -23,6 +24,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from jaxtyping import Int64
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import sampling_stats_every_n_batches
 from gigl.distributed.sampler import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
@@ -38,7 +40,6 @@ from gigl.distributed.utils.sampling_stats import (
     SamplingStats,
     instrument_dist_feature,
     instrument_rpc_callees,
-    sampling_stats_every_n_batches,
     tensor_map_bytes,
 )
 from gigl.utils.data_splitters import PADDING_NODE
@@ -105,6 +106,9 @@ class SampleLoopInputs:
 
 
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
+    # Distinguishes the stats lines of samplers that share a process (Graph Store servers host one per channel).
+    _stats_instance_ids = count()
+
     """Base class for GiGL distributed samplers.
 
     Extends GLT's DistNeighborSampler with shared utilities for preparing
@@ -167,7 +171,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         every_n_batches = sampling_stats_every_n_batches()
         if every_n_batches > 0:
             context = get_context()
-            scope = f"worker={context.rank if context is not None else -1} pid={os.getpid()}"
+            scope = (
+                f"worker={context.rank if context is not None else -1} pid={os.getpid()} "
+                f"sampler={next(BaseDistNeighborSampler._stats_instance_ids)}"
+            )
             self._stats = SamplingStats(
                 "GLT_SAMPLING_STATS", every_n_batches=every_n_batches, scope=scope
             )
@@ -180,6 +187,16 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 if feature is not None:
                     instrument_dist_feature(feature, self._stats, name)
             instrument_rpc_callees(self._stats)
+
+    def start_stats_window(self) -> None:
+        """Starts a fresh statistics window; no-op when statistics are off."""
+        if self._stats is not None:
+            self._stats.start_window()
+
+    def flush_stats(self) -> None:
+        """Logs the partial statistics window; no-op when statistics are off."""
+        if self._stats is not None:
+            self._stats.flush()
 
     def _prepare_sample_loop_inputs(
         self,
@@ -312,10 +329,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
         stats = self._stats
-        batch_start = time.perf_counter()
+        batch_start = time.perf_counter() if stats is not None else 0.0
         try:
             sampler_output = await async_func(*args, **kwargs)
-            sample_done = time.perf_counter()
+            sample_done = time.perf_counter() if stats is not None else 0.0
             res = await self._collate_fn(sampler_output)
             if stats is not None:
                 stats.add("sample_ms", (sample_done - batch_start) * 1e3)

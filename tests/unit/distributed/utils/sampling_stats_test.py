@@ -5,12 +5,11 @@ from unittest import mock
 
 import torch
 
-from gigl.distributed.utils.sampling_stats import (
+from gigl.distributed.constants import (
     SAMPLING_STATS_EVERY_N_BATCHES_ENV,
-    SamplingStats,
     sampling_stats_every_n_batches,
-    tensor_map_bytes,
 )
+from gigl.distributed.utils.sampling_stats import SamplingStats, tensor_map_bytes
 from tests.test_assets.test_case import TestCase
 
 
@@ -41,7 +40,7 @@ class SamplingStatsTest(TestCase):
         self.assertTrue(line.startswith("GLT_SAMPLING_STATS worker=3 batches=2 "))
         fields = _fields(line)
         self.assertEqual(fields["rpc_count"], "4.00")
-        # The timer fired in one batch of two, so its per-batch mean is half its total.
+        # Keys are per-batch means over the window; the timer's mean is a non-negative latency.
         self.assertGreaterEqual(float(fields["send_ms"]), 0.0)
         for key in ("wall_s", "batches_per_s", "proc_cpu_s", "loop_cpu_s"):
             self.assertIn(key, fields)
@@ -53,6 +52,50 @@ class SamplingStatsTest(TestCase):
         assert second is not None
         self.assertNotIn("rpc_count", _fields(second))
         self.assertEqual(_fields(second)["other"], "0.50")
+
+    def test_start_window_drops_the_partial_window(self) -> None:
+        lines: list[str] = []
+        stats = SamplingStats("P", every_n_batches=3, scope="s", log_fn=lines.append)
+        stats.add("stale", 1)
+        stats.batch_done()
+        stats.start_window()
+        stats.add("fresh", 2)
+        stats.batch_done()
+        line = stats.flush()
+        assert line is not None
+        self.assertEqual(lines, [line])
+        fields = _fields(line)
+        self.assertEqual(fields["batches"], "1")
+        self.assertNotIn("stale", fields)
+        self.assertEqual(fields["fresh"], "2.00")
+
+    def test_flush_reports_partial_window_once(self) -> None:
+        lines: list[str] = []
+        stats = SamplingStats("P", every_n_batches=10, scope="s", log_fn=lines.append)
+        self.assertIsNone(stats.flush())
+        stats.batch_done()
+        stats.batch_done()
+        line = stats.flush()
+        assert line is not None
+        self.assertEqual(_fields(line)["batches"], "2")
+        self.assertIsNone(stats.flush())
+        self.assertEqual(lines, [line])
+
+    def test_flush_from_another_thread_omits_loop_cpu(self) -> None:
+        stats = SamplingStats("P", every_n_batches=10, scope="s", log_fn=lambda _: None)
+        stats.batch_done()
+        lines: list[str] = []
+
+        def flush() -> None:
+            line = stats.flush()
+            assert line is not None
+            lines.append(line)
+
+        thread = threading.Thread(target=flush)
+        thread.start()
+        thread.join()
+        self.assertNotIn("loop_cpu_s", _fields(lines[0]))
+        self.assertIn("proc_cpu_s", _fields(lines[0]))
 
     def test_concurrent_adds_are_not_lost(self) -> None:
         stats = SamplingStats("P", every_n_batches=1, scope="s", log_fn=lambda _: None)

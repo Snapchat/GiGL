@@ -5,7 +5,26 @@ sampling worker it spawns inherits the variable and logs one ``GLT_SAMPLING_STAT
 ``N`` batches it produces; the loader logs one ``GLT_LOADER_STATS`` line per ``N`` batches it
 consumes. Each line reports per-batch means over its window together with the window's wall
 time and CPU time, so throughput and saturation can be read off the line without per-batch
-log spam. Unset or ``0`` keeps every hook on its zero-cost path.
+log spam. Unset or ``0`` keeps every hook on its untimed path.
+
+Reading the lines:
+
+* ``*_ms`` values are per-batch latencies, not costs. Batches overlap under
+  ``worker_concurrency`` (and per-edge-type hops run concurrently), so the latencies of
+  different stages, and of different batches, add up to more than the wall time per batch.
+  ``*_rpc_wait_ms`` runs from issuing the RPCs until they complete, so it includes the issue time.
+* ``loop_cpu_s / wall_s`` is the saturation signal for the sampler's asyncio thread, and
+  ``proc_cpu_s / wall_s`` for the whole process (RPC threads included).
+* Sampler lines emitted by the PPR sampler have ``hop_ms`` covering its neighbor fetches, and no
+  ``induce_ms``, ``nodes_per_batch`` or ``edges_per_batch``.
+* A window is reset when an epoch starts, and the partial window left at the end of an epoch is
+  logged by the loader and by colocated sampling workers (Graph Store samplers log full
+  windows only).
+
+The feature-fetch and served-RPC statistics wrap GLT private internals (``DistFeature``'s
+``_remote_selecting_get``, ``_local_selecting_get`` and ``_stitch``, and
+``graphlearn_torch.distributed.rpc._rpc_callee_pool``), so they may need updating when GLT is
+upgraded.
 """
 
 import os
@@ -21,28 +40,6 @@ from graphlearn_torch.distributed.dist_feature import DistFeature
 from gigl.common.logger import Logger
 
 logger = Logger()
-
-SAMPLING_STATS_EVERY_N_BATCHES_ENV: Final[str] = "GIGL_SAMPLING_STATS_EVERY_N_BATCHES"
-
-
-def _non_negative_int_from_env(name: str) -> Optional[int]:
-    raw = os.environ.get(name)
-    if not raw:
-        return None
-    try:
-        parsed = int(raw)
-    except ValueError:
-        logger.warning(f"{name}={raw!r} is not an integer; ignoring it")
-        return None
-    if parsed < 0:
-        logger.warning(f"{name}={parsed} is negative; ignoring it")
-        return None
-    return parsed
-
-
-def sampling_stats_every_n_batches() -> int:
-    """Window length for sampling statistics, in batches; ``0`` means disabled."""
-    return _non_negative_int_from_env(SAMPLING_STATS_EVERY_N_BATCHES_ENV) or 0
 
 
 def tensor_map_bytes(tensors: dict) -> int:
@@ -92,12 +89,38 @@ class SamplingStats:
         # The reporting thread's CPU clock is only meaningful on that thread, so the first
         # window's baseline is taken at its first ``batch_done`` rather than here.
         self._window_thread_cpu: Optional[float] = None
+        self._reporting_thread: Optional[int] = None
         self._reset_window_clocks()
 
     def _reset_window_clocks(self) -> None:
         self._window_start = time.perf_counter()
         times = os.times()
         self._window_proc_cpu = times.user + times.system
+
+    def start_window(self) -> None:
+        """Discards the current partial window and starts a fresh one (e.g. at the start of an epoch)."""
+        with self._lock:
+            self._values.clear()
+            self._batches = 0
+            self._window_thread_cpu = None
+            self._reset_window_clocks()
+
+    def flush(self) -> Optional[str]:
+        """Logs the partial window, if any batches were counted in it, and starts a fresh one.
+
+        Returns:
+            The report line, or ``None`` when the window was empty.
+        """
+        with self._lock:
+            if self._batches == 0:
+                return None
+            line = self._format_report_locked()
+            self._values.clear()
+            self._batches = 0
+            self._window_thread_cpu = None
+            self._reset_window_clocks()
+        self._log_fn(line)
+        return line
 
     def add(self, key: str, value: float) -> None:
         with self._lock:
@@ -124,6 +147,7 @@ class SamplingStats:
         with self._lock:
             if self._window_thread_cpu is None:
                 self._window_thread_cpu = time.thread_time()
+                self._reporting_thread = threading.get_ident()
             self._batches += 1
             if self._batches < self._every_n_batches:
                 return None
@@ -132,6 +156,7 @@ class SamplingStats:
             self._batches = 0
             self._reset_window_clocks()
             self._window_thread_cpu = time.thread_time()
+            self._reporting_thread = threading.get_ident()
         self._log_fn(line)
         return line
 
@@ -140,15 +165,22 @@ class SamplingStats:
         wall_s = time.perf_counter() - self._window_start
         times = os.times()
         proc_cpu_s = times.user + times.system - self._window_proc_cpu
-        assert self._window_thread_cpu is not None
-        loop_cpu_s = time.thread_time() - self._window_thread_cpu
+        # The thread CPU clock is per thread: it is only meaningful when the report is built on
+        # the thread that counted the batches (``flush`` may run on another one).
+        loop_cpu_s = (
+            time.thread_time() - self._window_thread_cpu
+            if self._window_thread_cpu is not None
+            and self._reporting_thread == threading.get_ident()
+            else None
+        )
         fields = [
             f"{self._prefix} {self._scope} batches={batches}",
             f"wall_s={wall_s:.2f}",
             f"batches_per_s={batches / wall_s if wall_s > 0 else 0.0:.3f}",
             f"proc_cpu_s={proc_cpu_s:.2f}",
-            f"loop_cpu_s={loop_cpu_s:.2f}",
         ]
+        if loop_cpu_s is not None:
+            fields.append(f"loop_cpu_s={loop_cpu_s:.2f}")
         fields.extend(
             f"{key}={total / batches:.2f}"
             for key, total in sorted(self._values.items())

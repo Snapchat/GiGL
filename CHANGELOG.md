@@ -20,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- Add opt-in sampling and loader statistics: `GIGL_SAMPLING_STATS_EVERY_N_BATCHES=<N>` makes each sampling worker log a
+  `GLT_SAMPLING_STATS` line and each loader a `GLT_LOADER_STATS` line every N batches (stage latencies, message size,
+  CPU use), plus a final partial-window line at the end of an epoch. Off by default
 
 ### Changed
 

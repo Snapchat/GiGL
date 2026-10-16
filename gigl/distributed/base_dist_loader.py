@@ -40,6 +40,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.constants import (
     DEFAULT_MASTER_INFERENCE_PORT,
     sampling_rpc_init_timeout_seconds,
+    sampling_stats_every_n_batches,
 )
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -65,11 +66,7 @@ from gigl.distributed.utils.neighborloader import (
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
 )
-from gigl.distributed.utils.sampling_stats import (
-    SamplingStats,
-    sampling_stats_every_n_batches,
-    tensor_map_bytes,
-)
+from gigl.distributed.utils.sampling_stats import SamplingStats, tensor_map_bytes
 from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -1116,12 +1113,14 @@ class BaseDistLoader(DistLoader):
         ``recv_wait_ms`` is time blocked on the channel (the producers are the bottleneck when
         it is large) and ``collate_ms`` covers host-to-device copies, the stream synchronize,
         and the PyG conversion. ``msg_mb`` is the received message size and ``loadavg1`` the
-        host's one-minute load average.
+        host's one-minute load average. The partial window left at the end of an epoch is
+        logged when the epoch's iteration stops.
         """
         stats = self._loader_stats
         if stats is None:
             return super().__next__()
         if self._num_recv == self._num_expected:
+            stats.flush()
             raise StopIteration
         with stats.timer("recv_wait_ms"):
             msg = self._channel.recv()
@@ -1136,6 +1135,9 @@ class BaseDistLoader(DistLoader):
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:
         self._num_recv = 0
+        if self._loader_stats is not None:
+            # Keep loader construction and the previous epoch out of this epoch's first window.
+            self._loader_stats.start_window()
         if self._is_collocated_worker:
             self._collocated_producer.reset()
         elif self._is_mp_worker:
