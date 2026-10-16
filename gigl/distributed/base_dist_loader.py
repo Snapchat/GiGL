@@ -89,7 +89,7 @@ def _flush() -> None:
 def _build_ppr_relation_channel_masks(
     sampler_options: SamplerOptions,
     edge_dir: str,
-) -> Optional[dict]:
+) -> Optional[dict[EdgeType, int]]:
     """Per-relation-edge-type channel bitmask for typed PPR, else ``None``.
 
     Bit ``c`` is set for an edge type when typed-PPR channel ``c`` traverses it.
@@ -107,7 +107,7 @@ def _build_ppr_relation_channel_masks(
     )
     if not typed_channel_groups:
         return None
-    channel_masks: dict = {}
+    channel_masks: dict[EdgeType, int] = {}
     for channel_index, edge_type_group in enumerate(typed_channel_groups):
         bit = 1 << channel_index
         for edge_type in edge_type_group:
