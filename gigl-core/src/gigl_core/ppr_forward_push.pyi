@@ -41,11 +41,15 @@ class PPRExtractTensors:
             ``[best_score, hop_proximity, (channel_score, channel_hop_proximity, channel_presence), ...]``.
             Hop proximity is ``1 / (1 + hop)`` (anchor ``1.0``, 1-hop ``0.5``, ...).
         valid_counts: int64 count of selected nodes per seed.
+        is_expanded: int64 per-node bitmask of PPR channels that pushed (expanded)
+            this node for its seed (bit ``c`` = channel ``c``; value 0 or 1 for
+            untyped PPR). Consumed by the graph-transformer relation filter.
     """
 
     ids: torch.Tensor
     weights: torch.Tensor
     valid_counts: torch.Tensor
+    is_expanded: torch.Tensor
 
 class OriginalEdgeExtractTensors:
     """One edge type's extracted original graph edges.
