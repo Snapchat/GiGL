@@ -11,7 +11,7 @@ overflow flag; its outputs are wrong and the caller must recompute it another wa
 """
 
 from dataclasses import dataclass
-from typing import Callable, NamedTuple, cast
+from typing import Any, Callable, NamedTuple, cast
 
 import torch
 import torch.nn.functional as F
@@ -119,6 +119,115 @@ def pack_tokens(
     )
 
 
+class _VarlenAttention(torch.autograd.Function):
+    """Memory-efficient varlen attention with the explicit backward kernel.
+
+    Rows outside every sequence (packing slack) are zeroed in the output and in
+    the input gradients: the kernels leave them unwritten, and a NaN there would
+    reach the weight gradients through ``0 * NaN``.
+    """
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        cu_seqlens_q: Tensor,
+        cu_seqlens_k: Tensor,
+        max_seqlen_q: int,
+        max_seqlen_k: int,
+    ) -> Tensor:
+        # The op's stub types every argument as ``...``; it returns
+        # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
+        efficient_attention_forward = cast(
+            Callable[..., tuple[Tensor, ...]],
+            torch.ops.aten._efficient_attention_forward,
+        )
+        needs_grad = any(ctx.needs_input_grad[:3])
+        output, logsumexp, philox_seed, philox_offset = efficient_attention_forward(
+            query.unsqueeze(0),
+            key.unsqueeze(0),
+            value.unsqueeze(0),
+            None,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            0.0,
+            0,
+            needs_grad,
+        )[:4]
+        output = _zero_rows_past(output.squeeze(0), cu_seqlens_q[-1])
+        if needs_grad:
+            ctx.save_for_backward(
+                query,
+                key,
+                value,
+                output,
+                logsumexp,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                philox_seed,
+                philox_offset,
+            )
+            ctx.max_seqlens = (max_seqlen_q, max_seqlen_k)
+        return output
+
+    @staticmethod
+    def backward(ctx: Any, *grad_outputs: Any) -> Any:
+        (grad_output,) = grad_outputs
+        (
+            query,
+            key,
+            value,
+            output,
+            logsumexp,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            philox_seed,
+            philox_offset,
+        ) = ctx.saved_tensors
+        max_seqlen_q, max_seqlen_k = ctx.max_seqlens
+        efficient_attention_backward = cast(
+            Callable[..., tuple[Tensor, ...]],
+            torch.ops.aten._efficient_attention_backward,
+        )
+        grad_query, grad_key, grad_value, _ = efficient_attention_backward(
+            grad_output.unsqueeze(0).contiguous(),
+            query.unsqueeze(0),
+            key.unsqueeze(0),
+            value.unsqueeze(0),
+            None,
+            output.unsqueeze(0),
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            logsumexp,
+            0.0,
+            philox_seed,
+            philox_offset,
+            0,
+            False,
+        )
+        return (
+            _zero_rows_past(grad_query.squeeze(0), cu_seqlens_q[-1]),
+            _zero_rows_past(grad_key.squeeze(0), cu_seqlens_k[-1]),
+            _zero_rows_past(grad_value.squeeze(0), cu_seqlens_k[-1]),
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+def _zero_rows_past(rows: Tensor, num_valid_rows: Tensor) -> Tensor:
+    """Zeroes ``rows[num_valid_rows:]`` without a host read of ``num_valid_rows``."""
+    valid = torch.arange(rows.size(0), device=rows.device) < num_valid_rows
+    return torch.where(valid.view(-1, *([1] * (rows.dim() - 1))), rows, 0.0)
+
+
 def varlen_attention(
     query: Tensor,
     key: Tensor,
@@ -133,9 +242,11 @@ def varlen_attention(
     Query sequence ``i`` attends to key sequence ``i``. The kernel reads the
     sequence offsets on the device and takes the length bounds from the host,
     so it never syncs. Rows outside every query sequence are zero.
+    Differentiable in ``query``, ``key`` and ``value``; slack rows get zero
+    gradients.
 
-    CUDA only, and not differentiable. ``head_dim`` must suit the
-    memory-efficient kernel (64 works in fp32, fp16 and bf16).
+    CUDA only. ``head_dim`` must suit the memory-efficient kernel (64 works in
+    fp32, fp16 and bf16).
 
     Args:
         query: ``[num_query_tokens, num_heads, head_dim]``.
@@ -149,27 +260,12 @@ def varlen_attention(
     Returns:
         ``[num_query_tokens, num_heads, head_dim]`` attention output.
     """
-    # The op's stub types every argument as ``...``; it returns (output, logsumexp, ...).
-    efficient_attention_forward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_forward,
+    return cast(
+        Tensor,
+        _VarlenAttention.apply(
+            query, key, value, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
+        ),
     )
-    output = efficient_attention_forward(
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        0.0,
-        0,
-        False,
-    )[0].squeeze(0)
-    # The kernel leaves rows past the last query sequence unwritten.
-    valid = torch.arange(output.size(0), device=output.device) < cu_seqlens_q[-1]
-    return torch.where(valid.view(-1, 1, 1), output, 0.0)
 
 
 def _scatter_to_grid(

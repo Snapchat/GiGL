@@ -3,6 +3,8 @@
 import copy
 import unittest
 import warnings
+import weakref
+from unittest.mock import patch
 
 import jaxtyping
 import torch
@@ -117,6 +119,33 @@ def _encoder_pair(
     ).eval()
     packed.load_state_dict(padded.state_dict())
     return padded, packed
+
+
+def _assert_training_gradients_match(
+    test_case: TestCase,
+    padded: GraphTransformerEncoder,
+    packed: GraphTransformerEncoder,
+    data: HeteroData,
+    atol: float = 1e-6,
+) -> None:
+    """Training-mode losses and every parameter gradient agree."""
+    losses = []
+    for encoder in (padded, packed):
+        encoder.train()
+        loss = encoder(data, anchor_node_type=_USER).sin().sum()
+        loss.backward()
+        losses.append(loss.detach())
+    torch.testing.assert_close(losses[1], losses[0], rtol=0, atol=atol)
+    packed_parameters = dict(packed.named_parameters())
+    for name, parameter in padded.named_parameters():
+        test_case.assertIsNotNone(parameter.grad, name)
+        torch.testing.assert_close(
+            packed_parameters[name].grad,
+            parameter.grad,
+            rtol=1e-5,
+            atol=atol,
+            msg=lambda message: f"{name}: {message}",
+        )
 
 
 class PackedForwardTest(TestCase):
@@ -237,6 +266,60 @@ class PackedForwardTest(TestCase):
                     packed(data, anchor_node_type=_USER), expected, rtol=0, atol=0
                 )
                 self.assertEqual(packed.packed_overflow_count, expected_count)
+
+    @parameterized.expand(
+        [
+            param("packed", tokens_per_anchor=_MAX_SEQ_LEN),
+            param("overflow_fallback", tokens_per_anchor=1),
+        ]
+    )
+    def test_training_gradients_match_padded_forward(
+        self, _: str, tokens_per_anchor: int
+    ) -> None:
+        data = _random_batch(0)
+        config = PackedForwardConfig(tokens_per_anchor, _max_degree(data, "in"))
+        padded, packed = _encoder_pair(config, data, _encoder_kwargs(dropout_rate=0.0))
+        _assert_training_gradients_match(self, padded, packed, data)
+        self.assertEqual(packed.packed_overflow_count, int(tokens_per_anchor == 1))
+
+    def test_overflow_frees_packed_graph_before_padded_recompute(self) -> None:
+        data = _random_batch(0)
+        config = PackedForwardConfig(1, _max_degree(data, "in"))
+        _, packed = _encoder_pair(config, data, _encoder_kwargs(dropout_rate=0.0))
+        packed_states: list[weakref.ref] = []
+        alive_during_padded: list[bool] = []
+        encode_packed = GraphTransformerEncoder._encode_packed
+        encode_sequences = GraphTransformerEncoder._encode_sequences
+
+        def spy_encode_packed(self, **kwargs):
+            anchor_states, overflow = encode_packed(self, **kwargs)
+            packed_states.append(weakref.ref(anchor_states))
+            return anchor_states, overflow
+
+        def spy_encode_sequences(self, **kwargs):
+            alive_during_padded.append(packed_states[-1]() is not None)
+            return encode_sequences(self, **kwargs)
+
+        with (
+            patch.object(GraphTransformerEncoder, "_encode_packed", spy_encode_packed),
+            patch.object(
+                GraphTransformerEncoder, "_encode_sequences", spy_encode_sequences
+            ),
+        ):
+            packed.train()(data, anchor_node_type=_USER).sum().backward()
+        self.assertEqual(packed.packed_overflow_count, 1)
+        self.assertEqual(alive_during_padded, [False])
+
+    def test_training_rejects_attention_dropout(self) -> None:
+        data = _random_batch(0)
+        config = PackedForwardConfig(_MAX_SEQ_LEN, _max_degree(data, "in"))
+        _, packed = _encoder_pair(
+            config, data, _encoder_kwargs(attention_dropout_rate=0.1)
+        )
+        with torch.no_grad():
+            packed(data, anchor_node_type=_USER)
+        with self.assertRaises(ValueError):
+            packed.train()(data, anchor_node_type=_USER)
 
     def test_rejects_unsupported_configs(self) -> None:
         config = PackedForwardConfig(tokens_per_anchor=8, neighbor_table_width=4)
@@ -389,6 +472,96 @@ class PackedForwardCudaTest(TestCase):
                     )
         finally:
             jaxtyping.config.update("jaxtyping_disable", False)
+
+    def test_varlen_attention_gradients_match_and_ignore_slack(self) -> None:
+        device = torch.device("cuda")
+        num_heads, head_dim, token_capacity = 2, 64, 60
+        node_index = torch.zeros(5, _MAX_SEQ_LEN, dtype=torch.long, device=device)
+        packed = pack_tokens(
+            node_index,
+            node_index,
+            torch.tensor([5, 1, 24, 3, 12], device=device),
+            token_capacity,
+        )
+        token_valid = packed.token_valid.view(-1, 1, 1)
+        generator = torch.Generator().manual_seed(0)
+
+        def random_rows(num_rows: int) -> torch.Tensor:
+            return torch.randn(num_rows, num_heads, head_dim, generator=generator).to(
+                device
+            )
+
+        for query_is_first_token in (False, True):
+            num_queries = 5 if query_is_first_token else token_capacity
+            query, key, value = (
+                random_rows(num_queries),
+                random_rows(token_capacity),
+                random_rows(token_capacity),
+            )
+            grad_output = random_rows(num_queries)
+            # Slack rows of the varlen inputs hold NaN; they must not leak.
+            varlen_query = (
+                query.clone()
+                if query_is_first_token
+                else query.masked_fill(~token_valid, torch.nan)
+            ).requires_grad_()
+            varlen_key = key.masked_fill(~token_valid, torch.nan).requires_grad_()
+            varlen_value = value.masked_fill(~token_valid, torch.nan).requires_grad_()
+            padded_query, padded_key, padded_value = (
+                tensor.clone().requires_grad_() for tensor in (query, key, value)
+            )
+            if query_is_first_token:
+                cu_seqlens_q = torch.arange(6, dtype=torch.int32, device=device)
+                max_seqlen_q = 1
+                output_valid = torch.ones_like(token_valid[:5])
+            else:
+                cu_seqlens_q = packed.cu_seqlens
+                max_seqlen_q = _MAX_SEQ_LEN
+                output_valid = token_valid
+            varlen_attention(
+                varlen_query,
+                varlen_key,
+                varlen_value,
+                cu_seqlens_q,
+                packed.cu_seqlens,
+                max_seqlen_q,
+                _MAX_SEQ_LEN,
+            ).backward(grad_output)
+            expected = padded_packed_attention(
+                padded_query, padded_key, padded_value, packed, query_is_first_token
+            )
+            torch.where(output_valid, expected, 0.0).backward(grad_output)
+            for name, actual_input, expected_input in (
+                ("query", varlen_query, padded_query),
+                ("key", varlen_key, padded_key),
+                ("value", varlen_value, padded_value),
+            ):
+                with self.subTest(first_token=query_is_first_token, grad=name):
+                    assert actual_input.grad is not None
+                    assert expected_input.grad is not None
+                    torch.testing.assert_close(
+                        actual_input.grad,
+                        expected_input.grad,
+                        rtol=0,
+                        atol=1e-4,
+                    )
+
+    def test_training_gradients_match_padded_forward(self) -> None:
+        device = torch.device("cuda")
+        data = _random_batch(0).to(device)
+        config = PackedForwardConfig(_MAX_SEQ_LEN, _max_degree(data, "in"))
+        kwargs = _encoder_kwargs(
+            hid_dim=128,
+            dropout_rate=0.0,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(3, 128)}
+            ),
+        )
+        padded, packed = _encoder_pair(config, _random_batch(0), kwargs)
+        _assert_training_gradients_match(
+            self, padded.to(device), packed.to(device), data, atol=1e-4
+        )
+        self.assertEqual(packed.packed_overflow_count, 0)
 
     def test_matches_padded_forward_with_one_host_sync(self) -> None:
         device = torch.device("cuda")

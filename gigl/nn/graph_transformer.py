@@ -481,8 +481,8 @@ class GraphTransformerEncoderLayer(nn.Module):
         attends only within its own sequence, and slack slots stay zero.
         ``query_seq_len=1`` then returns ``(1, num_sequences, model_dim)``, the
         first token of each sequence. Packed tokens require
-        ``relation_attention_mode`` and ``relation_message_mode`` ``"none"``
-        and no ``attn_bias``.
+        ``relation_attention_mode`` and ``relation_message_mode``
+        ``"none"``, no ``attn_bias``, and no attention dropout in training.
 
         Args:
             x: Input tensor of shape ``(batch, seq, model_dim)``.
@@ -503,7 +503,8 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         Raises:
             ValueError: If ``packed_tokens`` is combined with ``attn_bias``,
-                relation modes, or a ``query_seq_len`` other than 1.
+                relation modes, a ``query_seq_len`` other than 1, or attention
+                dropout in training.
         """
         if packed_tokens is not None:
             if (
@@ -517,6 +518,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             if query_seq_len not in (None, 1):
                 raise ValueError(
                     f"packed_tokens supports query_seq_len None or 1, got {query_seq_len}."
+                )
+            if self.training and self._attention_dropout_rate > 0:
+                raise ValueError(
+                    "Packed attention does not apply attention dropout. For "
+                    "training with packed_forward, set attention_dropout_rate=0, "
+                    "or omit packed_forward."
                 )
             return self._forward_packed_tokens(
                 x=x[0], packed=packed_tokens, first_token_output=query_seq_len == 1
@@ -1356,16 +1363,16 @@ class GraphTransformerEncoder(nn.Module):
             ``anchor_based_input_attr_names``, and requires
             ``sequence_construction_method="khop"``. See
             ``heterodata_to_graph_transformer_input``. (default: None)
-        packed_forward: Optional ``PackedForwardConfig``. In eval mode with
-            gradients disabled (``torch.no_grad`` or ``torch.inference_mode``),
-            ``forward`` then builds k-hop sequences with the fixed-shape layout
-            in ``gigl.transforms.static_khop`` and runs the encoder layers on
+        packed_forward: Optional ``PackedForwardConfig``. ``forward`` then
+            builds k-hop sequences with the fixed-shape layout in
+            ``gigl.transforms.static_khop`` and runs the encoder layers on
             packed tokens (``gigl.nn.packed_attention``). Apart from one read
             of the overflow flag there are no host syncs, and on CUDA no
             padding FLOPs; on CPU, attention runs on a padded grid as a
             fallback. Each anchor gets at most
             ``min(tokens_per_anchor, max_seq_len)`` packed slots. Embeddings
-            match the padded path up to float error. A batch that exceeds the
+            and gradients match the padded path up to float error; training
+            needs ``attention_dropout_rate=0``. A batch that exceeds the
             config's token capacity or neighbor table width is recomputed on
             the padded path and counted in ``packed_overflow_count``.
             ``length_buckets`` then apply to those batches only. Supports
@@ -1887,12 +1894,7 @@ class GraphTransformerEncoder(nn.Module):
                 else projected_x_dict[anchor_node_type].size(0)
             )
 
-        if (
-            self._packed_forward is not None
-            and not self.training
-            and not torch.is_grad_enabled()
-            and num_anchor_nodes > 0
-        ):
+        if self._packed_forward is not None and num_anchor_nodes > 0:
             anchor_states, overflow = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
@@ -1914,6 +1916,9 @@ class GraphTransformerEncoder(nn.Module):
                     "every batch, raise the config's limits."
                 )
             self.packed_overflow_count += 1
+            # Free the discarded packed activations (and, in training, their
+            # autograd graph) before the padded recompute allocates its own.
+            del anchor_states, overflow
 
         (
             sequences,
