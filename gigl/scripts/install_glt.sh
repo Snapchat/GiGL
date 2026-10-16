@@ -1,11 +1,27 @@
 #!/bin/bash
-# Builds a patched GraphLearn-Torch wheel and copies it into --output-dir. Caching, installing and
-# verifying the wheel is the caller's job (gigl/scripts/post_install.py).
+# Builds a patched GraphLearn-Torch wheel and copies it into --output-dir.
 #
-# Usage: install_glt.sh --commit <upstream sha> --cuda-arch-list <list, empty for a CPU build> --output-dir <dir>
+# Build-only: caching, installing and verifying the wheel live in gigl/scripts/post_install.py, which
+# is the entry point to use. Exits 0 without building on macOS.
+#
+# Flags:
+#   --commit           Upstream alibaba/graphlearn-for-pytorch sha to build. Required; post_install.py
+#                      passes its GLT_COMMIT.
+#   --cuda-arch-list   TORCH_CUDA_ARCH_LIST for a CUDA build, e.g. "7.5" (see the list of values next to
+#                      GLT_CUDA_ARCH_LIST in post_install.py). Empty or omitted builds for CPU
+#                      (WITH_CUDA=OFF).
+#   --output-dir       Directory the built wheel is copied into. Required.
+#
+# This script builds exactly the variant it is told. It does not detect CUDA itself: the CPU/CUDA
+# variant is part of the wheel cache key, so post_install.py decides it once, before computing the key.
 
 set -e
 set -x
+
+if [ "$(uname)" == "Darwin" ]; then
+    echo "Skipping build of GraphLearn-Torch on Mac"
+    exit 0
+fi
 
 COMMIT=""
 CUDA_ARCH_LIST=""

@@ -36,6 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   https://github.com/Snapchat/GiGL/pull/PENDING
 - Add `SKIP_SCALA=1` to `make install_dev_deps` to skip the Scala toolchain download, and document the git worktree
   workflow in `CLAUDE.md` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+- Add a `precondition_tests` check (`tests/config_tests/glt_patches_check.py`) that the local GLT patches apply to the
+  pinned `GLT_COMMIT`, so a bumped pin or edited patch fails fast instead of in an image build by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
 
 ### Fixed
 

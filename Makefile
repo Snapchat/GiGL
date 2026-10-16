@@ -78,6 +78,7 @@ install_deps:
 # installation scripts
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
+	uv run python tests/config_tests/glt_patches_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
