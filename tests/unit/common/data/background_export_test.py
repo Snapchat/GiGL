@@ -1,13 +1,25 @@
+import functools
+import os
+import signal
+import subprocess
+import sys
 import tempfile
+import textwrap
+import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import fastavro
 import torch
 from absl.testing import absltest
 
 from gigl.common import LocalUri
-from gigl.common.data.background_export import BackgroundRunner
+from gigl.common.data.background_export import (
+    BackgroundExportError,
+    BackgroundExportStalledError,
+    BackgroundRunner,
+)
 from gigl.common.data.export import EmbeddingExporter, PredictionExporter
 from tests.test_assets.test_case import TestCase
 
@@ -40,6 +52,48 @@ def _batches() -> list[tuple[torch.Tensor, torch.Tensor]]:
     ]
 
 
+def _guard(seconds: int):
+    """Fails the test, instead of hanging CI, if it runs longer than `seconds`."""
+
+    def decorator(test):
+        @functools.wraps(test)
+        def wrapped(self, *args, **kwargs):
+            def on_alarm(signum, frame):
+                raise AssertionError(f"{test.__name__} hung for more than {seconds}s")
+
+            previous = signal.signal(signal.SIGALRM, on_alarm)
+            signal.alarm(seconds)
+            try:
+                return test(self, *args, **kwargs)
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous)
+
+        return wrapped
+
+    return decorator
+
+
+class _HangingUploadExporter(EmbeddingExporter):
+    """Blocks in an interruptible wait, like a hung network call."""
+
+    def add_embedding(self, id_batch, embedding_batch, embedding_type) -> None:
+        threading.Event().wait()
+
+
+class _UnkillableUploadExporter(EmbeddingExporter):
+    """Blocks with SIGALRM masked, so only the parent's watchdog can stop it."""
+
+    def add_embedding(self, id_batch, embedding_batch, embedding_type) -> None:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        time.sleep(3600)
+
+
+class _NeverStartsExporter(EmbeddingExporter):
+    def __init__(self, *args: Any, **kwargs: Any):
+        time.sleep(3600)
+
+
 class _SlowExporter(EmbeddingExporter):
     def add_embedding(self, id_batch, embedding_batch, embedding_type) -> None:
         time.sleep(_SLOW_BATCH_SECONDS)
@@ -56,6 +110,7 @@ class TestBackgroundExporter(TestCase):
         super().tearDown()
         self._temp_dir.cleanup()
 
+    @_guard(240)
     def test_embedding_output_matches_synchronous_exporter(self):
         sync_dir, bg_dir = self.root / "sync", self.root / "bg"
         # A small threshold produces several shards, exercising flushes in the worker.
@@ -88,6 +143,7 @@ class TestBackgroundExporter(TestCase):
             list(range(_NUM_BATCHES * _BATCH_SIZE)),
         )
 
+    @_guard(240)
     def test_prediction_output_matches_synchronous_exporter(self):
         sync_dir, bg_dir = self.root / "sync", self.root / "bg"
         with PredictionExporter(LocalUri(str(sync_dir))) as exporter:
@@ -99,6 +155,7 @@ class TestBackgroundExporter(TestCase):
         exporter.close()
         self.assertEqual(_read_records(bg_dir), _read_records(sync_dir))
 
+    @_guard(240)
     def test_flush_waits_for_queued_batches_and_context_can_be_reentered(self):
         out = self.root / "out"
         batches = _batches()
@@ -120,6 +177,7 @@ class TestBackgroundExporter(TestCase):
         )
         exporter.close()
 
+    @_guard(240)
     def test_worker_error_surfaces_on_next_add_flush_and_context_exit(self):
         ids, embeddings = _batches()[0]
         # An embedding type Avro cannot encode as a string fails inside the worker.
@@ -143,6 +201,7 @@ class TestBackgroundExporter(TestCase):
         with self.assertRaisesRegex(TypeError, "node_type"):
             exporter.close()
 
+    @_guard(240)
     def test_dead_worker_is_reported(self):
         ids, embeddings = _batches()[0]
         exporter = EmbeddingExporter(
@@ -153,12 +212,13 @@ class TestBackgroundExporter(TestCase):
         process = exporter._background._proxy._process
         process.kill()
         process.join()
-        with self.assertRaisesRegex(RuntimeError, "exited unexpectedly"):
+        with self.assertRaisesRegex(BackgroundExportError, "exited unexpectedly"):
             for _ in range(20):
                 exporter.add_embedding(ids, embeddings, "user")
                 time.sleep(0.1)
             exporter.flush_records()
 
+    @_guard(240)
     def test_producer_blocks_when_worker_is_behind(self):
         out = self.root / "out"
         runner = BackgroundRunner(
@@ -178,6 +238,108 @@ class TestBackgroundExporter(TestCase):
         runner.close()
         self.assertEqual(len(_read_records(out)), num_batches * _BATCH_SIZE)
 
+    @_guard(60)
+    def test_hung_upload_becomes_an_error_and_the_worker_is_gone(self):
+        runner = BackgroundRunner(
+            _HangingUploadExporter,
+            dict(export_dir=LocalUri(str(self.root / "out"))),
+            stall_timeout_s=2,
+        )
+        ids, embeddings = _batches()[0]
+        runner.submit("add_embedding", ids, embeddings, "user")
+        start = time.perf_counter()
+        with self.assertRaises(TimeoutError):
+            runner.flush_records()
+        self.assertLess(time.perf_counter() - start, 30)
+        with self.assertRaises(TimeoutError):
+            runner.close()
+        self.assertFalse(runner._proxy._process.is_alive())
+
+    @_guard(90)
+    def test_uninterruptible_worker_is_killed_by_the_watchdog(self):
+        runner = BackgroundRunner(
+            _UnkillableUploadExporter,
+            dict(export_dir=LocalUri(str(self.root / "out"))),
+            stall_timeout_s=2,
+        )
+        process = runner._proxy._process
+        ids, embeddings = _batches()[0]
+        runner.submit("add_embedding", ids, embeddings, "user")
+        start = time.perf_counter()
+        with self.assertRaises(BackgroundExportStalledError):
+            runner.flush_records()
+        self.assertLess(time.perf_counter() - start, 40)
+        self.assertFalse(process.is_alive())
+        with self.assertRaises(BackgroundExportStalledError):
+            runner.close()
+
+    @_guard(90)
+    def test_full_queue_with_a_stalled_worker_raises_instead_of_blocking(self):
+        runner = BackgroundRunner(
+            _UnkillableUploadExporter,
+            dict(export_dir=LocalUri(str(self.root / "out"))),
+            max_pending_batches=2,
+            stall_timeout_s=2,
+        )
+        process = runner._proxy._process
+        ids, embeddings = _batches()[0]
+        start = time.perf_counter()
+        with self.assertRaises(BackgroundExportStalledError):
+            for _ in range(50):
+                runner.submit("add_embedding", ids, embeddings, "user")
+        self.assertLess(time.perf_counter() - start, 40)
+        self.assertFalse(process.is_alive())
+        with self.assertRaises(BackgroundExportStalledError):
+            runner.close()
+
+    @_guard(90)
+    def test_worker_that_never_starts_raises(self):
+        runner = BackgroundRunner(
+            _NeverStartsExporter,
+            dict(export_dir=LocalUri(str(self.root / "out"))),
+            startup_timeout_s=10,
+        )
+        process = runner._proxy._process
+        with self.assertRaises(BackgroundExportStalledError):
+            runner.flush_records()
+        self.assertFalse(process.is_alive())
+        with self.assertRaises(BackgroundExportStalledError):
+            runner.close()
+
+    @_guard(120)
+    def test_worker_exits_and_frees_shared_memory_when_parent_is_killed(self):
+        script = textwrap.dedent(
+            f"""
+            import os, signal, torch
+            from gigl.common import LocalUri
+            from gigl.common.data.export import EmbeddingExporter
+            exporter = EmbeddingExporter(LocalUri({str(self.root / "out")!r}), in_background=True)
+            exporter.add_embedding(torch.arange(4), torch.rand(4, 8), "user")
+            exporter.flush_records()
+            proxy = exporter._background._proxy
+            names = [s.name for s in proxy._segments.values()]
+            print(proxy._process.pid, *names, flush=True)
+            os.kill(os.getpid(), signal.SIGKILL)
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=100
+        )
+        pid, *names = result.stdout.split()
+        self.assertTrue(names, result.stderr)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            alive = (
+                os.path.exists(f"/proc/{pid}")
+                and "zombie" not in open(f"/proc/{pid}/status").read()
+            )
+            leftovers = [n for n in names if os.path.exists(f"/dev/shm/{n}")]
+            if not alive and not leftovers:
+                break
+            time.sleep(0.5)
+        self.assertFalse(alive, "worker outlived its parent")
+        self.assertEqual(leftovers, [])
+
     def test_invalid_arguments(self):
         with self.assertRaisesRegex(ValueError, "max_pending_batches"):
             EmbeddingExporter(
@@ -193,6 +355,7 @@ class TestBackgroundExporter(TestCase):
             )
 
     @absltest.skipUnless(torch.cuda.is_available(), "requires CUDA")
+    @_guard(240)
     def test_cuda_tensors_mutated_after_add_are_not_exported(self):
         out = self.root / "out"
         with EmbeddingExporter(LocalUri(str(out)), in_background=True) as exporter:

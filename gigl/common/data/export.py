@@ -24,7 +24,10 @@ from jaxtyping import Int64, Shaped
 from typing_extensions import Self
 
 from gigl.common import GcsUri, LocalUri, Uri
-from gigl.common.data.background_export import BackgroundRunner
+from gigl.common.data.background_export import (
+    DEFAULT_STALL_TIMEOUT_SECONDS,
+    BackgroundRunner,
+)
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.bq import BqUtils
@@ -246,6 +249,7 @@ class EmbeddingExporter(GcsExporter):
         min_shard_size_threshold_bytes: int = 0,
         in_background: bool = False,
         max_pending_batches: int = 8,
+        background_stall_timeout_s: float = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         """
         Initializes an EmbeddingExporter instance, which will write embeddings to gcs with an embedding avro schema for
@@ -262,6 +266,9 @@ class EmbeddingExporter(GcsExporter):
                 `close()` to stop the worker. Defaults to False.
             max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
                 before `add_embedding` blocks. This bounds memory.
+            background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
+                work pending, and the longest a single upload may take, before it is killed and a
+                `BackgroundExportStalledError` is raised.
         """
         super().__init__(
             export_dir,
@@ -278,6 +285,7 @@ class EmbeddingExporter(GcsExporter):
                     min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
                 ),
                 max_pending_batches,
+                background_stall_timeout_s,
             )
 
     def add_embedding(
@@ -328,6 +336,7 @@ class PredictionExporter(GcsExporter):
         min_shard_size_threshold_bytes: int = 0,
         in_background: bool = False,
         max_pending_batches: int = 8,
+        background_stall_timeout_s: float = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         """
         Initializes a PredictionExporter instance, which will write predictions to gcs with a prediction avro schema for
@@ -344,6 +353,9 @@ class PredictionExporter(GcsExporter):
                 `close()` to stop the worker. Defaults to False.
             max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
                 before `add_prediction` blocks. This bounds memory.
+            background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
+                work pending, and the longest a single upload may take, before it is killed and a
+                `BackgroundExportStalledError` is raised.
         """
 
         super().__init__(
@@ -361,6 +373,7 @@ class PredictionExporter(GcsExporter):
                     min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
                 ),
                 max_pending_batches,
+                background_stall_timeout_s,
             )
 
     def add_prediction(
