@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
 - Cache built GraphLearn-Torch wheels per machine (`~/.cache/gigl/glt-wheels/`, override with
-  `GIGL_GLT_WHEEL_CACHE_DIR`) in `install_glt.sh`, keyed on the pinned commit, patch contents, CPU/CUDA variant, torch
+  `GIGL_GLT_WHEEL_CACHE_DIR`) in `post_install.py`, keyed on the pinned commit, patch contents, CPU/CUDA variant, torch
   version and python version, so only the first environment on a machine compiles GLT. Ninja for the build now comes
   from the PyPI `ninja` package (`glt-build-backend` dependency group) instead of `apt` by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING
