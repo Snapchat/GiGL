@@ -21,15 +21,32 @@ import torch_geometric.data.hetero_data
 from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 
+from gigl.common.logger import Logger
+from gigl.nn.packed_attention import (
+    PackedForwardConfig,
+    PackedTokens,
+    pack_tokens,
+    packed_attention,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
     PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
+    _concat_tensors,
+    _get_node_type_offsets,
+    _to_homogeneous_edge_index,
     _validate_reserved_anchor_feature_usage,
     tensors_to_graph_transformer_input,
 )
+from gigl.transforms.static_khop import (
+    build_neighbor_table,
+    gather_rows,
+    khop_sequence_layout,
+)
+
+logger = Logger()
 
 
 def _get_node_type_positional_encodings(
@@ -454,8 +471,18 @@ class GraphTransformerEncoderLayer(nn.Module):
         valid_mask: Optional[Bool[Tensor, "batch sequence"]] = None,
         pairwise_relation_indices: Optional[Int64[Tensor, "relation_edges 4"]] = None,
         query_seq_len: Optional[int] = None,
+        packed_tokens: Optional[PackedTokens] = None,
     ) -> Float[Tensor, "batch query_sequence model_dim"]:
         """Forward pass.
+
+        With ``packed_tokens``, ``x`` is ``(1, token_capacity, model_dim)``:
+        every sequence's tokens packed back to back (see
+        ``gigl.nn.packed_attention``), with zeros on slack slots. Each token
+        attends only within its own sequence, and slack slots stay zero.
+        ``query_seq_len=1`` then returns ``(1, num_sequences, model_dim)``, the
+        first token of each sequence. Packed tokens require
+        ``relation_attention_mode`` and ``relation_message_mode`` ``"none"``
+        and no ``attn_bias``.
 
         Args:
             x: Input tensor of shape ``(batch, seq, model_dim)``.
@@ -469,10 +496,31 @@ class GraphTransformerEncoderLayer(nn.Module):
                 ``(batch_idx, query_pos, key_pos, relation_idx)`` coordinates.
             query_seq_len: Number of leading query positions to compute. Defaults
                 to the full input sequence length.
+            packed_tokens: Optional packed layout of ``x``; see above.
 
         Returns:
             Output tensor of shape ``(batch, query_seq_len, model_dim)``.
+
+        Raises:
+            ValueError: If ``packed_tokens`` is combined with ``attn_bias``,
+                relation modes, or a ``query_seq_len`` other than 1.
         """
+        if packed_tokens is not None:
+            if (
+                attn_bias is not None
+                or self._relation_attention_mode != "none"
+                or self._relation_message_mode != "none"
+            ):
+                raise ValueError(
+                    "packed_tokens supports no attn_bias and relation modes 'none'."
+                )
+            if query_seq_len not in (None, 1):
+                raise ValueError(
+                    f"packed_tokens supports query_seq_len None or 1, got {query_seq_len}."
+                )
+            return self._forward_packed_tokens(
+                x=x[0], packed=packed_tokens, first_token_output=query_seq_len == 1
+            ).unsqueeze(0)
         return self._forward_query_prefix(
             x=x,
             seq_len=x.size(1) if query_seq_len is None else query_seq_len,
@@ -641,6 +689,41 @@ class GraphTransformerEncoderLayer(nn.Module):
         if valid_mask is not None:
             x = x * valid_mask.unsqueeze(-1).to(x.dtype)  # [batch, seq_len, model_dim]
 
+        return x
+
+    def _forward_packed_tokens(
+        self, x: Tensor, packed: PackedTokens, first_token_output: bool
+    ) -> Tensor:
+        """Runs the layer on ``[token_capacity, model_dim]`` packed tokens.
+
+        Returns:
+            ``[num_sequences, model_dim]`` when ``first_token_output``, else
+            ``[token_capacity, model_dim]`` with zeros on slack.
+        """
+        x_norm = self._attention_norm(x)
+        key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        value = self._value_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        if first_token_output:
+            residual = x[packed.sequence_starts]
+            query_input = x_norm[packed.sequence_starts]
+        else:
+            residual = x
+            query_input = x_norm
+        query = self._query_projection(query_input).view(
+            -1, self._num_heads, self._head_dim
+        )
+        attention_output = packed_attention(
+            query, key, value, packed, query_is_first_token=first_token_output
+        ).reshape(-1, self._num_heads * self._head_dim)
+        x = residual + self._dropout(self._output_projection(attention_output))
+        # Slack rows can hold NaN, and NaN * 0 is NaN, so they are cleared with
+        # ``where`` rather than a mask product.
+        if not first_token_output:
+            x = torch.where(packed.token_valid.unsqueeze(-1), x, 0.0)
+        # The FFN acts on each row alone; its contract is (batch, sequence, dim).
+        x = x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
+        if not first_token_output:
+            x = torch.where(packed.token_valid.unsqueeze(-1), x, 0.0)
         return x
 
     def _zero_relation_parameter_dependency(self, reference: Tensor) -> Tensor:
@@ -1273,6 +1356,24 @@ class GraphTransformerEncoder(nn.Module):
             ``anchor_based_input_attr_names``, and requires
             ``sequence_construction_method="khop"``. See
             ``heterodata_to_graph_transformer_input``. (default: None)
+        packed_forward: Optional ``PackedForwardConfig``. In eval mode with
+            gradients disabled (``torch.no_grad`` or ``torch.inference_mode``),
+            ``forward`` then builds k-hop sequences with the fixed-shape layout
+            in ``gigl.transforms.static_khop`` and runs the encoder layers on
+            packed tokens (``gigl.nn.packed_attention``). Apart from one read
+            of the overflow flag there are no host syncs, and on CUDA no
+            padding FLOPs; on CPU, attention runs on a padded grid as a
+            fallback. Each anchor gets at most
+            ``min(tokens_per_anchor, max_seq_len)`` packed slots. Embeddings
+            match the padded path up to float error. A batch that exceeds the
+            config's token capacity or neighbor table width is recomputed on
+            the padded path and counted in ``packed_overflow_count``.
+            ``length_buckets`` then apply to those batches only. Supports
+            ``sequence_construction_method="khop"`` without
+            ``prioritize_hop_order``, ``readout_mode="anchor_only"``, relation
+            modes ``"none"``, no anchor-based or pairwise attention bias, and
+            token inputs limited to ``layout_hop_distance_attr_name``.
+            (default: None)
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -1340,10 +1441,14 @@ class GraphTransformerEncoder(nn.Module):
         ] = "none",
         length_buckets: Optional[list[int]] = None,
         layout_hop_distance_attr_name: Optional[str] = None,
+        packed_forward: Optional[PackedForwardConfig] = None,
         **kwargs: object,
     ) -> None:
         super().__init__()
         del kwargs
+        self._packed_forward = packed_forward
+        # Batches that overflowed the packed layout and ran on the padded path.
+        self.packed_overflow_count = 0
 
         if pe_integration_mode not in {"concat", "add"}:
             raise ValueError(
@@ -1626,6 +1731,49 @@ class GraphTransformerEncoder(nn.Module):
         # Output projection: hid_dim -> out_dim
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
+        if self._packed_forward is not None:
+            self._validate_packed_forward()
+
+    def _validate_packed_forward(self) -> None:
+        """Raises a ValueError listing every setting the packed path does not support."""
+        reasons: list[str] = []
+        if self._sequence_construction_method != "khop":
+            reasons.append(
+                f"sequence_construction_method={self._sequence_construction_method!r}"
+            )
+        if self._prioritize_hop_order:
+            reasons.append("prioritize_hop_order=True")
+        if self._readout_mode != "anchor_only":
+            reasons.append(f"readout_mode={self._readout_mode!r}")
+        if self._relation_attention_mode != "none":
+            reasons.append(f"relation_attention_mode={self._relation_attention_mode!r}")
+        if self._relation_message_mode != "none":
+            reasons.append(f"relation_message_mode={self._relation_message_mode!r}")
+        if self._anchor_based_attention_bias_attr_names:
+            reasons.append(
+                "anchor_based_attention_bias_attr_names="
+                f"{self._anchor_based_attention_bias_attr_names}"
+            )
+        if self._pairwise_attention_bias_attr_names:
+            reasons.append(
+                "pairwise_attention_bias_attr_names="
+                f"{self._pairwise_attention_bias_attr_names}"
+            )
+        unsupported_token_inputs = [
+            attr_name
+            for attr_name in self._anchor_based_input_attr_names
+            if attr_name != self._layout_hop_distance_attr_name
+        ]
+        if unsupported_token_inputs:
+            reasons.append(
+                f"anchor_based_input_attr_names {unsupported_token_inputs} other "
+                "than layout_hop_distance_attr_name"
+            )
+        if reasons:
+            raise ValueError(
+                "packed_forward does not support: " + "; ".join(reasons) + "."
+            )
+
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
@@ -1739,6 +1887,34 @@ class GraphTransformerEncoder(nn.Module):
                 else projected_x_dict[anchor_node_type].size(0)
             )
 
+        if (
+            self._packed_forward is not None
+            and not self.training
+            and not torch.is_grad_enabled()
+            and num_anchor_nodes > 0
+        ):
+            anchor_states, overflow = self._encode_packed(
+                projected_x_dict=projected_x_dict,
+                edge_index_dict=edge_index_dict,
+                anchor_node_type=anchor_node_type,
+                num_anchor_nodes=num_anchor_nodes,
+                anchor_node_ids=anchor_node_ids,
+                device=device,
+            )
+            # The one host read of the packed path, after its kernels are
+            # queued, so a wrong result never reaches the caller.
+            if not bool(overflow):
+                return self._project_output(anchor_states)
+            if self.packed_overflow_count == 0:
+                logger.warning(
+                    "A batch overflowed packed_forward (more tokens than "
+                    "tokens_per_anchor allows, or a node with more edges than "
+                    "neighbor_table_width) and is recomputed on the padded path. "
+                    "packed_overflow_count counts these batches; if it grows with "
+                    "every batch, raise the config's limits."
+                )
+            self.packed_overflow_count += 1
+
         (
             sequences,
             valid_mask,
@@ -1790,12 +1966,92 @@ class GraphTransformerEncoder(nn.Module):
                 valid_mask=valid_mask,
                 sequence_auxiliary_data=sequence_auxiliary_data,
             )
-        embeddings = self._output_projection(embeddings)
+        return self._project_output(embeddings)
 
+    def _project_output(self, embeddings: Tensor) -> Tensor:
+        """Projects encoder outputs to ``out_dim`` and optionally L2-normalizes."""
+        embeddings = self._output_projection(embeddings)
         if self._should_l2_normalize_embedding_layer_output:
             embeddings = F.normalize(embeddings, p=2, dim=-1)
-
         return embeddings
+
+    def _encode_packed(
+        self,
+        projected_x_dict: dict[NodeType, Tensor],
+        edge_index_dict: dict[tuple[str, str, str], Tensor],
+        anchor_node_type: NodeType,
+        num_anchor_nodes: int,
+        anchor_node_ids: Optional[Tensor],
+        device: torch.device,
+    ) -> tuple[Tensor, Tensor]:
+        """Encodes the anchors on packed tokens.
+
+        Every shape is fixed by the inputs and the ``PackedForwardConfig``, so
+        this runs without host syncs.
+
+        Returns:
+            - ``[num_anchor_nodes, hid_dim]`` final-norm anchor states, wrong
+              when the overflow flag is set.
+            - Scalar bool overflow flag: some node has more edges than the
+              neighbor table width, or the sequences hold more tokens than the
+              packed capacity.
+        """
+        assert self._packed_forward is not None
+        node_type_offsets = _get_node_type_offsets(projected_x_dict)
+        node_features = _concat_tensors(list(projected_x_dict.values()), dim=0)
+        edge_index = _to_homogeneous_edge_index(
+            edge_index_dict=edge_index_dict,
+            node_type_offsets=node_type_offsets,
+            device=device,
+        ).to(device=device, dtype=torch.long)
+        anchor_local_indices = (
+            anchor_node_ids.to(device)
+            if anchor_node_ids is not None
+            else torch.arange(num_anchor_nodes, device=device)
+        )
+        neighbor_table, table_overflow = build_neighbor_table(
+            edge_index,
+            num_nodes=node_features.size(0),
+            width=self._packed_forward.neighbor_table_width,
+            sampling_direction=self._sampling_direction,
+        )
+        node_index, hop_index, lengths = khop_sequence_layout(
+            neighbor_table,
+            node_type_offsets[anchor_node_type] + anchor_local_indices,
+            hop_distance=self._hop_distance,
+            max_seq_len=self._max_seq_len,
+        )
+        packed = pack_tokens(
+            node_index,
+            hop_index,
+            lengths,
+            # No sequence is longer than max_seq_len.
+            token_capacity=num_anchor_nodes
+            * min(self._packed_forward.tokens_per_anchor, self._max_seq_len),
+        )
+
+        tokens = gather_rows(node_features, packed.token_node, packed.token_valid)
+        x = tokens.unsqueeze(0)
+        if self._layout_hop_distance_attr_name in self._anchor_based_input_attr_names:
+            x = x + self._build_token_input_contribution(
+                token_input_features={
+                    self._layout_hop_distance_attr_name: packed.token_hop.view(
+                        1, -1, 1
+                    ).float()
+                },
+                sequences=x,
+                valid_mask=packed.token_valid.unsqueeze(0),
+            )
+        encoder_layers = self._encoder_layers
+        for layer_index, encoder_layer in enumerate(encoder_layers):
+            x = encoder_layer(
+                x,
+                query_seq_len=1 if layer_index == len(encoder_layers) - 1 else None,
+                packed_tokens=packed,
+            )
+        if len(encoder_layers) == 0:
+            x = x[:, packed.sequence_starts]
+        return self._final_norm(x).squeeze(0), table_overflow | packed.overflow
 
     def _encode_sequences(
         self,

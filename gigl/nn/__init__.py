@@ -7,6 +7,7 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.nn.loss import RetrievalLoss
 from gigl.nn.models import LightGCN, LinkPredictionGNN
+from gigl.nn.packed_attention import PackedForwardConfig
 
 __all__ = [
     "FeedForwardNetwork",
@@ -14,5 +15,6 @@ __all__ = [
     "GraphTransformerEncoderLayer",
     "LightGCN",
     "LinkPredictionGNN",
+    "PackedForwardConfig",
     "RetrievalLoss",
 ]

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `GraphTransformerEncoder(packed_forward=PackedForwardConfig(tokens_per_anchor, neighbor_table_width))` runs eval-mode
+  `forward` on packed tokens: a fixed-shape k-hop layout (`gigl.transforms.static_khop`) and per-sequence attention
+  (`gigl.nn.packed_attention`). On CUDA the varlen memory-efficient kernel skips padding entirely; on CPU, SDPA on a
+  padded grid is the fallback. One host sync per batch. Batches that overflow the token capacity or neighbor table width
+  are recomputed on the padded path and counted in `packed_overflow_count` by @kmontemayor2-sc
 - `layout_hop_distance_attr_name` on `GraphTransformerEncoder`, `heterodata_to_graph_transformer_input` and
   `tensors_to_graph_transformer_input` reads an anchor-relative hop distance off the k-hop sequence layout, so batches
   no longer need the all-pairs `AddHeteroHopDistanceEncoding`. The values equal that transform's output with
