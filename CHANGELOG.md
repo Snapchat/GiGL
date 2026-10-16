@@ -32,6 +32,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
+  tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
+  they leaked the label at train time and made embeddings depend on batch composition
 - PPR relation attention and messages no longer leak a co-seeded ABLP positive's sampled edges into an anchor's
   sequence. With `sequence_construction_method="ppr"` and `include_sampled_edges`, a relation edge whose source is a
   residual top-up node the anchor never expanded (e.g. the batch's positive label) appeared as a relation in the
