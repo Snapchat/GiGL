@@ -1279,8 +1279,8 @@ class SharedDistSamplingBackend:
         Cleanup sequence:
 
         1. Send ``STOP`` to every worker's task queue.
-        2. Join each worker with a timeout of
-           ``MP_STATUS_CHECK_INTERVAL`` seconds.
+        2. Join the workers against one shared deadline of
+           ``MP_STATUS_CHECK_INTERVAL`` seconds in total.
         3. Close all task queues and the event queue.
         4. Terminate any workers still alive after the join timeout.
 
@@ -1297,8 +1297,9 @@ class SharedDistSamplingBackend:
                         SharedMpCommand.STOP,
                         None,
                     )
+                deadline = time.monotonic() + MP_STATUS_CHECK_INTERVAL
                 for worker in self._workers:
-                    worker.join(timeout=MP_STATUS_CHECK_INTERVAL)
+                    worker.join(timeout=max(0.0, deadline - time.monotonic()))
                 for queue_ in self._task_queues:
                     queue_.cancel_join_thread()
                     queue_.close()
