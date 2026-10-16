@@ -1262,6 +1262,17 @@ class GraphTransformerEncoder(nn.Module):
               (``torch._dynamo.mark_dynamic(x, 0)``) avoids it.
 
             (default: None)
+        layout_hop_distance_attr_name: Optional anchor-relative attribute name
+            (usually ``"hop_distance"``) whose values are read off the k-hop
+            sequence layout instead of a sparse matrix on the input data, so the
+            batch needs no all-pairs ``AddHeteroHopDistanceEncoding``. The
+            values equal that transform's with ``is_undirected=False`` and the
+            same ``sampling_direction``. They range over ``0..hop_distance``,
+            so an embedding for it needs ``hop_distance + 1`` rows. It must
+            appear in ``anchor_based_attention_bias_attr_names`` or
+            ``anchor_based_input_attr_names``, and requires
+            ``sequence_construction_method="khop"``. See
+            ``heterodata_to_graph_transformer_input``. (default: None)
 
     Notes:
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
@@ -1328,6 +1339,7 @@ class GraphTransformerEncoder(nn.Module):
             "edge_type_attention",
         ] = "none",
         length_buckets: Optional[list[int]] = None,
+        layout_hop_distance_attr_name: Optional[str] = None,
         **kwargs: object,
     ) -> None:
         super().__init__()
@@ -1390,6 +1402,24 @@ class GraphTransformerEncoder(nn.Module):
                 "prioritize_hop_order=True is supported only with "
                 "sequence_construction_method='khop'."
             )
+        if (
+            layout_hop_distance_attr_name is not None
+            and sequence_construction_method != "khop"
+        ):
+            raise ValueError(
+                "layout_hop_distance_attr_name requires "
+                "sequence_construction_method='khop'."
+            )
+        if layout_hop_distance_attr_name is not None and (
+            layout_hop_distance_attr_name
+            not in list(anchor_based_attention_bias_attr_names or [])
+            + list(anchor_based_input_attr_names or [])
+        ):
+            raise ValueError(
+                f"layout_hop_distance_attr_name '{layout_hop_distance_attr_name}' "
+                "must be an anchor-based attention bias or token input."
+            )
+        self._layout_hop_distance_attr_name = layout_hop_distance_attr_name
         if sequence_positional_encoding_type is not None:
             sequence_positional_encoding_type = (
                 sequence_positional_encoding_type.lower()
@@ -1690,6 +1720,7 @@ class GraphTransformerEncoder(nn.Module):
         relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
         relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
         relative_pe_attr_names.discard(PPR_RELATION_FEATURES_NAME)
+        relative_pe_attr_names.discard(self._layout_hop_distance_attr_name)
         graph_attr_dict = {
             attr_name: getattr(data, attr_name)
             for attr_name in sorted(relative_pe_attr_names)
@@ -1725,6 +1756,7 @@ class GraphTransformerEncoder(nn.Module):
             sequence_construction_method=self._sequence_construction_method,
             sampling_direction=self._sampling_direction,
             prioritize_hop_order=self._prioritize_hop_order,
+            layout_hop_distance_attr_name=self._layout_hop_distance_attr_name,
             anchor_based_attention_bias_attr_names=self._anchor_based_attention_bias_attr_names,
             anchor_based_input_attr_names=self._anchor_based_input_attr_names,
             pairwise_attention_bias_attr_names=self._pairwise_attention_bias_attr_names,

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `layout_hop_distance_attr_name` on `GraphTransformerEncoder`, `heterodata_to_graph_transformer_input` and
+  `tensors_to_graph_transformer_input` reads an anchor-relative hop distance off the k-hop sequence layout, so batches
+  no longer need the all-pairs `AddHeteroHopDistanceEncoding`. The values equal that transform's output with
+  `is_undirected=False` and the same `sampling_direction` by @kmontemayor2-sc
 - `GraphTransformerEncoder(length_buckets=[...])` groups anchors by valid sequence length and runs each group on
   sequences trimmed to its bucket bound, so attention and FFNs skip most padding. Embeddings and gradients match the
   unbucketed forward up to float error by @kmontemayor2-sc

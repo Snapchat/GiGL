@@ -2532,5 +2532,52 @@ class TestGraphTransformerEncoderLengthBuckets(TestCase):
                 )
 
 
+class TestGraphTransformerEncoderLayoutHopDistance(TestCase):
+    def test_matches_precomputed_hop_distance(self) -> None:
+        """A batch without the hop-distance transform gives the same embeddings."""
+        user = NodeType("user")
+        data = _create_variable_length_graph()
+        batch_without_hop_distance = data.clone()
+        del batch_without_hop_distance.hop_distance
+        encoder_kwargs: dict = dict(
+            node_type_to_feat_dim_map={user: 4},
+            edge_type_to_feat_dim_map={EdgeType(user, Relation("to"), user): 0},
+            hid_dim=8,
+            out_dim=6,
+            num_layers=1,
+            num_heads=2,
+            max_seq_len=10,
+            hop_distance=2,
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+            anchor_based_input_attr_names=["hop_distance"],
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {"hop_distance": nn.Embedding(3, 8)}
+            ),
+        )
+        torch.manual_seed(0)
+        reference = GraphTransformerEncoder(**encoder_kwargs).eval()
+        layout = GraphTransformerEncoder(
+            **encoder_kwargs, layout_hop_distance_attr_name="hop_distance"
+        ).eval()
+        layout.load_state_dict(reference.state_dict())
+
+        with torch.no_grad():
+            expected = reference(data=data, anchor_node_type=user)
+            actual = layout(data=batch_without_hop_distance, anchor_node_type=user)
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_requires_khop(self) -> None:
+        user = NodeType("user")
+        with self.assertRaises(ValueError):
+            GraphTransformerEncoder(
+                node_type_to_feat_dim_map={user: 4},
+                edge_type_to_feat_dim_map={},
+                hid_dim=8,
+                sequence_construction_method="ppr",
+                layout_hop_distance_attr_name="hop_distance",
+            )
+
+
 if __name__ == "__main__":
     absltest.main()

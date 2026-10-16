@@ -7,9 +7,11 @@ from typing import Literal, cast
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from parameterized import param, parameterized
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
@@ -1420,6 +1422,138 @@ class TestTensorsToGraphTransformerInput(TestCase):
                 [[3, 4, 5], [-1, -1, -1], [-1, -1, -1]],
             ],
         )
+
+
+def _create_random_hetero_batch(seed: int) -> HeteroData:
+    """A random two-type batch with directed edges and some duplicate edges."""
+    generator = torch.Generator().manual_seed(seed)
+    data = HeteroData()
+    data["user"].x = torch.randn(12, 4, generator=generator)
+    data["item"].x = torch.randn(8, 4, generator=generator)
+    data["user", "follows", "user"].edge_index = torch.randint(
+        0, 12, (2, 30), generator=generator
+    )
+    data["user", "buys", "item"].edge_index = torch.stack(
+        [
+            torch.randint(0, 12, (20,), generator=generator),
+            torch.randint(0, 8, (20,), generator=generator),
+        ]
+    )
+    data["item", "bought_by", "user"].edge_index = torch.stack(
+        [
+            torch.randint(0, 8, (20,), generator=generator),
+            torch.randint(0, 12, (20,), generator=generator),
+        ]
+    )
+    return data
+
+
+class TestLayoutHopDistance(TestCase):
+    """Hop distance read off the layout equals the all-pairs transform's values."""
+
+    @parameterized.expand(
+        [
+            param(
+                f"{direction}_{'hop_ordered' if hop_ordered else 'node_id_ordered'}"
+                f"_{max_seq_len}_{'anchor_first' if anchor_first else 'anchor_anywhere'}",
+                sampling_direction=direction,
+                prioritize_hop_order=hop_ordered,
+                max_seq_len=max_seq_len,
+                include_anchor_first=anchor_first,
+            )
+            for direction in ("in", "out")
+            for hop_ordered in (False, True)
+            # 4 truncates most sequences; 20 keeps every reachable node.
+            for max_seq_len in (4, 20)
+            for anchor_first in (True, False)
+        ]
+    )
+    def test_matches_hop_distance_transform(
+        self,
+        _: str,
+        sampling_direction: Literal["in", "out"],
+        prioritize_hop_order: bool,
+        max_seq_len: int,
+        include_anchor_first: bool,
+    ) -> None:
+        hop_distance = 3
+        for seed in range(3):
+            data = _create_random_hetero_batch(seed)
+            kwargs: dict = dict(
+                batch_size=5,
+                max_seq_len=max_seq_len,
+                anchor_node_type="user",
+                hop_distance=hop_distance,
+                sampling_direction=sampling_direction,
+                prioritize_hop_order=prioritize_hop_order,
+                include_anchor_first=include_anchor_first,
+                anchor_based_attention_bias_attr_names=["hop_distance"],
+                anchor_based_input_attr_names=["hop_distance"],
+            )
+            expected = heterodata_to_graph_transformer_input(
+                data=AddHeteroHopDistanceEncoding(
+                    h_max=hop_distance, sampling_direction=sampling_direction
+                )(data.clone()),
+                **kwargs,
+            )
+            actual = heterodata_to_graph_transformer_input(
+                data=data, layout_hop_distance_attr_name="hop_distance", **kwargs
+            )
+            torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
+            torch.testing.assert_close(actual[1], expected[1], rtol=0, atol=0)
+            torch.testing.assert_close(
+                actual[2]["anchor_bias"], expected[2]["anchor_bias"], rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                actual[2]["token_input"], expected[2]["token_input"], rtol=0, atol=0
+            )
+
+    def test_keeps_other_anchor_attributes_in_order(self) -> None:
+        data = AddHeteroHopDistanceEncoding(h_max=2)(_create_random_hetero_batch(0))
+        data.other_distance = (data.hop_distance.to_dense() * 10).to_sparse_csr()
+        kwargs: dict = dict(
+            batch_size=5,
+            max_seq_len=8,
+            anchor_node_type="user",
+            anchor_based_attention_bias_attr_names=["other_distance", "hop_distance"],
+        )
+        expected = heterodata_to_graph_transformer_input(data=data, **kwargs)
+        actual = heterodata_to_graph_transformer_input(
+            data=data, layout_hop_distance_attr_name="hop_distance", **kwargs
+        )
+        torch.testing.assert_close(
+            actual[2]["anchor_bias"], expected[2]["anchor_bias"], rtol=0, atol=0
+        )
+
+    def test_rejects_unsupported_use(self) -> None:
+        data = _create_random_hetero_batch(0)
+        with self.assertRaises(ValueError):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=5,
+                max_seq_len=8,
+                anchor_node_type="user",
+                sequence_construction_method="ppr",
+                layout_hop_distance_attr_name="hop_distance",
+            )
+        with self.assertRaises(ValueError):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=5,
+                max_seq_len=8,
+                anchor_node_type="user",
+                pairwise_attention_bias_attr_names=["hop_distance"],
+                layout_hop_distance_attr_name="hop_distance",
+            )
+        # Set but not requested as an anchor bias or token input.
+        with self.assertRaises(ValueError):
+            heterodata_to_graph_transformer_input(
+                data=data,
+                batch_size=5,
+                max_seq_len=8,
+                anchor_node_type="user",
+                layout_hop_distance_attr_name="hop_distance",
+            )
 
 
 if __name__ == "__main__":

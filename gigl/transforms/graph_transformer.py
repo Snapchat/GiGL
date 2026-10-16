@@ -158,6 +158,7 @@ def heterodata_to_graph_transformer_input(
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
     prioritize_hop_order: bool = False,
+    layout_hop_distance_attr_name: Optional[str] = None,
 ) -> tuple[
     Float[Tensor, "anchors sequence feature_dim"],
     Bool[Tensor, "anchors sequence"],
@@ -216,6 +217,17 @@ def heterodata_to_graph_transformer_input(
         prioritize_hop_order: If True, k-hop sequence construction fills tokens
             by hop depth before truncating to ``max_seq_len``. The default False
             preserves existing homogeneous-node-id ordering.
+        layout_hop_distance_attr_name: If set, this anchor-relative attribute
+            (usually ``"hop_distance"``) is not read from a sparse matrix on
+            ``data``. Each token's value is instead the hop at which the k-hop
+            expansion first reached it: 0 for the anchor and padding, at most
+            ``hop_distance`` otherwise. That is the directed shortest-path
+            length ``AddHeteroHopDistanceEncoding`` stores for ``(anchor,
+            token)`` with ``h_max >= hop_distance``, ``is_undirected=False`` and
+            the same ``sampling_direction``, so the all-pairs transform can be
+            skipped. It must appear in ``anchor_based_attention_bias_attr_names``
+            or ``anchor_based_input_attr_names``, and requires
+            ``sequence_construction_method="khop"``. (default: None)
 
     Returns:
         (sequences, valid_mask, attention_bias_data), where:
@@ -261,6 +273,7 @@ def heterodata_to_graph_transformer_input(
     graph_attr_names = set(anchor_based_attention_bias_attr_names or [])
     graph_attr_names.update(anchor_based_input_attr_names or [])
     graph_attr_names.update(pairwise_attention_bias_attr_names or [])
+    graph_attr_names.discard(layout_hop_distance_attr_name)
     graph_attr_dict = {
         attr_name: getattr(data, attr_name)
         for attr_name in sorted(graph_attr_names)
@@ -285,6 +298,7 @@ def heterodata_to_graph_transformer_input(
         relation_edge_types=relation_edge_types,
         sampling_direction=sampling_direction,
         prioritize_hop_order=prioritize_hop_order,
+        layout_hop_distance_attr_name=layout_hop_distance_attr_name,
     )
 
 
@@ -307,6 +321,7 @@ def tensors_to_graph_transformer_input(
     relation_edge_types: Optional[list[GiGLEdgeType]] = None,
     sampling_direction: Literal["in", "out"] = "out",
     prioritize_hop_order: bool = False,
+    layout_hop_distance_attr_name: Optional[str] = None,
 ) -> tuple[
     Float[Tensor, "anchors sequence feature_dim"],
     Bool[Tensor, "anchors sequence"],
@@ -379,6 +394,17 @@ def tensors_to_graph_transformer_input(
         prioritize_hop_order: If True, k-hop sequence construction fills tokens
             by hop depth before truncating to ``max_seq_len``. The default False
             preserves existing homogeneous-node-id ordering.
+        layout_hop_distance_attr_name: If set, this anchor-relative attribute
+            (usually ``"hop_distance"``) is not read from a sparse matrix on
+            ``graph_attr_dict``. Each token's value is instead the hop at which the k-hop
+            expansion first reached it: 0 for the anchor and padding, at most
+            ``hop_distance`` otherwise. That is the directed shortest-path
+            length ``AddHeteroHopDistanceEncoding`` stores for ``(anchor,
+            token)`` with ``h_max >= hop_distance``, ``is_undirected=False`` and
+            the same ``sampling_direction``, so the all-pairs transform can be
+            skipped. It must appear in ``anchor_based_attention_bias_attr_names``
+            or ``anchor_based_input_attr_names``, and requires
+            ``sequence_construction_method="khop"``. (default: None)
 
     Returns:
         (sequences, valid_mask, attention_bias_data); see
@@ -451,6 +477,26 @@ def tensors_to_graph_transformer_input(
             "sequence_construction_method='ppr'."
         )
 
+    if layout_hop_distance_attr_name is not None:
+        if sequence_construction_method != "khop":
+            raise ValueError(
+                "layout_hop_distance_attr_name requires "
+                "sequence_construction_method='khop'."
+            )
+        if layout_hop_distance_attr_name in pairwise_bias_attr_names:
+            raise ValueError(
+                f"'{layout_hop_distance_attr_name}' is derived per anchor and "
+                "cannot be a pairwise attention bias."
+            )
+        if (
+            layout_hop_distance_attr_name
+            not in anchor_bias_attr_names + anchor_input_attr_names
+        ):
+            raise ValueError(
+                f"layout_hop_distance_attr_name '{layout_hop_distance_attr_name}' "
+                "must be an anchor-based attention bias or token input."
+            )
+
     if sequence_construction_method == "ppr":
         _validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
 
@@ -477,6 +523,7 @@ def tensors_to_graph_transformer_input(
     ppr_weight_sequences: Optional[Tensor] = None
     ppr_relation_feature_sequences: Optional[Tensor] = None
     frontier_batch_node_keys: Optional[Tensor] = None
+    layout_hop_sequences: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = _to_homogeneous_edge_index(
             edge_index_dict=edge_index_dict,
@@ -500,8 +547,13 @@ def tensors_to_graph_transformer_input(
                 hop_distance=hop_distance,
                 device=device,
             )
+        uses_layout_hops = (
+            layout_hop_distance_attr_name is not None
+            and layout_hop_distance_attr_name
+            in anchor_bias_attr_names + anchor_input_attr_names
+        )
         if prioritize_hop_order:
-            node_index_sequences, valid_mask = (
+            node_index_sequences, valid_mask, layout_hop_sequences = (
                 _build_hop_ordered_sequence_layout_from_sparse_edges(
                     anchor_indices=anchor_indices,
                     edge_index=homo_edge_index,
@@ -510,25 +562,37 @@ def tensors_to_graph_transformer_input(
                     max_seq_len=max_seq_len,
                     include_anchor_first=include_anchor_first,
                     device=device,
+                    return_hops=uses_layout_hops,
                 )
             )
         else:
             # Use sparse matrix operations for efficient k-hop neighbor extraction
             # Returns: (batch_size, num_nodes) sparse matrix where non-zero entries are reachable
-            reachable = _get_k_hop_neighbors_sparse(
-                anchor_indices=anchor_indices,
-                edge_index=homo_edge_index,
-                num_nodes=num_nodes,
-                k=hop_distance,
-                device=device,
-            )
-            node_index_sequences, valid_mask = (
+            reachable_hops: Optional[Tensor] = None
+            if uses_layout_hops:
+                reachable, reachable_hops = _get_k_hop_neighbors_with_hops(
+                    anchor_indices=anchor_indices,
+                    edge_index=homo_edge_index,
+                    num_nodes=num_nodes,
+                    k=hop_distance,
+                    device=device,
+                )
+            else:
+                reachable = _get_k_hop_neighbors_sparse(
+                    anchor_indices=anchor_indices,
+                    edge_index=homo_edge_index,
+                    num_nodes=num_nodes,
+                    k=hop_distance,
+                    device=device,
+                )
+            node_index_sequences, valid_mask, layout_hop_sequences = (
                 _build_sequence_layout_from_sparse_neighbors(
                     reachable=reachable,
                     anchor_indices=anchor_indices,
                     max_seq_len=max_seq_len,
                     include_anchor_first=include_anchor_first,
                     device=device,
+                    hop_values=reachable_hops,
                 )
             )
     elif sequence_construction_method == "ppr":
@@ -591,9 +655,14 @@ def tensors_to_graph_transformer_input(
             if attr_name not in {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         }
     )
+    anchor_lookup_attr_names = [
+        attr_name
+        for attr_name in anchor_matrix_attr_names
+        if attr_name != layout_hop_distance_attr_name
+    ]
     anchor_based_matrices = _get_sparse_feature_matrices(
         graph_attr_dict=graph_attr_dict,
-        attr_names=anchor_matrix_attr_names,
+        attr_names=anchor_lookup_attr_names,
         missing_attr_error_prefix="Anchor-based attribute",
     )
 
@@ -617,6 +686,14 @@ def tensors_to_graph_transformer_input(
         csr_matrices=anchor_based_matrices if anchor_based_matrices else None,
         device=device,
     )
+    if layout_hop_sequences is not None:
+        anchor_relative_feature_sequences = _merge_layout_hop_feature(
+            lookup_features=anchor_relative_feature_sequences,
+            lookup_attr_names=anchor_lookup_attr_names,
+            layout_hop_sequences=layout_hop_sequences,
+            ordered_attr_names=anchor_matrix_attr_names,
+            layout_attr_name=layout_hop_distance_attr_name,
+        )
 
     pairwise_feature_sequences, pairwise_nonmissing_indices = (
         _lookup_pairwise_relative_features(
@@ -845,13 +922,19 @@ def _build_sequence_layout_from_sparse_neighbors(
     max_seq_len: int,
     include_anchor_first: bool,
     device: torch.device,
-) -> tuple[Tensor, Tensor]:
+    hop_values: Optional[Tensor] = None,
+) -> tuple[Tensor, Tensor, Optional[Tensor]]:
     """
     Build padded node-index sequences and a validity mask from reachability data.
+
+    Args:
+        hop_values: Optional (nnz,) hops aligned with ``reachable.indices()``.
 
     Returns:
         node_index_sequences: (batch_size, max_seq_len) long tensor with -1 padding
         valid_mask: (batch_size, max_seq_len) bool tensor
+        hop_sequences: (batch_size, max_seq_len) float tensor of ``hop_values`` at
+            each token (0 at padding), or None without ``hop_values``
     """
     batch_size = anchor_indices.size(0)
     node_index_sequences = torch.full(
@@ -865,6 +948,11 @@ def _build_sequence_layout_from_sparse_neighbors(
         dtype=torch.bool,
         device=device,
     )
+    hop_sequences: Optional[Tensor] = None
+    if hop_values is not None:
+        hop_sequences = torch.zeros(
+            (batch_size, max_seq_len), dtype=torch.float, device=device
+        )
 
     indices = reachable.indices()
     batch_idx = indices[0]
@@ -878,12 +966,14 @@ def _build_sequence_layout_from_sparse_neighbors(
             keep = node_idx != anchor_indices[batch_idx]
             batch_idx = batch_idx[keep]
             node_idx = node_idx[keep]
+            if hop_values is not None:
+                hop_values = hop_values[keep]
         start_pos = 1
     else:
         start_pos = 0
 
     if batch_idx.numel() == 0 or start_pos >= max_seq_len:
-        return node_index_sequences, valid_mask
+        return node_index_sequences, valid_mask, hop_sequences
 
     # Compute within-anchor sequence positions for each neighbor node.
     #
@@ -931,8 +1021,11 @@ def _build_sequence_layout_from_sparse_neighbors(
     # Step 6: Scatter valid nodes into the output tensors
     node_index_sequences[valid_batch_idx, valid_positions] = valid_node_idx
     valid_mask[valid_batch_idx, valid_positions] = True
+    if hop_sequences is not None:
+        assert hop_values is not None
+        hop_sequences[valid_batch_idx, valid_positions] = hop_values[valid].float()
 
-    return node_index_sequences, valid_mask
+    return node_index_sequences, valid_mask, hop_sequences
 
 
 def _build_hop_ordered_sequence_layout_from_sparse_edges(
@@ -943,7 +1036,8 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
     max_seq_len: int,
     include_anchor_first: bool,
     device: torch.device,
-) -> tuple[Tensor, Tensor]:
+    return_hops: bool = False,
+) -> tuple[Tensor, Tensor, Optional[Tensor]]:
     """
     Build sequences by visiting lower-hop neighbors before higher-hop neighbors.
 
@@ -951,6 +1045,14 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
     of visited ``(batch, node)`` keys. It avoids a dense
     ``batch_size x num_nodes`` distance matrix and stops once all sequences are
     full.
+
+    Returns:
+        node_index_sequences: (batch_size, max_seq_len) long tensor with -1 padding
+        valid_mask: (batch_size, max_seq_len) bool tensor
+        hop_sequences: (batch_size, max_seq_len) float tensor of the hop at which
+            each token was added (0 at the anchor and padding), or None unless
+            ``return_hops``. A sequence only stops growing once it is full, so
+            every added token's hop is its shortest-path distance.
     """
     batch_size = anchor_indices.size(0)
     node_index_sequences = torch.full(
@@ -964,8 +1066,13 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         dtype=torch.bool,
         device=device,
     )
+    hop_sequences: Optional[Tensor] = None
+    if return_hops:
+        hop_sequences = torch.zeros(
+            (batch_size, max_seq_len), dtype=torch.float, device=device
+        )
     if max_seq_len == 0:
-        return node_index_sequences, valid_mask
+        return node_index_sequences, valid_mask, hop_sequences
 
     next_positions = torch.zeros(batch_size, dtype=torch.long, device=device)
     if include_anchor_first and max_seq_len > 0:
@@ -974,7 +1081,7 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         next_positions.fill_(1)
 
     if hop_distance <= 0 or (next_positions >= max_seq_len).all().item():
-        return node_index_sequences, valid_mask
+        return node_index_sequences, valid_mask, hop_sequences
 
     visited_batch_node_keys = (
         torch.arange(batch_size, device=device, dtype=torch.long) * num_nodes
@@ -1000,7 +1107,7 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
         device=device,
     )
 
-    for _ in range(hop_distance):
+    for hop in range(1, hop_distance + 1):
         active_batch_mask = next_positions < max_seq_len
         current_frontier = _filter_sparse_frontier_by_batch(
             frontier=current_frontier,
@@ -1027,12 +1134,14 @@ def _build_hop_ordered_sequence_layout_from_sparse_edges(
                 valid_mask=valid_mask,
                 num_nodes=num_nodes,
                 device=device,
+                hop_sequences=hop_sequences,
+                hop=hop,
             )
         )
         if (next_positions >= max_seq_len).all().item():
             break
 
-    return node_index_sequences, valid_mask
+    return node_index_sequences, valid_mask, hop_sequences
 
 
 def _empty_sparse_tensor_like(
@@ -1092,6 +1201,8 @@ def _append_frontier_tokens_to_sequences(
     valid_mask: Tensor,
     num_nodes: int,
     device: torch.device,
+    hop_sequences: Optional[Tensor] = None,
+    hop: int = 0,
 ) -> tuple[Tensor, Tensor]:
     if not frontier.is_coalesced():
         frontier = frontier.coalesce()
@@ -1168,6 +1279,8 @@ def _append_frontier_tokens_to_sequences(
 
     node_index_sequences[valid_batch_idx, valid_positions] = valid_node_idx
     valid_mask[valid_batch_idx, valid_positions] = True
+    if hop_sequences is not None:
+        hop_sequences[valid_batch_idx, valid_positions] = float(hop)
 
     inserted_counts = torch.zeros_like(next_positions)
     inserted_counts.scatter_add_(
@@ -1948,6 +2061,81 @@ def _get_k_hop_neighbors_sparse(
 
     # Coalesce and binarize final result
     return _binarize_sparse_tensor(sparse_tensor=reachable, device=device)
+
+
+def _get_k_hop_neighbors_with_hops(
+    anchor_indices: Tensor,
+    edge_index: Tensor,
+    num_nodes: int,
+    k: int,
+    device: torch.device,
+) -> tuple[Tensor, Tensor]:
+    """
+    Same reachability as ``_get_k_hop_neighbors_sparse``, plus the hop of first reach.
+
+    Returns:
+        reachable: (batch_size, num_nodes) coalesced binary sparse tensor, equal to
+            the one ``_get_k_hop_neighbors_sparse`` returns.
+        hops: (nnz,) hop at which each entry of ``reachable.indices()`` was first
+            reached (0 for the anchor itself).
+    """
+    batch_size = anchor_indices.size(0)
+    batch_range = torch.arange(batch_size, device=device)
+    adj = _binarize_sparse_tensor(
+        sparse_tensor=to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)),
+        device=device,
+    )
+    current = torch.sparse_coo_tensor(
+        torch.stack([batch_range, anchor_indices]),
+        torch.ones(batch_size, device=device, dtype=torch.float),
+        size=(batch_size, num_nodes),
+        is_coalesced=True,
+    )
+    key_parts = [batch_range * num_nodes + anchor_indices]
+    hop_parts = [torch.zeros(batch_size, dtype=torch.long, device=device)]
+    for hop in range(1, k + 1):
+        current = torch.sparse.mm(current, adj)
+        if current._nnz() == 0:
+            break
+        indices = current.coalesce().indices()
+        key_parts.append(indices[0] * num_nodes + indices[1])
+        hop_parts.append(torch.full_like(indices[0], hop))
+
+    # Sorted unique (batch, node) keys are the row-major order coalesce gives.
+    unique_keys, inverse = torch.unique(torch.cat(key_parts), return_inverse=True)
+    hops = torch.full_like(unique_keys, k).scatter_reduce(
+        0, inverse, torch.cat(hop_parts), reduce="amin"
+    )
+    reachable = torch.sparse_coo_tensor(
+        torch.stack([unique_keys // num_nodes, unique_keys % num_nodes]),
+        torch.ones(unique_keys.numel(), device=device, dtype=torch.float),
+        size=(batch_size, num_nodes),
+        is_coalesced=True,
+    )
+    return reachable, hops
+
+
+def _merge_layout_hop_feature(
+    lookup_features: Optional[Tensor],
+    lookup_attr_names: list[str],
+    layout_hop_sequences: Tensor,
+    ordered_attr_names: list[str],
+    layout_attr_name: Optional[str],
+) -> Tensor:
+    """Stacks looked-up anchor-relative features and the layout-derived one.
+
+    Returns:
+        ``(batch, seq, len(ordered_attr_names))`` features in ``ordered_attr_names`` order.
+    """
+    columns: list[Tensor] = []
+    for attr_name in ordered_attr_names:
+        if attr_name == layout_attr_name:
+            columns.append(layout_hop_sequences.unsqueeze(-1))
+        else:
+            assert lookup_features is not None
+            lookup_idx = lookup_attr_names.index(attr_name)
+            columns.append(lookup_features[..., lookup_idx : lookup_idx + 1])
+    return torch.cat(columns, dim=-1)
 
 
 def _lookup_csr_values(
