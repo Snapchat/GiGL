@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Install GraphLearn-for-PyTorch as a git dependency pinned in `pyproject.toml` and resolved by `uv sync`, instead of
+  cloning and building it in a post-install script. `gigl-post-install` and `gigl/scripts/install_glt.sh` are removed;
+  `requirements/install_py_deps.sh --skip-glt-post-install` is now `--skip-glt-install` by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
+
 ### Removed
 
 - Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by

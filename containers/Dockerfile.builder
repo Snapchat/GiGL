@@ -57,8 +57,6 @@ COPY pyproject.toml pyproject.toml
 COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY requirements requirements
-# Needed to install GLT
-COPY gigl/scripts gigl/scripts
 
 
 COPY .python-version tmp/.python-version

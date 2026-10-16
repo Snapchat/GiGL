@@ -5,9 +5,9 @@ set -x
 DEV=0  # Flag to install dev dependencies.
 # Flag to skip installing GiGL lib dependencies, i.e. only dev tools will be installed if DEV=1.
 SKIP_GIGL_LIB_DEPS_INSTALL=0
-# Flag to skip GLT post install. Note: if SKIP_GIGL_LIB_DEPS_INSTALL=1,
-# GLT will never be installed (i.e. SKIP_GLT_POST_INSTALL flag will be treated as set to 1)
-SKIP_GLT_POST_INSTALL=0
+# Flag to skip installing GraphLearn-for-PyTorch (GLT). Note: if SKIP_GIGL_LIB_DEPS_INSTALL=1,
+# GLT will never be installed (i.e. SKIP_GLT_INSTALL flag will be treated as set to 1)
+SKIP_GLT_INSTALL=0
 
 
 for arg in "$@"
@@ -21,8 +21,8 @@ do
         SKIP_GIGL_LIB_DEPS_INSTALL=1
         shift
         ;;
-    --skip-glt-post-install)
-        SKIP_GLT_POST_INSTALL=1
+    --skip-glt-install)
+        SKIP_GLT_INSTALL=1
         shift
         ;;
     esac
@@ -138,28 +138,47 @@ install_gigl_lib_deps() {
         flag_use_inexact_match="--inexact"
     fi
 
-    # gigl-core's CMake build requires torch to be present during the build, but
-    # torch is a runtime dep of gigl, not a declared build dep of gigl-core.
-    # uv sync may ignore no-build-isolation-package for workspace members and always
-    # builds them in an isolated environment where torch is absent.
-    # Workaround: phase 1 installs everything except gigl-core (so torch lands in
-    # the venv); phase 2 uses `uv pip install --no-build-isolation` which explicitly
-    # skips isolation and lets CMake find torch from the ambient venv.
+    # https://docs.astral.sh/uv/reference/cli/#uv-sync
+    sync_args=(${extra_deps_clause[@]} --locked ${flag_use_inexact_match} --no-install-package gigl-core)
     if [[ $DEV -eq 1 ]]
     then
-        # https://docs.astral.sh/uv/reference/cli/#uv-sync
-        uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-package gigl-core
+        sync_args+=(--group dev)
     else
-        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
+        sync_args+=(--group gigl-core-build-backend)
     fi
+
+    # gigl-core and graphlearn-torch (GLT) both compile against torch, which is a runtime
+    # dep of gigl rather than a declared build dep, so neither can build in an isolated
+    # build environment (see no-build-isolation-package in pyproject.toml). They also
+    # cannot build before torch is in the venv, so the install runs in phases:
+    #   1. everything except the two source builds, so torch lands in the venv;
+    #   2. gigl-core via `uv pip install --no-build-isolation`, because uv sync may still
+    #      isolate workspace members;
+    #   3. GLT via a second `uv sync`, which now finds torch in the ambient venv and builds
+    #      the commit pinned in pyproject.toml / uv.lock. uv caches the resulting wheel per
+    #      GLT commit, so only the first environment on a machine pays for the compile.
+    uv sync "${sync_args[@]}" --no-install-package graphlearn-torch
     uv pip install --no-build-isolation ./gigl-core/
 
-    # Taken from https://stackoverflow.com/questions/59895/how-do-i-get-the-directory-where-a-bash-script-is-located-from-within-the-script
-    # We do this so if `install_py_deps.sh` is run from a different directory, the script can still find the post_install.py file.
-    if [[ "${SKIP_GLT_POST_INSTALL}" -eq 0 ]]
+    if [[ "${SKIP_GLT_INSTALL}" -eq 0 ]]
     then
-        SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-        uv run python $SCRIPT_DIR/../gigl/scripts/post_install.py
+        glt_build_env=(WITH_CUDA=OFF)
+        if ! is_running_on_mac && has_cuda_driver;
+        then
+            # Potential values for TORCH_CUDA_ARCH_LIST: (not all are tested)
+            # 6.0 = Pascal support i.e. Tesla P100 - CUDA 8 or later
+            # 6.1 = Pascal support i.e. Tesla P4 - CUDA 8 or later
+            # 7.0 = Volta support i.e. Tesla V100 - CUDA 9 or later
+            # 7.5 = Turing support i.e. Tesla T4 - CUDA 10 or later
+            # 8.0 = Ampere support i.e. A100 - CUDA 11 or later
+            # 8.9 = Ada Lovelace support i.e. L4 - CUDA 11.8 or later
+            # 9.0 = Hopper support i.e. H100 , H200 - CUDA 12.0 or later
+            # 10.0 = Blackwell support i.e. B200 - CUDA 12.6 or later
+            # 12.0 = Blackwell support i.e. RTX6000 - CUDA 12.8 or later
+            # List of Nvidia GPUS: https://developer.nvidia.com/cuda-gpus
+            glt_build_env=(WITH_CUDA=ON TORCH_CUDA_ARCH_LIST="7.5")
+        fi
+        env "${glt_build_env[@]}" uv sync "${sync_args[@]}"
     fi
 }
 

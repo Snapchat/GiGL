@@ -73,6 +73,9 @@ pyg27-torch28-cpu = [
   "torch_spline_conv; sys_platform != 'darwin'",
   # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
   "torchrec~=1.3.0 ; sys_platform != 'darwin'",
+  # GraphLearn-for-PyTorch is compiled from source against the torch in this extra; the
+  # commit it is built from is pinned under [tool.uv.sources] below.
+  "graphlearn-torch ; sys_platform == 'linux'",
 ]
 pyg27-torch28-cu128 = [
   "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'",
@@ -85,7 +88,9 @@ pyg27-torch28-cu128 = [
   "torch_spline_conv; sys_platform != 'darwin'",
   # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
   "torchrec~=1.3.0 ; sys_platform != 'darwin'",
-
+  # GraphLearn-for-PyTorch is compiled from source against the torch in this extra; the
+  # commit it is built from is pinned under [tool.uv.sources] below.
+  "graphlearn-torch ; sys_platform == 'linux'",
 ]
 experimental = [
   "hydra-core==1.3.2",
@@ -104,16 +109,37 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# gigl-core must build against torch, which is not on PyPI and cannot be installed
-# into an isolated build environment. Disabling isolation lets cmake find torch from
-# the ambient venv (installed by make install_dev_deps / base Docker images).
-no-build-isolation-package = ["gigl-core"]
+# gigl-core and graphlearn-torch both compile C++ extensions against torch, which is not
+# on PyPI and cannot be installed into an isolated build environment. Disabling isolation
+# lets their builds find torch from the ambient venv (installed by make install_dev_deps /
+# base Docker images).
+no-build-isolation-package = ["gigl-core", "graphlearn-torch"]
+
+# graphlearn-torch only has a setup.py, and that setup.py imports torch, so uv cannot
+# learn its name/version/requirements without a working torch install. This static
+# metadata lets `uv lock` resolve it without building anything (locking must work on
+# machines and CI runners that have no torch). It must match what the pinned commit's
+# setup.py declares: `_VERSION` in setup.py and no install_requires. Update the version
+# here whenever the pinned commit moves to a new GLT version.
+[[tool.uv.dependency-metadata]]
+name = "graphlearn-torch"
+version = "0.2.4"
+requires-dist = []
 
 [dependency-groups]
-# These are gigl-core's [build-system].requires. With no-build-isolation-package set,
-# uv does not install them automatically, so they must be present in the ambient
-# environment before any gigl-core build (uv sync, uv build, Dockerfiles).
-gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# Build requirements of the packages listed in no-build-isolation-package. uv does not
+# install these automatically when isolation is off, so they must be present in the
+# ambient environment before any gigl-core / graphlearn-torch build (uv sync, uv build,
+# Dockerfiles). scikit-build-core + pybind11 are gigl-core's [build-system].requires;
+# setuptools + wheel back graphlearn-torch's setup.py, and ninja lets torch's
+# cpp_extension compile it in parallel instead of one file at a time.
+gigl-core-build-backend = [
+  "scikit-build-core>=0.10",
+  "pybind11>=2.12",
+  "setuptools>=68",
+  "wheel",
+  "ninja",
+]
 dev = [
   {include-group = "gigl-core-build-backend"},
   {include-group = "docs"},
@@ -212,6 +238,21 @@ explicit = true
 
 # ========== Mapping individual packages to their appropriate index =============
 [tool.uv.sources]
+# ============= GraphLearn-for-PyTorch (GLT)
+# GLT is built from a pinned commit instead of a release because GiGL relies on fixes
+# that are merged upstream but not yet in a tagged release:
+#   https://github.com/alibaba/graphlearn-for-pytorch/pull/151
+#   https://github.com/alibaba/graphlearn-for-pytorch/pull/153
+#   https://github.com/alibaba/graphlearn-for-pytorch/pull/154
+# To move the pin, pick a commit on alibaba/graphlearn-for-pytorch (or a fork) that
+# contains every fix above, set `rev` to its full 40-character sha, update the version in
+# [[tool.uv.dependency-metadata]] if setup.py's `_VERSION` changed, and run `uv lock` so
+# uv.lock records the new commit. uv caches the built wheel per GLT commit, so the
+# next `uv sync` rebuilds it automatically; if torch changes while the GLT commit stays
+# the same, run `uv cache clean graphlearn-torch` to drop the wheel built against the
+# old torch.
+graphlearn-torch = { git = "https://github.com/alibaba/graphlearn-for-pytorch", rev = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9" }
+
 # ============= PyTorch hosted Package Index Mappings
 torch = [
   { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
@@ -273,9 +314,6 @@ include = ["gigl*", "snapchat*"]
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
-
-[project.scripts]
-gigl-post-install = "gigl.scripts.post_install:main"
 
 [tool.ruff]
 # Skip generated proto files.

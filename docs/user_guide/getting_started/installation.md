@@ -135,12 +135,20 @@ pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
 
 pip resolves and installs `gigl-core` automatically from the same GCP registry. No separate install step is needed.
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
-script to setup GLT dependency:
+GiGL depends on [GraphLearn-for-PyTorch](https://github.com/alibaba/graphlearn-for-pytorch) (GLT) built from a pinned
+commit rather than a release, because it relies on fixes that are not in a GLT release yet. `pip install gigl[...]`
+pulls the PyPI `graphlearn-torch` wheel, which lacks those fixes, so replace it with a build of the pinned commit. The
+commit is the `rev` of `graphlearn-torch` under `[tool.uv.sources]` in
+[pyproject.toml](https://github.com/Snapchat/GiGL/blob/main/pyproject.toml):
 
 ```bash
-gigl-post-install
+pip install ninja  # lets torch compile the extension in parallel
+pip install --no-build-isolation --force-reinstall --no-deps \
+  "graphlearn-torch @ git+https://github.com/alibaba/graphlearn-for-pytorch@<rev from pyproject.toml>"
 ```
+
+`--no-build-isolation` is required so the build can see the torch you just installed. Set `WITH_CUDA=OFF` in the
+environment for a CPU-only build (the default is a CUDA build).
 
 ### Install from source
 
