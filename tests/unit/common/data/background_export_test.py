@@ -100,6 +100,12 @@ class _SlowExporter(EmbeddingExporter):
         super().add_embedding(id_batch, embedding_batch, embedding_type)
 
 
+class _SteadyExporter(EmbeddingExporter):
+    def add_embedding(self, id_batch, embedding_batch, embedding_type) -> None:
+        time.sleep(1.0)
+        super().add_embedding(id_batch, embedding_batch, embedding_type)
+
+
 class TestBackgroundExporter(TestCase):
     def setUp(self):
         super().setUp()
@@ -347,12 +353,69 @@ class TestBackgroundExporter(TestCase):
                 in_background=True,
                 max_pending_batches=0,
             )
+        with self.assertRaisesRegex(ValueError, "stall_timeout_s"):
+            EmbeddingExporter(
+                LocalUri(str(self.root / "out")),
+                in_background=True,
+                background_stall_timeout_s=0,
+            )
         with self.assertRaisesRegex(ValueError, "non-negative"):
             EmbeddingExporter(
                 LocalUri(str(self.root / "out")),
                 min_shard_size_threshold_bytes=-1,
                 in_background=True,
             )
+
+    @_guard(240)
+    def test_empty_batches_are_exported_like_synchronous(self):
+        sync_dir, bg_dir = self.root / "sync", self.root / "bg"
+        for directory, in_background in ((sync_dir, False), (bg_dir, True)):
+            exporter = EmbeddingExporter(
+                LocalUri(str(directory)), in_background=in_background
+            )
+            with exporter:
+                exporter.add_embedding(
+                    torch.empty(0, dtype=torch.int64), torch.empty(0, _DIM), "user"
+                )
+                exporter.add_embedding(torch.arange(4), torch.ones(4, _DIM), "user")
+            exporter.close()
+        self.assertEqual(_read_records(bg_dir), _read_records(sync_dir))
+        self.assertEqual(len(_read_records(bg_dir)), 4)
+
+    @_guard(240)
+    def test_use_after_close_raises_instead_of_overwriting_shards(self):
+        out = self.root / "out"
+        exporter = EmbeddingExporter(LocalUri(str(out)), in_background=True)
+        with exporter:
+            exporter.add_embedding(torch.arange(4), torch.ones(4, _DIM), "user")
+        exporter.close()
+        with self.assertRaisesRegex(BackgroundExportError, "closed"):
+            exporter.add_embedding(torch.arange(4), torch.ones(4, _DIM), "user")
+        self.assertEqual([r["node_id"] for r in _read_records(out)], [0, 1, 2, 3])
+
+    @_guard(240)
+    def test_add_record_is_rejected_in_background_mode(self):
+        exporter = EmbeddingExporter(
+            LocalUri(str(self.root / "out")), in_background=True
+        )
+        with self.assertRaises(NotImplementedError):
+            exporter.add_record([])
+        exporter.close()
+
+    @_guard(240)
+    def test_flush_waits_for_a_slow_but_steady_worker(self):
+        # Total time to drain the queue exceeds `stall_timeout_s`, but every command finishes well within it.
+        runner = BackgroundRunner(
+            _SteadyExporter,
+            dict(export_dir=LocalUri(str(self.root / "out"))),
+            max_pending_batches=8,
+            stall_timeout_s=3,
+        )
+        for _ in range(8):
+            runner.submit("add_embedding", torch.arange(4), torch.ones(4, _DIM), "user")
+        runner.flush_records()
+        runner.close()
+        self.assertEqual(len(_read_records(self.root / "out")), 8 * 4)
 
     @absltest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     @_guard(240)

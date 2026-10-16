@@ -8,13 +8,16 @@ synchronous exporter, so the output files are identical.
 The feeder thread exists so that CUDA tensors never block the caller: the device-to-host copy is queued into a pinned
 buffer and the feeder waits for it, instead of the caller waiting for the forward pass to finish.
 
-Nothing here blocks without a timeout. Every wait polls in short intervals and checks that the worker is alive and
+Nothing here blocks without a bound. Every wait polls in short intervals and checks that the worker is alive and
 making progress, and the worker checks that its parent is alive. A worker that dies, or that makes no progress for
 `stall_timeout_s` while work is pending, is killed and reported as a `BackgroundExportError`; there is no fallback to
-synchronous export.
+synchronous export. Waiting for a flush or shutdown has no fixed deadline: it lasts as long as the worker keeps
+finishing commands.
+
+The worker is started with the `spawn` method, which re-imports the caller's main module. Scripts that use a
+background exporter therefore need an `if __name__ == "__main__":` guard around their entry point.
 """
 
-import atexit
 import multiprocessing as mp
 import os
 import pickle
@@ -53,6 +56,8 @@ def _view(
     numel = 1
     for dim in shape:
         numel *= dim
+    if numel == 0:
+        return torch.empty(shape, dtype=dtype), 0
     nbytes = numel * torch.empty(0, dtype=dtype).element_size()
     return (
         torch.frombuffer(shm.buf, dtype=dtype, count=numel, offset=offset).reshape(
@@ -255,7 +260,9 @@ class _ProcessProxy:
         if not self._process.is_alive():
             self._fail(
                 BackgroundExportError(
-                    f"Background exporter process exited unexpectedly (exit code {self._process.exitcode})."
+                    f"Background exporter process exited unexpectedly (exit code {self._process.exitcode}). "
+                    "The worker's traceback, if any, is in its stderr, above this message. If the calling script "
+                    'has no `if __name__ == "__main__":` guard, the spawned worker re-runs it and fails.'
                 )
             )
             return
@@ -329,8 +336,9 @@ class _ProcessProxy:
                 if segment is not None:
                     segment.close()
                     segment.unlink()
+                # A segment cannot be empty, even when the batch is.
                 segment = self._segments[slot] = shared_memory.SharedMemory(
-                    create=True, size=need
+                    create=True, size=max(need, 1)
                 )
             ids_view, offset = _view(segment, 0, tuple(ids.shape), ids.dtype)
             ids_view.copy_(ids)
@@ -349,14 +357,15 @@ class _ProcessProxy:
                 )
             )
 
-    def _wait_for(self, token: str, timeout_s: float) -> None:
-        deadline = time.monotonic() + timeout_s
+    def _wait_for(self, token: str, timeout_s: Optional[float] = None) -> None:
+        """Waits for a reply. Without `timeout_s`, only worker death or the progress watchdog end the wait."""
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
         while True:
             with self._lock:
                 if token in self._tokens:
                     self._tokens.remove(token)
                     break
-            if time.monotonic() > deadline:
+            if deadline is not None and time.monotonic() > deadline:
                 self._fail(
                     BackgroundExportStalledError(
                         f"Background exporter did not reply '{token}' within {timeout_s:.0f}s. The worker was killed."
@@ -381,14 +390,14 @@ class _ProcessProxy:
     def flush(self) -> None:
         self.poll_error()
         self._put_command((_FLUSH,))
-        self._wait_for("done", self._stall_timeout_s + _STALL_GRACE_SECONDS)
+        self._wait_for("done")
 
     def stop(self) -> None:
         """Asks the worker to finish and exit. Always leaves the worker dead and shared memory freed."""
         try:
             if not self._dead:
                 self._put_command((_STOP,))
-                self._wait_for("done", self._stall_timeout_s + _STALL_GRACE_SECONDS)
+                self._wait_for("done")
         finally:
             self._process.join(_KILL_GRACE_SECONDS)
             self.kill()
@@ -396,17 +405,19 @@ class _ProcessProxy:
             raise self._error
 
 
-_runners: "weakref.WeakSet[BackgroundRunner]" = weakref.WeakSet()
-
-
-@atexit.register
-def _abort_runners_at_exit() -> None:
-    for runner in list(_runners):
-        runner._abort()
+def _shut_down(proxy: _ProcessProxy, closing: threading.Event) -> None:
+    closing.set()
+    proxy.kill()
 
 
 class BackgroundRunner:
     """Feeds batches to a worker process that runs `exporter_cls(**exporter_kwargs)`.
+
+    Memory is bounded by about `2 * max_pending_batches + 1` batches: up to `max_pending_batches` waiting for the
+    feeder thread, the same number in shared memory waiting for the worker, and the one the feeder is copying. The
+    shared-memory segments are reused and only grow, to the size of the largest batch seen in their slot.
+
+    The worker runs `exporter_cls` itself, so it must be constructible from `exporter_kwargs` alone.
 
     Args:
         exporter_cls: Exporter class the worker instantiates (with background disabled).
@@ -434,36 +445,34 @@ class BackgroundRunner:
             raise ValueError(
                 f"stall_timeout_s must be positive, but got {stall_timeout_s}"
             )
-        self._exporter_cls = exporter_cls
-        self._exporter_kwargs = exporter_kwargs
-        self._max_pending_batches = max_pending_batches
         self._stall_timeout_s = stall_timeout_s
-        self._startup_timeout_s = startup_timeout_s
-        self._feeder_error: Optional[BaseException] = None
+        self._feeder_errors: list[BaseException] = []
         self._closing = threading.Event()
-        self._proxy, self._queue, self._feeder = self._launch()
-        self._running = True
-        _runners.add(self)
-
-    def _launch(self) -> tuple[_ProcessProxy, "queue.Queue[Any]", threading.Thread]:
-        self._feeder_error = None
-        self._closing = threading.Event()
-        proxy = _ProcessProxy(
-            self._exporter_cls,
-            self._exporter_kwargs,
-            self._max_pending_batches,
-            self._stall_timeout_s,
-            self._startup_timeout_s,
+        self._proxy = _ProcessProxy(
+            exporter_cls,
+            exporter_kwargs,
+            max_pending_batches,
+            stall_timeout_s,
+            startup_timeout_s,
         )
-        batches: "queue.Queue[Any]" = queue.Queue(maxsize=self._max_pending_batches)
-        feeder = threading.Thread(
-            target=self._feed,
-            args=(proxy, batches, self._closing),
+        self._queue: "queue.Queue[Any]" = queue.Queue(maxsize=max_pending_batches)
+        # The feeder thread must not reference `self`, so that dropping the runner without `close` still cleans up.
+        self._feeder = threading.Thread(
+            target=_feed,
+            args=(
+                self._proxy,
+                self._queue,
+                self._closing,
+                self._feeder_errors,
+                stall_timeout_s,
+            ),
             name="background-exporter-feeder",
             daemon=True,
         )
-        feeder.start()
-        return proxy, batches, feeder
+        self._feeder.start()
+        self._running = True
+        # Kills the worker if the runner is garbage collected or the interpreter exits without `close`.
+        weakref.finalize(self, _shut_down, self._proxy, self._closing)
 
     def submit(
         self,
@@ -474,15 +483,16 @@ class BackgroundRunner:
     ) -> None:
         """Queues a batch. Tensors may be on the GPU and may be modified as soon as this returns."""
         if not self._running:
-            self._proxy, self._queue, self._feeder = self._launch()
-            self._running = True
+            raise BackgroundExportError("The background exporter was closed.")
         self._raise_error()
         ids, values = _snapshot(id_batch), _snapshot(value_batch)
-        copied: Optional[torch.cuda.Event] = None
-        if id_batch.is_cuda or value_batch.is_cuda:
-            # Device-to-host copies are asynchronous; the feeder waits on this before reading.
-            copied = torch.cuda.Event()
-            copied.record()
+        copied: list[torch.cuda.Event] = []
+        # Device-to-host copies are asynchronous; the feeder waits on these before reading. Each copy is queued on
+        # the current stream of its tensor's device, so the event is recorded there too.
+        for device in {t.device for t in (id_batch, value_batch) if t.is_cuda}:
+            event = torch.cuda.Event()
+            event.record(torch.cuda.current_stream(device))
+            copied.append(event)
         item = (method, ids, values, copied, record_type)
         while True:
             try:
@@ -502,66 +512,72 @@ class BackgroundRunner:
         self._proxy.flush()
 
     def close(self) -> None:
-        """Stops the worker after it finishes queued batches. Does not flush. A later `submit` starts a new one.
+        """Flushes, then stops the worker, after it finishes queued batches.
 
-        Raises the worker's error if it has not been raised yet. The worker is always gone when this returns.
+        The worker's exporter is exited, which flushes its remaining records, so this can raise the worker's error,
+        including upload errors, if it has not been raised yet. The worker is always gone when this returns. The
+        runner cannot be used afterwards.
         """
         if not self._running:
             return
         self._running = False
         self._closing.set()
-        self._feeder.join(self._stall_timeout_s + _STALL_GRACE_SECONDS)
+        while self._feeder.is_alive():
+            self._feeder.join(_POLL_SECONDS)
         self._proxy.stop()
-        if self._feeder_error is not None:
-            raise self._feeder_error
-
-    def _abort(self) -> None:
-        self._closing.set()
-        self._proxy.kill()
+        if self._feeder_errors:
+            raise self._feeder_errors[0]
 
     def _raise_error(self) -> None:
-        if self._feeder_error is not None:
-            raise self._feeder_error
+        if self._feeder_errors:
+            raise self._feeder_errors[0]
         self._proxy.poll_error()
         if self._running and not self._feeder.is_alive():
             raise BackgroundExportError(
                 "Background exporter feeder thread exited unexpectedly."
             )
 
-    def _feed(
-        self, proxy: _ProcessProxy, batches: queue.Queue, closing: threading.Event
-    ) -> None:
-        try:
-            proxy.wait_ready()
-        except BaseException as e:
-            self._feeder_error = e
-        while True:
-            try:
-                item = batches.get(timeout=_POLL_SECONDS)
-            except queue.Empty:
-                if closing.is_set():
-                    return  # Closing and nothing left to feed.
-                continue
-            try:
-                if self._feeder_error is not None:
-                    continue  # Drop work after a failure so the queue still drains.
-                method, ids, values, copied, record_type = item
-                if copied is not None:
-                    self._wait_for_copy(copied)
-                proxy.send(method, ids, values, record_type)
-            except BaseException as e:  # Surfaced on the caller's thread.
-                self._feeder_error = e
-            finally:
-                batches.task_done()
 
-    def _wait_for_copy(self, copied: "torch.cuda.Event") -> None:
-        deadline = time.monotonic() + self._stall_timeout_s
-        while not copied.query():
-            if time.monotonic() > deadline:
-                raise BackgroundExportStalledError(
-                    f"A device-to-host copy did not finish within {self._stall_timeout_s:.0f}s."
-                )
-            time.sleep(0.001)
+def _feed(
+    proxy: _ProcessProxy,
+    batches: "queue.Queue[Any]",
+    closing: threading.Event,
+    errors: list[BaseException],
+    stall_timeout_s: float,
+) -> None:
+    """Feeder thread: moves snapshotted batches into shared memory in order, once their host copies finish."""
+    try:
+        proxy.wait_ready()
+    except BaseException as e:
+        errors.append(e)
+    while True:
+        try:
+            item = batches.get(timeout=_POLL_SECONDS)
+        except queue.Empty:
+            if closing.is_set():
+                return  # Closing and nothing left to feed.
+            continue
+        try:
+            if errors:
+                continue  # Drop work after a failure so the queue still drains.
+            method, ids, values, copied, record_type = item
+            for event in copied:
+                _wait_for_copy(event, stall_timeout_s)
+            proxy.send(method, ids, values, record_type)
+        except BaseException as e:  # Surfaced on the caller's thread.
+            errors.append(e)
+        finally:
+            batches.task_done()
+
+
+def _wait_for_copy(copied: "torch.cuda.Event", stall_timeout_s: float) -> None:
+    deadline = time.monotonic() + stall_timeout_s
+    while not copied.query():
+        if time.monotonic() > deadline:
+            raise BackgroundExportStalledError(
+                f"A device-to-host copy did not finish within {stall_timeout_s:.0f}s."
+            )
+        time.sleep(0.001)
 
 
 def _snapshot(tensor: torch.Tensor) -> torch.Tensor:

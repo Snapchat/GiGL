@@ -152,6 +152,10 @@ class GcsExporter:
             records (Iterable[dict]): An iterable of dictionaries containing the records.
         """
 
+        if self._background is not None:
+            raise NotImplementedError(
+                "`add_record` is not supported with `in_background=True`; use the typed `add_*` methods."
+            )
         start = time.perf_counter()
         fastavro.writer(self._buffer, self._avro_schema, records)
         self._write_time += time.perf_counter() - start
@@ -233,9 +237,12 @@ class GcsExporter:
         self._in_context = False
 
     def close(self) -> None:
-        """Stops the background worker, if any, after it finishes queued batches. Does not flush.
+        """Flushes and stops the background worker, if any, after it finishes queued batches.
 
-        Only needed with `in_background=True`; the worker otherwise lives until the interpreter exits.
+        The worker's exporter is exited, which flushes its remaining records, so this can raise the worker's error,
+        including upload errors. Only needed with `in_background=True`; a worker that is never closed is killed when
+        the exporter is garbage collected or the interpreter exits, without flushing. The exporter cannot add records
+        after `close()`.
         """
         if self._background is not None:
             self._background.close()
@@ -263,9 +270,11 @@ class EmbeddingExporter(GcsExporter):
                 `add_embedding` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
                 as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
                 worker are re-raised from the next `add_embedding`, `flush_records`, or context-manager exit. Call
-                `close()` to stop the worker. Defaults to False.
+                `close()` to flush and stop the worker. The worker runs the base exporter class, so overrides in
+                subclasses do not apply to it, and the calling script needs an `if __name__ == "__main__":` guard
+                because the worker is started with `spawn`. Defaults to False.
             max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
-                before `add_embedding` blocks. This bounds memory.
+                before `add_embedding` blocks. Memory is bounded by about twice this many batches.
             background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
                 work pending, and the longest a single upload may take, before it is killed and a
                 `BackgroundExportStalledError` is raised.
@@ -350,9 +359,11 @@ class PredictionExporter(GcsExporter):
                 `add_prediction` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
                 as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
                 worker are re-raised from the next `add_prediction`, `flush_records`, or context-manager exit. Call
-                `close()` to stop the worker. Defaults to False.
+                `close()` to flush and stop the worker. The worker runs the base exporter class, so overrides in
+                subclasses do not apply to it, and the calling script needs an `if __name__ == "__main__":` guard
+                because the worker is started with `spawn`. Defaults to False.
             max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
-                before `add_prediction` blocks. This bounds memory.
+                before `add_prediction` blocks. Memory is bounded by about twice this many batches.
             background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
                 work pending, and the longest a single upload may take, before it is killed and a
                 `BackgroundExportStalledError` is raised.
