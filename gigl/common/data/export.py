@@ -24,6 +24,7 @@ from jaxtyping import Int64, Shaped
 from typing_extensions import Self
 
 from gigl.common import GcsUri, LocalUri, Uri
+from gigl.common.data.background_export import BackgroundRunner
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.bq import BqUtils
@@ -127,6 +128,7 @@ class GcsExporter:
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
         self._avro_schema = avro_schema
+        self._background: Optional[BackgroundRunner] = None
 
         if isinstance(
             self._base_export_uri, LocalUri
@@ -206,6 +208,9 @@ class GcsExporter:
 
         After this method is called, the buffer is reset to an empty state.
         """
+        if self._background is not None:
+            self._background.flush_records()
+            return
         if self._buffer.tell() == 0:
             logger.info("No records to flush, will skip upload.")
             return
@@ -224,6 +229,14 @@ class GcsExporter:
         self.flush_records()
         self._in_context = False
 
+    def close(self) -> None:
+        """Stops the background worker, if any, after it finishes queued batches. Does not flush.
+
+        Only needed with `in_background=True`; the worker otherwise lives until the interpreter exits.
+        """
+        if self._background is not None:
+            self._background.close()
+
 
 class EmbeddingExporter(GcsExporter):
     def __init__(
@@ -231,6 +244,8 @@ class EmbeddingExporter(GcsExporter):
         export_dir: Uri,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
+        in_background: bool = False,
+        max_pending_batches: int = 8,
     ):
         """
         Initializes an EmbeddingExporter instance, which will write embeddings to gcs with an embedding avro schema for
@@ -240,6 +255,13 @@ class EmbeddingExporter(GcsExporter):
             export_dir (Uri): URI where the Avro files will be uploaded.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+            in_background (bool): If True, a worker process does the conversion, Avro encoding, and uploads, so that
+                `add_embedding` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
+                as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
+                worker are re-raised from the next `add_embedding`, `flush_records`, or context-manager exit. Call
+                `close()` to stop the worker. Defaults to False.
+            max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
+                before `add_embedding` blocks. This bounds memory.
         """
         super().__init__(
             export_dir,
@@ -247,6 +269,16 @@ class EmbeddingExporter(GcsExporter):
             file_prefix,
             min_shard_size_threshold_bytes,
         )
+        if in_background:
+            self._background = BackgroundRunner(
+                EmbeddingExporter,
+                dict(
+                    export_dir=export_dir,
+                    file_prefix=file_prefix,
+                    min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
+                ),
+                max_pending_batches,
+            )
 
     def add_embedding(
         self,
@@ -262,6 +294,11 @@ class EmbeddingExporter(GcsExporter):
             embedding_batch (torch.Tensor): A torch.Tensor containing embeddings corresponding to the integer IDs in `id_batch`.
             embedding_type (str): A tag for the type of the embeddings, e.g., 'user', 'content', etc.
         """
+        if self._background is not None:
+            self._background.submit(
+                "add_embedding", id_batch, embedding_batch, embedding_type
+            )
+            return
         # Convert torch tensors to NumPy arrays, and then to Python int(s)
         # and Python list(s). This is faster than converting torch tensors
         # directly to Python int(s) and Python list(s), as Numpy's implementation
@@ -289,6 +326,8 @@ class PredictionExporter(GcsExporter):
         export_dir: Uri,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
+        in_background: bool = False,
+        max_pending_batches: int = 8,
     ):
         """
         Initializes a PredictionExporter instance, which will write predictions to gcs with a prediction avro schema for
@@ -298,6 +337,13 @@ class PredictionExporter(GcsExporter):
             export_dir (Uri): URI where the Avro files will be uploaded.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+            in_background (bool): If True, a worker process does the conversion, Avro encoding, and uploads, so that
+                `add_prediction` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
+                as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
+                worker are re-raised from the next `add_prediction`, `flush_records`, or context-manager exit. Call
+                `close()` to stop the worker. Defaults to False.
+            max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
+                before `add_prediction` blocks. This bounds memory.
         """
 
         super().__init__(
@@ -306,6 +352,16 @@ class PredictionExporter(GcsExporter):
             file_prefix,
             min_shard_size_threshold_bytes,
         )
+        if in_background:
+            self._background = BackgroundRunner(
+                PredictionExporter,
+                dict(
+                    export_dir=export_dir,
+                    file_prefix=file_prefix,
+                    min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
+                ),
+                max_pending_batches,
+            )
 
     def add_prediction(
         self,
@@ -321,6 +377,11 @@ class PredictionExporter(GcsExporter):
             prediction_batch (torch.Tensor): A torch.Tensor containing predictions corresponding to the integer IDs in `id_batch`.
             prediction_type (str): A tag for the type of the predictions, e.g., 'user', 'content', etc.
         """
+        if self._background is not None:
+            self._background.submit(
+                "add_prediction", id_batch, prediction_batch, prediction_type
+            )
+            return
         # Convert torch tensors to NumPy arrays, and then to Python int(s)
         # and Python list(s). This is faster than converting torch tensors
         # directly to Python int(s) and Python list(s), as Numpy's implementation
