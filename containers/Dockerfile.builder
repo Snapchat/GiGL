@@ -58,6 +58,8 @@ COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY requirements requirements
 # Needed to install GLT
+# post_install.py imports gigl.scripts.glt_wheel_cache, so `gigl` must be a package here.
+COPY gigl/__init__.py gigl/__init__.py
 COPY gigl/scripts gigl/scripts
 
 

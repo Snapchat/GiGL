@@ -18,10 +18,7 @@ from pathlib import Path
 
 import torch
 
-# Plain imports so this works both as `python gigl/scripts/post_install.py` and as the
-# `gigl-post-install` entry point.
-sys.path.insert(0, str(Path(__file__).parent))
-from glt_wheel_cache import (  # noqa: E402
+from gigl.scripts.glt_wheel_cache import (
     compute_cache_key,
     find_cached_wheel,
     publish_wheel,

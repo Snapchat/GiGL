@@ -20,42 +20,48 @@ from gigl.scripts.glt_wheel_cache import (
 from gigl.scripts.post_install import install_glt_wheel
 from tests.test_assets.test_case import TestCase
 
-_BASE_INPUTS = dict(
-    commit="88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9",
-    patch_contents=[b"a", b"b"],
-    variant="cuda7.5",
-    torch_version="2.8.0+cu128",
-    python_tag="cp311",
-)
+
+def _key(
+    commit: str = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9",
+    patch_contents: list[bytes] = [b"a", b"b"],
+    variant: str = "cuda7.5",
+    torch_version: str = "2.8.0+cu128",
+    python_tag: str = "cp311",
+) -> str:
+    """compute_cache_key with baseline inputs; override one to test its effect."""
+    return compute_cache_key(
+        commit=commit,
+        patch_contents=patch_contents,
+        variant=variant,
+        torch_version=torch_version,
+        python_tag=python_tag,
+    )
 
 
 class ComputeCacheKeyTest(TestCase):
     def test_key_is_deterministic_and_formatted(self) -> None:
-        key = compute_cache_key(**_BASE_INPUTS)
-        self.assertEqual(key, compute_cache_key(**_BASE_INPUTS))
+        key = _key()
+        self.assertEqual(key, _key())
         self.assertRegex(
             key, r"^glt-88ff111a-p[0-9a-f]{12}-cuda7\.5-torch2\.8\.0\+cu128-cp311$"
         )
 
     def test_changing_any_single_input_changes_the_key(self) -> None:
-        base = compute_cache_key(**_BASE_INPUTS)
-        changes = dict(
-            commit="99ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9",
-            patch_contents=[b"a", b"c"],
-            variant="cpu",
-            torch_version="2.9.0",
-            python_tag="cp312",
-        )
-        for name, value in changes.items():
+        base = _key()
+        changed = {
+            "commit": _key(commit="99ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"),
+            "patch_contents": _key(patch_contents=[b"a", b"c"]),
+            "variant": _key(variant="cpu"),
+            "torch_version": _key(torch_version="2.9.0"),
+            "python_tag": _key(python_tag="cp312"),
+        }
+        for name, key in changed.items():
             with self.subTest(changed=name):
-                self.assertNotEqual(
-                    base, compute_cache_key(**{**_BASE_INPUTS, name: value})
-                )
+                self.assertNotEqual(base, key)
 
     def test_patch_order_matters(self) -> None:
         self.assertNotEqual(
-            compute_cache_key(**{**_BASE_INPUTS, "patch_contents": [b"a", b"b"]}),
-            compute_cache_key(**{**_BASE_INPUTS, "patch_contents": [b"b", b"a"]}),
+            _key(patch_contents=[b"a", b"b"]), _key(patch_contents=[b"b", b"a"])
         )
 
 
