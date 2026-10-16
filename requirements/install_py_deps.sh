@@ -144,7 +144,7 @@ install_gigl_lib_deps() {
     then
         sync_args+=(--group dev)
     else
-        sync_args+=(--group gigl-core-build-backend)
+        sync_args+=(--group gigl-core-build-backend --group glt-build-backend)
     fi
 
     # gigl-core and graphlearn-torch (GLT) both compile against torch, which is a runtime

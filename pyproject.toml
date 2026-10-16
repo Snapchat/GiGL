@@ -129,19 +129,17 @@ requires-dist = []
 [dependency-groups]
 # Build requirements of the packages listed in no-build-isolation-package. uv does not
 # install these automatically when isolation is off, so they must be present in the
-# ambient environment before any gigl-core / graphlearn-torch build (uv sync, uv build,
-# Dockerfiles). scikit-build-core + pybind11 are gigl-core's [build-system].requires;
-# setuptools + wheel back graphlearn-torch's setup.py, and ninja lets torch's
-# cpp_extension compile it in parallel instead of one file at a time.
-gigl-core-build-backend = [
-  "scikit-build-core>=0.10",
-  "pybind11>=2.12",
-  "setuptools>=68",
-  "wheel",
-  "ninja",
-]
+# ambient environment before the package builds (uv sync, uv build, Dockerfiles).
+# These are gigl-core's [build-system].requires.
+gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# graphlearn-torch builds with a plain setup.py (setuptools + wheel). ninja is optional for
+# it but makes torch's cpp_extension compile the extension in parallel instead of one
+# translation unit at a time; uv puts the venv's bin on PATH during the build so the PyPI
+# ninja is found.
+glt-build-backend = ["setuptools>=68", "wheel", "ninja"]
 dev = [
   {include-group = "gigl-core-build-backend"},
+  {include-group = "glt-build-backend"},
   {include-group = "docs"},
   {include-group = "lint"},
   {include-group = "test"},

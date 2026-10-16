@@ -829,9 +829,11 @@ docs = [
     { name = "sphinx-tabs" },
 ]
 gigl-core-build-backend = [
-    { name = "ninja" },
     { name = "pybind11" },
     { name = "scikit-build-core" },
+]
+glt-build-backend = [
+    { name = "ninja" },
     { name = "setuptools" },
     { name = "wheel" },
 ]
@@ -963,9 +965,11 @@ docs = [
     { name = "sphinx-tabs", specifier = "==3.4.5" },
 ]
 gigl-core-build-backend = [
-    { name = "ninja" },
     { name = "pybind11", specifier = ">=2.12" },
     { name = "scikit-build-core", specifier = ">=0.10" },
+]
+glt-build-backend = [
+    { name = "ninja" },
     { name = "setuptools", specifier = ">=68" },
     { name = "wheel" },
 ]
