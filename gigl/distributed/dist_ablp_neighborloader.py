@@ -241,8 +241,9 @@ class DistABLPLoader(BaseDistLoader):
             include_edge_features (bool): Whether to sample edge ids and fetch edge features when
                 the dataset has them. Set to ``False`` for models that never read ``edge_attr``: the
                 per-batch edge-feature requests and the sampled edge ids (``data.edge``) are skipped,
-                which raises sampling throughput, and ``edge_attr`` is returned empty (shape
-                ``[0, edge_dim]``), so layers that consume ``edge_attr`` will fail with shape
+                which raises sampling throughput. Homogeneous batches carry an empty ``edge_attr``
+                (shape ``[0, edge_dim]``); heterogeneous batches carry no ``edge_attr`` on the sampled
+                edge stores. Layers that consume ``edge_attr`` will therefore fail with shape
                 mismatches. Must be the same on every rank sharing a sampling backend in Graph Store
                 mode. (default: ``True``).
         """

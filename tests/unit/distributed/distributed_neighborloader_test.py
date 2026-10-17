@@ -1619,12 +1619,10 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
             input_nodes=(_USER, torch.tensor([0])),
             batch_size=1,
         )
-        # The full dequantized width is 2; the edge type without features gets an empty
-        # tensor of the raw width when edge features are included.
-        self.assertIn(2, summary["edge_attr_dims"])
-        if not include_edge_features:
-            self.assertEqual(summary["edge_attr_dims"], [2])
+        # Sampled edge stores carry edge features only when they are included.
         self.assertEqual(summary["edge_attr_rows"] > 0, include_edge_features)
+        if include_edge_features:
+            self.assertIn(2, summary["edge_attr_dims"])
 
     def test_incoming_edges_reverse_feature_metadata_and_output_stores(self) -> None:
         partition_output = PartitionOutput(

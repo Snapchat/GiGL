@@ -95,10 +95,16 @@ def _full_width_edge_feature_info(
     assert metadata is not None
     if isinstance(metadata, dict):
         per_edge_type = cast(dict[EdgeType, FeatureQuantizationMetadata], metadata)
-        return {
-            edge_type: FeatureInfo(dim=md.feature_dim, dtype=torch.float32)
-            for edge_type, md in per_edge_type.items()
-        }
+        # Edge types without quantization keep their raw feature info.
+        raw_info = cast(
+            dict[EdgeType, FeatureInfo], dataset_schema.edge_feature_info or {}
+        )
+        edge_feature_info = dict(raw_info)
+        for edge_type, md in per_edge_type.items():
+            edge_feature_info[edge_type] = FeatureInfo(
+                dim=md.feature_dim, dtype=torch.float32
+            )
+        return edge_feature_info
     feature_info = FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
     if dataset_schema.is_homogeneous_with_labeled_edge_type:
         # Sampled as heterogeneous (to carry label edges) and converted back afterwards; GLT
@@ -479,7 +485,8 @@ class BaseDistLoader(DistLoader):
             include_edge_features: Whether to sample edge ids and fetch edge features when the
                 dataset has them. Pass ``False`` for models that never read ``edge_attr``: the
                 per-batch edge-feature requests and the sampled edge ids (``data.edge``) are
-                skipped, and ``edge_attr`` comes back empty.
+                skipped, and batches carry no edge features (homogeneous batches get an empty
+                ``edge_attr``).
 
         Returns:
             A fully configured SamplingConfig.
