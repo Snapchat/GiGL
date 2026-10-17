@@ -361,7 +361,9 @@ class DistRangePartitioner(DistPartitioner):
         gc.collect()
 
         if len(res_list) == 0:
-            partitioned_edge_index = torch.empty((2, 0))
+            partitioned_edge_index = torch.empty(
+                (2, 0), dtype=self._edge_index_dtype(edge_type)
+            )
             partitioned_edge_features = (
                 torch.empty(0, edge_feat_dim) if edge_feat_dim is not None else None
             )
