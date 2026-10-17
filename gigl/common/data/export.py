@@ -24,6 +24,10 @@ from jaxtyping import Int64, Shaped
 from typing_extensions import Self
 
 from gigl.common import GcsUri, LocalUri, Uri
+from gigl.common.data.background_export import (
+    DEFAULT_STALL_TIMEOUT_SECONDS,
+    BackgroundRunner,
+)
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
 from gigl.src.common.utils.bq import BqUtils
@@ -127,6 +131,7 @@ class GcsExporter:
         self._prefix = file_prefix
         self._min_shard_size_threshold_bytes = min_shard_size_threshold_bytes
         self._avro_schema = avro_schema
+        self._background: Optional[BackgroundRunner] = None
 
         if isinstance(
             self._base_export_uri, LocalUri
@@ -147,6 +152,10 @@ class GcsExporter:
             records (Iterable[dict]): An iterable of dictionaries containing the records.
         """
 
+        if self._background is not None:
+            raise NotImplementedError(
+                "`add_record` is not supported with `in_background=True`; use the typed `add_*` methods."
+            )
         start = time.perf_counter()
         fastavro.writer(self._buffer, self._avro_schema, records)
         self._write_time += time.perf_counter() - start
@@ -206,6 +215,9 @@ class GcsExporter:
 
         After this method is called, the buffer is reset to an empty state.
         """
+        if self._background is not None:
+            self._background.flush_records()
+            return
         if self._buffer.tell() == 0:
             logger.info("No records to flush, will skip upload.")
             return
@@ -224,6 +236,17 @@ class GcsExporter:
         self.flush_records()
         self._in_context = False
 
+    def close(self) -> None:
+        """Flushes and stops the background worker, if any, after it finishes queued batches.
+
+        The worker's exporter is exited, which flushes its remaining records, so this can raise the worker's error,
+        including upload errors. Only needed with `in_background=True`; a worker that is never closed is killed when
+        the exporter is garbage collected or the interpreter exits, without flushing. The exporter cannot add records
+        after `close()`.
+        """
+        if self._background is not None:
+            self._background.close()
+
 
 class EmbeddingExporter(GcsExporter):
     def __init__(
@@ -231,6 +254,9 @@ class EmbeddingExporter(GcsExporter):
         export_dir: Uri,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
+        in_background: bool = False,
+        max_pending_batches: int = 8,
+        background_stall_timeout_s: float = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         """
         Initializes an EmbeddingExporter instance, which will write embeddings to gcs with an embedding avro schema for
@@ -240,6 +266,18 @@ class EmbeddingExporter(GcsExporter):
             export_dir (Uri): URI where the Avro files will be uploaded.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+            in_background (bool): If True, a worker process does the conversion, Avro encoding, and uploads, so that
+                `add_embedding` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
+                as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
+                worker are re-raised from the next `add_embedding`, `flush_records`, or context-manager exit. Call
+                `close()` to flush and stop the worker. The worker runs the base exporter class, so overrides in
+                subclasses do not apply to it, and the calling script needs an `if __name__ == "__main__":` guard
+                because the worker is started with `spawn`. Defaults to False.
+            max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
+                before `add_embedding` blocks. Memory is bounded by about twice this many batches.
+            background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
+                work pending, and the longest a single upload may take, before it is killed and a
+                `BackgroundExportStalledError` is raised.
         """
         super().__init__(
             export_dir,
@@ -247,6 +285,17 @@ class EmbeddingExporter(GcsExporter):
             file_prefix,
             min_shard_size_threshold_bytes,
         )
+        if in_background:
+            self._background = BackgroundRunner(
+                EmbeddingExporter,
+                dict(
+                    export_dir=export_dir,
+                    file_prefix=file_prefix,
+                    min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
+                ),
+                max_pending_batches,
+                background_stall_timeout_s,
+            )
 
     def add_embedding(
         self,
@@ -262,6 +311,11 @@ class EmbeddingExporter(GcsExporter):
             embedding_batch (torch.Tensor): A torch.Tensor containing embeddings corresponding to the integer IDs in `id_batch`.
             embedding_type (str): A tag for the type of the embeddings, e.g., 'user', 'content', etc.
         """
+        if self._background is not None:
+            self._background.submit(
+                "add_embedding", id_batch, embedding_batch, embedding_type
+            )
+            return
         # Convert torch tensors to NumPy arrays, and then to Python int(s)
         # and Python list(s). This is faster than converting torch tensors
         # directly to Python int(s) and Python list(s), as Numpy's implementation
@@ -289,6 +343,9 @@ class PredictionExporter(GcsExporter):
         export_dir: Uri,
         file_prefix: Optional[str] = None,
         min_shard_size_threshold_bytes: int = 0,
+        in_background: bool = False,
+        max_pending_batches: int = 8,
+        background_stall_timeout_s: float = DEFAULT_STALL_TIMEOUT_SECONDS,
     ):
         """
         Initializes a PredictionExporter instance, which will write predictions to gcs with a prediction avro schema for
@@ -298,6 +355,18 @@ class PredictionExporter(GcsExporter):
             export_dir (Uri): URI where the Avro files will be uploaded.
             file_prefix (Optional[str]): An optional prefix to add to the file name. If provided then the
             min_shard_size_threshold_bytes (int): The minimum size in bytes at which the buffer will be flushed to GCS.
+            in_background (bool): If True, a worker process does the conversion, Avro encoding, and uploads, so that
+                `add_prediction` returns as soon as the batch is queued. Tensors may be on the GPU and may be modified
+                as soon as the call returns. The output is identical to the synchronous exporter. Errors raised by the
+                worker are re-raised from the next `add_prediction`, `flush_records`, or context-manager exit. Call
+                `close()` to flush and stop the worker. The worker runs the base exporter class, so overrides in
+                subclasses do not apply to it, and the calling script needs an `if __name__ == "__main__":` guard
+                because the worker is started with `spawn`. Defaults to False.
+            max_pending_batches (int): With `in_background`, the number of batches that may be waiting for the worker
+                before `add_prediction` blocks. Memory is bounded by about twice this many batches.
+            background_stall_timeout_s (float): With `in_background`, the longest the worker may make no progress with
+                work pending, and the longest a single upload may take, before it is killed and a
+                `BackgroundExportStalledError` is raised.
         """
 
         super().__init__(
@@ -306,6 +375,17 @@ class PredictionExporter(GcsExporter):
             file_prefix,
             min_shard_size_threshold_bytes,
         )
+        if in_background:
+            self._background = BackgroundRunner(
+                PredictionExporter,
+                dict(
+                    export_dir=export_dir,
+                    file_prefix=file_prefix,
+                    min_shard_size_threshold_bytes=min_shard_size_threshold_bytes,
+                ),
+                max_pending_batches,
+                background_stall_timeout_s,
+            )
 
     def add_prediction(
         self,
@@ -321,6 +401,11 @@ class PredictionExporter(GcsExporter):
             prediction_batch (torch.Tensor): A torch.Tensor containing predictions corresponding to the integer IDs in `id_batch`.
             prediction_type (str): A tag for the type of the predictions, e.g., 'user', 'content', etc.
         """
+        if self._background is not None:
+            self._background.submit(
+                "add_prediction", id_batch, prediction_batch, prediction_type
+            )
+            return
         # Convert torch tensors to NumPy arrays, and then to Python int(s)
         # and Python list(s). This is faster than converting torch tensors
         # directly to Python int(s) and Python list(s), as Numpy's implementation
