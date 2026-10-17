@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Sampling-worker shutdown (`DistSamplingProducer` and the Graph Store `SharedDistSamplingBackend`) waits at most one
   `MP_STATUS_CHECK_INTERVAL` in total for workers to stop, instead of one interval per worker, before terminating the
-  stragglers
+  stragglers by @kmontemayor2-sc
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
