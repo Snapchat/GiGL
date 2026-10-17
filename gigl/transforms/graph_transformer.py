@@ -1523,25 +1523,45 @@ def _lookup_pairwise_relation_indices(
         if relation_batch_indices.numel() == 0:
             continue
 
-        relation_indices = torch.stack(
-            [
-                relation_batch_indices,
-                relation_query_positions,
-                relation_key_positions,
-                torch.full(
-                    (relation_batch_indices.size(0),),
-                    relation_idx,
-                    dtype=torch.long,
-                    device=device,
-                ),
-            ],
-            dim=1,
+        relation_index_parts.append(
+            _unique_relation_indices(
+                batch_indices=relation_batch_indices,
+                query_positions=relation_query_positions,
+                key_positions=relation_key_positions,
+                relation_idx=relation_idx,
+                sequence_length=node_index_sequences.size(1),
+            )
         )
-        relation_index_parts.append(torch.unique(relation_indices, dim=0))
 
     if not relation_index_parts:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     return torch.cat(relation_index_parts, dim=0)
+
+
+def _unique_relation_indices(
+    batch_indices: Tensor,
+    query_positions: Tensor,
+    key_positions: Tensor,
+    relation_idx: int,
+    sequence_length: int,
+) -> Tensor:
+    """Return the sorted unique ``[batch, query, key, relation_idx]`` rows.
+
+    Equivalent to ``torch.unique(torch.stack(...), dim=0)`` but packs
+    ``(batch, query, key)`` into one int64 key and runs a 1-D ``torch.unique``,
+    which is much faster. Positions are below ``sequence_length``, so the keys
+    are below ``batch_size * sequence_length**2`` and cannot overflow int64.
+    """
+    keys = (batch_indices * sequence_length + query_positions) * sequence_length
+    unique_keys = torch.unique(keys + key_positions)
+    key_out = unique_keys % sequence_length
+    unique_keys = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    query_out = unique_keys % sequence_length
+    batch_out = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    return torch.stack(
+        [batch_out, query_out, key_out, torch.full_like(batch_out, relation_idx)],
+        dim=1,
+    )
 
 
 def _get_sampled_frontier_batch_node_keys(

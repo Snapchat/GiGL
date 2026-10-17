@@ -12,6 +12,7 @@ from torch_geometric.data import HeteroData
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
+    _unique_relation_indices,
     heterodata_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
@@ -285,6 +286,49 @@ class TestGetKHopNeighborsSparse(TestCase):
         mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertEqual(nodes_reached, [0])
+
+
+class TestUniqueRelationIndices(TestCase):
+    def _assert_matches_unique_dim0(
+        self,
+        batch: torch.Tensor,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        relation_idx: int,
+        sequence_length: int,
+    ) -> None:
+        rows = torch.stack(
+            [batch, query, key, torch.full_like(batch, relation_idx)], dim=1
+        )
+        expected = torch.unique(rows, dim=0)
+        actual = _unique_relation_indices(
+            batch, query, key, relation_idx, sequence_length
+        )
+        self.assertEqual(actual.dtype, expected.dtype)
+        self.assertTrue(torch.equal(actual, expected), f"{actual} != {expected}")
+
+    def test_random_rows_with_duplicates_match_unique_dim0(self) -> None:
+        generator = torch.Generator().manual_seed(0)
+        for num_sequences, sequence_length, relation_idx in [
+            (1, 1, 0),
+            (8, 5, 2),
+            (64, 40, 3),
+        ]:
+            columns = [
+                torch.randint(0, high, (3000,), generator=generator)
+                for high in (num_sequences, sequence_length, sequence_length)
+            ]
+            self._assert_matches_unique_dim0(
+                columns[0], columns[1], columns[2], relation_idx, sequence_length
+            )
+
+    def test_empty_and_single_row_match_unique_dim0(self) -> None:
+        empty = torch.zeros((0,), dtype=torch.long)
+        self._assert_matches_unique_dim0(empty, empty, empty, 1, 4)
+        one = torch.tensor([2])
+        self._assert_matches_unique_dim0(
+            one, torch.tensor([3]), torch.tensor([1]), 0, 4
+        )
 
 
 class TestHeteroToGraphTransformerInput(TestCase):
