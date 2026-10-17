@@ -5,7 +5,6 @@ import multiprocessing as mp
 import sys
 import tempfile
 import traceback
-from distutils.util import strtobool
 from typing import Any, Optional
 
 import tensorflow as tf
@@ -19,6 +18,7 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils, torch_training
 from gigl.common.utils.local_fs import does_path_exist
+from gigl.common.utils.parse import str_to_bool
 from gigl.common.utils.torch_training import (
     get_distributed_backend,
     get_rank,
@@ -300,7 +300,9 @@ class GnnTrainingProcess:
         # If all parameters are always expected to receive backprop in training, it is not recommended to enable this flag, as it can adversely affect
         # performance as a result of the extra traversal of the autograd graph every iteration.
         should_enable_find_unused_parameters = bool(
-            strtobool(trainer_args.get("should_enable_find_unused_parameters", "False"))
+            str_to_bool(
+                trainer_args.get("should_enable_find_unused_parameters", "False")
+            )
         )
 
         trainer_instance.model = setup_model_device(
