@@ -1,0 +1,268 @@
+"""Fetching a raw feature matrix and its packed sidecar with one request per partition.
+
+Feature quantization stores the columns of a node or edge type in two GLT feature stores: a raw float matrix and a
+packed ``uint8`` sidecar. Fetching them through two ``DistFeature`` objects costs two RPCs per remote partition for
+every batch. ``FusedFeatureStore`` serves both stores as one row of bytes (the float columns reinterpreted as bytes,
+followed by the sidecar columns) and ``FusedDistFeature`` is a ``DistFeature`` over such stores, so one lookup is one
+request per partition. ``FusedDistFeature.async_get`` resolves to the two matrices.
+"""
+
+from typing import Optional, Union
+
+import torch
+from graphlearn_torch.data import Feature
+from graphlearn_torch.distributed.dist_feature import (
+    DistFeature,
+    RpcFeatureLookupCallee,
+)
+from graphlearn_torch.distributed.rpc import RpcDataPartitionRouter, rpc_register
+from graphlearn_torch.partition import GLTPartitionBook, PartitionBook
+from graphlearn_torch.typing import EdgeType, NodeType
+from graphlearn_torch.utils import ensure_device, get_available_device
+
+
+class FusedFeatureStore:
+    """A raw float feature store and its packed sidecar, served to other partitions as one ``uint8`` row per entity.
+
+    A served row holds the raw float columns reinterpreted as bytes, then the sidecar columns, then zero padding up to
+    a multiple of the raw dtype's size.
+    The padding keeps every row aligned, so the raw columns of a received row can be read as floats without a copy.
+
+    Args:
+        raw: Raw float feature store with at least one column.
+        packed: Packed ``uint8`` sidecar store with the same ids and id mapping as ``raw``.
+    """
+
+    def __init__(self, raw: Feature, packed: Feature) -> None:
+        self._raw = raw
+        self._packed = packed
+
+    def lazy_init_with_ipc_handle(self) -> None:
+        """Materializes both stores after an IPC transfer."""
+        self._raw.lazy_init_with_ipc_handle()
+        self._packed.lazy_init_with_ipc_handle()
+
+    @property
+    def _raw_dtype(self) -> torch.dtype:
+        self._raw.lazy_init_with_ipc_handle()
+        return self._raw.feature_tensor.dtype
+
+    @property
+    def _raw_row_bytes(self) -> int:
+        return self._raw.shape[1] * self._raw_dtype.itemsize
+
+    @property
+    def _packed_dim(self) -> int:
+        return self._packed.shape[1]
+
+    @property
+    def _row_bytes(self) -> int:
+        itemsize = self._raw_dtype.itemsize
+        unpadded = self._raw_row_bytes + self._packed_dim
+        return (unpadded + itemsize - 1) // itemsize * itemsize
+
+    def __getitem__(self, ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Raw float rows and packed sidecar rows of ids that are local to this store."""
+        return self._raw[ids], self._packed[ids]
+
+    def cpu_get(self, ids: torch.Tensor) -> torch.Tensor:
+        """Served rows of ids from the CPU tensors, as ``[len(ids), row_bytes]`` bytes, for answering remote requests.
+
+        Each store is gathered straight into its columns of the output, so every value is copied once.
+        """
+        rows = torch.empty(len(ids), self._row_bytes, dtype=torch.uint8)
+        raw_rows, packed_rows = self.split(rows)
+        for store, out in ((self._raw, raw_rows), (self._packed, packed_rows)):
+            store.lazy_init_with_ipc_handle()
+            index = ids.to("cpu")
+            if store.id2index is not None:
+                index = store.id2index[index]
+            torch.index_select(store.feature_tensor, 0, index, out=out)
+        rows[:, self._raw_row_bytes + self._packed_dim :] = 0
+        return rows
+
+    def split(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Views of served byte rows as the raw float matrix and the packed sidecar rows, without copying."""
+        raw_bytes = self._raw_row_bytes
+        return (
+            rows[:, :raw_bytes].view(self._raw_dtype),
+            rows[:, raw_bytes : raw_bytes + self._packed_dim],
+        )
+
+
+class FusedDistFeature(DistFeature):
+    """A ``DistFeature`` whose local stores are ``FusedFeatureStore`` objects.
+
+    GLT's ``DistFeature`` looks up local rows and answers remote requests by indexing its local stores with ids, which
+    ``FusedFeatureStore`` supports; only the constructor checks the store type, so it is repeated here without that
+    check.
+
+    ``async_get`` resolves to the raw float matrix and the packed sidecar rows, stitched straight from the local rows
+    and the received byte rows.
+
+    The all-to-all path is not supported.
+
+    Args:
+        num_partitions: Number of data partitions.
+        partition_idx: Data partition of the current process.
+        local_feature: A fused store, or one per node/edge type for heterogeneous data.
+        feature_pb: Partition book of the entities, or one per type for heterogeneous data.
+        rpc_router: Router used to reach the other partitions.
+        device: Device used for computing.
+    """
+
+    def __init__(
+        self,
+        num_partitions: int,
+        partition_idx: int,
+        local_feature: Union[
+            FusedFeatureStore, dict[Union[NodeType, EdgeType], FusedFeatureStore]
+        ],
+        feature_pb: Union[
+            PartitionBook, dict[Union[NodeType, EdgeType], PartitionBook]
+        ],
+        rpc_router: RpcDataPartitionRouter,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.num_partitions = num_partitions
+        self.partition_idx = partition_idx
+        self.device = get_available_device(device)
+        ensure_device(self.device)
+
+        self.local_feature = local_feature
+        if isinstance(local_feature, FusedFeatureStore):
+            self.data_cls = "homo"
+            local_feature.lazy_init_with_ipc_handle()
+        else:
+            self.data_cls = "hetero"
+            for store in local_feature.values():
+                store.lazy_init_with_ipc_handle()
+
+        self.feature_pb = feature_pb
+        if isinstance(feature_pb, dict):
+            assert self.data_cls == "hetero"
+            for key, book in feature_pb.items():
+                if not isinstance(book, PartitionBook):
+                    feature_pb[key] = GLTPartitionBook(book)
+        elif isinstance(feature_pb, torch.Tensor):
+            assert self.data_cls == "homo"
+            self.feature_pb = GLTPartitionBook(feature_pb)
+        else:
+            assert self.data_cls == "homo"
+
+        self.rpc_router = rpc_router
+        self.rpc_callee_id = rpc_register(RpcFeatureLookupCallee(self))
+
+    def async_get(
+        self,
+        ids: torch.Tensor,
+        input_type: Optional[Union[NodeType, EdgeType]] = None,
+    ) -> torch.futures.Future:
+        """Looks up the raw float rows and packed sidecar rows of ids.
+
+        Args:
+            ids: Ids to look up.
+            input_type: Node or edge type of the ids for heterogeneous data.
+
+        Returns:
+            A future of the ``[len(ids), raw_dim]`` raw matrix and the ``[len(ids), packed_dim]`` sidecar rows.
+        """
+        remote_future = self._remote_selecting_get(ids, input_type)
+        local_rows, local_index = self._local_selecting_get(ids, input_type)
+        store, _ = self._get_local_store(input_type)
+        result_future: torch.futures.Future = torch.futures.Future()
+
+        def on_done(*_: object) -> None:
+            try:
+                result = self._stitch_fused(
+                    store, ids, local_rows, local_index, remote_future.wait()
+                )
+            except Exception as e:
+                result_future.set_exception(e)
+            else:
+                result_future.set_result(result)
+
+        remote_future.add_done_callback(on_done)
+        return result_future
+
+    def _stitch_fused(
+        self,
+        store: FusedFeatureStore,
+        ids: torch.Tensor,
+        local_rows: tuple[torch.Tensor, torch.Tensor],
+        local_index: torch.Tensor,
+        remotes: list[tuple[torch.Tensor, torch.Tensor]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Puts the local rows and the received byte rows of each remote partition into the raw and sidecar outputs."""
+        if local_index.numel() == ids.numel():
+            # Every id is local, so the local rows are already complete and in order.
+            return local_rows[0].to(self.device), local_rows[1].to(self.device)
+        outputs = tuple(
+            torch.empty(
+                ids.shape[0], rows.shape[1], dtype=rows.dtype, device=self.device
+            )
+            for rows in local_rows
+        )
+        pieces = [(local_rows, local_index)] + [
+            (store.split(remote_rows.to(self.device)), remote_index)
+            for remote_rows, remote_index in remotes
+        ]
+        for rows_per_store, index in pieces:
+            index = index.to(self.device)
+            for output, rows in zip(outputs, rows_per_store):
+                output[index] = rows.to(self.device)
+        return outputs[0], outputs[1]
+
+
+def build_fused_dist_feature(
+    num_partitions: int,
+    partition_idx: int,
+    raw_features: Optional[Union[Feature, dict[Union[NodeType, EdgeType], Feature]]],
+    packed_features: Optional[Union[Feature, dict[Union[NodeType, EdgeType], Feature]]],
+    feature_pb: Union[PartitionBook, dict[Union[NodeType, EdgeType], PartitionBook]],
+    rpc_router: RpcDataPartitionRouter,
+    device: Optional[torch.device] = None,
+) -> Optional[FusedDistFeature]:
+    """Builds a ``FusedDistFeature`` over the entity types that have both a raw store and a packed sidecar.
+
+    Types whose raw store has no columns are left out and keep their separate lookups.
+
+    Args:
+        num_partitions: Number of data partitions.
+        partition_idx: Data partition of the current process.
+        raw_features: Raw float store, or one per type.
+        packed_features: Packed sidecar store, or one per type.
+        feature_pb: Partition book of the entities, or one per type.
+        rpc_router: Router used to reach the other partitions.
+        device: Device used for computing.
+
+    Returns:
+        ``None`` if no entity type has both stores with raw columns.
+    """
+    if raw_features is None or packed_features is None:
+        return None
+    local_feature: Union[
+        FusedFeatureStore, dict[Union[NodeType, EdgeType], FusedFeatureStore]
+    ]
+    if isinstance(raw_features, Feature):
+        assert isinstance(packed_features, Feature)
+        if raw_features.shape[1] == 0:
+            return None
+        local_feature = FusedFeatureStore(raw_features, packed_features)
+    else:
+        assert not isinstance(packed_features, Feature)
+        local_feature = {
+            key: FusedFeatureStore(raw_features[key], packed_features[key])
+            for key in raw_features
+            if key in packed_features and raw_features[key].shape[1] > 0
+        }
+        if not local_feature:
+            return None
+    return FusedDistFeature(
+        num_partitions,
+        partition_idx,
+        local_feature,
+        feature_pb,
+        rpc_router,
+        device,
+    )

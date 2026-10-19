@@ -26,6 +26,11 @@ from gigl.distributed.sampler import (
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
 )
+from gigl.distributed.utils.fused_feature import (
+    FusedDistFeature,
+    FusedFeatureStore,
+    build_fused_dist_feature,
+)
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
@@ -33,6 +38,17 @@ from gigl.distributed.utils.sampling_errors import (
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
+
+
+def _fused_store_for(
+    fused: Optional[FusedDistFeature], entity_type: object
+) -> Optional[FusedFeatureStore]:
+    """The fused store of ``entity_type`` in ``fused`` (``entity_type`` is ignored for homogeneous data), if any."""
+    if fused is None:
+        return None
+    if isinstance(fused.local_feature, FusedFeatureStore):
+        return fused.local_feature
+    return fused.local_feature.get(entity_type)
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -149,6 +165,31 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 rpc_router=self.rpc_router,
                 device=self.device,
             )
+
+        # Entity types that have both a raw float store and a packed sidecar are fetched with one request per
+        # partition instead of two. The all-to-all path keeps the separate lookups.
+        self.dist_node_fused_feature: Optional[FusedDistFeature] = None
+        self.dist_edge_fused_feature: Optional[FusedDistFeature] = None
+        if self.collect_features and data is not None and not self.use_all2all:
+            self.dist_node_fused_feature = build_fused_dist_feature(
+                data.num_partitions,
+                data.partition_idx,
+                data.node_features,
+                data.node_quantized_features,
+                data.node_feat_pb,
+                self.rpc_router,
+                self.device,
+            )
+            if self.with_edge:
+                self.dist_edge_fused_feature = build_fused_dist_feature(
+                    data.num_partitions,
+                    data.partition_idx,
+                    data.edge_features,
+                    data.edge_quantized_features,
+                    data.edge_feat_pb,
+                    self.rpc_router,
+                    self.device,
+                )
 
     def _prepare_sample_loop_inputs(
         self,
@@ -354,6 +395,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         futs: dict[str, asyncio.Future[torch.Tensor]] = {}
         label_keys: set[str] = set()
+        # Fetched with one fused request: result key of the raw matrix -> result key of the packed sidecar rows.
+        fused_results: dict[str, str] = {}
 
         if is_hetero:
             for ntype, nodes in output.node.items():
@@ -392,6 +435,18 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             result_map[f"{as_str(input_type)}.nlabels"] = node_labels[
                                 output.node[input_type].to(node_labels.device)
                             ]
+            for ntype, nodes in output.node.items():
+                node_store = _fused_store_for(self.dist_node_fused_feature, ntype)
+                if node_store is None:
+                    continue
+                assert self.dist_node_fused_feature is not None
+                raw_key = f"{as_str(ntype)}.nfeats"
+                futs[raw_key] = wrap_torch_future(
+                    self.dist_node_fused_feature.async_get(nodes.to(torch.long), ntype)
+                )
+                fused_results[raw_key] = (
+                    f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                )
             if self.dist_node_feature is not None:
                 if self.use_all2all:
                     sorted_ntype = sorted(self.dist_node_feature.local_feature.keys())
@@ -416,6 +471,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 else:
                     for ntype, nodes in output.node.items():
                         if ntype not in self.dist_node_feature.local_feature:
+                            continue
+                        if f"{as_str(ntype)}.nfeats" in fused_results:
                             continue
                         nodes = nodes.to(torch.long)
                         futs[f"{as_str(ntype)}.nfeats"] = wrap_torch_future(
@@ -445,15 +502,45 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     for ntype, nodes in output.node.items():
                         if ntype not in self.dist_node_quantized_feature.local_feature:
                             continue
+                        if f"{as_str(ntype)}.nfeats" in fused_results:
+                            continue
                         nodes = nodes.to(torch.long)
                         futs[
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
                         ] = wrap_torch_future(
                             self.dist_node_quantized_feature.async_get(nodes, ntype)
                         )
+            if self.dist_edge_fused_feature is not None and self.with_edge:
+                for etype in self.edge_types:
+                    edge_store = _fused_store_for(self.dist_edge_fused_feature, etype)
+                    if edge_store is None:
+                        continue
+                    result_edge_type = (
+                        reverse_edge_type(etype) if self.edge_dir == "in" else etype
+                    )
+                    eids = result_map.get(f"{as_str(result_edge_type)}.eids")
+                    if eids is None:
+                        continue
+                    output_edge_type = (
+                        reverse_edge_type(etype) if self.edge_dir == "out" else etype
+                    )
+                    raw_key = f"{as_str(result_edge_type)}.efeats"
+                    futs[raw_key] = wrap_torch_future(
+                        self.dist_edge_fused_feature.async_get(
+                            eids.to(torch.long), etype
+                        )
+                    )
+                    fused_results[raw_key] = (
+                        f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}.{output_edge_type}"
+                    )
             if self.dist_edge_feature is not None and self.with_edge:
                 for etype in self.edge_types:
                     if etype not in self.dist_edge_feature.local_feature:
+                        continue
+                    if (
+                        f"{as_str(reverse_edge_type(etype) if self.edge_dir == 'in' else etype)}.efeats"
+                        in fused_results
+                    ):
                         continue
                     if self.edge_dir == "in":
                         eids = result_map.get(
@@ -475,6 +562,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     # Like node features, an edge partition book covers every
                     # edge type while a feature store may register only some.
                     if etype not in self.dist_edge_quantized_feature.local_feature:
+                        continue
+                    if (
+                        f"{as_str(reverse_edge_type(etype) if self.edge_dir == 'in' else etype)}.efeats"
+                        in fused_results
+                    ):
                         continue
                     result_edge_type = (
                         reverse_edge_type(etype) if self.edge_dir == "in" else etype
@@ -520,23 +612,45 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     result_map["nlabels"] = self.dist_node_labels[
                         output.node.to(self.dist_node_labels.device)
                     ]
-            if self.dist_node_feature is not None:
+            node_store = _fused_store_for(self.dist_node_fused_feature, None)
+            if node_store is not None:
+                assert self.dist_node_fused_feature is not None
                 futs["nfeats"] = wrap_torch_future(
-                    self.dist_node_feature.async_get(output.node)
+                    self.dist_node_fused_feature.async_get(output.node)
                 )
-            if self.dist_node_quantized_feature is not None:
-                futs[f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"] = wrap_torch_future(
-                    self.dist_node_quantized_feature.async_get(output.node)
-                )
-            if self.dist_edge_feature is not None:
-                eids = result_map["eids"]
+                fused_results["nfeats"] = f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"
+            else:
+                if self.dist_node_feature is not None:
+                    futs["nfeats"] = wrap_torch_future(
+                        self.dist_node_feature.async_get(output.node)
+                    )
+                if self.dist_node_quantized_feature is not None:
+                    futs[f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"] = (
+                        wrap_torch_future(
+                            self.dist_node_quantized_feature.async_get(output.node)
+                        )
+                    )
+            edge_store = _fused_store_for(self.dist_edge_fused_feature, None)
+            if edge_store is not None:
+                assert self.dist_edge_fused_feature is not None
                 futs["efeats"] = wrap_torch_future(
-                    self.dist_edge_feature.async_get(eids)
+                    self.dist_edge_fused_feature.async_get(result_map["eids"])
                 )
-            if self.dist_edge_quantized_feature is not None:
-                futs[f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}"] = wrap_torch_future(
-                    self.dist_edge_quantized_feature.async_get(result_map["eids"])
-                )
+                fused_results["efeats"] = f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}"
+            else:
+                if self.dist_edge_feature is not None:
+                    eids = result_map["eids"]
+                    futs["efeats"] = wrap_torch_future(
+                        self.dist_edge_feature.async_get(eids)
+                    )
+                if self.dist_edge_quantized_feature is not None:
+                    futs[f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}"] = (
+                        wrap_torch_future(
+                            self.dist_edge_quantized_feature.async_get(
+                                result_map["eids"]
+                            )
+                        )
+                    )
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
@@ -551,6 +665,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # 2-D — this may be a breaking change for single-label
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
                 value = value if value.shape[1] > 1 else value.T[0]
+            if result_key in fused_results:
+                value, result_map[fused_results[result_key]] = value
             result_map[result_key] = value
 
         return result_map

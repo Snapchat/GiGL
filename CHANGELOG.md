@@ -20,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- Fetch a node or edge type's raw float features and its packed quantized features with one request per partition
+  instead of two (`FusedFeatureStore` / `FusedDistFeature`, used by the samplers when a type has both stores), which
+  halves the feature RPCs of datasets that mix raw and quantized columns by @kmontemayor2-sc
 
 ### Changed
 
