@@ -21,16 +21,22 @@ import torch_geometric.data.hetero_data
 from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 
+from gigl.nn.packed_attention import PackedSequences, pack_sequences, packed_attention
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    HOP_DISTANCE_FEATURE_NAME,
     PPR_EXPANDED_FEATURE_NAME,
     PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
+    _concat_tensors,
+    _get_node_type_offsets,
+    _to_homogeneous_edge_index,
     _validate_reserved_anchor_feature_usage,
     tensors_to_graph_transformer_input,
 )
+from gigl.transforms.static_khop import khop_layout
 
 
 def _get_node_type_positional_encodings(
@@ -481,6 +487,61 @@ class GraphTransformerEncoderLayer(nn.Module):
             valid_mask=valid_mask,
             pairwise_relation_indices=pairwise_relation_indices,
         )
+
+    def forward_packed(
+        self,
+        x: Float[Tensor, "tokens model_dim"],
+        packed: PackedSequences,
+        first_token_output: bool = False,
+    ) -> Float[Tensor, "outputs model_dim"]:
+        """Runs the layer on packed tokens (see ``gigl.nn.packed_attention``).
+
+        Every sequence's tokens sit back to back in ``x`` and each token attends
+        only within its own sequence, with no attention bias. This needs
+        ``relation_attention_mode`` and ``relation_message_mode`` ``"none"`` and
+        no attention dropout in training.
+
+        Args:
+            x: ``(tokens, model_dim)`` packed token states.
+            packed: Layout of the sequences in ``x``.
+            first_token_output: Compute only each sequence's first token.
+
+        Returns:
+            ``(tokens, model_dim)``, or ``(num_sequences, model_dim)`` with
+            ``first_token_output``.
+
+        Raises:
+            ValueError: If a relation mode is not ``"none"``, or in training with
+                attention dropout.
+        """
+        if self._relation_attention_mode != "none" or self._relation_message_mode != (
+            "none"
+        ):
+            raise ValueError("forward_packed supports relation modes 'none' only.")
+        if self.training and self._attention_dropout_rate > 0:
+            raise ValueError(
+                "Packed attention does not apply attention dropout; set "
+                "attention_dropout_rate=0 or use forward."
+            )
+        x_norm = self._attention_norm(x)
+        key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        value = self._value_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        if first_token_output:
+            first_tokens = packed.cu_seqlens[:-1].long()
+            residual = x[first_tokens]
+            query_input = x_norm[first_tokens]
+        else:
+            residual = x
+            query_input = x_norm
+        query = self._query_projection(query_input).view(
+            -1, self._num_heads, self._head_dim
+        )
+        attention_output = packed_attention(
+            query, key, value, packed, query_is_first_token=first_token_output
+        ).reshape(-1, self._num_heads * self._head_dim)
+        x = residual + self._dropout(self._output_projection(attention_output))
+        # The FFN acts on each row alone; its contract is (batch, sequence, dim).
+        return x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
 
     def _forward_query_prefix(
         self,
@@ -1176,6 +1237,24 @@ class GraphTransformerEncoder(nn.Module):
             bias broadcastable (no per-layer (seq, seq) bias materialization).
 
     Notes:
+        On CUDA, configs with ``sequence_construction_method="khop"`` (without
+        ``prioritize_hop_order``), ``readout_mode="anchor_only"``, relation modes
+        ``"none"``, no anchor-based or pairwise attention bias, and
+        ``anchor_based_input_attr_names`` limited to ``"hop_distance"`` run on
+        packed tokens: every real token of every sequence in one
+        ``[tokens, hid_dim]`` buffer, so there are no padding FLOPs and attention
+        is a varlen kernel. Other configs, CPU, and training with
+        ``attention_dropout_rate > 0`` run on padded ``[anchors, max_seq_len]``
+        sequences. Both give the same embeddings and gradients up to float error;
+        ``dropout_rate`` masks are drawn over different shapes, so train-mode
+        draws differ (same distribution). With ``"hop_distance"`` as an
+        anchor-based input, the packed path derives it from the layout (a token's
+        first-reach directed hop in ``sampling_direction``, 0 for the anchor) and
+        does not read the batch attribute; that equals
+        ``AddHeteroHopDistanceEncoding(is_undirected=False,
+        sampling_direction=<the same direction>)`` with ``h_max >=
+        hop_distance``. The packed path costs two small host reads per batch.
+
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
         forward first, passing ``anchor_node_ids``/``anchor_node_type`` for the
@@ -1487,6 +1566,27 @@ class GraphTransformerEncoder(nn.Module):
         # Output projection: hid_dim -> out_dim
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
+        self._attention_dropout_rate = attention_dropout_rate
+        self._supports_packed_backend = (
+            self._sequence_construction_method == "khop"
+            and not self._prioritize_hop_order
+            and self._readout_mode == "anchor_only"
+            and self._relation_attention_mode == "none"
+            and self._relation_message_mode == "none"
+            and not self._anchor_based_attention_bias_attr_names
+            and not self._pairwise_attention_bias_attr_names
+            and set(self._anchor_based_input_attr_names or ())
+            <= {HOP_DISTANCE_FEATURE_NAME}
+        )
+
+    def _use_packed_backend(self, device: torch.device) -> bool:
+        """Whether this forward runs on packed tokens (CUDA, no attention dropout)."""
+        return (
+            self._supports_packed_backend
+            and device.type == "cuda"
+            and not (self.training and self._attention_dropout_rate > 0)
+        )
+
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
@@ -1608,6 +1708,18 @@ class GraphTransformerEncoder(nn.Module):
                 else projected_x_dict[anchor_node_type].size(0)
             )
 
+        if num_anchor_nodes > 0 and self._use_packed_backend(device):
+            return self._project_output(
+                self._encode_packed(
+                    projected_x_dict=projected_x_dict,
+                    edge_index_dict=edge_index_dict,
+                    anchor_node_type=anchor_node_type,
+                    num_anchor_nodes=num_anchor_nodes,
+                    anchor_node_ids=anchor_node_ids,
+                    device=device,
+                )
+            )
+
         (
             sequences,
             valid_mask,
@@ -1684,12 +1796,70 @@ class GraphTransformerEncoder(nn.Module):
                 "pairwise_relation_indices"
             ],
         )
-        embeddings = self._output_projection(embeddings)
+        return self._project_output(embeddings)
 
+    def _project_output(self, embeddings: Tensor) -> Tensor:
+        """Projects encoder outputs to ``out_dim`` and optionally L2-normalizes."""
+        embeddings = self._output_projection(embeddings)
         if self._should_l2_normalize_embedding_layer_output:
             embeddings = F.normalize(embeddings, p=2, dim=-1)
-
         return embeddings
+
+    def _encode_packed(
+        self,
+        projected_x_dict: dict[NodeType, Tensor],
+        edge_index_dict: dict[tuple[str, str, str], Tensor],
+        anchor_node_type: NodeType,
+        num_anchor_nodes: int,
+        anchor_node_ids: Optional[Tensor],
+        device: torch.device,
+    ) -> Tensor:
+        """Encodes the anchors on packed tokens.
+
+        Returns:
+            ``[num_anchor_nodes, hid_dim]`` final-norm anchor states.
+        """
+        node_type_offsets = _get_node_type_offsets(projected_x_dict)
+        node_features = _concat_tensors(list(projected_x_dict.values()), dim=0)
+        edge_index = _to_homogeneous_edge_index(
+            edge_index_dict=edge_index_dict,
+            node_type_offsets=node_type_offsets,
+            device=device,
+        ).to(device=device, dtype=torch.long)
+        anchor_local_indices = (
+            anchor_node_ids.to(device)
+            if anchor_node_ids is not None
+            else torch.arange(num_anchor_nodes, device=device)
+        )
+        node_index, hop_index, lengths = khop_layout(
+            edge_index,
+            num_nodes=node_features.size(0),
+            anchor_indices=node_type_offsets[anchor_node_type] + anchor_local_indices,
+            hop_distance=self._hop_distance,
+            max_seq_len=self._max_seq_len,
+            sampling_direction=self._sampling_direction,
+        )
+        token_node, token_hop, packed = pack_sequences(node_index, hop_index, lengths)
+
+        x = node_features[token_node]
+        if HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names:
+            x = x + self._build_token_input_contribution(
+                token_input_features={
+                    HOP_DISTANCE_FEATURE_NAME: token_hop.view(1, -1, 1).float()
+                },
+                sequences=x.unsqueeze(0),
+                valid_mask=torch.ones((1, x.size(0)), dtype=torch.bool, device=device),
+            ).squeeze(0)
+        encoder_layers = self._encoder_layers
+        for layer_index, encoder_layer in enumerate(encoder_layers):
+            x = cast(GraphTransformerEncoderLayer, encoder_layer).forward_packed(
+                x,
+                packed,
+                first_token_output=layer_index == len(encoder_layers) - 1,
+            )
+        if len(encoder_layers) == 0:
+            x = x[packed.cu_seqlens[:-1].long()]
+        return self._final_norm(x)
 
     def _get_sequence_positional_encoding(
         self,
