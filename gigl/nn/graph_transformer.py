@@ -1569,6 +1569,8 @@ class GraphTransformerEncoder(nn.Module):
         ppr_is_expanded_dict: dict[tuple[str, str, str], Tensor] = {}
         for edge_type in data.edge_types:
             edge_store = data[edge_type]
+            if "edge_index" not in edge_store:
+                continue
             edge_index_dict[edge_type] = edge_store.edge_index
             if getattr(edge_store, "edge_attr", None) is not None:
                 edge_attr_dict[edge_type] = edge_store.edge_attr

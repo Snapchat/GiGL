@@ -127,6 +127,22 @@ class TestGraphTransformerEncoder(TestCase):
         self.assertFalse(torch.isnan(user_embeddings).any())
         self.assertFalse(torch.isnan(item_embeddings).any())
 
+    def test_forward_ignores_edge_store_without_edge_index(self) -> None:
+        """An edge store holding only ``edge_attr`` does not change the output."""
+        data = _create_simple_hetero_data()
+        data_with_attr_only_store = copy.deepcopy(data)
+        data_with_attr_only_store["user", "rates", "item"].edge_attr = torch.randn(4, 3)
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = encoder(
+                data=data_with_attr_only_store,
+                anchor_node_type=self._user_node_type,
+            )
+
+        torch.testing.assert_close(actual, expected)
+
     def test_compiled_forward_matches_eager(self) -> None:
         """``torch.compile`` of the whole encoder runs on a HeteroData batch.
 
