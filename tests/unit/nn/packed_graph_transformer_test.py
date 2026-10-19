@@ -438,7 +438,7 @@ class PackedPathCudaTest(TestCase):
         )
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
-        cuda_data = data.to("cuda")
+        cuda_data = copy.deepcopy(data).to("cuda")
         _assert_training_gradients_match(
             self,
             _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
@@ -460,9 +460,9 @@ class PackedPathCudaTest(TestCase):
         cpu_encoder = _materialized_encoder(batches[0], kwargs)
         cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
         with torch.no_grad():
-            cuda_encoder(batches[0].to(device), anchor_node_type=_USER)
+            cuda_encoder(copy.deepcopy(batches[0]).to(device), anchor_node_type=_USER)
             for data in batches:
-                cuda_data = data.to(device)
+                cuda_data = copy.deepcopy(data).to(device)
                 torch.cuda.synchronize()
                 torch.cuda.set_sync_debug_mode("warn")
                 try:
