@@ -123,11 +123,12 @@ TEST(PPRForwardPush, PprScoreAbsorbsAlpha) {
     state.pushResiduals({});
     auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
-    const auto& [ids, weights, counts] = topk.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topk.at(0);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     ASSERT_EQ(weights.size(1), 2);
     EXPECT_NEAR(weights[0][0].item<float>(), static_cast<float>(alpha), 1e-5F);
     EXPECT_NEAR(weights[0][1].item<float>(), 1.0F, 1e-5F);
+    EXPECT_EQ(isExpanded[0].item<int64_t>(), 1);
 }
 
 // Node 0 (degree 1) pushes (1-alpha)*alpha residual to node 1 (sink).
@@ -147,7 +148,7 @@ TEST(PPRForwardPush, ResidualDistributedToNeighbor) {
 
     auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
-    const auto& [ids, weights, counts] = topk.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topk.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 2);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     EXPECT_EQ(ids[1].item<int64_t>(), 1);
@@ -168,7 +169,7 @@ TEST(PPRForwardPush, HopProximityIsScopedPerSeed) {
 
     auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
-    const auto& [ids, weights, counts] = topk.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topk.at(0);
 
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 1, 1}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2, 1}));
@@ -378,7 +379,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpMergesChannelsInCpp) {
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
-    const auto& [ids, features, counts] = result.at(0);
+    const auto& [ids, features, counts, isExpanded] = result.at(0);
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 10, 20}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({3}));
     ASSERT_EQ(features.size(0), 3);
@@ -422,7 +423,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpUsesTargetsForResidualRows
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
-    const auto& [ids, features, counts] = result.at(0);
+    const auto& [ids, features, counts, isExpanded] = result.at(0);
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 20}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2}));
     ASSERT_EQ(features.size(0), 2);
@@ -457,7 +458,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpEmitsResidualAwareBaseRows
                                                     /*enableResidualTopUp=*/true);
 
     ASSERT_NE(result.find(0), result.end());
-    const auto& [ids, features, counts] = result.at(0);
+    const auto& [ids, features, counts, isExpanded] = result.at(0);
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0, 1}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({2}));
     ASSERT_EQ(features.size(0), 2);
@@ -494,7 +495,7 @@ TEST(PPRForwardPush, ExtractTypedTopKWithResidualTopUpCanDisableTopUp) {
                                                     /*enableResidualTopUp=*/false);
 
     ASSERT_NE(result.find(0), result.end());
-    const auto& [ids, features, counts] = result.at(0);
+    const auto& [ids, features, counts, isExpanded] = result.at(0);
     EXPECT_EQ(tensorToInt64Vector(ids), std::vector<int64_t>({0}));
     EXPECT_EQ(tensorToInt64Vector(counts), std::vector<int64_t>({1}));
     ASSERT_EQ(features.size(0), 1);
@@ -522,7 +523,7 @@ TEST(PPRForwardPush, DeduplicatesNodesAcrossSeeds) {
 
     auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/false);
     ASSERT_NE(topk.find(0), topk.end());
-    const auto& [ids, weights, counts] = topk.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topk.at(0);
     // Each seed (batch indices 0 and 1) should have 2 nodes in its top-k.
     EXPECT_EQ(counts[0].item<int64_t>(), 2); // seed 0: nodes {0, 2}
     EXPECT_EQ(counts[1].item<int64_t>(), 2); // seed 1: nodes {1, 2}
@@ -567,7 +568,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
 
     auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*enableResidualTopUp=*/true);
     ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
-    const auto& [ids, weights, counts] = topkWithResiduals.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topkWithResiduals.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 3);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
     ASSERT_EQ(weights.size(1), 2);
@@ -581,6 +582,14 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpIncludesUnpushedResiduals) {
     ASSERT_NE(residualWeights.find(2), residualWeights.end());
     EXPECT_NEAR(residualWeights[1], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
     EXPECT_NEAR(residualWeights[2], static_cast<float>((1.0 - alpha) * alpha / 2.0), 1e-5F);
+
+    // Node 0 was pushed (expanded); nodes 1 and 2 are unpushed residual top-ups.
+    EXPECT_EQ(isExpanded[0].item<int64_t>(), 1);
+    std::unordered_map<int64_t, int64_t> residualExpanded;
+    residualExpanded[ids[1].item<int64_t>()] = isExpanded[1].item<int64_t>();
+    residualExpanded[ids[2].item<int64_t>()] = isExpanded[2].item<int64_t>();
+    EXPECT_EQ(residualExpanded[1], 0);
+    EXPECT_EQ(residualExpanded[2], 0);
 }
 
 // Residual top-up cannot displace finalized PPR nodes from the selected set,
@@ -601,7 +610,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpSortsSelectedResultsByScore) {
 
     auto topkWithResiduals = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/4, /*enableResidualTopUp=*/true);
     ASSERT_NE(topkWithResiduals.find(0), topkWithResiduals.end());
-    const auto& [ids, weights, counts] = topkWithResiduals.at(0);
+    const auto& [ids, weights, counts, isExpanded] = topkWithResiduals.at(0);
     ASSERT_EQ(counts[0].item<int64_t>(), 4);
 
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
@@ -638,7 +647,7 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpUsesMaxPPRNodesAsTotalCap) {
 
     auto cappedTopk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/2, /*enableResidualTopUp=*/true);
     ASSERT_NE(cappedTopk.find(0), cappedTopk.end());
-    const auto& [ids, weights, counts] = cappedTopk.at(0);
+    const auto& [ids, weights, counts, isExpanded] = cappedTopk.at(0);
 
     ASSERT_EQ(counts[0].item<int64_t>(), 2);
     EXPECT_EQ(ids[0].item<int64_t>(), 0);
