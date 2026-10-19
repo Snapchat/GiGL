@@ -346,6 +346,54 @@ class TestGraphTransformerEncoder(TestCase):
 
         self.assertTrue(mock_transform.call_args.kwargs["prioritize_hop_order"])
 
+    def test_forward_preserves_ppr_is_expanded(self) -> None:
+        # The encoder must pass the PPR expansion provenance and channel masks
+        # to the transform, or the relation filter silently no-ops.
+        user = self._user_node_type
+        ppr_edge_type = (user, "ppr", user)
+        data = HeteroData()
+        data[user].x = torch.randn(3, self._node_type_to_feat_dim_map[user])
+        data[user].batch_size = 1
+        data[ppr_edge_type].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data[ppr_edge_type].edge_attr = torch.tensor([[0.9], [0.6]])
+        data[ppr_edge_type].ppr_is_expanded = torch.tensor([True, False])
+        data.ppr_relation_channel_masks = {ppr_edge_type: 0b01}
+
+        encoder = self._create_encoder(
+            num_layers=0,
+            readout_mode="anchor_only",
+            sequence_construction_method="ppr",
+        )
+        encoder.eval()
+
+        sequences = torch.zeros((1, 10, self._hid_dim), dtype=torch.float)
+        valid_mask = torch.zeros((1, 10), dtype=torch.bool)
+        valid_mask[:, 0] = True
+        aux = {
+            "anchor_bias": None,
+            "pairwise_bias": None,
+            "pairwise_relation_indices": None,
+            "pairwise_nonmissing_indices": None,
+            "token_input": None,
+        }
+        with patch(
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
+            return_value=(sequences, valid_mask, aux),
+        ) as mock_transform:
+            with torch.no_grad():
+                encoder(data=data, anchor_node_type=user, device=self._device)
+
+        call_kwargs = mock_transform.call_args.kwargs
+        self.assertTrue(
+            torch.equal(
+                call_kwargs["ppr_is_expanded_dict"][ppr_edge_type],
+                torch.tensor([True, False]),
+            )
+        )
+        self.assertEqual(
+            call_kwargs["ppr_relation_channel_masks"], data.ppr_relation_channel_masks
+        )
+
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
         """Test anchor-only readout returns the post-norm anchor token."""
         encoder = self._create_encoder(

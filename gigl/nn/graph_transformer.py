@@ -23,6 +23,7 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    PPR_EXPANDED_FEATURE_NAME,
     PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
@@ -1565,11 +1566,18 @@ class GraphTransformerEncoder(nn.Module):
         # Plain dicts of the batch's edges, in the batch's edge type order.
         edge_index_dict: dict[tuple[str, str, str], Tensor] = {}
         edge_attr_dict: dict[tuple[str, str, str], Tensor] = {}
+        ppr_is_expanded_dict: dict[tuple[str, str, str], Tensor] = {}
         for edge_type in data.edge_types:
             edge_store = data[edge_type]
             edge_index_dict[edge_type] = edge_store.edge_index
             if getattr(edge_store, "edge_attr", None) is not None:
                 edge_attr_dict[edge_type] = edge_store.edge_attr
+            # PPR expansion provenance lets the relation filter drop a
+            # co-seeded positive's leaked edges.
+            if getattr(edge_store, PPR_EXPANDED_FEATURE_NAME, None) is not None:
+                ppr_is_expanded_dict[edge_type] = getattr(
+                    edge_store, PPR_EXPANDED_FEATURE_NAME
+                )
         # Relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
             attr_name
@@ -1607,6 +1615,11 @@ class GraphTransformerEncoder(nn.Module):
             edge_index_dict=edge_index_dict,
             edge_attr_dict=edge_attr_dict,
             graph_attr_dict=graph_attr_dict,
+            ppr_is_expanded_dict=ppr_is_expanded_dict,
+            # Typed-PPR per-edge-type channel masks drive the relation filter.
+            ppr_relation_channel_masks=getattr(
+                data, "ppr_relation_channel_masks", None
+            ),
             batch_size=num_anchor_nodes,
             max_seq_len=self._max_seq_len,
             anchor_node_type=anchor_node_type,

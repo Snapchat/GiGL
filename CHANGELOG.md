@@ -38,6 +38,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
   tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
   they leaked the label at train time and made embeddings depend on batch composition
+- PPR relation attention and messages no longer leak a co-seeded ABLP positive's sampled edges into an anchor's
+  sequence. With `sequence_construction_method="ppr"` and `include_sampled_edges`, a relation edge whose source is a
+  residual top-up node the anchor never expanded (e.g. the batch's positive label) appeared as a relation in the
+  anchor's sequence -- a train-time label leak and train/serve skew (the PPR analog of #795). `gigl_core` now emits a
+  per-node `is_expanded` flag, threaded to a `ppr_is_expanded` PPR edge attribute, and the graph-transformer relation
+  channel drops edges whose source token the anchor did not push. Always on by @mkolodner-sc in
+  https://github.com/Snapchat/GiGL/pull/799
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
   a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/761
