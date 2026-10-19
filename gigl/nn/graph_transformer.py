@@ -23,6 +23,7 @@ from torch import Tensor
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    PPR_EXPANDED_FEATURE_NAME,
     PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
@@ -1570,6 +1571,14 @@ class GraphTransformerEncoder(nn.Module):
             projected_data[edge_type].edge_index = data[edge_type].edge_index
             if hasattr(data[edge_type], "edge_attr"):
                 projected_data[edge_type].edge_attr = data[edge_type].edge_attr
+            # Preserve PPR expansion provenance so the relation filter can drop a
+            # co-seeded positive's leaked edges (see heterodata_to_graph_transformer_input).
+            if hasattr(data[edge_type], PPR_EXPANDED_FEATURE_NAME):
+                setattr(
+                    projected_data[edge_type],
+                    PPR_EXPANDED_FEATURE_NAME,
+                    getattr(data[edge_type], PPR_EXPANDED_FEATURE_NAME),
+                )
         # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
             attr_name
@@ -1584,6 +1593,10 @@ class GraphTransformerEncoder(nn.Module):
             for attr_name in sorted(relative_pe_attr_names):
                 if hasattr(data, attr_name):
                     setattr(projected_data, attr_name, getattr(data, attr_name))
+        # Typed-PPR per-edge-type channel masks (graph-level) drive the
+        # relation filter in the transform; carry them through the projection.
+        if hasattr(data, "ppr_relation_channel_masks"):
+            projected_data.ppr_relation_channel_masks = data.ppr_relation_channel_masks
 
         # 2. Build sequences and run transformer
         # If anchor_node_ids provided, use those; otherwise use first batch_size nodes
