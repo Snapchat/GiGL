@@ -6,7 +6,6 @@
 
 import datetime
 import queue
-import time
 from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
 
@@ -45,7 +44,10 @@ from gigl.distributed.constants import (
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.dist_sampler import create_dist_sampler
+from gigl.distributed.utils.dist_sampler import (
+    create_dist_sampler,
+    join_workers_with_shared_deadline,
+)
 
 logger = Logger()
 
@@ -308,10 +310,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         """Stops the sampling workers, waiting at most ``MP_STATUS_CHECK_INTERVAL`` in total.
 
         Same as GLT's ``DistMpSamplingProducer.shutdown`` except that the grace period is a
-        single deadline shared by all workers instead of a separate wait per worker. A worker
-        that is mid-sample (for example blocked sending to a full channel because the consumer
-        stopped early) never reads the stop command, so GLT's per-worker wait costs
-        ``num_workers x MP_STATUS_CHECK_INTERVAL`` before such workers are terminated.
+        single deadline shared by all workers. See :func:`join_workers_with_shared_deadline`.
         """
         if self._shutdown:
             return
@@ -319,9 +318,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         try:
             for task_queue in self._task_queues:
                 task_queue.put((MpCommand.STOP, None))
-            deadline = time.monotonic() + MP_STATUS_CHECK_INTERVAL
-            for worker in self._workers:
-                worker.join(timeout=max(0.0, deadline - time.monotonic()))
+            join_workers_with_shared_deadline(self._workers, MP_STATUS_CHECK_INTERVAL)
             for task_queue in self._task_queues:
                 task_queue.cancel_join_thread()
                 task_queue.close()
