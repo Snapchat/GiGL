@@ -1237,23 +1237,20 @@ class GraphTransformerEncoder(nn.Module):
             bias broadcastable (no per-layer (seq, seq) bias materialization).
 
     Notes:
-        On CUDA, configs with ``sequence_construction_method="khop"`` (without
-        ``prioritize_hop_order``), ``readout_mode="anchor_only"``, relation modes
-        ``"none"``, no anchor-based or pairwise attention bias, and
-        ``anchor_based_input_attr_names`` limited to ``"hop_distance"`` run on
-        packed tokens: every real token of every sequence in one
-        ``[tokens, hid_dim]`` buffer, so there are no padding FLOPs and attention
-        is a varlen kernel. Other configs, CPU, and training with
-        ``attention_dropout_rate > 0`` run on padded ``[anchors, max_seq_len]``
-        sequences. Both give the same embeddings and gradients up to float error;
-        ``dropout_rate`` masks are drawn over different shapes, so train-mode
-        draws differ (same distribution). With ``"hop_distance"`` as an
-        anchor-based input, the packed path derives it from the layout (a token's
-        first-reach directed hop in ``sampling_direction``, 0 for the anchor) and
-        does not read the batch attribute; that equals
+        On CUDA, configs run on packed tokens (one ``[tokens, hid_dim]`` buffer, a
+        varlen attention kernel, no padding FLOPs) when they use ``"khop"``
+        sequences without ``prioritize_hop_order``, ``readout_mode="anchor_only"``,
+        relation modes ``"none"``, no attention biases, at most ``"hop_distance"``
+        as an anchor-based input, ``hid_dim // num_heads`` divisible by 8,
+        ``hop_distance <= 2``, and no attention dropout in training. All other
+        configs and CPU run on padded sequences. Both paths give the same
+        embeddings and gradients up to float error; with ``dropout_rate > 0``,
+        train-mode dropout draws differ (same distribution). The packed path
+        derives ``hop_distance`` from the layout (first-reach directed hop in
+        ``sampling_direction``) and ignores the batch attribute; that equals
         ``AddHeteroHopDistanceEncoding(is_undirected=False,
-        sampling_direction=<the same direction>)`` with ``h_max >=
-        hop_distance``. The packed path costs two small host reads per batch.
+        sampling_direction=<same>, h_max >= hop_distance)``. It costs two host
+        reads per batch.
 
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
@@ -1577,6 +1574,12 @@ class GraphTransformerEncoder(nn.Module):
             and not self._pairwise_attention_bias_attr_names
             and set(self._anchor_based_input_attr_names or ())
             <= {HOP_DISTANCE_FEATURE_NAME}
+            # The CUDA memory-efficient varlen kernel only has aligned kernels
+            # for head dims divisible by 8; SDPA falls back for other dims.
+            and (hid_dim // num_heads) % 8 == 0
+            # Packed memory is O(anchors * width ** hop_distance), which beyond
+            # two hops can far exceed the padded path's.
+            and self._hop_distance <= 2
         )
 
     def _use_packed_backend(self, device: torch.device) -> bool:
@@ -1592,7 +1595,7 @@ class GraphTransformerEncoder(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
         anchor_node_type: Optional[NodeType] = None,
         anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
-        device: Optional[torch.device] = None,
+        device: Optional[Union[str, torch.device]] = None,
     ) -> Float[torch.Tensor, "anchors output_dim"]:
         """Run the forward pass of the Graph Transformer encoder.
 
@@ -1610,8 +1613,11 @@ class GraphTransformerEncoder(nn.Module):
             Embeddings tensor of shape ``(num_anchor_nodes, out_dim)``.
         """
         # Infer device from data if not provided
-        if device is None:
-            device = data[data.node_types[0]].x.device
+        device = (
+            data[data.node_types[0]].x.device
+            if device is None
+            else torch.device(device)
+        )
 
         # Use first node type if not specified
         if anchor_node_type is None:
@@ -1839,7 +1845,9 @@ class GraphTransformerEncoder(nn.Module):
             max_seq_len=self._max_seq_len,
             sampling_direction=self._sampling_direction,
         )
-        token_node, token_hop, packed = pack_sequences(node_index, hop_index, lengths)
+        flat_index, packed = pack_sequences(lengths, self._max_seq_len)
+        token_node = node_index.flatten()[flat_index]
+        token_hop = hop_index.flatten()[flat_index]
 
         x = node_features[token_node]
         if HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names:
@@ -1850,14 +1858,13 @@ class GraphTransformerEncoder(nn.Module):
                 sequences=x.unsqueeze(0),
                 valid_mask=torch.ones((1, x.size(0)), dtype=torch.bool, device=device),
             ).squeeze(0)
-        encoder_layers = self._encoder_layers
-        for layer_index, encoder_layer in enumerate(encoder_layers):
+        for layer_index, encoder_layer in enumerate(self._encoder_layers):
             x = cast(GraphTransformerEncoderLayer, encoder_layer).forward_packed(
                 x,
                 packed,
-                first_token_output=layer_index == len(encoder_layers) - 1,
+                first_token_output=layer_index == len(self._encoder_layers) - 1,
             )
-        if len(encoder_layers) == 0:
+        if len(self._encoder_layers) == 0:
             x = x[packed.cu_seqlens[:-1].long()]
         return self._final_norm(x)
 

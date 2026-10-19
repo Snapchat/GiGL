@@ -22,9 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
-  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs are `khop` sequences with
-  `anchor_only` readout and no attention bias; training with attention dropout and CPU keep the padded path. Both paths
-  give the same embeddings and gradients up to float error by @kmontemayor2-sc
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences without
+  `prioritize_hop_order`, `anchor_only` readout, relation modes `none`, no attention biases, at most `hop_distance` as
+  an anchor-based input, a head dim divisible by 8, `hop_distance <= 2`, and no attention dropout in training;
+  everything else, and CPU, keeps the padded path. Both paths give the same embeddings and gradients up to float error,
+  except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives `hop_distance` from
+  the layout and ignores the batch attribute; that equals the directed `AddHeteroHopDistanceEncoding` with the same
+  sampling direction by @kmontemayor2-sc
 
 ### Changed
 

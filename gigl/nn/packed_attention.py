@@ -31,34 +31,26 @@ class PackedSequences(NamedTuple):
     max_seq_len: int
 
 
-def pack_sequences(
-    node_index: Tensor, hop_index: Tensor, lengths: Tensor
-) -> tuple[Tensor, Tensor, PackedSequences]:
-    """Packs the first ``lengths[i]`` tokens of every sequence back to back.
+def pack_sequences(lengths: Tensor, max_seq_len: int) -> tuple[Tensor, PackedSequences]:
+    """Locates the first ``lengths[i]`` positions of every sequence in a padded grid.
 
-    Costs one host read, of the total token count.
+    Costs one host read, of the total token count. Gather any
+    ``[num_sequences, max_seq_len]`` per-position tensor into packed order with
+    ``grid.flatten()[flat_index]``.
 
     Args:
-        node_index: ``[num_sequences, max_seq_len]`` long node id per position.
-        hop_index: ``[num_sequences, max_seq_len]`` long hop per position.
         lengths: ``[num_sequences]`` long valid length of each sequence.
+        max_seq_len: Width of the padded grid.
 
     Returns:
-        - ``[num_tokens]`` long node id per packed token.
-        - ``[num_tokens]`` long hop per packed token.
+        - ``[num_tokens]`` long indices of the valid positions in the flattened
+          grid, sequence by sequence.
         - The packed layout.
     """
-    valid = torch.arange(node_index.size(1), device=lengths.device) < lengths.unsqueeze(
-        1
-    )
+    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
     cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
-    # One ``nonzero`` (one host sync) serves both gathers.
-    flat = valid.flatten().nonzero().squeeze(1)
-    return (
-        node_index.flatten()[flat],
-        hop_index.flatten()[flat],
-        PackedSequences(cu_seqlens.to(torch.int32), node_index.size(1)),
-    )
+    flat_index = valid.flatten().nonzero().squeeze(1)
+    return flat_index, PackedSequences(cu_seqlens.to(torch.int32), max_seq_len)
 
 
 class _VarlenAttention(torch.autograd.Function):
@@ -159,7 +151,7 @@ class _VarlenAttention(torch.autograd.Function):
         )
 
 
-def varlen_attention(
+def _varlen_attention(
     query: Tensor,
     key: Tensor,
     value: Tensor,
@@ -197,7 +189,7 @@ def varlen_attention(
     )
 
 
-def padded_packed_attention(
+def _padded_packed_attention(
     query: Tensor,
     key: Tensor,
     value: Tensor,
@@ -209,7 +201,7 @@ def padded_packed_attention(
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
     with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
     and unpacks the outputs. It runs on any device; it is the CPU path and
-    the reference for ``varlen_attention``.
+    the reference for ``_varlen_attention``.
 
     Args:
         query: ``[num_tokens, num_heads, head_dim]`` packed queries, or
@@ -268,12 +260,12 @@ def packed_attention(
     packed: PackedSequences,
     query_is_first_token: bool,
 ) -> Tensor:
-    """Attention over packed sequences: ``varlen_attention`` on CUDA, else ``padded_packed_attention``.
+    """Attention over packed sequences: the CUDA varlen kernel, or SDPA on CPU.
 
-    Args and returns are as in ``padded_packed_attention``.
+    Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda:
-        return padded_packed_attention(query, key, value, packed, query_is_first_token)
+        return _padded_packed_attention(query, key, value, packed, query_is_first_token)
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
             packed.cu_seqlens.size(0), dtype=torch.int32, device=query.device
@@ -282,7 +274,7 @@ def packed_attention(
     else:
         cu_seqlens_q = packed.cu_seqlens
         max_seqlen_q = packed.max_seq_len
-    return varlen_attention(
+    return _varlen_attention(
         query,
         key,
         value,

@@ -1,12 +1,12 @@
 """The packed ``GraphTransformerEncoder`` path matches the padded path."""
 
 import copy
+import itertools
 import unittest
 import warnings
 from typing import Any, Callable, Literal, cast
 from unittest import mock
 
-import jaxtyping
 import torch
 import torch.nn as nn
 from absl.testing import absltest
@@ -19,9 +19,9 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.nn.packed_attention import (
     PackedSequences,
+    _padded_packed_attention,
+    _varlen_attention,
     pack_sequences,
-    padded_packed_attention,
-    varlen_attention,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
@@ -164,8 +164,10 @@ class PackedPathTest(TestCase):
     def test_matches_padded_path(
         self, _: str, hetero: bool = False, **overrides: object
     ) -> None:
-        for seed in range(3):
-            kwargs = _encoder_kwargs(hetero=hetero, **overrides)
+        for seed, hop_distance in itertools.product(range(3), (1, 2)):
+            kwargs = _encoder_kwargs(
+                hetero=hetero, hop_distance=hop_distance, **overrides
+            )
             data = _random_batch(
                 seed, hetero, cast(Literal["in", "out"], kwargs["sampling_direction"])
             )
@@ -173,7 +175,7 @@ class PackedPathTest(TestCase):
             if hetero:
                 data[_ITEM].random_walk_pe = torch.randn(20, 3)
             encoder = _materialized_encoder(data, kwargs)
-            with self.subTest(seed=seed), torch.no_grad():
+            with self.subTest(seed=seed, hop=hop_distance), torch.no_grad():
                 torch.testing.assert_close(
                     _run_packed(encoder, data),
                     encoder(data, anchor_node_type=_USER),
@@ -245,6 +247,8 @@ class PackedPathTest(TestCase):
             param("relation_message", relation_message_mode="edge_type_linear"),
             param("relation_attention", relation_attention_mode="edge_type_bilinear"),
             param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
+            param("head_dim_not_multiple_of_8", num_heads=4),
+            param("three_hops", hop_distance=3),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
             param(
                 "other_token_input",
@@ -264,10 +268,21 @@ class PackedPathTest(TestCase):
         encoder = GraphTransformerEncoder(**_encoder_kwargs(**overrides))
         self.assertEqual(encoder._supports_packed_backend, supported)
 
-    def test_packed_path_is_not_used_on_cpu(self) -> None:
-        encoder = GraphTransformerEncoder(**_encoder_kwargs())
-        self.assertTrue(encoder._supports_packed_backend)
-        self.assertFalse(encoder._use_packed_backend(torch.device("cpu")))
+    def test_packed_path_is_used_on_cuda_unless_training_with_attention_dropout(
+        self,
+    ) -> None:
+        encoder = GraphTransformerEncoder(**_encoder_kwargs(attention_dropout_rate=0.1))
+        self.assertTrue(encoder.eval()._use_packed_backend(torch.device("cuda")))
+        self.assertFalse(encoder.train()._use_packed_backend(torch.device("cuda")))
+        self.assertFalse(encoder.eval()._use_packed_backend(torch.device("cpu")))
+
+    def test_forward_accepts_a_string_device(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with torch.no_grad():
+            self.assertEqual(
+                encoder(data, anchor_node_type=_USER, device="cpu").shape, (12, 8)
+            )
 
     def test_layer_rejects_attention_dropout_in_training(self) -> None:
         layer = GraphTransformerEncoderLayer(
@@ -279,57 +294,43 @@ class PackedPathTest(TestCase):
             layer.train().forward_packed(torch.randn(2, 16), packed)
 
     def test_pack_sequences_layout(self) -> None:
-        node_index = torch.tensor([[5, 6, -1], [7, -1, -1], [8, 9, 10]])
-        hops = torch.tensor([[0, 1, 0], [0, 0, 0], [0, 1, 2]])
-        token_node, token_hop, packed = pack_sequences(
-            node_index, hops, torch.tensor([2, 1, 3])
-        )
-        self.assertEqual(token_node.tolist(), [5, 6, 7, 8, 9, 10])
-        self.assertEqual(token_hop.tolist(), [0, 1, 0, 0, 1, 2])
+        flat_index, packed = pack_sequences(torch.tensor([2, 1, 3]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 3, 6, 7, 8])
         self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
         self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
         self.assertEqual(packed.max_seq_len, 3)
 
-    def test_compiled_forward_packed_matches_eager(self) -> None:
-        layer = GraphTransformerEncoderLayer(
-            model_dim=16,
-            num_heads=2,
-            feedforward_dim=32,
-            dropout_rate=0.0,
-            activation="swiglu",
-        ).eval()
-        _, _, packed = pack_sequences(
-            torch.zeros(4, 6, dtype=torch.long),
-            torch.zeros(4, 6, dtype=torch.long),
-            torch.tensor([3, 1, 5, 2]),
-        )
-        x = torch.randn(11, 16)
-        compiled = torch.compile(layer.forward_packed)
-        # The test-only runtime shape checks are not traceable; production code
-        # has none.
-        jaxtyping.config.update("jaxtyping_disable", True)
-        try:
-            with torch.no_grad():
-                for first_token_output in (False, True):
-                    torch.testing.assert_close(
-                        compiled(x, packed, first_token_output),
-                        layer.forward_packed(x, packed, first_token_output),
-                    )
-        finally:
-            jaxtyping.config.update("jaxtyping_disable", False)
-
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedPathCudaTest(TestCase):
+    def test_compiled_forward_packed_matches_eager(self) -> None:
+        layer = (
+            GraphTransformerEncoderLayer(
+                model_dim=16,
+                num_heads=2,
+                feedforward_dim=32,
+                dropout_rate=0.0,
+                activation="swiglu",
+            )
+            .eval()
+            .to("cuda")
+        )
+        _, packed = pack_sequences(torch.tensor([3, 1, 5, 2], device="cuda"), 6)
+        x = torch.randn(11, 16, device="cuda")
+        compiled = torch.compile(layer.forward_packed)
+        with torch.no_grad():
+            for first_token_output in (False, True):
+                torch.testing.assert_close(
+                    compiled(x, packed, first_token_output),
+                    layer.forward_packed(x, packed, first_token_output),
+                )
+
     def test_varlen_attention_matches_padded_packed_attention(self) -> None:
         device = torch.device("cuda")
         num_sequences, num_heads, head_dim = 6, 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12, 9], device=device)
         num_tokens = int(lengths.sum())
-        zeros = torch.zeros(
-            num_sequences, _MAX_SEQ_LEN, dtype=torch.long, device=device
-        )
-        _, _, packed = pack_sequences(zeros, zeros, lengths)
+        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
         for dtype, atol in ((torch.float32, 1e-4), (torch.bfloat16, 5e-2)):
             for query_is_first_token in (False, True):
@@ -340,7 +341,7 @@ class PackedPathCudaTest(TestCase):
                     )
                     for rows in (num_queries, num_tokens, num_tokens)
                 )
-                expected = padded_packed_attention(
+                expected = _padded_packed_attention(
                     query, key, value, packed, query_is_first_token
                 )
                 if query_is_first_token:
@@ -351,7 +352,7 @@ class PackedPathCudaTest(TestCase):
                 else:
                     cu_seqlens_q = packed.cu_seqlens
                     max_seqlen_q = _MAX_SEQ_LEN
-                actual = varlen_attention(
+                actual = _varlen_attention(
                     query,
                     key,
                     value,
@@ -370,8 +371,7 @@ class PackedPathCudaTest(TestCase):
         num_heads, head_dim = 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
         num_tokens = int(lengths.sum())
-        zeros = torch.zeros(5, _MAX_SEQ_LEN, dtype=torch.long, device=device)
-        _, _, packed = pack_sequences(zeros, zeros, lengths)
+        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
 
         def random_rows(num_rows: int) -> torch.Tensor:
@@ -397,7 +397,7 @@ class PackedPathCudaTest(TestCase):
                 else:
                     cu_seqlens_q = packed.cu_seqlens
                     max_seqlen_q = _MAX_SEQ_LEN
-                varlen_attention(
+                _varlen_attention(
                     varlen_inputs[0],
                     varlen_inputs[1],
                     varlen_inputs[2],
@@ -406,7 +406,7 @@ class PackedPathCudaTest(TestCase):
                     max_seqlen_q,
                     _MAX_SEQ_LEN,
                 ).backward(grad_output)
-                padded_packed_attention(
+                _padded_packed_attention(
                     padded_inputs[0],
                     padded_inputs[1],
                     padded_inputs[2],
@@ -426,14 +426,6 @@ class PackedPathCudaTest(TestCase):
                             rtol=0,
                             atol=atol,
                         )
-
-    def test_packed_path_is_used_on_cuda_unless_training_with_attention_dropout(
-        self,
-    ) -> None:
-        device = torch.device("cuda")
-        encoder = GraphTransformerEncoder(**_encoder_kwargs(attention_dropout_rate=0.1))
-        self.assertTrue(encoder.eval()._use_packed_backend(device))
-        self.assertFalse(encoder.train()._use_packed_backend(device))
 
     def test_cuda_training_gradients_match_cpu(self) -> None:
         data = _random_batch(0)

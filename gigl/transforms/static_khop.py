@@ -5,10 +5,10 @@ from the data (sparse matmul, ``coalesce``, ``unique``, ``nonzero``, bool-mask
 indexing). The functions here build the same layout as its default
 (node-id-ordered, anchor-first) k-hop sequences from a dense ``[num_nodes, width]``
 neighbour table, using only sort, gather and scatter ops. Their only host read
-is the table width, the largest number of edges any node expands along.
+is the table width, the largest per-node degree over all edge types combined.
 
 Memory is ``O(num_anchors * width ** hop_distance)``, so this suits sampled
-subgraphs, where ``width`` is bounded by the sampling fanout.
+subgraphs and small hop counts.
 
 Example:
     >>> node_index, hop_index, lengths = khop_layout(
@@ -27,7 +27,7 @@ import torch
 from torch import Tensor
 
 
-def build_neighbor_table(
+def _build_neighbor_table(
     edge_index: Tensor,
     num_nodes: int,
     sampling_direction: Literal["in", "out"] = "out",
@@ -75,7 +75,7 @@ def build_neighbor_table(
     return table
 
 
-def khop_sequence_layout(
+def _khop_sequence_layout(
     neighbor_table: Tensor,
     anchor_indices: Tensor,
     hop_distance: int,
@@ -95,7 +95,7 @@ def khop_sequence_layout(
     every walk of up to ``hop_distance`` steps, deduplicated by a per-row sort.
 
     Args:
-        neighbor_table: ``[num_nodes + 1, width]`` table from ``build_neighbor_table``.
+        neighbor_table: ``[num_nodes + 1, width]`` table from ``_build_neighbor_table``.
         anchor_indices: ``[num_anchors]`` local node ids of the anchors.
         hop_distance: Number of hops to expand.
         max_seq_len: Tokens per sequence, anchor included.
@@ -182,10 +182,10 @@ def khop_layout(
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
 
     Returns:
-        The outputs of ``khop_sequence_layout``.
+        The outputs of ``_khop_sequence_layout``.
     """
-    return khop_sequence_layout(
-        build_neighbor_table(edge_index, num_nodes, sampling_direction),
+    return _khop_sequence_layout(
+        _build_neighbor_table(edge_index, num_nodes, sampling_direction),
         anchor_indices,
         hop_distance,
         max_seq_len,

@@ -61,7 +61,7 @@ Example Usage:
     >>> # attention_bias_data['anchor_bias']: (batch_size, max_seq_len, 1)
 """
 
-from typing import Final, Literal, NamedTuple, Optional, TypedDict
+from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
 from jaxtyping import Bool, Float, Int64
@@ -83,7 +83,7 @@ class SequenceAuxiliaryData(TypedDict):
     token_input: Optional[TokenInputData]
 
 
-HOP_DISTANCE_FEATURE_NAME: Final = "hop_distance"
+HOP_DISTANCE_FEATURE_NAME = "hop_distance"
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
 PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"

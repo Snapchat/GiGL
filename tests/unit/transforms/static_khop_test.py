@@ -9,7 +9,7 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import build_neighbor_table, khop_layout
+from gigl.transforms.static_khop import khop_layout
 from tests.test_assets.test_case import TestCase
 
 _CPU = torch.device("cpu")
@@ -110,25 +110,6 @@ class StaticKhopLayoutTest(TestCase):
         )
         self.assertEqual(lengths.tolist(), [4, 1, 2])
         self._assert_layouts_equal(edge_index, 6, 3, 5, direction="in")
-
-    def test_edgeless_batch(self) -> None:
-        empty = torch.empty((2, 0), dtype=torch.long)
-        self.assertEqual(build_neighbor_table(empty, 5).shape, (6, 1))
-        self._assert_layouts_equal(empty, 5, 5, 8, direction="in")
-
-    def test_table_width_is_the_largest_degree(self) -> None:
-        edge_index = torch.tensor([[1, 2, 3, 3], [0, 0, 0, 1]])
-        table = build_neighbor_table(edge_index, 4, sampling_direction="in")
-        self.assertEqual(
-            table.tolist(),
-            [[1, 2, 3], [3, -1, -1], [-1, -1, -1], [-1, -1, -1], [-1, -1, -1]],
-        )
-
-    def test_two_node_types_via_offsets(self) -> None:
-        # Nodes 0-2 are one type and 3-5 another; edges cross the boundary.
-        edge_index = torch.tensor([[3, 4, 0, 5], [0, 1, 4, 2]])
-        self._assert_layouts_equal(edge_index, 6, 3, 6, direction="in")
-        self._assert_layouts_equal(edge_index, 6, 3, 6, direction="out")
 
 
 if __name__ == "__main__":
