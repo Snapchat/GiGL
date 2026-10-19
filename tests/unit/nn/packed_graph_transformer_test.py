@@ -429,6 +429,7 @@ class PackedPathCudaTest(TestCase):
 
     def test_cuda_training_gradients_match_cpu(self) -> None:
         data = _random_batch(0)
+        cuda_data = _random_batch(0).to("cuda")
         kwargs = _encoder_kwargs(
             hid_dim=128,
             dropout_rate=0.0,
@@ -438,7 +439,6 @@ class PackedPathCudaTest(TestCase):
         )
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
-        cuda_data = copy.deepcopy(data).to("cuda")
         _assert_training_gradients_match(
             self,
             _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
@@ -451,6 +451,8 @@ class PackedPathCudaTest(TestCase):
     def test_cuda_forward_matches_cpu_with_two_host_syncs(self) -> None:
         device = torch.device("cuda")
         batches = [_random_batch(seed) for seed in range(3)]
+        warmup_data = _random_batch(0).to(device)
+        cuda_batches = [_random_batch(seed).to(device) for seed in range(3)]
         kwargs = _encoder_kwargs(
             hid_dim=128,
             anchor_based_input_embedding_dict=nn.ModuleDict(
@@ -460,9 +462,8 @@ class PackedPathCudaTest(TestCase):
         cpu_encoder = _materialized_encoder(batches[0], kwargs)
         cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
         with torch.no_grad():
-            cuda_encoder(copy.deepcopy(batches[0]).to(device), anchor_node_type=_USER)
-            for data in batches:
-                cuda_data = copy.deepcopy(data).to(device)
+            cuda_encoder(warmup_data, anchor_node_type=_USER)
+            for data, cuda_data in zip(batches, cuda_batches):
                 torch.cuda.synchronize()
                 torch.cuda.set_sync_debug_mode("warn")
                 try:
