@@ -1617,8 +1617,12 @@ class GraphTransformerEncoder(nn.Module):
             graph_attr_dict=graph_attr_dict,
             ppr_is_expanded_dict=ppr_is_expanded_dict,
             # Typed-PPR per-edge-type channel masks drive the relation filter.
-            ppr_relation_channel_masks=getattr(
-                data, "ppr_relation_channel_masks", None
+            # Check membership first: a missing-attribute lookup on HeteroData
+            # runs a regex, which torch.compile guards on.
+            ppr_relation_channel_masks=(
+                data.ppr_relation_channel_masks
+                if "ppr_relation_channel_masks" in data
+                else None
             ),
             batch_size=num_anchor_nodes,
             max_seq_len=self._max_seq_len,
