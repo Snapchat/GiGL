@@ -309,8 +309,12 @@ class DistSamplingProducer(DistMpSamplingProducer):
     def shutdown(self) -> None:
         """Stops the sampling workers, waiting at most ``MP_STATUS_CHECK_INTERVAL`` in total.
 
-        Same as GLT's ``DistMpSamplingProducer.shutdown`` except that the grace period is a
-        single deadline shared by all workers. See :func:`join_workers_with_shared_deadline`.
+        Same as GLT's ``DistMpSamplingProducer.shutdown`` [1] except that the grace period
+        is a single deadline shared by all workers.
+        See :func:`join_workers_with_shared_deadline`.
+
+        [1]:
+        https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_sampling_producer.py#L223-L239
         """
         if self._shutdown:
             return
