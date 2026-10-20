@@ -9,48 +9,15 @@ Packing reads the token count back to the host once, so the buffer is exactly
 as large as the real tokens and no slot is wasted.
 """
 
-from typing import Any, Callable, NamedTuple, cast
+from typing import Any, Callable, cast
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+from torch.autograd.function import once_differentiable
 from torch_geometric.utils import to_dense_batch
 
-
-class PackedSequences(NamedTuple):
-    """Where each sequence lives in the packed token buffer.
-
-    Attributes:
-        cu_seqlens: ``[num_sequences + 1]`` int32 cumulative sequence lengths on
-            the tokens' device; sequence ``i`` occupies
-            ``[cu_seqlens[i], cu_seqlens[i + 1])``.
-        max_seq_len: Host upper bound on any sequence length.
-    """
-
-    cu_seqlens: Tensor
-    max_seq_len: int
-
-
-def pack_sequences(lengths: Tensor, max_seq_len: int) -> tuple[Tensor, PackedSequences]:
-    """Locates the first ``lengths[i]`` positions of every sequence in a padded grid.
-
-    Costs one host read, of the total token count. Gather any
-    ``[num_sequences, max_seq_len]`` per-position tensor into packed order with
-    ``grid.flatten()[flat_index]``.
-
-    Args:
-        lengths: ``[num_sequences]`` long valid length of each sequence.
-        max_seq_len: Width of the padded grid.
-
-    Returns:
-        - ``[num_tokens]`` long indices of the valid positions in the flattened
-          grid, sequence by sequence.
-        - The packed layout.
-    """
-    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
-    cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
-    flat_index = valid.flatten().nonzero().squeeze(1)
-    return flat_index, PackedSequences(cu_seqlens.to(torch.int32), max_seq_len)
+from gigl.transforms.static_khop import PackedSequences
 
 
 class _VarlenAttention(torch.autograd.Function):
@@ -104,6 +71,7 @@ class _VarlenAttention(torch.autograd.Function):
         return output
 
     @staticmethod
+    @once_differentiable
     def backward(ctx: Any, *grad_outputs: Any) -> Any:
         (grad_output,) = grad_outputs
         (
@@ -167,7 +135,11 @@ def _varlen_attention(
     so it never syncs. Differentiable in ``query``, ``key`` and ``value``.
 
     CUDA only. ``head_dim`` must suit the memory-efficient kernel (64 works in
-    fp32, fp16 and bf16).
+    fp32, fp16 and bf16). The backward is non-deterministic unless
+    ``torch.use_deterministic_algorithms(True)``, and it needs
+    ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
+    Attention dropout is not supported: in torch 2.8 the varlen kernel draws one
+    dropout mask shared across heads and sequences.
 
     Args:
         query: ``[num_query_tokens, num_heads, head_dim]``.
@@ -181,6 +153,10 @@ def _varlen_attention(
     Returns:
         ``[num_query_tokens, num_heads, head_dim]`` attention output.
     """
+    if not torch.is_grad_enabled():
+        # ``needs_input_grad`` ignores grad mode; detached inputs skip the
+        # logsumexp and the saved tensors.
+        query, key, value = query.detach(), key.detach(), value.detach()
     return cast(
         Tensor,
         _VarlenAttention.apply(
@@ -273,7 +249,7 @@ def packed_attention(
         max_seqlen_q = 1
     else:
         cu_seqlens_q = packed.cu_seqlens
-        max_seqlen_q = packed.max_seq_len
+        max_seqlen_q = min(packed.max_seq_len, query.size(0))
     return _varlen_attention(
         query,
         key,
@@ -281,5 +257,5 @@ def packed_attention(
         cu_seqlens_q,
         packed.cu_seqlens,
         max_seqlen_q,
-        packed.max_seq_len,
+        min(packed.max_seq_len, key.size(0)),
     )

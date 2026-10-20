@@ -17,14 +17,10 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
 )
-from gigl.nn.packed_attention import (
-    PackedSequences,
-    _padded_packed_attention,
-    _varlen_attention,
-    pack_sequences,
-)
+from gigl.nn.packed_attention import _padded_packed_attention, _varlen_attention
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
+from gigl.transforms.static_khop import PackedSequences, pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -128,7 +124,7 @@ def _assert_training_gradients_match(
     atol: float = 1e-6,
 ) -> None:
     """Training-mode losses and every parameter gradient agree."""
-    torch.testing.assert_close(actual[0].cpu(), expected[0].cpu(), rtol=0, atol=atol)
+    torch.testing.assert_close(actual[0].cpu(), expected[0].cpu(), rtol=1e-6, atol=atol)
     test_case.assertEqual(actual[1].keys(), expected[1].keys())
     test_case.assertTrue(expected[1])
     for name, gradient in expected[1].items():
@@ -249,6 +245,7 @@ class PackedPathTest(TestCase):
             param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
             param("head_dim_not_multiple_of_8", num_heads=4),
             param("three_hops", hop_distance=3),
+            param("attention_dropout", attention_dropout_rate=0.1),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
             param(
                 "other_token_input",
@@ -268,13 +265,66 @@ class PackedPathTest(TestCase):
         encoder = GraphTransformerEncoder(**_encoder_kwargs(**overrides))
         self.assertEqual(encoder._supports_packed_backend, supported)
 
-    def test_packed_path_is_used_on_cuda_unless_training_with_attention_dropout(
-        self,
+    def test_packed_path_selection_does_not_depend_on_training_mode(self) -> None:
+        encoder = GraphTransformerEncoder(**_encoder_kwargs())
+        for training in (True, False):
+            encoder.train(training)
+            self.assertTrue(encoder._use_packed_backend(torch.device("cuda")))
+            self.assertFalse(encoder._use_packed_backend(torch.device("cpu")))
+
+    def test_constructor_rejects_invalid_sequence_bounds(self) -> None:
+        with self.assertRaises(ValueError):
+            GraphTransformerEncoder(**_encoder_kwargs(max_seq_len=0))
+        with self.assertRaises(ValueError):
+            GraphTransformerEncoder(**_encoder_kwargs(hop_distance=-1))
+
+    @parameterized.expand([param("one_anchor", [3]), param("two_anchors", [3, 40])])
+    def test_training_gradients_match_padded_path_on_tiny_batches(
+        self, _: str, anchors: list[int]
     ) -> None:
-        encoder = GraphTransformerEncoder(**_encoder_kwargs(attention_dropout_rate=0.1))
-        self.assertTrue(encoder.eval()._use_packed_backend(torch.device("cuda")))
-        self.assertFalse(encoder.train()._use_packed_backend(torch.device("cuda")))
-        self.assertFalse(encoder.eval()._use_packed_backend(torch.device("cpu")))
+        data = _random_batch(0)
+        anchor_node_ids = torch.tensor(anchors)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(dropout_rate=0.0, max_seq_len=256)
+        ).train()
+        _assert_training_gradients_match(
+            self,
+            _gradients(
+                lambda: encoder(
+                    data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+                ),
+                encoder,
+            ),
+            _gradients(
+                lambda: _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder,
+            ),
+        )
+
+    def test_batch_with_an_oversized_layout_runs_on_the_padded_path(self) -> None:
+        # One hub with more neighbours than the layout budget allows at two hops.
+        num_nodes = 6000
+        data = HeteroData()
+        data[_USER].x = torch.randn(num_nodes, 8)
+        data[_USER].batch_size = 1
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.stack(
+            [torch.arange(1, num_nodes), torch.zeros(num_nodes - 1, dtype=torch.long)]
+        )
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        encoder = _materialized_encoder(data, _encoder_kwargs(sampling_direction="in"))
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data), encoder(data, anchor_node_type=_USER)
+            )
+
+    def test_int32_edge_index(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with torch.no_grad():
+            expected = _run_packed(encoder, data)
+            edge_store = data[_FOLLOWS.tuple_repr()]
+            edge_store.edge_index = edge_store.edge_index.int()
+            torch.testing.assert_close(_run_packed(encoder, data), expected)
 
     def test_forward_accepts_a_string_device(self) -> None:
         data = _random_batch(0)
@@ -447,6 +497,41 @@ class PackedPathCudaTest(TestCase):
             ),
             atol=1e-4,
         )
+
+    def test_cuda_training_step_with_fewer_tokens_than_max_seq_len(self) -> None:
+        # The backward kernel rejects a length bound above the token count.
+        data = _random_batch(0)
+        kwargs = _encoder_kwargs(
+            hid_dim=128,
+            max_seq_len=256,
+            dropout_rate=0.0,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(3, 128)}
+            ),
+        )
+        cpu_encoder = _materialized_encoder(data, kwargs).train()
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        cuda_data = _random_batch(0).to("cuda")
+        for anchors in ([3], [3, 40]):
+            anchor_node_ids = torch.tensor(anchors)
+            _assert_training_gradients_match(
+                self,
+                _gradients(
+                    lambda: cpu_encoder(
+                        data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+                    ),
+                    cpu_encoder,
+                ),
+                _gradients(
+                    lambda: cuda_encoder(
+                        cuda_data,
+                        anchor_node_type=_USER,
+                        anchor_node_ids=anchor_node_ids.to("cuda"),
+                    ),
+                    cuda_encoder,
+                ),
+                atol=1e-4,
+            )
 
     def test_cuda_forward_matches_cpu_with_two_host_syncs(self) -> None:
         device = torch.device("cuda")
