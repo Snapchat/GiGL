@@ -720,6 +720,70 @@ class PackedPathCudaTest(TestCase):
                     atol=1e-4,
                 )
 
+    def test_cuda_relation_messages_match_cpu_with_a_fixed_number_of_host_syncs(
+        self,
+    ) -> None:
+        device = torch.device("cuda")
+        sync_counts: dict[int, list[int]] = {}
+        for num_layers in (1, 3):
+            kwargs = _relation_encoder_kwargs(
+                num_layers=num_layers,
+                hid_dim=128,
+                anchor_based_input_embedding_dict=nn.ModuleDict(
+                    {_HOP: nn.Embedding(3, 128)}
+                ),
+            )
+            data = _three_relation_batch(0)
+            cpu_encoder = _relation_encoder(data, kwargs)
+            cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
+            with torch.no_grad():
+                cuda_encoder(
+                    _three_relation_batch(0).to(device), anchor_node_type=_USER
+                )
+                for seed in range(3):
+                    data = _three_relation_batch(seed)
+                    cuda_data = _three_relation_batch(seed).to(device)
+                    torch.cuda.synchronize()
+                    torch.cuda.set_sync_debug_mode("warn")
+                    try:
+                        with warnings.catch_warnings(record=True) as caught:
+                            warnings.simplefilter("always")
+                            actual = cuda_encoder(cuda_data, anchor_node_type=_USER)
+                    finally:
+                        torch.cuda.set_sync_debug_mode("default")
+                    sync_counts.setdefault(num_layers, []).append(
+                        len([w for w in caught if "synchroniz" in str(w.message)])
+                    )
+                    torch.testing.assert_close(
+                        actual.cpu(),
+                        cpu_encoder(data, anchor_node_type=_USER),
+                        rtol=0,
+                        atol=1e-4,
+                    )
+        # Syncs come from building the batch's layout and edges, not from layers.
+        self.assertEqual(sync_counts[1], sync_counts[3])
+        print(f"RELATION_SYNC_COUNT {sync_counts}")
+
+    def test_cuda_relation_training_gradients_match_cpu(self) -> None:
+        kwargs = _relation_encoder_kwargs(
+            hid_dim=128,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(3, 128)}
+            ),
+        )
+        data = _three_relation_batch(0)
+        cpu_encoder = _relation_encoder(data, kwargs).train()
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        cuda_data = _three_relation_batch(0).to("cuda")
+        _assert_training_gradients_match(
+            self,
+            _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
+            _gradients(
+                lambda: cuda_encoder(cuda_data, anchor_node_type=_USER), cuda_encoder
+            ),
+            atol=1e-4,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()
