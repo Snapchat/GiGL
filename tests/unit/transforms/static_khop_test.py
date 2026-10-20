@@ -9,7 +9,7 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import khop_layout
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
 from tests.test_assets.test_case import TestCase
 
 _CPU = torch.device("cpu")
@@ -110,6 +110,27 @@ class StaticKhopLayoutTest(TestCase):
         )
         self.assertEqual(lengths.tolist(), [4, 1, 2])
         self._assert_layouts_equal(edge_index, 6, 3, 5, direction="in")
+
+    def test_accepts_int32_edge_index_and_anchors(self) -> None:
+        edge_index = _random_graph(40, 90, 0)
+        anchors = torch.tensor([5, 0, 17])
+        for hop_distance in (0, 1, 2):
+            with self.subTest(hop_distance=hop_distance):
+                expected = khop_layout(edge_index, 40, anchors, hop_distance, 8)
+                actual = khop_layout(
+                    edge_index.int(), 40, anchors.int(), hop_distance, 8
+                )
+                for expected_tensor, actual_tensor in zip(expected, actual):
+                    self.assertEqual(actual_tensor.dtype, torch.long)
+                    self.assertTrue(torch.equal(actual_tensor, expected_tensor))
+
+    def test_rejects_a_layout_over_the_candidate_budget(self) -> None:
+        # Width 3 at two hops is 1 + 3 + 9 = 13 candidates per anchor.
+        edge_index = torch.tensor([[0, 0, 0], [1, 2, 3]])
+        anchors = torch.arange(2)
+        khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=26)
+        with self.assertRaises(KhopLayoutTooLargeError):
+            khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=25)
 
 
 if __name__ == "__main__":
