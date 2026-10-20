@@ -616,7 +616,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if node_store is not None:
                 assert self.dist_node_fused_feature is not None
                 futs["nfeats"] = wrap_torch_future(
-                    self.dist_node_fused_feature.async_get(output.node)
+                    self.dist_node_fused_feature.async_get(output.node.to(torch.long))
                 )
                 fused_results["nfeats"] = f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}"
             else:
@@ -634,7 +634,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if edge_store is not None:
                 assert self.dist_edge_fused_feature is not None
                 futs["efeats"] = wrap_torch_future(
-                    self.dist_edge_fused_feature.async_get(result_map["eids"])
+                    self.dist_edge_fused_feature.async_get(
+                        result_map["eids"].to(torch.long)
+                    )
                 )
                 fused_results["efeats"] = f"#META.{EDGE_PACKED_FEATURES_METADATA_KEY}"
             else:
