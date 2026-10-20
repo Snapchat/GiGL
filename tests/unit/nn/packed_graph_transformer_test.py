@@ -11,11 +11,13 @@ import torch
 import torch.nn as nn
 from absl.testing import absltest
 from parameterized import param, parameterized
+from torch.utils.checkpoint import checkpoint
 from torch_geometric.data import HeteroData
 
 from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
+    PackedRelationEdges,
 )
 from gigl.nn.packed_attention import (
     PackedSequences,
@@ -25,6 +27,7 @@ from gigl.nn.packed_attention import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
+from gigl.transforms.static_khop import khop_layout
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -32,6 +35,10 @@ _ITEM = NodeType("item")
 _FOLLOWS = EdgeType(_USER, Relation("follows"), _USER)
 _BUYS = EdgeType(_USER, Relation("buys"), _ITEM)
 _BOUGHT_BY = EdgeType(_ITEM, Relation("bought_by"), _USER)
+_USER_EDGE_TYPES = [
+    EdgeType(_USER, Relation(name), _USER)
+    for name in ("is_friends_with", "bidi_engage", "bidi_imc")
+]
 _HOP = "hop_distance"
 _MAX_SEQ_LEN = 24
 
@@ -96,6 +103,61 @@ def _materialized_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEnc
     encoder = GraphTransformerEncoder(**kwargs).eval()
     with torch.no_grad():
         encoder(data, anchor_node_type=_USER)
+    return encoder
+
+
+def _three_relation_batch(seed: int, num_edges: int = 80) -> HeteroData:
+    """A user graph with three user-to-user edge types."""
+    generator = torch.Generator().manual_seed(seed)
+    data = HeteroData()
+    data[_USER].x = torch.randn(60, 8, generator=generator)
+    data[_USER].batch_size = 12
+    for edge_type in _USER_EDGE_TYPES:
+        data[edge_type.tuple_repr()].edge_index = torch.randint(
+            0, 60, (2, num_edges), generator=generator
+        )
+    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+
+
+def _sequence_lengths(data: HeteroData) -> torch.Tensor:
+    """Each anchor's token count in the batch's 2-hop layout."""
+    edge_index = torch.cat(
+        [data[edge_type.tuple_repr()].edge_index for edge_type in _USER_EDGE_TYPES],
+        dim=1,
+    )
+    return khop_layout(
+        edge_index,
+        num_nodes=data[_USER].x.size(0),
+        anchor_indices=torch.arange(data[_USER].batch_size),
+        hop_distance=2,
+        max_seq_len=_MAX_SEQ_LEN,
+        sampling_direction="in",
+    )[2]
+
+
+def _relation_encoder_kwargs(
+    mode: str = "edge_type_attention", **overrides: object
+) -> dict:
+    kwargs = _encoder_kwargs()
+    kwargs.update(
+        edge_type_to_feat_dim_map={edge_type: 0 for edge_type in _USER_EDGE_TYPES},
+        relation_message_mode=mode,
+        num_layers=3,
+        dropout_rate=0.0,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def _relation_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEncoder:
+    """An eval-mode encoder whose relation parameters, which start at no-op
+    values, are random."""
+    encoder = _materialized_encoder(data, kwargs)
+    generator = torch.Generator().manual_seed(0)
+    with torch.no_grad():
+        for name, parameter in encoder.named_parameters():
+            if "_relation_message" in name:
+                parameter.add_(0.3 * torch.randn(parameter.shape, generator=generator))
     return encoder
 
 
@@ -244,7 +306,21 @@ class PackedPathTest(TestCase):
                 readout_mode="anchor_neighbor_attention",
             ),
             param("prioritize_hop_order", prioritize_hop_order=True),
-            param("relation_message", relation_message_mode="edge_type_linear"),
+            param(
+                "relation_message_linear",
+                supported=True,
+                relation_message_mode="edge_type_linear",
+            ),
+            param(
+                "relation_message_attention",
+                supported=True,
+                relation_message_mode="edge_type_attention",
+            ),
+            param(
+                "relation_attention_with_message",
+                relation_attention_mode="edge_type_bilinear",
+                relation_message_mode="edge_type_attention",
+            ),
             param("relation_attention", relation_attention_mode="edge_type_bilinear"),
             param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
             param("head_dim_not_multiple_of_8", num_heads=4),
@@ -299,6 +375,169 @@ class PackedPathTest(TestCase):
         self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
         self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
         self.assertEqual(packed.max_seq_len, 3)
+
+
+class PackedRelationMessageTest(TestCase):
+    def test_batches_mix_truncated_and_short_sequences(self) -> None:
+        for seed in range(3):
+            lengths = _sequence_lengths(_three_relation_batch(seed))
+            self.assertTrue((lengths == _MAX_SEQ_LEN).any(), lengths)
+            self.assertTrue((lengths < _MAX_SEQ_LEN).any(), lengths)
+
+    @parameterized.expand(
+        [
+            param("attention"),
+            param("linear", mode="edge_type_linear"),
+            param("one_layer", num_layers=1),
+            param("one_hop", hop_distance=1),
+            param("out_direction", sampling_direction="out"),
+            param("sparse_graph", num_edges=20),
+        ]
+    )
+    def test_matches_padded_path(
+        self,
+        _: str,
+        mode: str = "edge_type_attention",
+        num_edges: int = 80,
+        **overrides: object,
+    ) -> None:
+        for seed in range(3):
+            data = _three_relation_batch(seed, num_edges)
+            if overrides.get("sampling_direction") == "out":
+                data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="out")(
+                    data
+                )
+            encoder = _relation_encoder(
+                data, _relation_encoder_kwargs(mode, **overrides)
+            )
+            no_messages = copy.deepcopy(encoder)
+            for name, parameter in no_messages.named_parameters():
+                if "_relation_message_matrices" in name:
+                    parameter.data.zero_()
+            with self.subTest(seed=seed), torch.no_grad():
+                expected = encoder(data, anchor_node_type=_USER)
+                torch.testing.assert_close(
+                    _run_packed(encoder, data), expected, rtol=0, atol=1e-6
+                )
+                # The relation channel is what the comparison above exercises.
+                self.assertGreater(
+                    (expected - no_messages(data, anchor_node_type=_USER)).abs().max(),
+                    1e-3,
+                )
+
+    def test_matches_padded_path_with_explicit_anchors(self) -> None:
+        data = _three_relation_batch(0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs())
+        anchor_node_ids = torch.tensor([7, 3, 3, 40, 0])
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder(data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_edgeless_batch(self) -> None:
+        data = _three_relation_batch(0, num_edges=0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs())
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    @parameterized.expand(
+        [
+            param("attention", mode="edge_type_attention"),
+            param("linear", mode="edge_type_linear"),
+        ]
+    )
+    def test_training_gradients_match_padded_path(self, _: str, mode: str) -> None:
+        data = _three_relation_batch(0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs(mode)).train()
+        expected = _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder)
+        actual = _gradients(lambda: _run_packed(encoder, data), encoder)
+        # The relation parameters of every layer are trained.
+        self.assertTrue(
+            all(
+                actual[1][f"_encoder_layers.{layer}._relation_message_matrices"]
+                .abs()
+                .max()
+                > 0
+                for layer in range(3)
+            )
+        )
+        _assert_training_gradients_match(self, expected, actual)
+
+    def test_training_keeps_relation_parameters_in_the_graph_without_edges(
+        self,
+    ) -> None:
+        data = _three_relation_batch(0, num_edges=0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs()).train()
+        _, gradients = _gradients(lambda: _run_packed(encoder, data), encoder)
+        for layer in range(3):
+            self.assertEqual(
+                gradients[f"_encoder_layers.{layer}._relation_message_matrices"]
+                .abs()
+                .max(),
+                0,
+            )
+
+    def test_per_layer_checkpointing_matches_plain_gradients(self) -> None:
+        class CheckpointedEncoder(GraphTransformerEncoder):
+            layer_calls = 0
+
+            def _run_packed_layer(
+                self,
+                layer: GraphTransformerEncoderLayer,
+                x: torch.Tensor,
+                packed: PackedSequences,
+                first_token_output: bool,
+                relation_edges: PackedRelationEdges | None,
+            ) -> torch.Tensor:
+                def run(x: torch.Tensor) -> torch.Tensor:
+                    self.layer_calls += 1
+                    return super(CheckpointedEncoder, self)._run_packed_layer(
+                        layer, x, packed, first_token_output, relation_edges
+                    )
+
+                return checkpoint(run, x, use_reentrant=False)
+
+        data = _three_relation_batch(0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs()).train()
+        checkpointed = CheckpointedEncoder(**_relation_encoder_kwargs()).train()
+        checkpointed.load_state_dict(encoder.state_dict())
+        expected = _gradients(lambda: _run_packed(encoder, data), encoder)
+        actual = _gradients(lambda: _run_packed(checkpointed, data), checkpointed)
+        # Each of the 3 layers ran in the forward and again in the backward.
+        self.assertEqual(checkpointed.layer_calls, 6)
+        _assert_training_gradients_match(self, expected, actual, atol=1e-7)
+
+    def test_layer_requires_relation_edges_for_relation_messages(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=16,
+            num_heads=2,
+            feedforward_dim=32,
+            relation_message_mode="edge_type_attention",
+            num_relations=2,
+        )
+        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        with self.assertRaises(ValueError):
+            layer.eval().forward_packed(torch.randn(2, 16), packed)
+
+    def test_layer_rejects_relation_attention_bias(self) -> None:
+        layer = GraphTransformerEncoderLayer(
+            model_dim=16,
+            num_heads=2,
+            feedforward_dim=32,
+            relation_attention_mode="edge_type_bilinear",
+            num_relations=2,
+        )
+        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        with self.assertRaises(ValueError):
+            layer.eval().forward_packed(torch.randn(2, 16), packed)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
