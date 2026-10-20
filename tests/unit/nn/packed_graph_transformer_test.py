@@ -399,7 +399,7 @@ class PackedRelationMessageTest(TestCase):
         _: str,
         mode: str = "edge_type_attention",
         num_edges: int = 80,
-        **overrides: object,
+        **overrides: Any,
     ) -> None:
         for seed in range(3):
             data = _three_relation_batch(seed, num_edges)
@@ -469,20 +469,63 @@ class PackedRelationMessageTest(TestCase):
                 for layer in range(3)
             )
         )
-        _assert_training_gradients_match(self, expected, actual)
+        _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
-    def test_training_keeps_relation_parameters_in_the_graph_without_edges(
-        self,
+    @parameterized.expand(
+        [
+            param("no_edges", num_edges=0),
+            # Every edge into an anchor is dropped: with "out" sampling and one hop
+            # the expanded endpoint of such an edge is a last-hop token.
+            param("no_edges_into_anchors", sampling_direction="out", hop_distance=1),
+        ]
+    )
+    def test_training_gradients_match_padded_path_when_edges_are_filtered(
+        self, _: str, num_edges: int = 80, **overrides: Any
     ) -> None:
-        data = _three_relation_batch(0, num_edges=0)
-        encoder = _relation_encoder(data, _relation_encoder_kwargs()).train()
-        _, gradients = _gradients(lambda: _run_packed(encoder, data), encoder)
-        for layer in range(3):
-            self.assertEqual(
-                gradients[f"_encoder_layers.{layer}._relation_message_matrices"]
-                .abs()
-                .max(),
-                0,
+        data = _three_relation_batch(0, num_edges)
+        if overrides:
+            data = AddHeteroHopDistanceEncoding(h_max=1, sampling_direction="out")(data)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs(**overrides)).train()
+        _assert_training_gradients_match(
+            self,
+            _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder),
+            _gradients(lambda: _run_packed(encoder, data), encoder),
+            atol=1e-5,
+        )
+
+    @parameterized.expand(
+        [
+            param("tiny_max_seq_len", max_seq_len=2),
+            param("max_seq_len_one", max_seq_len=1),
+        ]
+    )
+    def test_matches_padded_path_with_most_edges_truncated(
+        self, _: str, **overrides: Any
+    ) -> None:
+        data = _three_relation_batch(0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs(**overrides))
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_matches_padded_path_on_a_hetero_graph(self) -> None:
+        # Edge types between different node types, and a relation subset that
+        # leaves a relation absent from the batch.
+        data = _random_batch(0, hetero=True)
+        kwargs = _encoder_kwargs(
+            hetero=True, relation_message_mode="edge_type_attention"
+        )
+        encoder = _relation_encoder(data, kwargs)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
             )
 
     def test_per_layer_checkpointing_matches_plain_gradients(self) -> None:
@@ -762,7 +805,6 @@ class PackedPathCudaTest(TestCase):
                     )
         # Syncs come from building the batch's layout and edges, not from layers.
         self.assertEqual(sync_counts[1], sync_counts[3])
-        print(f"RELATION_SYNC_COUNT {sync_counts}")
 
     def test_cuda_relation_training_gradients_match_cpu(self) -> None:
         kwargs = _relation_encoder_kwargs(

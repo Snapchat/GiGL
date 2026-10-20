@@ -245,17 +245,19 @@ class PackedRelationEdges(NamedTuple):
         segments: ``(relation, start, end)`` runs of equal ``relation``, covering
             ``[0, num_edges)`` in order. They are host values, so the per-relation
             transforms never read the device.
+        all_filtered: The batch has relation edges but none reach these outputs.
     """
 
     target: Tensor
     source: Tensor
     relation: Tensor
     segments: tuple[tuple[int, int, int], ...]
+    all_filtered: bool = False
 
 
 def _get_relation_segments(
     relation_indices: Tensor,
-) -> list[tuple[int, int, int]]:
+) -> tuple[tuple[int, int, int], ...]:
     """Returns the ``(relation, start, end)`` runs of equal consecutive relations.
 
     Costs one host read.
@@ -266,7 +268,7 @@ def _get_relation_segments(
     for relation, count in torch.stack([relations, counts]).t().tolist():
         segments.append((relation, start, start + count))
         start += count
-    return segments
+    return tuple(segments)
 
 
 class GraphTransformerEncoderLayer(nn.Module):
@@ -599,7 +601,7 @@ class GraphTransformerEncoderLayer(nn.Module):
                     num_target_rows=x.size(0),
                 )
                 x = x + self._dropout(messages)
-            elif self.training:
+            elif self.training and relation_edges.all_filtered:
                 # Keep the relation parameters in the graph, as the padded path does
                 # when anchor filtering drops every edge.
                 x = x + self._zero_relation_parameter_dependency(x)
@@ -1153,8 +1155,8 @@ class GraphTransformerEncoderLayer(nn.Module):
             * edge_weights.unsqueeze(-1)
         ).reshape(num_edges, model_dim)
         messages = source_features.new_zeros((num_target_rows, model_dim))
-        return messages.index_add_(
-            0, target_rows, weighted_messages.to(dtype=messages.dtype)
+        return messages.index_put_(
+            (target_rows,), weighted_messages.to(dtype=messages.dtype), accumulate=True
         )
 
 
@@ -1943,8 +1945,8 @@ class GraphTransformerEncoder(nn.Module):
         """Runs one layer on packed tokens.
 
         A subclass can override this to wrap the call, for example in
-        ``torch.utils.checkpoint.checkpoint``. The layer reads no host values
-        and draws no random numbers when dropout is 0, so it can be recomputed.
+        ``torch.utils.checkpoint.checkpoint``. The layer reads no host values,
+        so it can be recomputed.
         """
         return layer.forward_packed(
             x,
@@ -2033,16 +2035,17 @@ class GraphTransformerEncoder(nn.Module):
                 ),
                 source=edge_first_tokens + source_positions,
                 relation=relations,
-                segments=tuple(_get_relation_segments(relations)),
+                segments=_get_relation_segments(relations),
             )
 
-        # The matcher returns the edges grouped by relation. The last layer
-        # computes only the anchors, so it keeps the edges into position 0.
-        return (
-            to_packed_edges(relation_edges, target_is_anchor_row=False),
-            to_packed_edges(
-                relation_edges[relation_edges[:, 1] == 0], target_is_anchor_row=True
-            ),
+        # The last layer computes only the anchors, so it keeps the edges into
+        # position 0.
+        all_edges = to_packed_edges(relation_edges, target_is_anchor_row=False)
+        anchor_edges = to_packed_edges(
+            relation_edges[relation_edges[:, 1] == 0], target_is_anchor_row=True
+        )
+        return all_edges, anchor_edges._replace(
+            all_filtered=bool(all_edges.segments) and not anchor_edges.segments
         )
 
     def _get_sequence_positional_encoding(
