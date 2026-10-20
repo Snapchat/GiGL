@@ -24,7 +24,7 @@ from functools import cached_property
 from typing import Final, Iterable, Optional, Sequence
 
 import torch
-from jaxtyping import Bool, Float, Float32
+from jaxtyping import Bool, Float, Float32, Shaped, UInt8
 
 from gigl.common.logger import Logger
 
@@ -241,7 +241,9 @@ class FeatureCodec:
         used = sum(group.num_bytes for group in self._groups)
         return (used + 3) // 4 * 4
 
-    def encode(self, features: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self, features: Float[torch.Tensor, "n _num_columns"]
+    ) -> UInt8[torch.Tensor, "n {self.row_bytes}"]:
         """Packs float32 ``[N, D]`` features into ``uint8`` ``[N, row_bytes]`` rows.
 
         Raises:
@@ -285,7 +287,9 @@ class FeatureCodec:
                 f"(kind {group.kind}); the packed layout cannot represent it"
             )
 
-    def decode(self, rows: torch.Tensor) -> torch.Tensor:
+    def decode(
+        self, rows: Shaped[torch.Tensor, "n _row_bytes"]
+    ) -> Float32[torch.Tensor, "n {self.num_columns}"]:
         """Unpacks ``uint8`` ``[N, row_bytes]`` rows (on any device) to float32 ``[N, D]``."""
         if (
             rows.dtype != torch.uint8
