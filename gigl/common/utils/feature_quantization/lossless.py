@@ -24,6 +24,7 @@ from functools import cached_property
 from typing import Final, Iterable, Optional, Sequence
 
 import torch
+from jaxtyping import Bool, Float, Float32
 
 from gigl.common.logger import Logger
 
@@ -75,9 +76,9 @@ class ColumnStats:
             values and NaN).
     """
 
-    minimum: torch.Tensor
-    maximum: torch.Tensor
-    integral: torch.Tensor
+    minimum: Float32[torch.Tensor, "width"]
+    maximum: Float32[torch.Tensor, "width"]
+    integral: Bool[torch.Tensor, "width"]
 
     @classmethod
     def empty(cls, width: int) -> "ColumnStats":
@@ -90,7 +91,9 @@ class ColumnStats:
 
     @classmethod
     def from_features(
-        cls, features: torch.Tensor, columns: Optional[Sequence[int]] = None
+        cls,
+        features: Float[torch.Tensor, "rows features_dim"],
+        columns: Optional[Sequence[int]] = None,
     ) -> "ColumnStats":
         """Scans ``features`` (only ``columns`` if given) in row chunks, so the scan needs no full-size temporaries."""
         if features.dim() != 2:

@@ -17,6 +17,7 @@ from typing import Hashable, Mapping, Optional, TypeVar, Union
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
+from jaxtyping import Float, UInt8
 
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.lossless import ColumnStats, FeatureCodec
@@ -74,7 +75,8 @@ def _candidate_columns(
 
 
 def _check_width(
-    features: Optional[torch.Tensor], logical_to_raw: dict[int, int]
+    features: Optional[Float[torch.Tensor, "rows raw_dim"]],
+    logical_to_raw: dict[int, int],
 ) -> None:
     if features is not None and features.shape[1] != len(logical_to_raw):
         raise ValueError(
@@ -84,7 +86,7 @@ def _check_width(
 
 
 def lossless_column_stats(
-    features: Optional[torch.Tensor],
+    features: Optional[Float[torch.Tensor, "rows raw_dim"]],
     metadata: Optional[FeatureQuantizationMetadata],
     declared: FeatureCodec,
 ) -> Optional[ColumnStats]:
@@ -111,15 +113,15 @@ def lossless_column_stats(
 
 
 def compress_lossless_columns(
-    features: Optional[torch.Tensor],
-    quantized_features: Optional[torch.Tensor],
+    features: Optional[Float[torch.Tensor, "rows raw_dim"]],
+    quantized_features: Optional[UInt8[torch.Tensor, "rows packed_dim"]],
     metadata: Optional[FeatureQuantizationMetadata],
     declared: FeatureCodec,
     stats: Optional[ColumnStats],
     strict: bool = False,
 ) -> tuple[
-    Optional[torch.Tensor],
-    Optional[torch.Tensor],
+    Optional[Float[torch.Tensor, "rows _remaining_dim"]],
+    Optional[UInt8[torch.Tensor, "rows _new_packed_dim"]],
     Optional[FeatureQuantizationMetadata],
 ]:
     """Moves the declared columns of one node or edge type from the raw float matrix into the packed sidecar.
