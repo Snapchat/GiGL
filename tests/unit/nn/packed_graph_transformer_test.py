@@ -101,13 +101,15 @@ def _materialized_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEnc
     return encoder
 
 
-def _three_relation_batch(seed: int, num_edges: int = 80) -> HeteroData:
-    """A user graph with three user-to-user edge types."""
+def _three_relation_batch(
+    seed: int, num_edges: int = 80, num_relations: int = 3
+) -> HeteroData:
+    """A user graph with ``num_relations`` of three user-to-user edge types."""
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
     data[_USER].x = torch.randn(60, 8, generator=generator)
     data[_USER].batch_size = 12
-    for edge_type in _USER_EDGE_TYPES:
+    for edge_type in _USER_EDGE_TYPES[:num_relations]:
         data[edge_type.tuple_repr()].edge_index = torch.randint(
             0, 60, (2, num_edges), generator=generator
         )
@@ -131,11 +133,13 @@ def _sequence_lengths(data: HeteroData) -> torch.Tensor:
 
 
 def _relation_encoder_kwargs(
-    mode: str = "edge_type_attention", **overrides: object
+    mode: str = "edge_type_attention", num_relations: int = 3, **overrides: object
 ) -> dict:
     kwargs = _encoder_kwargs()
     kwargs.update(
-        edge_type_to_feat_dim_map={edge_type: 0 for edge_type in _USER_EDGE_TYPES},
+        edge_type_to_feat_dim_map={
+            edge_type: 0 for edge_type in _USER_EDGE_TYPES[:num_relations]
+        },
         relation_message_mode=mode,
         num_layers=3,
         dropout_rate=0.0,
@@ -869,25 +873,27 @@ class PackedPathCudaTest(TestCase):
         self,
     ) -> None:
         device = torch.device("cuda")
-        sync_counts: dict[int, list[int]] = {}
-        for num_layers in (1, 3):
+        sync_counts: dict[tuple[int, int], list[int]] = {}
+        for num_layers, num_relations in ((1, 3), (3, 3), (3, 1)):
             kwargs = _relation_encoder_kwargs(
+                num_relations=num_relations,
                 num_layers=num_layers,
                 hid_dim=128,
                 anchor_based_input_embedding_dict=nn.ModuleDict(
                     {_HOP: nn.Embedding(3, 128)}
                 ),
             )
-            data = _three_relation_batch(0)
+            data = _three_relation_batch(0, num_relations=num_relations)
             cpu_encoder = _relation_encoder(data, kwargs)
             cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
             with torch.no_grad():
                 cuda_encoder(
-                    _three_relation_batch(0).to(device), anchor_node_type=_USER
+                    _three_relation_batch(0, num_relations=num_relations).to(device),
+                    anchor_node_type=_USER,
                 )
                 for seed in range(3):
-                    data = _three_relation_batch(seed)
-                    cuda_data = _three_relation_batch(seed).to(device)
+                    data = _three_relation_batch(seed, num_relations=num_relations)
+                    cuda_data = data.clone().to(device)
                     torch.cuda.synchronize()
                     torch.cuda.set_sync_debug_mode("warn")
                     try:
@@ -896,7 +902,7 @@ class PackedPathCudaTest(TestCase):
                             actual = cuda_encoder(cuda_data, anchor_node_type=_USER)
                     finally:
                         torch.cuda.set_sync_debug_mode("default")
-                    sync_counts.setdefault(num_layers, []).append(
+                    sync_counts.setdefault((num_layers, num_relations), []).append(
                         len([w for w in caught if "synchroniz" in str(w.message)])
                     )
                     torch.testing.assert_close(
@@ -905,8 +911,13 @@ class PackedPathCudaTest(TestCase):
                         rtol=0,
                         atol=1e-4,
                     )
-        # Syncs come from building the batch's layout and edges, not from layers.
-        self.assertEqual(sync_counts[1], sync_counts[3])
+        # Syncs come from building the batch's layout and edges, so they depend on
+        # neither the number of layers nor the number of relations.
+        self.assertEqual(
+            len({count for counts in sync_counts.values() for count in counts}),
+            1,
+            sync_counts,
+        )
 
     def test_cuda_relation_training_gradients_match_cpu(self) -> None:
         kwargs = _relation_encoder_kwargs(

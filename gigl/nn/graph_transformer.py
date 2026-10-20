@@ -1090,9 +1090,9 @@ class GraphTransformerEncoderLayer(nn.Module):
             edge_keys: ``(num_edges, num_heads, head_dim)`` source keys, or
                 ``None`` for mean aggregation.
             relation_indices: ``(num_edges,)`` relation of each edge.
-            relation_segments: ``(relation, start, end)`` runs of equal
-                relation covering ``[0, num_edges)`` in order; the per-relation
-                transforms run on these slices.
+            relation_segments: ``(relation, start, end)`` edge ranges covering
+                ``[0, num_edges)`` in order, empty ranges allowed; the
+                per-relation transforms run on these slices.
             target_rows: ``(num_edges,)`` output row of each edge's target.
             num_target_rows: Number of output rows.
 
@@ -2092,8 +2092,10 @@ class GraphTransformerEncoder(nn.Module):
         )
         relations = relations.contiguous()
         edge_first_tokens = first_tokens[batch_indices]
+        source_rows = edge_first_tokens + source_positions
         # The last layer computes only the anchors, so it keeps the edges into
-        # position 0. A stable sort puts them first, still grouped by relation.
+        # position 0. Sorting on (not anchor, relation) puts them first, grouped by
+        # relation; stability keeps each relation's edges in lookup order.
         num_relations = len(self._relation_attention_edge_types)
         is_not_anchor_edge = (target_positions != 0).long()
         anchor_sort_keys, anchor_order = torch.sort(
@@ -2113,13 +2115,13 @@ class GraphTransformerEncoder(nn.Module):
         return (
             PackedRelationEdges(
                 target=edge_first_tokens + target_positions,
-                source=edge_first_tokens + source_positions,
+                source=source_rows,
                 relation=relations,
                 segments=_get_relation_segments_from_bounds(all_bounds),
             ),
             PackedRelationEdges(
                 target=batch_indices[anchor_edges],
-                source=(edge_first_tokens + source_positions)[anchor_edges],
+                source=source_rows[anchor_edges],
                 relation=relations[anchor_edges],
                 segments=_get_relation_segments_from_bounds(anchor_bounds),
                 all_filtered=all_bounds[-1] > 0 and num_anchor_edges == 0,
