@@ -24,6 +24,7 @@ from functools import cached_property
 from typing import Final, Iterable, Optional, Sequence
 
 import torch
+from jaxtyping import Bool, Float, Float32, Shaped, UInt8
 
 from gigl.common.logger import Logger
 
@@ -75,9 +76,9 @@ class ColumnStats:
             values and NaN).
     """
 
-    minimum: torch.Tensor
-    maximum: torch.Tensor
-    integral: torch.Tensor
+    minimum: Float32[torch.Tensor, "width"]
+    maximum: Float32[torch.Tensor, "width"]
+    integral: Bool[torch.Tensor, "width"]
 
     @classmethod
     def empty(cls, width: int) -> "ColumnStats":
@@ -90,7 +91,9 @@ class ColumnStats:
 
     @classmethod
     def from_features(
-        cls, features: torch.Tensor, columns: Optional[Sequence[int]] = None
+        cls,
+        features: Float[torch.Tensor, "rows features_dim"],
+        columns: Optional[Sequence[int]] = None,
     ) -> "ColumnStats":
         """Scans ``features`` (only ``columns`` if given) in row chunks, so the scan needs no full-size temporaries."""
         if features.dim() != 2:
@@ -238,7 +241,9 @@ class FeatureCodec:
         used = sum(group.num_bytes for group in self._groups)
         return (used + 3) // 4 * 4
 
-    def encode(self, features: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self, features: Float[torch.Tensor, "n _num_columns"]
+    ) -> UInt8[torch.Tensor, "n {self.row_bytes}"]:
         """Packs float32 ``[N, D]`` features into ``uint8`` ``[N, row_bytes]`` rows.
 
         Raises:
@@ -282,7 +287,9 @@ class FeatureCodec:
                 f"(kind {group.kind}); the packed layout cannot represent it"
             )
 
-    def decode(self, rows: torch.Tensor) -> torch.Tensor:
+    def decode(
+        self, rows: Shaped[torch.Tensor, "n _row_bytes"]
+    ) -> Float32[torch.Tensor, "n {self.num_columns}"]:
         """Unpacks ``uint8`` ``[N, row_bytes]`` rows (on any device) to float32 ``[N, D]``."""
         if (
             rows.dtype != torch.uint8
