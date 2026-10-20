@@ -19,6 +19,7 @@ from graphlearn_torch.distributed.rpc import RpcDataPartitionRouter, rpc_registe
 from graphlearn_torch.partition import GLTPartitionBook, PartitionBook
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import ensure_device, get_available_device
+from jaxtyping import Float, Int64, UInt8
 
 
 class FusedFeatureStore:
@@ -61,11 +62,18 @@ class FusedFeatureStore:
         unpadded = self._raw_row_bytes + self._packed_dim
         return (unpadded + itemsize - 1) // itemsize * itemsize
 
-    def __getitem__(self, ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, ids: Int64[torch.Tensor, "num_ids"]
+    ) -> tuple[
+        Float[torch.Tensor, "num_ids raw_dim"],
+        UInt8[torch.Tensor, "num_ids packed_dim"],
+    ]:
         """Raw float rows and packed sidecar rows of ids that are local to this store."""
         return self._raw[ids], self._packed[ids]
 
-    def cpu_get(self, ids: torch.Tensor) -> torch.Tensor:
+    def cpu_get(
+        self, ids: Int64[torch.Tensor, "num_ids"]
+    ) -> UInt8[torch.Tensor, "num_ids row_bytes"]:
         """Served rows of ids from the CPU tensors, as ``[len(ids), row_bytes]`` bytes, for answering remote requests.
 
         Each store is gathered straight into its columns of the output, so every value is copied once.
@@ -81,7 +89,12 @@ class FusedFeatureStore:
         rows[:, self._raw_row_bytes + self._packed_dim :] = 0
         return rows
 
-    def split(self, rows: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def split(
+        self, rows: UInt8[torch.Tensor, "num_rows row_bytes"]
+    ) -> tuple[
+        Float[torch.Tensor, "num_rows raw_dim"],
+        UInt8[torch.Tensor, "num_rows packed_dim"],
+    ]:
         """Views of served byte rows as the raw float matrix and the packed sidecar rows, without copying."""
         raw_bytes = self._raw_row_bytes
         return (
@@ -155,7 +168,7 @@ class FusedDistFeature(DistFeature):
 
     def async_get(
         self,
-        ids: torch.Tensor,
+        ids: Int64[torch.Tensor, "num_ids"],
         input_type: Optional[Union[NodeType, EdgeType]] = None,
     ) -> torch.futures.Future:
         """Looks up the raw float rows and packed sidecar rows of ids.
@@ -188,11 +201,17 @@ class FusedDistFeature(DistFeature):
     def _stitch_fused(
         self,
         store: FusedFeatureStore,
-        ids: torch.Tensor,
-        local_rows: tuple[torch.Tensor, torch.Tensor],
-        local_index: torch.Tensor,
+        ids: Int64[torch.Tensor, "num_ids"],
+        local_rows: tuple[
+            Float[torch.Tensor, "num_local raw_dim"],
+            UInt8[torch.Tensor, "num_local packed_dim"],
+        ],
+        local_index: Int64[torch.Tensor, "num_local"],
         remotes: list[tuple[torch.Tensor, torch.Tensor]],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        Float[torch.Tensor, "num_ids raw_dim"],
+        UInt8[torch.Tensor, "num_ids packed_dim"],
+    ]:
         """Puts the local rows and the received byte rows of each remote partition into the raw and sidecar outputs."""
         if local_index.numel() == ids.numel():
             # Every id is local, so the local rows are already complete and in order.
