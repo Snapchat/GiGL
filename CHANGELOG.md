@@ -23,12 +23,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
   (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences without
-  `prioritize_hop_order`, `anchor_only` readout, relation modes `none`, no attention biases, at most `hop_distance` as
-  an anchor-based input, a head dim divisible by 8, `hop_distance <= 2`, and `attention_dropout_rate == 0`; everything
-  else, CPU, and batches whose k-hop candidate set is too large keep the padded path. Both paths give the same
-  embeddings and gradients up to float error, except that train-mode `dropout_rate` draws differ (same distribution).
-  The packed path derives `hop_distance` from the layout and ignores the batch attribute; that equals the directed
-  `AddHeteroHopDistanceEncoding` with the same sampling direction by @kmontemayor2-sc
+  `prioritize_hop_order`, `anchor_only` readout, `relation_attention_mode` `none`, any `relation_message_mode`, no
+  attention biases, at most `hop_distance` as an anchor-based input, a head dim divisible by 8, `hop_distance <= 2`, and
+  `attention_dropout_rate == 0`; everything else, CPU, and batches whose k-hop candidate set is too large keep the
+  padded path. Both paths give the same embeddings and gradients up to float error, except that train-mode
+  `dropout_rate` draws differ (same distribution). The packed path derives `hop_distance` from the layout and ignores
+  the batch attribute; that equals the directed `AddHeteroHopDistanceEncoding` with the same sampling direction. The
+  relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation messages over the layout's
+  edges with a fixed number of host syncs per forward, independent of the number of relations and layers by
+  @kmontemayor2-sc
 
 ### Changed
 
