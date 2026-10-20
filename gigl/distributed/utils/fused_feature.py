@@ -170,7 +170,12 @@ class FusedDistFeature(DistFeature):
         self,
         ids: Int64[torch.Tensor, "num_ids"],
         input_type: Optional[Union[NodeType, EdgeType]] = None,
-    ) -> torch.futures.Future:
+    ) -> torch.futures.Future[
+        tuple[
+            Float[torch.Tensor, "num_ids raw_dim"],
+            UInt8[torch.Tensor, "num_ids packed_dim"],
+        ]
+    ]:
         """Looks up the raw float rows and packed sidecar rows of ids.
 
         Args:
@@ -183,7 +188,12 @@ class FusedDistFeature(DistFeature):
         remote_future = self._remote_selecting_get(ids, input_type)
         local_rows, local_index = self._local_selecting_get(ids, input_type)
         store, _ = self._get_local_store(input_type)
-        result_future: torch.futures.Future = torch.futures.Future()
+        result_future: torch.futures.Future[
+            tuple[
+                Float[torch.Tensor, "num_ids raw_dim"],
+                UInt8[torch.Tensor, "num_ids packed_dim"],
+            ]
+        ] = torch.futures.Future()
 
         def on_done(*_: object) -> None:
             try:
@@ -191,7 +201,8 @@ class FusedDistFeature(DistFeature):
                     store, ids, local_rows, local_index, remote_future.wait()
                 )
             except Exception as e:
-                result_future.set_exception(e)
+                # torch types set_exception as taking the result type, not an exception.
+                result_future.set_exception(e)  # ty: ignore[invalid-argument-type]
             else:
                 result_future.set_result(result)
 
@@ -216,21 +227,31 @@ class FusedDistFeature(DistFeature):
         if local_index.numel() == ids.numel():
             # Every id is local, so the local rows are already complete and in order.
             return local_rows[0].to(self.device), local_rows[1].to(self.device)
-        outputs = tuple(
-            torch.empty(
-                ids.shape[0], rows.shape[1], dtype=rows.dtype, device=self.device
-            )
-            for rows in local_rows
+        local_raw_rows, local_packed_rows = local_rows
+        raw_output = torch.empty(
+            ids.shape[0],
+            local_raw_rows.shape[1],
+            dtype=local_raw_rows.dtype,
+            device=self.device,
         )
-        pieces = [(local_rows, local_index)] + [
-            (store.split(remote_rows.to(self.device)), remote_index)
-            for remote_rows, remote_index in remotes
-        ]
-        for rows_per_store, index in pieces:
-            index = index.to(self.device)
-            for output, rows in zip(outputs, rows_per_store):
-                output[index] = rows.to(self.device)
-        return outputs[0], outputs[1]
+        packed_output = torch.empty(
+            ids.shape[0],
+            local_packed_rows.shape[1],
+            dtype=local_packed_rows.dtype,
+            device=self.device,
+        )
+        local_index = local_index.to(self.device)
+        raw_output[local_index] = local_raw_rows.to(self.device)
+        packed_output[local_index] = local_packed_rows.to(self.device)
+        # Each remote partition answered with byte rows that hold both stores.
+        for remote_rows, remote_index in remotes:
+            remote_raw_rows, remote_packed_rows = store.split(
+                remote_rows.to(self.device)
+            )
+            remote_index = remote_index.to(self.device)
+            raw_output[remote_index] = remote_raw_rows
+            packed_output[remote_index] = remote_packed_rows
+        return raw_output, packed_output
 
 
 def build_fused_dist_feature(
