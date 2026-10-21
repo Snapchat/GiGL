@@ -210,7 +210,7 @@ class PackedPathTest(TestCase):
         ]
     )
     def test_matches_padded_path_with_more_hops_and_hop_order(
-        self, _: str, hop_distance: int = 2, **overrides: object
+        self, _: str, hop_distance: int = 2, **overrides: Any
     ) -> None:
         kwargs = _encoder_kwargs(
             hop_distance=hop_distance,
@@ -666,7 +666,7 @@ class PackedPathCudaTest(TestCase):
         ]
     )
     def test_cuda_training_gradients_match_cpu_with_more_hops_and_hop_order(
-        self, _: str, hop_distance: int = 2, **overrides: object
+        self, _: str, hop_distance: int = 2, **overrides: Any
     ) -> None:
         data = _random_batch(0, h_max=hop_distance)
         cuda_data = _random_batch(0, h_max=hop_distance).to("cuda")
