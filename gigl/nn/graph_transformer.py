@@ -1186,6 +1186,13 @@ class GraphTransformerEncoder(nn.Module):
             Example: ``['hop_distance', 'ppr_weight']`` for continuous features,
             or ``['hop_distance']`` when ``hop_distance`` will be embedded via
             ``anchor_based_input_embedding_dict``.
+            The padded path reads the ``hop_distance`` attribute that
+            ``AddHeteroHopDistanceEncoding`` stored on ``data``; the packed path
+            computes the hop from the sequence layout instead. Its ``h_max`` must
+            therefore be at least this encoder's ``hop_distance``, and its
+            direction must match ``sampling_direction``, or the two paths
+            disagree. An embedding for ``hop_distance`` needs more than
+            ``hop_distance`` entries on a config that can run packed.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1602,6 +1609,30 @@ class GraphTransformerEncoder(nn.Module):
                 "tokens, because: " + "; ".join(blockers)
             )
         self._packed_fallback_count = 0
+        self._check_hop_embedding_covers_packed_hops()
+
+    def _check_hop_embedding_covers_packed_hops(self) -> None:
+        """Raises if the hop embedding cannot index the hops the packed path produces.
+
+        The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
+        padded path only looks up the values stored on the batch, so only configs
+        that can run packed are checked.
+        """
+        embedding_dict = self._anchor_based_input_embedding_dict
+        if not self._supports_packed_backend or embedding_dict is None:
+            return
+        hop_embedding = (
+            embedding_dict[HOP_DISTANCE_FEATURE_NAME]
+            if (HOP_DISTANCE_FEATURE_NAME in embedding_dict)
+            else None
+        )
+        num_embeddings = getattr(hop_embedding, "num_embeddings", None)
+        if num_embeddings is not None and num_embeddings <= self._hop_distance:
+            raise ValueError(
+                f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
+                f"entries, but hop_distance={self._hop_distance} needs at least "
+                f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
+            )
 
     def _packed_backend_blockers(
         self, num_heads: int, attention_dropout_rate: float
@@ -1635,9 +1666,9 @@ class GraphTransformerEncoder(nn.Module):
         # can far exceed the padded path's memory.
         if self._hop_distance > 2:
             blockers.append("hop_distance is above 2")
-        # The torch 2.8 varlen kernel draws one dropout mask shared by all heads
-        # and sequences. Treating dropout as a blocker keeps training and eval on
-        # the same path.
+        # The varlen kernel's dropout has not been tested against the padded
+        # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
+        # training and eval on the same path.
         if attention_dropout_rate > 0:
             blockers.append("attention_dropout_rate is above 0")
         return blockers
@@ -1754,6 +1785,18 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
+            # The packed path does not read the attribute, but a missing one is an
+            # error on the padded path too, so a pipeline fails the same way on
+            # both.
+            if (
+                HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
+                and not hasattr(data, HOP_DISTANCE_FEATURE_NAME)
+            ):
+                raise ValueError(
+                    f"Anchor-based attribute '{HOP_DISTANCE_FEATURE_NAME}' not "
+                    "found in data. Make sure to apply the corresponding transform "
+                    "first."
+                )
             # Assign the packed result to a local before projecting. Do not write
             # ``self._project_output(self._encode_packed(...))``.
             # Under ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks

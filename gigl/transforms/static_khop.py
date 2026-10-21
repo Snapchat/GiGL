@@ -72,7 +72,9 @@ from torch import Tensor
 
 # Maximum number of candidate cells, ``num_anchors * (1 + width + ... + width **
 # hop_distance)``, that ``khop_layout`` builds. The layout keeps about ten int64
-# tensors of this size alive at once, so the limit is about 2.5 GiB.
+# tensors of this size alive at once, so the limit is about 2.5 GiB. The width is
+# the largest degree in the whole batch, so one hub node can push every anchor
+# over the limit and send the batch to the padded path.
 MAX_LAYOUT_CANDIDATES = 2**25
 
 
@@ -107,6 +109,9 @@ def pack_sequences(
     ``[num_sequences, max_seq_len]`` per-position tensor into packed order with
     ``grid.flatten()[flat_index]``.
 
+    A length above ``max_seq_len`` is clamped to it, because the grid has no
+    positions beyond that. Checking for it would cost another host read.
+
     Args:
         lengths: ``[num_sequences]`` long valid length of each sequence.
         max_seq_len: Width of the padded grid.
@@ -116,6 +121,7 @@ def pack_sequences(
           grid, sequence by sequence.
         - The packed layout.
     """
+    lengths = lengths.clamp(max=max_seq_len)
     valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
     cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
     flat_index = valid.flatten().nonzero().squeeze(1)

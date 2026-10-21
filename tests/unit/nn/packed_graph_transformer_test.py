@@ -252,12 +252,43 @@ class PackedPathTest(TestCase):
             _gradients(lambda: _run_packed(encoder, data), encoder),
         )
 
-    def test_packed_path_ignores_the_hop_distance_attribute(self) -> None:
+    def test_packed_path_requires_the_hop_distance_attribute_like_the_padded_path(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        del data[_HOP]
+        with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
+            encoder(data, anchor_node_type=_USER)
+        with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
+            _run_packed(encoder, data)
+
+    def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
+        # A transform with a smaller h_max stores different hops than the layout
+        # derives; the packed path follows the layout.
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
         expected = _run_packed(encoder, data)
-        del data[_HOP]
+        data[_HOP] = AddHeteroHopDistanceEncoding(h_max=1, sampling_direction="in")(
+            data
+        )[_HOP]
         torch.testing.assert_close(_run_packed(encoder, data), expected)
+
+    def test_hop_embedding_must_cover_every_packed_hop(self) -> None:
+        too_small = {_HOP: nn.Embedding(2, 16)}
+        with self.assertRaisesRegex(ValueError, "hop_distance=2"):
+            GraphTransformerEncoder(
+                **_encoder_kwargs(
+                    anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
+                )
+            )
+        # A config that always runs padded reads the batch's own hop values.
+        encoder = GraphTransformerEncoder(
+            **_encoder_kwargs(
+                num_heads=4, anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
+            )
+        )
+        self.assertFalse(encoder._supports_packed_backend)
 
     @parameterized.expand(
         [
@@ -385,6 +416,11 @@ class PackedPathTest(TestCase):
         self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
         self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
         self.assertEqual(packed.max_seq_len, 3)
+
+        # A length above the grid width is clamped, so the offsets match the indices.
+        flat_index, packed = pack_sequences(torch.tensor([5, 1]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 2, 3])
+        self.assertEqual(packed.cu_seqlens.tolist(), [0, 3, 4])
 
     def test_varlen_attention_fake_forward_shapes(self) -> None:
         with FakeTensorMode():
