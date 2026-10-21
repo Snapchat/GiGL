@@ -5,7 +5,8 @@
 # is the entry point to use. Exits 0 without building on macOS.
 #
 # The clone and build happen inside --output-dir, so a failed build leaves nothing in the caller's
-# directory. post_install.py passes a temp dir that it removes.
+# directory. post_install.py passes a temp dir under $TMPDIR that it removes; set TMPDIR if /tmp is small
+# (for example a tmpfs).
 #
 # Flags:
 #   --commit           Upstream alibaba/graphlearn-for-pytorch sha to build. Required; post_install.py
@@ -57,7 +58,7 @@ command -v ninja >/dev/null 2>&1 || {
 
 echo "Building GraphLearn-Torch"
 cd "${OUTPUT_DIR}"
-# Occasionally, there is an existing GLT folder, delete it so we can clone.
+# A direct run can reuse --output-dir; clear any earlier clone so git clone succeeds.
 rm -rf graphlearn-for-pytorch
 git clone https://github.com/alibaba/graphlearn-for-pytorch.git
 cd graphlearn-for-pytorch

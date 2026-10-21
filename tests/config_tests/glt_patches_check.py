@@ -14,9 +14,9 @@ from typing import Final
 
 from gigl.scripts.glt_wheel_cache import GLT_COMMIT
 
-GLT_REPO_URL: Final[str] = "https://github.com/alibaba/graphlearn-for-pytorch.git"
+GLT_REPO_URL: Final = "https://github.com/alibaba/graphlearn-for-pytorch.git"
 # We're in GiGL/tests/config_tests, so we need to go up two levels to find GiGL/gigl/scripts/patches
-PATCHES_DIR: Final[Path] = (
+PATCHES_DIR: Final = (
     Path(__file__).parent.parent.parent / "gigl" / "scripts" / "patches"
 )
 

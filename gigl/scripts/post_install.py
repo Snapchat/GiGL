@@ -131,6 +131,8 @@ def main():
                 "--output-dir", str(output_dir),
             ],
             check=True,
+            # ninja lives next to the interpreter; install_glt.sh must find it even if the venv is not activated.
+            env={**os.environ, "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"},
         )  # fmt: skip
 
     def install_wheel(wheel: Path) -> None:
