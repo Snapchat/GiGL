@@ -339,10 +339,19 @@ class PackedPathTest(TestCase):
         )
         data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
         encoder = _materialized_encoder(data, _encoder_kwargs(sampling_direction="in"))
-        with torch.no_grad():
-            torch.testing.assert_close(
-                _run_packed(encoder, data), encoder(data, anchor_node_type=_USER)
-            )
+        with (
+            torch.no_grad(),
+            self.assertLogs(gigl.nn.graph_transformer.logger.logger, "WARNING") as logs,
+        ):
+            outputs = [_run_packed(encoder, data) for _ in range(5)]
+            expected = encoder(data, anchor_node_type=_USER)
+        # The fallback is counted per batch and warned about at powers of two.
+        self.assertEqual(encoder._packed_fallback_count, 5)
+        self.assertEqual(len(logs.records), 3, logs.output)
+        for record, count in zip(logs.records, (1, 2, 4)):
+            self.assertIn(f"({count} so far)", record.getMessage())
+        for output in outputs:
+            torch.testing.assert_close(output, expected)
 
     def test_int32_edge_index(self) -> None:
         data = _random_batch(0)
@@ -453,28 +462,6 @@ class PackedPathTest(TestCase):
                 )
         # The first batches may compile (static, then dynamic shapes); later ones reuse the graphs.
         self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
-
-    def test_too_large_layout_falls_back_and_logs_at_powers_of_two(self) -> None:
-        data = _random_batch(0)
-        encoder = _materialized_encoder(data, _encoder_kwargs())
-        with (
-            mock.patch.object(encoder, "_use_packed_backend", return_value=True),
-            mock.patch.object(
-                gigl.nn.graph_transformer,
-                "khop_layout",
-                side_effect=KhopLayoutTooLargeError("too many candidates"),
-            ),
-            mock.patch.object(gigl.nn.graph_transformer, "logger") as logger,
-            torch.no_grad(),
-        ):
-            for _ in range(5):
-                encoder(data, anchor_node_type=_USER)
-        self.assertEqual(encoder._packed_fallback_count, 5)
-        messages = [call.args[0] for call in logger.warning.call_args_list]
-        self.assertEqual(len(messages), 3, messages)
-        for message, count in zip(messages, (1, 2, 4)):
-            self.assertIn(f"({count} so far)", message)
-            self.assertIn("too many candidates", message)
 
     def test_fallback_under_compile_does_not_keep_recompiling(self) -> None:
         torch._dynamo.reset()
