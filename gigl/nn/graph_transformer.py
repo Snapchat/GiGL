@@ -1738,10 +1738,16 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
-            # Bound to a local, not passed inline to ``_project_output``: an inline call
-            # leaves the ``_encode_packed`` bound method on Dynamo's stack across the graph
-            # breaks inside it, and the guard on that fresh object recompiles every batch
-            # (``test_whole_encoder_compile_does_not_recompile_across_batches``).
+            # Assign first, then project: don't write
+            # ``self._project_output(self._encode_packed(...))``. Under
+            # ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks (it reads
+            # sizes back from the GPU). Dynamo resumes after a break with any
+            # half-evaluated expression saved, and guards that the saved object is the
+            # same on the next call. Here that object would be the bound method
+            # ``self._project_output``, which Python creates fresh on every access, so
+            # the guard fails and the encoder recompiles on every batch. With the result
+            # in a local, nothing is pending across the break. Covered by
+            # ``test_whole_encoder_compile_does_not_recompile_across_batches``.
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
