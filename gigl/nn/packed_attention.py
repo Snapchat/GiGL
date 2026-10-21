@@ -133,7 +133,7 @@ def _varlen_attention(
     The CUDA tests compare this call with the padded path, so such a change fails
     tests rather than silently changing outputs.
 
-    TODO: when GiGL moves to torch >= 2.10, try the public
+    TODO(kmonte): when GiGL moves to torch >= 2.10, try the public
     ``torch.nn.attention.varlen.varlen_attn``. It takes the same packed inputs
     but wraps Flash Attention, so check fp32 support, backward and
     ``torch.compile`` before switching. If it lacks fp32, use it for bf16 only
