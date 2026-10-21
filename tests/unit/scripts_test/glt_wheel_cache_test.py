@@ -5,13 +5,17 @@ hit/miss/evict orchestration in ``post_install.install_glt_wheel`` driven with r
 install and verify callables instead of mocks.
 """
 
+import fcntl
+import shutil
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
 from absl.testing import absltest
 
 from gigl.scripts.glt_wheel_cache import (
+    cache_entry_lock,
     compute_cache_key,
     find_cached_wheel,
     publish_wheel,
@@ -166,6 +170,54 @@ class InstallGltWheelTest(TestCase):
         self.verify_failures = 1
         with self.assertRaises(subprocess.CalledProcessError):
             self._run()
+
+
+class CacheEntryLockTest(TestCase):
+    def test_lock_excludes_second_holder_until_released(self) -> None:
+        with tempfile.TemporaryDirectory() as cache_root:
+            entry = Path(cache_root) / "glt-key"
+            lock_path = Path(cache_root) / "glt-key.lock"
+            with cache_entry_lock(entry):
+                with open(lock_path, "w") as other:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with open(lock_path, "w") as other:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+class ReadPatchesTest(TestCase):
+    def test_empty_patches_dir_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as patches_dir:
+            with self.assertRaises(FileNotFoundError):
+                read_patches(Path(patches_dir))
+
+
+class WheelPackageDataTest(TestCase):
+    def test_built_wheel_contains_every_patch(self) -> None:
+        repo_root = Path(__file__).parents[3]
+        patch_names = [
+            path.name for path in (repo_root / "gigl/scripts/patches").glob("*.patch")
+        ]
+        self.assertTrue(patch_names)
+        # The build writes these into the repo; remove them if we created them.
+        artifacts = [repo_root / "build", repo_root / "gigl.egg-info"]
+        preexisting = [artifact.exists() for artifact in artifacts]
+        try:
+            with tempfile.TemporaryDirectory() as out_dir:
+                subprocess.run(
+                    ["uv", "build", "--wheel", "--out-dir", out_dir, str(repo_root)],
+                    check=True,
+                    capture_output=True,
+                )
+                (wheel,) = Path(out_dir).glob("*.whl")
+                with zipfile.ZipFile(wheel) as wheel_zip:
+                    wheel_names = set(wheel_zip.namelist())
+        finally:
+            for artifact, existed in zip(artifacts, preexisting):
+                if not existed:
+                    shutil.rmtree(artifact, ignore_errors=True)
+        for name in patch_names:
+            self.assertIn(f"gigl/scripts/patches/{name}", wheel_names)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from gigl.scripts.post_install import GLT_COMMIT
+from gigl.scripts.glt_wheel_cache import GLT_COMMIT
 
 GLT_REPO_URL = "https://github.com/alibaba/graphlearn-for-pytorch.git"
 # We're in GiGL/tests/config_tests, so we need to go up two levels to find GiGL/gigl/scripts/patches

@@ -17,8 +17,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 import torch
+import torch.version
 
 from gigl.scripts.glt_wheel_cache import (
+    GLT_COMMIT,
+    cache_entry_lock,
     compute_cache_key,
     find_cached_wheel,
     publish_wheel,
@@ -27,12 +30,6 @@ from gigl.scripts.glt_wheel_cache import (
 
 _SCRIPTS_DIR = Path(__file__).parent
 
-# Upstream GLT commit we build. We upstreamed some bug fixes recently to GLT which have not been released yet.
-# * https://github.com/alibaba/graphlearn-for-pytorch/pull/154
-# * https://github.com/alibaba/graphlearn-for-pytorch/pull/153
-# * https://github.com/alibaba/graphlearn-for-pytorch/pull/151
-# Thus, checking out a specific commit instead of a tagged version.
-GLT_COMMIT = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"
 # Potential values for TORCH_CUDA_ARCH_LIST: (not all are tested)
 # 6.0 = Pascal support i.e. Tesla P100 - CUDA 8 or later
 # 6.1 = Pascal support i.e. Tesla P4 - CUDA 8 or later
@@ -47,11 +44,6 @@ GLT_COMMIT = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"
 GLT_CUDA_ARCH_LIST = "7.5"
 
 
-def has_cuda() -> bool:
-    """Whether the host has a CUDA toolkit; the Python equivalent of the `whereis cuda` check."""
-    return shutil.which("nvcc") is not None or Path("/usr/local/cuda").exists()
-
-
 def install_glt_wheel(
     cache_entry: Path,
     build_wheel: Callable[[Path], None],
@@ -63,6 +55,9 @@ def install_glt_wheel(
     On a cache hit the cached wheel is installed and verified; if either step fails, the entry is
     deleted and the wheel is built. After a fresh build, a failure to install or verify is fatal.
     The callables signal failure by raising (e.g. ``subprocess.CalledProcessError``).
+
+    The caller must hold ``cache_entry_lock(cache_entry)`` so the check, eviction, build and publish
+    of one key are serialized across processes.
 
     Args:
         cache_entry: Cache entry directory for this wheel's cache key.
@@ -100,7 +95,9 @@ def main():
         print("Skipping install of GraphLearn-Torch on Mac")
         return 0
 
-    variant = f"cuda{GLT_CUDA_ARCH_LIST}" if has_cuda() else "cpu"
+    # install_py_deps.sh's CUDA check picks the torch extra, and GLT must match that torch build,
+    # so the installed torch is the single source of truth for the variant.
+    variant = f"cuda{GLT_CUDA_ARCH_LIST}" if torch.version.cuda is not None else "cpu"
     cache_key = compute_cache_key(
         commit=GLT_COMMIT,
         patch_contents=read_patches(_SCRIPTS_DIR / "patches"),
@@ -136,8 +133,10 @@ def main():
             [sys.executable, str(_SCRIPTS_DIR / "verify_glt_patches.py")], check=True
         )
 
+    cache_entry = cache_root / cache_key
     try:
-        install_glt_wheel(cache_root / cache_key, build_wheel, install_wheel, verify)
+        with cache_entry_lock(cache_entry):
+            install_glt_wheel(cache_entry, build_wheel, install_wheel, verify)
     except (subprocess.CalledProcessError, OSError) as e:
         print(f"FATAL: GLT install failed: {e}")
         return 1

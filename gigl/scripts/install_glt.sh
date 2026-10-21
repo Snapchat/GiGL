@@ -6,7 +6,7 @@
 #
 # Flags:
 #   --commit           Upstream alibaba/graphlearn-for-pytorch sha to build. Required; post_install.py
-#                      passes its GLT_COMMIT.
+#                      passes the GLT_COMMIT from glt_wheel_cache.py.
 #   --cuda-arch-list   TORCH_CUDA_ARCH_LIST for a CUDA build, e.g. "7.5" (see the list of values next to
 #                      GLT_CUDA_ARCH_LIST in post_install.py). Empty or omitted builds for CPU
 #                      (WITH_CUDA=OFF).
