@@ -151,7 +151,7 @@ def _varlen_attention_backward_fake(
 
 def _register_custom_op(
     name: str, kernel: Callable[..., Any], fake: Callable[..., Any]
-) -> Callable[..., Any]:
+) -> Any:
     """Registers ``gigl::<name>``, or returns the op if it is already registered.
 
     A reload of this module in the same process must not register the op twice.
