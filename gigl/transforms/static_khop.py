@@ -1,11 +1,11 @@
 """Fixed-shape k-hop sequence layout for sampled subgraphs.
 
-The sparse k-hop path in ``gigl.transforms.graph_transformer`` sizes its tensors
-from the data (sparse matmul, ``coalesce``, ``unique``, ``nonzero``, bool-mask
-indexing), which keeps it from compiling well and forces host syncs. This module
-builds the same layout as that path's default (node-id-ordered, anchor-first
-k-hop sequences) from a dense neighbour table, using only sort, gather and scatter
-ops whose shapes are known up front.
+The sparse k-hop path in ``gigl.transforms.graph_transformer`` creates tensors
+whose sizes depend on the data (sparse matmul, ``coalesce``, ``unique``,
+``nonzero``, bool-mask indexing). That compiles poorly and forces host syncs.
+This module builds the same layout as that path's default (anchor first, then
+neighbours in ascending node id) from a dense neighbour table. It uses only sort,
+gather and scatter ops, whose output shapes are known up front.
 
 How a layout is built::
 
@@ -30,15 +30,15 @@ How a layout is built::
         v
     flat_index + PackedSequences(cu_seqlens, max_seq_len)  for gigl.nn.packed_attention
 
-Memory is ``O(num_anchors * width ** hop_distance)``: every walk of up to
-``hop_distance`` steps is a candidate before deduplication, so a hub node with a
-large degree blows it up quickly. ``khop_layout`` therefore counts the candidates
-before building anything and raises ``KhopLayoutTooLargeError`` when they exceed
-``max_candidates``. ``GraphTransformerEncoder`` catches it and runs that batch on
-the padded path instead.
+Memory is ``O(num_anchors * width ** hop_distance)``. Every walk of up to
+``hop_distance`` steps is a candidate before deduplication, so a high-degree hub
+node makes this grow quickly. ``khop_layout`` therefore counts the candidates
+before building anything and raises ``KhopLayoutTooLargeError`` if they exceed
+``max_candidates``. ``GraphTransformerEncoder`` catches the error and runs that
+batch on the padded path instead.
 
-Host reads:
-  - the table width, the largest per-node degree over all edge types combined
+Host reads (each is a GPU sync):
+  - the table width: the largest per-node degree, with all edge types combined
   - the total token count in ``pack_sequences``
 
 Example:
@@ -70,27 +70,27 @@ import torch
 from jaxtyping import Int, Int32, Int64
 from torch import Tensor
 
-# Candidate cells (``num_anchors * (1 + width + ... + width ** hop_distance)``)
-# above which ``khop_layout`` refuses to build. The layout keeps about ten int64
-# tensors of this size alive, so this is about 2.5 GiB.
+# Maximum number of candidate cells, ``num_anchors * (1 + width + ... + width **
+# hop_distance)``, that ``khop_layout`` builds. The layout keeps about ten int64
+# tensors of this size alive at once, so the limit is about 2.5 GiB.
 MAX_LAYOUT_CANDIDATES = 2**25
 
 
 class KhopLayoutTooLargeError(ValueError):
-    """The candidate set of a k-hop layout exceeds its budget."""
+    """The k-hop layout would have more candidates than the allowed maximum."""
 
 
 class PackedSequences(NamedTuple):
     """Where each sequence lives in the packed token buffer.
 
     Attributes:
-        cu_seqlens: ``[num_sequences + 1]`` int32 cumulative sequence lengths on
-            the tokens' device (the attention kernel requires int32, so the
-            total token count must fit in int32); sequence ``i`` occupies
-            ``[cu_seqlens[i], cu_seqlens[i + 1])``.
-        max_seq_len: Host upper bound on any sequence length. It must not be
-            smaller than the longest sequence (the attention kernel would skip
-            rows) and the attention clamps it to the token count.
+        cu_seqlens: ``[num_sequences + 1]`` int32 cumulative sequence lengths,
+            on the same device as the tokens. Sequence ``i`` occupies
+            ``[cu_seqlens[i], cu_seqlens[i + 1])``. The attention kernel
+            requires int32, so the total token count must fit in int32.
+        max_seq_len: Python int upper bound on any sequence length. It must be at
+            least the longest sequence, or the attention kernel skips rows. The
+            attention clamps it to the token count.
     """
 
     cu_seqlens: Int32[Tensor, "num_sequences_plus_one"]
@@ -100,9 +100,10 @@ class PackedSequences(NamedTuple):
 def pack_sequences(
     lengths: Int64[Tensor, "num_sequences"], max_seq_len: int
 ) -> tuple[Int64[Tensor, "num_tokens"], PackedSequences]:
-    """Locates the first ``lengths[i]`` positions of every sequence in a padded grid.
+    """Finds the valid positions of every sequence in a padded grid.
 
-    Costs one host read, of the total token count. Gather any
+    Sequence ``i`` is valid in its first ``lengths[i]`` positions. This costs one
+    host read, of the total token count. To gather any
     ``[num_sequences, max_seq_len]`` per-position tensor into packed order with
     ``grid.flatten()[flat_index]``.
 
@@ -129,15 +130,15 @@ def _build_neighbor_table(
     """Builds a padded adjacency table for k-hop reachability.
 
     Row ``i`` lists the nodes one hop from node ``i``, padded with -1. With
-    ``sampling_direction="in"`` (GLT in-edge sampling, edges point neighbour to
-    target) reachability follows the reversed edges, as in
+    ``sampling_direction="in"`` (GLT in-edge sampling, where edges point from
+    neighbour to target) reachability follows the reversed edges, as in
     ``heterodata_to_graph_transformer_input``.
 
     The table is as wide as the largest row (at least 1), which costs one host
     read. Duplicate edges take one slot each.
 
-    The table has an extra all -1 row at index ``num_nodes``, so a lookup of -1
-    (padding) stays -1.
+    The table has an extra all -1 row at index ``num_nodes``. Looking up a -1
+    (padding) id is redirected to that row, so it yields -1 again.
 
     Args:
         edge_index: ``[2, num_edges]`` int32 or int64 local node ids in
@@ -155,11 +156,11 @@ def _build_neighbor_table(
     # Scatter indices must be int64.
     source, target = source.long(), target.long()
     device = edge_index.device
-    # The table is built with sort/scatter, not ``to_dense_batch``, whose
+    # Build the table with sort and scatter rather than ``to_dense_batch``, whose
     # ``fill_value`` host-to-device copy is an extra sync on CUDA.
-    # A stable sort groups each node's edges; an edge's slot is its rank in the
-    # group. The degrees are scattered because ``bincount`` would sync the host
-    # on CUDA.
+    # A stable sort groups each node's edges, and an edge's slot is its rank in
+    # that group. Degrees are counted with ``scatter_add_`` because ``bincount``
+    # would sync with the host on CUDA.
     order = torch.argsort(source, stable=True)
     sorted_source = source[order]
     degree = torch.zeros(num_nodes + 1, dtype=torch.long, device=device)
@@ -185,15 +186,15 @@ def _khop_sequence_layout(
     """Lays out each anchor's k-hop neighbourhood as a fixed-length token sequence.
 
     Each sequence is the anchor, then every other node within ``hop_distance``
-    hops in ascending node id, truncated to ``max_seq_len``. That is the order
-    the sparse path gets from ``coalesce``, so the layout equals
+    hops in ascending node id, truncated to ``max_seq_len``. The sparse path gets
+    the same order from ``coalesce``, so this layout equals
     ``_get_k_hop_neighbors_sparse`` followed by
-    ``_build_sequence_layout_from_sparse_neighbors`` with the anchor first.
+    ``_build_sequence_layout_from_sparse_neighbors`` with the anchor moved first.
 
     A token's hop is the hop at which it is first reached; the anchor's is 0.
 
-    Memory is ``O(num_anchors * width ** hop_distance)``: the candidate set is
-    every walk of up to ``hop_distance`` steps, deduplicated by a per-row sort.
+    Memory is ``O(num_anchors * width ** hop_distance)``. The candidates are every
+    walk of up to ``hop_distance`` steps, which a per-row sort then deduplicates.
 
     Args:
         neighbor_table: ``[num_nodes + 1, width]`` table from ``_build_neighbor_table``.
@@ -224,8 +225,9 @@ def _khop_sequence_layout(
     candidates = torch.cat(candidate_parts, dim=1)
     candidate_hops = torch.cat(hop_parts, dim=1)
 
-    # Sorting node * (k + 1) + hop puts each node's copies together, smallest hop
-    # first, so the first copy carries the first-reach hop. Padding sorts last.
+    # Sort on ``node * (hop_distance + 1) + hop``. This groups each node's copies
+    # with the smallest hop first, so the first copy carries the first-reach hop.
+    # Padding gets the largest key and sorts last.
     hop_radix = hop_distance + 1
     padding_key = torch.iinfo(torch.long).max
     keys = torch.where(
@@ -242,10 +244,11 @@ def _khop_sequence_layout(
         dim=1,
     )
     keep = is_first_copy & (nodes >= 0) & (nodes != anchor_indices.unsqueeze(1))
-    # Position 0 is the anchor's, so neighbours count up from 1.
+    # Position 0 belongs to the anchor, so neighbours are numbered from 1.
     positions = torch.cumsum(keep.long(), dim=1)
     keep = keep & (positions < max_seq_len)
-    # Dropped candidates write to a spare last column.
+    # Dropped candidates are scattered into a spare last column, which is cut off
+    # below.
     positions = torch.where(keep, positions, max_seq_len)
 
     node_index = torch.full(
@@ -290,7 +293,8 @@ def khop_layout(
         hop_distance: Number of hops to expand.
         max_seq_len: Tokens per sequence, anchor included.
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
-        max_candidates: Budget on the candidate set, see ``MAX_LAYOUT_CANDIDATES``.
+        max_candidates: Maximum number of candidates; see
+            ``MAX_LAYOUT_CANDIDATES``.
 
     Returns:
         The outputs of ``_khop_sequence_layout``.
@@ -305,8 +309,9 @@ def khop_layout(
     )
     if num_candidates > max_candidates:
         raise KhopLayoutTooLargeError(
-            f"{num_candidates} candidates for {anchor_indices.numel()} anchors "
-            f"at width {width} and {hop_distance} hops exceed {max_candidates}."
+            f"The k-hop layout needs {num_candidates} candidates for "
+            f"{anchor_indices.numel()} anchors at width {width} and "
+            f"{hop_distance} hops, more than the maximum of {max_candidates}."
         )
     return _khop_sequence_layout(
         neighbor_table,
