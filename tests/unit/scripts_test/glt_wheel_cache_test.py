@@ -31,6 +31,8 @@ def _key(
     variant: str = "cuda7.5",
     torch_version: str = "2.8.0+cu128",
     python_tag: str = "cp311",
+    build_script: bytes = b"build",
+    platform_tag: str = "linux-x86_64",
 ) -> str:
     """compute_cache_key with baseline inputs; override one to test its effect."""
     return compute_cache_key(
@@ -39,6 +41,8 @@ def _key(
         variant=variant,
         torch_version=torch_version,
         python_tag=python_tag,
+        build_script=build_script,
+        platform_tag=platform_tag,
     )
 
 
@@ -47,7 +51,8 @@ class ComputeCacheKeyTest(TestCase):
         key = _key()
         self.assertEqual(key, _key())
         self.assertRegex(
-            key, r"^glt-88ff111a-p[0-9a-f]{12}-cuda7\.5-torch2\.8\.0\+cu128-cp311$"
+            key,
+            r"^glt-88ff111a-p[0-9a-f]{12}-cuda7\.5-torch2\.8\.0\+cu128-cp311-linux-x86_64$",
         )
 
     def test_changing_any_single_input_changes_the_key(self) -> None:
@@ -58,6 +63,8 @@ class ComputeCacheKeyTest(TestCase):
             "variant": _key(variant="cpu"),
             "torch_version": _key(torch_version="2.9.0"),
             "python_tag": _key(python_tag="cp312"),
+            "build_script": _key(build_script=b"other"),
+            "platform_tag": _key(platform_tag="linux-aarch64"),
         }
         for name, key in changed.items():
             with self.subTest(changed=name):
@@ -66,6 +73,11 @@ class ComputeCacheKeyTest(TestCase):
     def test_patch_order_matters(self) -> None:
         self.assertNotEqual(
             _key(patch_contents=[b"a", b"b"]), _key(patch_contents=[b"b", b"a"])
+        )
+
+    def test_patch_boundary_matters(self) -> None:
+        self.assertNotEqual(
+            _key(patch_contents=[b"ab", b"c"]), _key(patch_contents=[b"a", b"bc"])
         )
 
 
@@ -79,6 +91,11 @@ class ReadPatchesTest(TestCase):
                 read_patches(Path(d)),
                 [b"0001-a.patch", b"0002-b.patch", b"0003-c.patch"],
             )
+
+    def test_empty_patches_dir_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as patches_dir:
+            with self.assertRaises(FileNotFoundError):
+                read_patches(Path(patches_dir))
 
 
 class CacheEntryTest(TestCase):
@@ -166,6 +183,20 @@ class InstallGltWheelTest(TestCase):
             ["install:built", "verify", "build", "install:built", "verify"],
         )
 
+    def test_oserror_on_hit_propagates_and_keeps_the_entry(self) -> None:
+        self._run()
+        self.events.clear()
+
+        def install_raising_oserror(wheel: Path) -> None:
+            raise FileNotFoundError("uv")
+
+        with self.assertRaises(FileNotFoundError):
+            install_glt_wheel(
+                self.entry, self._build, install_raising_oserror, self._verify
+            )
+        self.assertEqual(self.events, [])
+        self.assertIsNotNone(find_cached_wheel(self.entry))
+
     def test_verify_failure_after_fresh_build_is_fatal(self) -> None:
         self.verify_failures = 1
         with self.assertRaises(subprocess.CalledProcessError):
@@ -183,13 +214,6 @@ class CacheEntryLockTest(TestCase):
                         fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with open(lock_path, "w") as other:
                 fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-class ReadPatchesTest(TestCase):
-    def test_empty_patches_dir_raises(self) -> None:
-        with tempfile.TemporaryDirectory() as patches_dir:
-            with self.assertRaises(FileNotFoundError):
-                read_patches(Path(patches_dir))
 
 
 class WheelPackageDataTest(TestCase):

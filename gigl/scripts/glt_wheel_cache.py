@@ -11,44 +11,65 @@ import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Final
 
 # Upstream GLT commit we build. We upstreamed some bug fixes recently to GLT which have not been released yet.
 # * https://github.com/alibaba/graphlearn-for-pytorch/pull/154
 # * https://github.com/alibaba/graphlearn-for-pytorch/pull/153
 # * https://github.com/alibaba/graphlearn-for-pytorch/pull/151
 # Thus, checking out a specific commit instead of a tagged version.
-GLT_COMMIT = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"
+GLT_COMMIT: Final = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9"
 
 
 def compute_cache_key(
     commit: str,
     patch_contents: Sequence[bytes],
+    build_script: bytes,
     variant: str,
     torch_version: str,
     python_tag: str,
+    platform_tag: str,
 ) -> str:
     """Names the cache entry for the wheel built from the given inputs.
 
     Every input that changes the built wheel is part of the name.
 
+    The ``p`` segment is a hash of the build script followed by the patches. Each item is
+    length-prefixed before hashing, so the boundaries between items are part of the digest.
+
+    Example:
+        >>> compute_cache_key(
+        ...     GLT_COMMIT, [b"patch"], b"#!/bin/bash", "cpu", "2.8.0", "cp311", "linux-x86_64"
+        ... )
+        'glt-88ff111a-p2e56eb6940b0-cpu-torch2.8.0-cp311-linux-x86_64'
+
     Args:
         commit: Pinned upstream GLT commit sha; its first 8 characters are used.
         patch_contents: Contents of the local patches, hashed in the order given.
+        build_script: Contents of ``install_glt.sh``.
         variant: Build variant, e.g. ``cpu`` or ``cuda7.5``.
         torch_version: Torch version the wheel links against, e.g. ``2.8.0+cu128``.
         python_tag: Python ABI tag, e.g. ``cp311``.
+        platform_tag: Platform the wheel is built for, ``sysconfig.get_platform()``, e.g. ``linux-x86_64``.
 
     Returns:
-        The cache entry name, ``glt-<commit8>-p<patches hash>-<variant>-torch<version>-<tag>``.
+        The cache entry name, ``glt-<commit8>-p<build script and patches hash>-<variant>``
+        followed by ``-torch<version>-<python tag>-<platform tag>``.
     """
-    patches_hash = hashlib.sha256(b"".join(patch_contents)).hexdigest()[:12]
-    return (
-        f"glt-{commit[:8]}-p{patches_hash}-{variant}-torch{torch_version}-{python_tag}"
-    )
+    digest = hashlib.sha256()
+    for content in (build_script, *patch_contents):
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    inputs_hash = digest.hexdigest()[:12]
+    return f"glt-{commit[:8]}-p{inputs_hash}-{variant}-torch{torch_version}-{python_tag}-{platform_tag}"
 
 
 def read_patches(patches_dir: Path) -> list[bytes]:
     """Reads every ``*.patch`` file in a directory.
+
+    Example:
+        >>> read_patches(Path("/tmp/patches"))
+        [b'<contents of 0001-first.patch>', b'<contents of 0002-second.patch>']
 
     Args:
         patches_dir: Directory containing the patch files.
@@ -69,6 +90,10 @@ def read_patches(patches_dir: Path) -> list[bytes]:
 def find_cached_wheel(cache_entry: Path) -> Path | None:
     """Finds the wheel in a cache entry.
 
+    Example:
+        >>> find_cached_wheel(Path("/tmp/cache/glt-key"))
+        PosixPath('/tmp/cache/glt-key/graphlearn_torch-0.2-cp311-linux_x86_64.whl')
+
     Args:
         cache_entry: The cache entry directory; it may not exist.
 
@@ -86,6 +111,10 @@ def cache_entry_lock(cache_entry: Path) -> Iterator[None]:
 
     Blocks until any other holder releases it. The lock file sits next to the entry, not inside it,
     so evicting or replacing the entry does not delete the lock.
+
+    Example:
+        >>> with cache_entry_lock(Path("/tmp/cache/glt-key")):
+        ...     wheel = find_cached_wheel(Path("/tmp/cache/glt-key"))
 
     Args:
         cache_entry: The cache entry directory the lock guards; it may not exist.
@@ -111,6 +140,12 @@ def publish_wheel(wheel: Path, cache_entry: Path) -> Path:
 
     The caller must hold ``cache_entry_lock(cache_entry)``; otherwise replacing the entry can delete
     a wheel another process just published.
+
+    Example:
+        >>> entry = Path("/tmp/cache/glt-key")
+        >>> with cache_entry_lock(entry):
+        ...     publish_wheel(Path("/tmp/build/glt.whl"), entry)
+        PosixPath('/tmp/cache/glt-key/glt.whl')
 
     Args:
         wheel: The built wheel to publish.

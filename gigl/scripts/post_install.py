@@ -12,9 +12,11 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 import torch
 import torch.version
@@ -28,7 +30,7 @@ from gigl.scripts.glt_wheel_cache import (
     read_patches,
 )
 
-_SCRIPTS_DIR = Path(__file__).parent
+_SCRIPTS_DIR: Final = Path(__file__).parent
 
 # Potential values for TORCH_CUDA_ARCH_LIST: (not all are tested)
 # 6.0 = Pascal support i.e. Tesla P100 - CUDA 8 or later
@@ -41,7 +43,7 @@ _SCRIPTS_DIR = Path(__file__).parent
 # 10.0 = Blackwell support i.e. B200 - CUDA 12.6 or later
 # 12.0 = Blackwell support i.e. RTX6000 - CUDA 12.8 or later
 # List of Nvidia GPUS: https://developer.nvidia.com/cuda-gpus
-GLT_CUDA_ARCH_LIST = "7.5"
+GLT_CUDA_ARCH_LIST: Final = "7.5"
 
 
 def install_glt_wheel(
@@ -54,10 +56,17 @@ def install_glt_wheel(
 
     On a cache hit the cached wheel is installed and verified; if either step fails, the entry is
     deleted and the wheel is built. After a fresh build, a failure to install or verify is fatal.
-    The callables signal failure by raising (e.g. ``subprocess.CalledProcessError``).
+    The callables signal a bad wheel by raising ``subprocess.CalledProcessError``; any other
+    exception propagates and leaves the entry in place.
 
     The caller must hold ``cache_entry_lock(cache_entry)`` so the check, eviction, build and publish
     of one key are serialized across processes.
+
+    Example:
+        >>> entry = Path("/tmp/cache/glt-key")
+        >>> with cache_entry_lock(entry):
+        ...     install_glt_wheel(entry, build_wheel, install_wheel, verify)
+        GLT wheel cache miss: /tmp/cache/glt-key
 
     Args:
         cache_entry: Cache entry directory for this wheel's cache key.
@@ -72,7 +81,7 @@ def install_glt_wheel(
             install_wheel(cached_wheel)
             verify()
             return
-        except (subprocess.CalledProcessError, OSError) as e:
+        except subprocess.CalledProcessError as e:
             print(
                 f"WARNING: cached GLT wheel {cached_wheel} failed to install or verify ({e}); evicting it and rebuilding"
             )
@@ -101,9 +110,11 @@ def main():
     cache_key = compute_cache_key(
         commit=GLT_COMMIT,
         patch_contents=read_patches(_SCRIPTS_DIR / "patches"),
+        build_script=(_SCRIPTS_DIR / "install_glt.sh").read_bytes(),
         variant=variant,
         torch_version=torch.__version__,
         python_tag=f"cp{sys.version_info.major}{sys.version_info.minor}",
+        platform_tag=sysconfig.get_platform(),
     )
     cache_root = Path(
         os.environ.get("GIGL_GLT_WHEEL_CACHE_DIR")
