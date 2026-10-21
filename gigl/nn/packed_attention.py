@@ -9,7 +9,7 @@ Packing reads the token count back to the host once, so the buffer is exactly
 as large as the real tokens and no slot is wasted.
 """
 
-from typing import Any, Callable, cast
+from typing import Any, Callable, NamedTuple, cast
 
 import torch
 import torch.nn.functional as F
@@ -35,14 +35,14 @@ def _varlen_attention_forward_kernel(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_logsumexp: bool,
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     # The op's stub types every argument as ``...``; it returns
     # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_forward,
     )
-    output, logsumexp, philox_seed, philox_offset = efficient_attention_forward(
+    output, logsumexp = efficient_attention_forward(
         query.unsqueeze(0),
         key.unsqueeze(0),
         value.unsqueeze(0),
@@ -54,8 +54,8 @@ def _varlen_attention_forward_kernel(
         0.0,
         0,
         compute_logsumexp,
-    )[:4]
-    return output.squeeze(0).contiguous(), logsumexp, philox_seed, philox_offset
+    )[:2]
+    return output.squeeze(0).contiguous(), logsumexp
 
 
 def _varlen_attention_forward_fake(
@@ -67,7 +67,7 @@ def _varlen_attention_forward_fake(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_logsumexp: bool,
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor]:
     padded_q = -(-max_seqlen_q // _LSE_ALIGNMENT) * _LSE_ALIGNMENT
     return (
         torch.empty_like(query),
@@ -79,9 +79,6 @@ def _varlen_attention_forward_fake(
             ),
             dtype=torch.float32,
         ),
-        # Without dropout the kernel returns the Philox seed and offset as CPU scalars.
-        torch.empty((), dtype=torch.long),
-        torch.empty((), dtype=torch.long),
     )
 
 
@@ -94,11 +91,12 @@ def _varlen_attention_backward_kernel(
     logsumexp: Tensor,
     cu_seqlens_q: Tensor,
     cu_seqlens_k: Tensor,
-    philox_seed: Tensor,
-    philox_offset: Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> tuple[Tensor, Tensor, Tensor]:
+    # Dropout is off, so the kernel never reads the Philox state.
+    philox_seed = torch.zeros((), dtype=torch.long)
+    philox_offset = torch.zeros((), dtype=torch.long)
     efficient_attention_backward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_backward,
@@ -137,8 +135,6 @@ def _varlen_attention_backward_fake(
     logsumexp: Tensor,
     cu_seqlens_q: Tensor,
     cu_seqlens_k: Tensor,
-    philox_seed: Tensor,
-    philox_offset: Tensor,
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> tuple[Tensor, Tensor, Tensor]:
@@ -175,6 +171,19 @@ _varlen_attention_backward = _register_custom_op(
 )
 
 
+class VarlenAttentionOutput(NamedTuple):
+    """Result of the varlen attention forward op.
+
+    Attributes:
+        output: Attention output, shaped like the query.
+        logsumexp: Per-row softmax normalizer the backward kernel needs; its last
+            dim is zero when the forward ran without ``compute_logsumexp``.
+    """
+
+    output: Tensor
+    logsumexp: Tensor
+
+
 class _VarlenAttention(torch.autograd.Function):
     """Memory-efficient varlen attention with the explicit backward kernel."""
 
@@ -190,30 +199,30 @@ class _VarlenAttention(torch.autograd.Function):
         max_seqlen_k: int,
     ) -> Tensor:
         needs_grad = any(ctx.needs_input_grad[:3])
-        output, logsumexp, philox_seed, philox_offset = _varlen_attention_forward(
-            query,
-            key,
-            value,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            needs_grad,
+        attention = VarlenAttentionOutput(
+            *_varlen_attention_forward(
+                query,
+                key,
+                value,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                needs_grad,
+            )
         )
         if needs_grad:
             ctx.save_for_backward(
                 query,
                 key,
                 value,
-                output,
-                logsumexp,
+                attention.output,
+                attention.logsumexp,
                 cu_seqlens_q,
                 cu_seqlens_k,
-                philox_seed,
-                philox_offset,
             )
             ctx.max_seqlens = (max_seqlen_q, max_seqlen_k)
-        return output
+        return attention.output
 
     @staticmethod
     @once_differentiable
@@ -227,8 +236,6 @@ class _VarlenAttention(torch.autograd.Function):
             logsumexp,
             cu_seqlens_q,
             cu_seqlens_k,
-            philox_seed,
-            philox_offset,
         ) = ctx.saved_tensors
         max_seqlen_q, max_seqlen_k = ctx.max_seqlens
         grad_query, grad_key, grad_value = _varlen_attention_backward(
@@ -240,8 +247,6 @@ class _VarlenAttention(torch.autograd.Function):
             logsumexp,
             cu_seqlens_q,
             cu_seqlens_k,
-            philox_seed,
-            philox_offset,
             max_seqlen_q,
             max_seqlen_k,
         )

@@ -377,24 +377,19 @@ class PackedPathTest(TestCase):
             cu_seqlens = torch.empty(4, dtype=torch.int32)
             query, key, value = (torch.empty(30, 2, 64) for _ in range(3))
             for compute_logsumexp, padded_length in ((True, 32), (False, 0)):
-                output, logsumexp, philox_seed, philox_offset = (
-                    _varlen_attention_forward(
-                        query,
-                        key,
-                        value,
-                        cu_seqlens,
-                        cu_seqlens,
-                        24,
-                        24,
-                        compute_logsumexp,
-                    )
+                output, logsumexp = _varlen_attention_forward(
+                    query,
+                    key,
+                    value,
+                    cu_seqlens,
+                    cu_seqlens,
+                    24,
+                    24,
+                    compute_logsumexp,
                 )
                 with self.subTest(compute_logsumexp=compute_logsumexp):
                     self.assertEqual(output.shape, query.shape)
                     self.assertEqual(logsumexp.shape, (3, 2, padded_length))
-                    self.assertEqual(philox_seed.shape, ())
-                    self.assertEqual(philox_seed.device.type, "cpu")
-                    self.assertEqual(philox_offset.shape, ())
 
     def test_custom_ops_register_in_a_spawned_process(self) -> None:
         context = multiprocessing.get_context("spawn")
@@ -432,8 +427,6 @@ class PackedPathTest(TestCase):
                 torch.empty(3, 2, 32),
                 cu_seqlens,
                 cu_seqlens,
-                torch.empty((), dtype=torch.long),
-                torch.empty((), dtype=torch.long),
                 24,
                 24,
             )
@@ -686,9 +679,7 @@ class PackedPathCudaTest(TestCase):
         torch.library.opcheck(
             _varlen_attention_forward, forward_args, test_utils=test_utils
         )
-        output, logsumexp, philox_seed, philox_offset = _varlen_attention_forward(
-            *forward_args
-        )
+        output, logsumexp = _varlen_attention_forward(*forward_args)
         torch.library.opcheck(
             _varlen_attention_backward,
             (
@@ -700,8 +691,6 @@ class PackedPathCudaTest(TestCase):
                 logsumexp,
                 packed.cu_seqlens,
                 packed.cu_seqlens,
-                philox_seed,
-                philox_offset,
                 _MAX_SEQ_LEN,
                 _MAX_SEQ_LEN,
             ),
