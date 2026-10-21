@@ -65,6 +65,32 @@ docker buildx imagetools inspect multiarch/qemu-user-static:latest
 Nightly builds are triggered automatically by `nightly_release_&_test.yml`, which calls `create_release.yml` with
 `bump_type=nightly`. The **Release GiGL** wheel-publish step is not part of the nightly flow.
 
+## Release identity and permissions
+
+CI authenticates to GCP through Workload Identity Federation with two service accounts:
+
+| Service account                  | Used by                                                                    | Artifact Registry access                                                        |
+| -------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| PR/test (`untrusted-external-…`) | Every workflow job that does not run in the `release` environment          | `writer` on `gigl-base-images`; `reader` on `public-gigl`                       |
+| Release (`gigl-release`)         | `create_release.yml` job `release_gigl_kfp_pipeline`; all of `release.yml` | `writer` on `public-gigl`, `gigl`, `gigl-cu128`; `reader` on `gigl-base-images` |
+
+Both workflows read the service account email from the secret `GCP_SERVICE_ACCOUNT_EMAIL`. The `release` GitHub
+environment defines its own copy of that secret holding the release account, and an environment secret overrides the
+repository secret of the same name. So a job gets the release account only when it declares `environment: release`.
+
+The real control is on the GCP side. The release account's `roles/iam.workloadIdentityUser` binding matches only OIDC
+tokens whose `sub` is `repo:Snapchat/GiGL:environment:release` and whose `job_workflow_ref` is `create_release.yml` on
+`refs/heads/main` or `release.yml` on a `refs/heads/release/v*` branch. A PR job cannot obtain that token, so it cannot
+impersonate the release account even if it names it.
+
+Two consequences. `create_release.yml` must be dispatched from `main`; the `release` environment only admits `main` and
+`release/v**` branches, so a dispatch from another branch fails at the environment check. And the gate's floor is repo
+write access: anyone who can create a `release/v*` branch can run `release.yml` from it. A ruleset that restricts
+creation of `release/v*` branches (with a bypass for GitHub Actions, which creates them in `bump_version`) closes that.
+
+When you add a new publish target (a registry, a bucket path), grant it to the release account only, and run the
+publishing step in a job that declares `environment: release`. Do not widen the PR/test account.
+
 ## What gets published
 
 Each release run publishes to two self-contained registries:

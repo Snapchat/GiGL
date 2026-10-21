@@ -112,6 +112,11 @@ jobs:
   release_gigl_kfp_pipeline:
     needs: bump_version
     runs-on: ubuntu-latest
+    # Runs in the release environment so GCP_SERVICE_ACCOUNT_EMAIL resolves to the release
+    # service account, the only identity allowed to push release images to public-gigl.
+    # The PR/test service account cannot. See RELEASING.md, "Release identity and permissions".
+    environment:
+      name: release
     permissions:
       contents: write
       pull-requests: write
