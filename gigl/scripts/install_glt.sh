@@ -4,6 +4,9 @@
 # Build-only: caching, installing and verifying the wheel live in gigl/scripts/post_install.py, which
 # is the entry point to use. Exits 0 without building on macOS.
 #
+# The clone and build happen inside --output-dir, so a failed build leaves nothing in the caller's
+# directory. post_install.py passes a temp dir that it removes.
+#
 # Flags:
 #   --commit           Upstream alibaba/graphlearn-for-pytorch sha to build. Required; post_install.py
 #                      passes the GLT_COMMIT from glt_wheel_cache.py.
@@ -47,15 +50,20 @@ OUTPUT_DIR="$( cd -- "${OUTPUT_DIR}" && pwd )"
 # Without Ninja, torch's cpp_extension builds sequentially which is very slow. Ninja comes from the
 # `glt-build-backend` dependency group, whose binary lives in the venv's bin dir.
 export PATH="$(dirname "$(command -v python)"):${PATH}"
+command -v ninja >/dev/null 2>&1 || {
+    echo "FATAL: ninja not found on PATH. The GLT build needs it; install with 'uv sync --group glt-build-backend' in a dev checkout, or 'pip install ninja'."
+    exit 1
+}
 
 echo "Building GraphLearn-Torch"
+cd "${OUTPUT_DIR}"
 # Occasionally, there is an existing GLT folder, delete it so we can clone.
 rm -rf graphlearn-for-pytorch
-git clone https://github.com/alibaba/graphlearn-for-pytorch.git \
-    && cd graphlearn-for-pytorch \
-    && git checkout "${COMMIT}" \
-    && git submodule update --init \
-    && bash install_dependencies.sh
+git clone https://github.com/alibaba/graphlearn-for-pytorch.git
+cd graphlearn-for-pytorch
+git checkout "${COMMIT}"
+git submodule update --init
+bash install_dependencies.sh
 # TODO (dsaini2-sc): once a Snapchat-maintained GLT fork exists, land these patches as
 # commits on the fork, pin to it, and retire this apply loop.
 # Local patches applied on top of the pinned commit, in order. The CSR patch replaces the

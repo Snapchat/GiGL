@@ -10,16 +10,20 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Final
 
 from gigl.scripts.glt_wheel_cache import GLT_COMMIT
 
-GLT_REPO_URL = "https://github.com/alibaba/graphlearn-for-pytorch.git"
+GLT_REPO_URL: Final[str] = "https://github.com/alibaba/graphlearn-for-pytorch.git"
 # We're in GiGL/tests/config_tests, so we need to go up two levels to find GiGL/gigl/scripts/patches
-PATCHES_DIR = Path(__file__).parent.parent.parent / "gigl" / "scripts" / "patches"
+PATCHES_DIR: Final[Path] = (
+    Path(__file__).parent.parent.parent / "gigl" / "scripts" / "patches"
+)
 
 
 def _git(args: list[str], cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    # Git's stderr goes to the terminal so its failure reason is visible when check=True raises.
+    subprocess.run(["git", *args], cwd=cwd, check=True)
 
 
 if __name__ == "__main__":
