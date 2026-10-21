@@ -116,6 +116,29 @@ def _varlen_attention(
     Attention dropout is not supported; the kernel's varlen dropout has not been
     tested against the padded path.
 
+    This calls the private ``aten._efficient_attention_forward`` op because torch
+    2.8 has no public attention API that takes ``cu_seqlens``:
+
+    - ``F.scaled_dot_product_attention`` only takes padded
+      ``[batch, heads, seq, dim]`` inputs.
+    - Jagged nested tensors reach the same kernel through SDPA, but do not trace
+      under ``torch.compile`` and sync with the host to find the min and max
+      sequence lengths.
+    - FlexAttention compiles, but its 128-token blocks waste more work than
+      varlen on short sequences.
+    - The memory-efficient kernel runs in fp32, which inference needs for
+      accuracy. Flash Attention kernels support fp16 and bf16 only.
+
+    Because the op is private, its arguments can change between torch releases.
+    The CUDA tests compare this call with the padded path, so such a change fails
+    tests rather than silently changing outputs.
+
+    TODO: when GiGL moves to torch >= 2.10, try the public
+    ``torch.nn.attention.varlen.varlen_attn``. It takes the same packed inputs
+    but wraps Flash Attention, so check fp32 support, backward and
+    ``torch.compile`` before switching. If it lacks fp32, use it for bf16 only
+    and keep this call for fp32.
+
     Args:
         query: ``[num_query_tokens, num_heads, head_dim]``.
         key: ``[num_key_tokens, num_heads, head_dim]``.
