@@ -1599,8 +1599,7 @@ class GraphTransformerEncoder(nn.Module):
         if blockers:
             logger.info(
                 "GraphTransformerEncoder will run on padded sequences, not packed "
-                "tokens, because: "
-                + "; ".join(blockers)
+                "tokens, because: " + "; ".join(blockers)
             )
         self._packed_fallback_count = 0
 
