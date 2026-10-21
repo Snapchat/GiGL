@@ -104,6 +104,7 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
     SamplerRuntime,
     create_dist_sampler,
+    join_workers_with_shared_deadline,
 )
 
 logger = Logger()
@@ -1279,8 +1280,8 @@ class SharedDistSamplingBackend:
         Cleanup sequence:
 
         1. Send ``STOP`` to every worker's task queue.
-        2. Join each worker with a timeout of
-           ``MP_STATUS_CHECK_INTERVAL`` seconds.
+        2. Join the workers against one shared deadline of
+           ``MP_STATUS_CHECK_INTERVAL`` seconds in total.
         3. Close all task queues and the event queue.
         4. Terminate any workers still alive after the join timeout.
 
@@ -1297,8 +1298,9 @@ class SharedDistSamplingBackend:
                         SharedMpCommand.STOP,
                         None,
                     )
-                for worker in self._workers:
-                    worker.join(timeout=MP_STATUS_CHECK_INTERVAL)
+                join_workers_with_shared_deadline(
+                    self._workers, MP_STATUS_CHECK_INTERVAL
+                )
                 for queue_ in self._task_queues:
                     queue_.cancel_join_thread()
                     queue_.close()
