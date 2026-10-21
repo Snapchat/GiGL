@@ -440,6 +440,22 @@ class PackedPathTest(TestCase):
         for gradient in gradients:
             self.assertEqual(gradient.shape, query.shape)
 
+    def test_whole_encoder_compile_does_not_recompile_across_batches(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        encoder = _materialized_encoder(_random_batch(0), _encoder_kwargs())
+        graph_counts = []
+        with mock.patch.object(encoder, "_use_packed_backend", return_value=True):
+            compiled = torch.compile(encoder, backend="eager")
+            for seed in range(5):
+                with torch.no_grad():
+                    compiled(_random_batch(seed), anchor_node_type=_USER)
+                graph_counts.append(
+                    torch._dynamo.utils.counters["stats"]["unique_graphs"]
+                )
+        # The first batches may compile (static, then dynamic shapes); later ones reuse the graphs.
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedPathCudaTest(TestCase):
@@ -691,6 +707,30 @@ class PackedPathCudaTest(TestCase):
             ),
             test_utils=test_utils,
         )
+
+    def test_whole_encoder_inductor_compile_matches_eager_without_recompiling(
+        self,
+    ) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        kwargs = _encoder_kwargs(
+            hid_dim=128,
+            dropout_rate=0.0,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(3, 128)}
+            ),
+        )
+        encoder = _materialized_encoder(_random_batch(0), kwargs).to("cuda")
+        compiled = torch.compile(encoder)
+        graph_counts = []
+        for seed in range(5):
+            data = _random_batch(seed).to("cuda")
+            with torch.no_grad():
+                actual = compiled(data, anchor_node_type=_USER)
+                expected = encoder(data, anchor_node_type=_USER)
+            graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"])
+            torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
     def test_cuda_forward_matches_cpu_with_two_host_syncs(self) -> None:
         device = torch.device("cuda")
