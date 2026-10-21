@@ -1,7 +1,9 @@
 """The packed ``GraphTransformerEncoder`` path matches the padded path."""
 
 import copy
+import importlib
 import itertools
+import multiprocessing
 import unittest
 import warnings
 from typing import Any, Callable, Literal, cast
@@ -11,13 +13,20 @@ import torch
 import torch.nn as nn
 from absl.testing import absltest
 from parameterized import param, parameterized
+from torch._subclasses.fake_tensor import FakeTensorMode
 from torch_geometric.data import HeteroData
 
+import gigl.nn.packed_attention
 from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
 )
-from gigl.nn.packed_attention import _padded_packed_attention, _varlen_attention
+from gigl.nn.packed_attention import (
+    _padded_packed_attention,
+    _varlen_attention,
+    _varlen_attention_backward,
+    _varlen_attention_forward,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.static_khop import PackedSequences, pack_sequences
@@ -30,6 +39,19 @@ _BUYS = EdgeType(_USER, Relation("buys"), _ITEM)
 _BOUGHT_BY = EdgeType(_ITEM, Relation("bought_by"), _USER)
 _HOP = "hop_distance"
 _MAX_SEQ_LEN = 24
+
+
+def _check_custom_ops_in_child(result_queue: Any) -> None:
+    """Imports the packed attention module in a fresh process and runs a fake op."""
+    from torch._subclasses.fake_tensor import FakeTensorMode as ChildFakeTensorMode
+
+    from gigl.nn.packed_attention import _varlen_attention_forward as forward_op
+
+    with ChildFakeTensorMode():
+        query = torch.empty(6, 2, 64)
+        cu_seqlens = torch.empty(3, dtype=torch.int32)
+        output = forward_op(query, query, query, cu_seqlens, cu_seqlens, 4, 4, True)[0]
+    result_queue.put(tuple(output.shape))
 
 
 def _random_batch(
@@ -350,6 +372,74 @@ class PackedPathTest(TestCase):
         self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
         self.assertEqual(packed.max_seq_len, 3)
 
+    def test_varlen_attention_fake_forward_shapes(self) -> None:
+        with FakeTensorMode():
+            cu_seqlens = torch.empty(4, dtype=torch.int32)
+            query, key, value = (torch.empty(30, 2, 64) for _ in range(3))
+            for compute_logsumexp, padded_length in ((True, 32), (False, 0)):
+                output, logsumexp, philox_seed, philox_offset = (
+                    _varlen_attention_forward(
+                        query,
+                        key,
+                        value,
+                        cu_seqlens,
+                        cu_seqlens,
+                        24,
+                        24,
+                        compute_logsumexp,
+                    )
+                )
+                with self.subTest(compute_logsumexp=compute_logsumexp):
+                    self.assertEqual(output.shape, query.shape)
+                    self.assertEqual(logsumexp.shape, (3, 2, padded_length))
+                    self.assertEqual(philox_seed.shape, ())
+                    self.assertEqual(philox_seed.device.type, "cpu")
+                    self.assertEqual(philox_offset.shape, ())
+
+    def test_custom_ops_register_in_a_spawned_process(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        result_queue = context.Queue()
+        process = context.Process(
+            target=_check_custom_ops_in_child, args=(result_queue,)
+        )
+        process.start()
+        try:
+            self.assertEqual(result_queue.get(timeout=300), (6, 2, 64))
+        finally:
+            process.join(timeout=60)
+        self.assertEqual(process.exitcode, 0)
+
+    def test_custom_ops_survive_a_module_reload(self) -> None:
+        importlib.reload(gigl.nn.packed_attention)
+        with FakeTensorMode():
+            query = torch.empty(6, 2, 64)
+            cu_seqlens = torch.empty(3, dtype=torch.int32)
+            output = gigl.nn.packed_attention._varlen_attention_forward(
+                query, query, query, cu_seqlens, cu_seqlens, 4, 4, True
+            )[0]
+        self.assertEqual(output.shape, query.shape)
+
+    def test_varlen_attention_fake_backward_shapes(self) -> None:
+        with FakeTensorMode():
+            cu_seqlens = torch.empty(4, dtype=torch.int32)
+            query, key, value = (torch.empty(30, 2, 64) for _ in range(3))
+            gradients = _varlen_attention_backward(
+                torch.empty(30, 2, 64),
+                query,
+                key,
+                value,
+                torch.empty(30, 2, 64),
+                torch.empty(3, 2, 32),
+                cu_seqlens,
+                cu_seqlens,
+                torch.empty((), dtype=torch.long),
+                torch.empty((), dtype=torch.long),
+                24,
+                24,
+            )
+        for gradient in gradients:
+            self.assertEqual(gradient.shape, query.shape)
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedPathCudaTest(TestCase):
@@ -532,6 +622,75 @@ class PackedPathCudaTest(TestCase):
                 ),
                 atol=1e-4,
             )
+
+    def test_varlen_attention_without_grad_matches_padded_packed_attention(
+        self,
+    ) -> None:
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3], device=device)
+        num_tokens = int(lengths.sum())
+        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        query, key, value = (
+            torch.randn(num_tokens, 2, 64, device=device, requires_grad=True)
+            for _ in range(3)
+        )
+        with torch.no_grad():
+            actual = _varlen_attention(
+                query,
+                key,
+                value,
+                packed.cu_seqlens,
+                packed.cu_seqlens,
+                _MAX_SEQ_LEN,
+                _MAX_SEQ_LEN,
+            )
+            expected = _padded_packed_attention(query, key, value, packed, False)
+        self.assertFalse(actual.requires_grad)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-4)
+
+    def test_varlen_attention_ops_pass_opcheck(self) -> None:
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3], device=device)
+        num_tokens = int(lengths.sum())
+        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        query, key, value = (
+            torch.randn(num_tokens, 2, 64, device=device) for _ in range(3)
+        )
+        forward_args = (
+            query,
+            key,
+            value,
+            packed.cu_seqlens,
+            packed.cu_seqlens,
+            _MAX_SEQ_LEN,
+            _MAX_SEQ_LEN,
+            True,
+        )
+        test_utils = ("test_schema", "test_faketensor")
+        torch.library.opcheck(
+            _varlen_attention_forward, forward_args, test_utils=test_utils
+        )
+        output, logsumexp, philox_seed, philox_offset = _varlen_attention_forward(
+            *forward_args
+        )
+        torch.library.opcheck(
+            _varlen_attention_backward,
+            (
+                torch.randn_like(output),
+                query,
+                key,
+                value,
+                output,
+                logsumexp,
+                packed.cu_seqlens,
+                packed.cu_seqlens,
+                philox_seed,
+                philox_offset,
+                _MAX_SEQ_LEN,
+                _MAX_SEQ_LEN,
+            ),
+            test_utils=test_utils,
+        )
 
     def test_cuda_forward_matches_cpu_with_two_host_syncs(self) -> None:
         device = torch.device("cuda")

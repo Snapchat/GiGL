@@ -19,6 +19,161 @@ from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedSequences
 
+# The memory-efficient attention kernels sit behind custom ops, so Inductor treats
+# them as opaque instead of applying its layout rules for aten attention ops, which
+# need concrete strides and fail on the ``[1, tokens, ...]`` views of a token count
+# that is only known at run time.
+_LSE_ALIGNMENT = 32
+
+
+def _varlen_attention_forward_kernel(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    compute_logsumexp: bool,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    # The op's stub types every argument as ``...``; it returns
+    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
+    efficient_attention_forward = cast(
+        Callable[..., tuple[Tensor, ...]],
+        torch.ops.aten._efficient_attention_forward,
+    )
+    output, logsumexp, philox_seed, philox_offset = efficient_attention_forward(
+        query.unsqueeze(0),
+        key.unsqueeze(0),
+        value.unsqueeze(0),
+        None,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        0.0,
+        0,
+        compute_logsumexp,
+    )[:4]
+    return output.squeeze(0).contiguous(), logsumexp, philox_seed, philox_offset
+
+
+def _varlen_attention_forward_fake(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    compute_logsumexp: bool,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    padded_q = -(-max_seqlen_q // _LSE_ALIGNMENT) * _LSE_ALIGNMENT
+    return (
+        torch.empty_like(query),
+        query.new_empty(
+            (
+                cu_seqlens_q.size(0) - 1,
+                query.size(1),
+                padded_q if compute_logsumexp else 0,
+            ),
+            dtype=torch.float32,
+        ),
+        # Without dropout the kernel returns the Philox seed and offset as CPU scalars.
+        torch.empty((), dtype=torch.long),
+        torch.empty((), dtype=torch.long),
+    )
+
+
+def _varlen_attention_backward_kernel(
+    grad_output: Tensor,
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    output: Tensor,
+    logsumexp: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    philox_seed: Tensor,
+    philox_offset: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    efficient_attention_backward = cast(
+        Callable[..., tuple[Tensor, ...]],
+        torch.ops.aten._efficient_attention_backward,
+    )
+    grad_query, grad_key, grad_value, _ = efficient_attention_backward(
+        grad_output.unsqueeze(0).contiguous(),
+        query.unsqueeze(0),
+        key.unsqueeze(0),
+        value.unsqueeze(0),
+        None,
+        output.unsqueeze(0),
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        logsumexp,
+        0.0,
+        philox_seed,
+        philox_offset,
+        0,
+        False,
+    )
+    return (
+        grad_query.squeeze(0).contiguous(),
+        grad_key.squeeze(0).contiguous(),
+        grad_value.squeeze(0).contiguous(),
+    )
+
+
+def _varlen_attention_backward_fake(
+    grad_output: Tensor,
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    output: Tensor,
+    logsumexp: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    philox_seed: Tensor,
+    philox_offset: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    return (
+        torch.empty_like(query),
+        torch.empty_like(key),
+        torch.empty_like(value),
+    )
+
+
+def _register_custom_op(
+    name: str, kernel: Callable[..., Any], fake: Callable[..., Any]
+) -> Callable[..., Any]:
+    """Registers ``gigl::<name>``, or returns the op if it is already registered.
+
+    A reload of this module in the same process must not register the op twice.
+    """
+    if hasattr(torch.ops.gigl, name):
+        return getattr(torch.ops.gigl, name)
+    op = torch.library.custom_op(f"gigl::{name}", mutates_args=())(kernel)
+    op.register_fake(fake)
+    return op
+
+
+_varlen_attention_forward = _register_custom_op(
+    "varlen_attention_forward",
+    _varlen_attention_forward_kernel,
+    _varlen_attention_forward_fake,
+)
+_varlen_attention_backward = _register_custom_op(
+    "varlen_attention_backward",
+    _varlen_attention_backward_kernel,
+    _varlen_attention_backward_fake,
+)
+
 
 class _VarlenAttention(torch.autograd.Function):
     """Memory-efficient varlen attention with the explicit backward kernel."""
@@ -34,27 +189,17 @@ class _VarlenAttention(torch.autograd.Function):
         max_seqlen_q: int,
         max_seqlen_k: int,
     ) -> Tensor:
-        # The op's stub types every argument as ``...``; it returns
-        # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
-        efficient_attention_forward = cast(
-            Callable[..., tuple[Tensor, ...]],
-            torch.ops.aten._efficient_attention_forward,
-        )
         needs_grad = any(ctx.needs_input_grad[:3])
-        output, logsumexp, philox_seed, philox_offset = efficient_attention_forward(
-            query.unsqueeze(0),
-            key.unsqueeze(0),
-            value.unsqueeze(0),
-            None,
+        output, logsumexp, philox_seed, philox_offset = _varlen_attention_forward(
+            query,
+            key,
+            value,
             cu_seqlens_q,
             cu_seqlens_k,
             max_seqlen_q,
             max_seqlen_k,
-            0.0,
-            0,
             needs_grad,
-        )[:4]
-        output = output.squeeze(0)
+        )
         if needs_grad:
             ctx.save_for_backward(
                 query,
@@ -86,37 +231,21 @@ class _VarlenAttention(torch.autograd.Function):
             philox_offset,
         ) = ctx.saved_tensors
         max_seqlen_q, max_seqlen_k = ctx.max_seqlens
-        efficient_attention_backward = cast(
-            Callable[..., tuple[Tensor, ...]],
-            torch.ops.aten._efficient_attention_backward,
-        )
-        grad_query, grad_key, grad_value, _ = efficient_attention_backward(
-            grad_output.unsqueeze(0).contiguous(),
-            query.unsqueeze(0),
-            key.unsqueeze(0),
-            value.unsqueeze(0),
-            None,
-            output.unsqueeze(0),
+        grad_query, grad_key, grad_value = _varlen_attention_backward(
+            grad_output,
+            query,
+            key,
+            value,
+            output,
+            logsumexp,
             cu_seqlens_q,
             cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            logsumexp,
-            0.0,
             philox_seed,
             philox_offset,
-            0,
-            False,
+            max_seqlen_q,
+            max_seqlen_k,
         )
-        return (
-            grad_query.squeeze(0),
-            grad_key.squeeze(0),
-            grad_value.squeeze(0),
-            None,
-            None,
-            None,
-            None,
-        )
+        return grad_query, grad_key, grad_value, None, None, None, None
 
 
 def _varlen_attention(
