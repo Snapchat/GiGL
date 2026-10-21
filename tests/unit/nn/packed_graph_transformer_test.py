@@ -41,7 +41,10 @@ _MAX_SEQ_LEN = 24
 
 
 def _random_batch(
-    seed: int, hetero: bool = False, direction: Literal["in", "out"] = "in"
+    seed: int,
+    hetero: bool = False,
+    direction: Literal["in", "out"] = "in",
+    h_max: int = 2,
 ) -> HeteroData:
     """A random batch with duplicate edges, self loops and shared neighbours.
 
@@ -69,7 +72,7 @@ def _random_batch(
                 torch.randint(0, 50, (40,), generator=generator),
             ]
         )
-    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction=direction)(data)
+    return AddHeteroHopDistanceEncoding(h_max=h_max, sampling_direction=direction)(data)
 
 
 def _encoder_kwargs(hetero: bool = False, **overrides: object) -> dict:
@@ -187,6 +190,51 @@ class PackedPathTest(TestCase):
                     atol=1e-6,
                 )
 
+    @parameterized.expand(
+        [
+            param("three_hops", hop_distance=3),
+            param("four_hops", hop_distance=4),
+            param("hop_order", prioritize_hop_order=True, max_seq_len=10),
+            param(
+                "hop_order_three_hops",
+                hop_distance=3,
+                prioritize_hop_order=True,
+                max_seq_len=10,
+            ),
+            param(
+                "hop_order_out_direction",
+                prioritize_hop_order=True,
+                max_seq_len=10,
+                sampling_direction="out",
+            ),
+        ]
+    )
+    def test_matches_padded_path_with_more_hops_and_hop_order(
+        self, _: str, hop_distance: int = 2, **overrides: object
+    ) -> None:
+        kwargs = _encoder_kwargs(
+            hop_distance=hop_distance,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(hop_distance + 1, 16)}
+            ),
+            **overrides,
+        )
+        self.assertTrue(GraphTransformerEncoder(**kwargs)._supports_packed_backend)
+        for seed in range(3):
+            data = _random_batch(
+                seed,
+                direction=cast(Literal["in", "out"], kwargs["sampling_direction"]),
+                h_max=hop_distance,
+            )
+            encoder = _materialized_encoder(data, kwargs)
+            with self.subTest(seed=seed), torch.no_grad():
+                torch.testing.assert_close(
+                    _run_packed(encoder, data),
+                    encoder(data, anchor_node_type=_USER),
+                    rtol=0,
+                    atol=1e-6,
+                )
+
     def test_matches_padded_path_with_explicit_anchors(self) -> None:
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
@@ -278,12 +326,12 @@ class PackedPathTest(TestCase):
                 "neighbor_readout",
                 readout_mode="anchor_neighbor_attention",
             ),
-            param("prioritize_hop_order", prioritize_hop_order=True),
+            param("prioritize_hop_order", prioritize_hop_order=True, supported=True),
             param("relation_message", relation_message_mode="edge_type_linear"),
             param("relation_attention", relation_attention_mode="edge_type_bilinear"),
             param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
             param("head_dim_not_multiple_of_8", num_heads=4),
-            param("three_hops", hop_distance=3),
+            param("five_hops", hop_distance=5),
             param("attention_dropout", attention_dropout_rate=0.1),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
             param(

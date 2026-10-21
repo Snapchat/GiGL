@@ -1259,13 +1259,13 @@ class GraphTransformerEncoder(nn.Module):
         Packed backend: on CUDA, the encoder runs on packed tokens (one
         ``[tokens, hid_dim]`` buffer and a varlen attention kernel, so no FLOPs go
         to padding) when the config meets all of these:
-          - ``sequence_construction_method="khop"`` without ``prioritize_hop_order``
+          - ``sequence_construction_method="khop"``
           - ``readout_mode="anchor_only"``
           - ``relation_attention_mode`` and ``relation_message_mode`` are ``"none"``
           - no attention biases
           - ``"hop_distance"`` is the only anchor-based input, if any
           - ``hid_dim // num_heads`` is divisible by 8
-          - ``hop_distance <= 2``
+          - ``hop_distance <= 4``
           - ``attention_dropout_rate == 0``
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
@@ -1641,8 +1641,6 @@ class GraphTransformerEncoder(nn.Module):
         blockers: list[str] = []
         if self._sequence_construction_method != "khop":
             blockers.append("sequence_construction_method is not 'khop'")
-        if self._prioritize_hop_order:
-            blockers.append("prioritize_hop_order is set")
         if self._readout_mode != "anchor_only":
             blockers.append("readout_mode is not 'anchor_only'")
         if self._relation_attention_mode != "none":
@@ -1662,10 +1660,11 @@ class GraphTransformerEncoder(nn.Module):
         # a different kernel.
         if (self._hid_dim // num_heads) % 8 != 0:
             blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
-        # Packed memory is O(anchors * width ** hop_distance). Beyond two hops it
-        # can far exceed the padded path's memory.
-        if self._hop_distance > 2:
-            blockers.append("hop_distance is above 2")
+        # Packed memory is O(anchors * width ** hop_distance), and the candidate
+        # budget sends batches over it to the padded path. Past four hops nearly
+        # every batch would exceed it.
+        if self._hop_distance > 4:
+            blockers.append("hop_distance is above 4")
         # The varlen kernel's dropout has not been tested against the padded
         # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
         # training and eval on the same path.
@@ -1971,6 +1970,7 @@ class GraphTransformerEncoder(nn.Module):
                 hop_distance=self._hop_distance,
                 max_seq_len=self._max_seq_len,
                 sampling_direction=self._sampling_direction,
+                prioritize_hop_order=self._prioritize_hop_order,
             )
         except KhopLayoutTooLargeError as error:
             self._record_packed_fallback(error)

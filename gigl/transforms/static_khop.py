@@ -21,7 +21,8 @@ How a layout is built::
         |  sort each row by (node id, hop); the first copy of a node is its
         |  first-reach hop, so drop repeats, padding and the anchor itself
         v
-    anchor first, then neighbours in ascending node id, cut at max_seq_len
+    anchor first, then neighbours in ascending node id (or by hop, then node id,
+    with ``prioritize_hop_order``), cut at max_seq_len
         |
         v
     node_index, hop_index [num_anchors, max_seq_len] (-1 / 0 at padding), lengths
@@ -184,6 +185,7 @@ def _khop_sequence_layout(
     anchor_indices: Int[Tensor, "num_anchors"],
     hop_distance: int,
     max_seq_len: int,
+    prioritize_hop_order: bool = False,
 ) -> tuple[
     Int64[Tensor, "num_anchors max_seq_len"],
     Int64[Tensor, "num_anchors max_seq_len"],
@@ -196,6 +198,9 @@ def _khop_sequence_layout(
     the same order from ``coalesce``, so this layout equals
     ``_get_k_hop_neighbors_sparse`` followed by
     ``_build_sequence_layout_from_sparse_neighbors`` with the anchor moved first.
+    With ``prioritize_hop_order`` the neighbours are ordered by first-reach hop,
+    then node id, so truncation drops the farthest hops first, as in
+    ``_build_hop_ordered_sequence_layout_from_sparse_edges``.
 
     A token's hop is the hop at which it is first reached; the anchor's is 0.
 
@@ -208,6 +213,7 @@ def _khop_sequence_layout(
             anchors.
         hop_distance: Number of hops to expand.
         max_seq_len: Tokens per sequence, anchor included.
+        prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
         - ``[num_anchors, max_seq_len]`` long node ids, -1 at padding.
@@ -250,6 +256,15 @@ def _khop_sequence_layout(
         dim=1,
     )
     keep = is_first_copy & (nodes >= 0) & (nodes != anchor_indices.unsqueeze(1))
+    if prioritize_hop_order:
+        # Re-sort the kept neighbours by (hop, node id) so truncation below drops
+        # the farthest hops first.
+        node_radix = neighbor_table.size(0)
+        order_keys = torch.where(keep, hops * node_radix + nodes, padding_key)
+        order_keys, _ = torch.sort(order_keys, dim=1)
+        keep = order_keys != padding_key
+        nodes = torch.where(keep, order_keys % node_radix, -1)
+        hops = torch.where(keep, order_keys // node_radix, 0)
     # Position 0 belongs to the anchor, so neighbours are numbered from 1.
     positions = torch.cumsum(keep.long(), dim=1)
     keep = keep & (positions < max_seq_len)
@@ -283,6 +298,7 @@ def khop_layout(
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
+    prioritize_hop_order: bool = False,
 ) -> tuple[
     Int64[Tensor, "num_anchors max_seq_len"],
     Int64[Tensor, "num_anchors max_seq_len"],
@@ -301,6 +317,7 @@ def khop_layout(
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
         max_candidates: Maximum number of candidates; see
             ``MAX_LAYOUT_CANDIDATES``.
+        prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
         The outputs of ``_khop_sequence_layout``.
@@ -324,4 +341,5 @@ def khop_layout(
         anchor_indices,
         hop_distance,
         max_seq_len,
+        prioritize_hop_order,
     )
