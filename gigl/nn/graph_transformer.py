@@ -504,15 +504,15 @@ class GraphTransformerEncoderLayer(nn.Module):
     ) -> Float[Tensor, "outputs model_dim"]:
         """Runs the layer on packed tokens (see ``gigl.nn.packed_attention``).
 
-        Every sequence's tokens sit back to back in ``x`` and each token attends
-        only within its own sequence, with no attention bias. This needs
-        ``relation_attention_mode`` and ``relation_message_mode`` ``"none"`` and
-        no attention dropout in training.
+        The tokens of each sequence sit back to back in ``x``. Each token attends
+        only to tokens of its own sequence, with no attention bias. Requires
+        ``relation_attention_mode`` and ``relation_message_mode`` to be ``"none"``,
+        and attention dropout to be off in training.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
             packed: Layout of the sequences in ``x``.
-            first_token_output: Compute only each sequence's first token.
+            first_token_output: Compute only the first token of each sequence.
 
         Returns:
             ``(tokens, model_dim)``, or ``(num_sequences, model_dim)`` with
@@ -525,11 +525,14 @@ class GraphTransformerEncoderLayer(nn.Module):
         if self._relation_attention_mode != "none" or self._relation_message_mode != (
             "none"
         ):
-            raise ValueError("forward_packed supports relation modes 'none' only.")
+            raise ValueError(
+                "forward_packed requires relation_attention_mode and "
+                "relation_message_mode to be 'none'."
+            )
         if self.training and self._attention_dropout_rate > 0:
             raise ValueError(
-                "Packed attention does not apply attention dropout; set "
-                "attention_dropout_rate=0 or use forward."
+                "Packed attention does not support attention dropout in training; "
+                "set attention_dropout_rate=0 or use forward."
             )
         x_norm = self._attention_norm(x)
         key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
@@ -548,7 +551,8 @@ class GraphTransformerEncoderLayer(nn.Module):
             query, key, value, packed, query_is_first_token=first_token_output
         ).reshape(-1, self._num_heads * self._head_dim)
         x = residual + self._dropout(self._output_projection(attention_output))
-        # The FFN acts on each row alone; its contract is (batch, sequence, dim).
+        # The FFN treats each row independently but expects (batch, sequence, dim)
+        # input, so add a leading batch dim of 1.
         return x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
 
     def _forward_query_prefix(
@@ -1245,24 +1249,33 @@ class GraphTransformerEncoder(nn.Module):
             bias broadcastable (no per-layer (seq, seq) bias materialization).
 
     Notes:
-        On CUDA, configs run on packed tokens (one ``[tokens, hid_dim]`` buffer, a
-        varlen attention kernel, no padding FLOPs) when they use ``"khop"``
-        sequences without ``prioritize_hop_order``, ``readout_mode="anchor_only"``,
-        relation modes ``"none"``, no attention biases, at most ``"hop_distance"``
-        as an anchor-based input, ``hid_dim // num_heads`` divisible by 8,
-        ``hop_distance <= 2``, and ``attention_dropout_rate == 0``. All other
-        configs and CPU run on padded sequences; a batch whose k-hop
-        candidate set is too large for the packed layout also runs padded (these are
-        counted and warned about on the 1st, 2nd, 4th, ... occurrence).
-        Both paths give the same embeddings and gradients up to float error;
-        with ``dropout_rate > 0``, train-mode dropout draws differ (same
-        distribution). The reasons a config is not packed are logged at
-        construction. The packed path
-        derives ``hop_distance`` from the layout (first-reach directed hop in
-        ``sampling_direction``) and ignores the batch attribute; that equals
-        ``AddHeteroHopDistanceEncoding(is_undirected=False,
-        sampling_direction=<same>, h_max >= hop_distance)``. It costs two host
-        reads per batch.
+        Packed backend: on CUDA, the encoder runs on packed tokens (one
+        ``[tokens, hid_dim]`` buffer and a varlen attention kernel, so no FLOPs go
+        to padding) when the config meets all of these:
+          - ``sequence_construction_method="khop"`` without ``prioritize_hop_order``
+          - ``readout_mode="anchor_only"``
+          - ``relation_attention_mode`` and ``relation_message_mode`` are ``"none"``
+          - no attention biases
+          - ``"hop_distance"`` is the only anchor-based input, if any
+          - ``hid_dim // num_heads`` is divisible by 8
+          - ``hop_distance <= 2``
+          - ``attention_dropout_rate == 0``
+
+        Every other config, and every CPU run, uses padded sequences. A batch whose
+        k-hop candidate set is too large for the packed layout also runs padded;
+        these batches are counted, and a warning is logged on the 1st, 2nd, 4th,
+        ... occurrence. The reasons a config cannot be packed are logged at
+        construction.
+
+        Both paths give the same embeddings and gradients up to float error. With
+        ``dropout_rate > 0`` the train-mode dropout masks differ between paths, but
+        follow the same distribution.
+
+        The packed path computes ``hop_distance`` from the layout (the first-reach
+        directed hop in ``sampling_direction``) and ignores the batch attribute.
+        That equals ``AddHeteroHopDistanceEncoding(is_undirected=False,
+        sampling_direction=<same>, h_max >= hop_distance)``. The packed path costs
+        two host reads per batch.
 
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
@@ -1585,7 +1598,8 @@ class GraphTransformerEncoder(nn.Module):
         self._supports_packed_backend = not blockers
         if blockers:
             logger.info(
-                "GraphTransformerEncoder runs on padded sequences: "
+                "GraphTransformerEncoder will run on padded sequences, not packed "
+                "tokens, because: "
                 + "; ".join(blockers)
             )
         self._packed_fallback_count = 0
@@ -1613,22 +1627,24 @@ class GraphTransformerEncoder(nn.Module):
             HOP_DISTANCE_FEATURE_NAME
         }:
             blockers.append("anchor-based inputs other than hop_distance are set")
-        # The CUDA memory-efficient varlen kernel only has aligned kernels
-        # for head dims divisible by 8; SDPA falls back for other dims.
+        # The CUDA memory-efficient varlen kernel only has aligned variants for
+        # head dims divisible by 8. For other dims, the padded path's SDPA picks
+        # a different kernel.
         if (self._hid_dim // num_heads) % 8 != 0:
             blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
-        # Packed memory is O(anchors * width ** hop_distance), which beyond
-        # two hops can far exceed the padded path's.
+        # Packed memory is O(anchors * width ** hop_distance). Beyond two hops it
+        # can far exceed the padded path's memory.
         if self._hop_distance > 2:
             blockers.append("hop_distance is above 2")
         # The torch 2.8 varlen kernel draws one dropout mask shared by all heads
-        # and sequences. Rejecting it here keeps training and eval on one path.
+        # and sequences. Treating dropout as a blocker keeps training and eval on
+        # the same path.
         if attention_dropout_rate > 0:
             blockers.append("attention_dropout_rate is above 0")
         return blockers
 
     def _use_packed_backend(self, device: torch.device) -> bool:
-        """Whether this forward runs on packed tokens (a supported config on CUDA)."""
+        """Returns whether this forward runs on packed tokens (supported config, on CUDA)."""
         return self._supports_packed_backend and device.type == "cuda"
 
     def forward(
@@ -1739,15 +1755,16 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
-            # Assign first, then project: don't write
-            # ``self._project_output(self._encode_packed(...))``. Under
-            # ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks (it reads
-            # sizes back from the GPU). Dynamo resumes after a break with any
-            # half-evaluated expression saved, and guards that the saved object is the
-            # same on the next call. Here that object would be the bound method
-            # ``self._project_output``, which Python creates fresh on every access, so
-            # the guard fails and the encoder recompiles on every batch. With the result
-            # in a local, nothing is pending across the break. Covered by
+            # Assign the packed result to a local before projecting. Do not write
+            # ``self._project_output(self._encode_packed(...))``.
+            # Under ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks
+            # because it reads sizes back from the GPU. After a break, Dynamo resumes
+            # with any half-evaluated expression saved, and on the next call it checks
+            # that the saved object is the same one. Here that object would be the
+            # bound method ``self._project_output``, which Python creates anew on every
+            # attribute access. The check would fail and the encoder would recompile on
+            # every batch. With the result held in a local, nothing is pending across
+            # the break. Covered by
             # ``test_whole_encoder_compile_does_not_recompile_across_batches``.
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
@@ -1863,16 +1880,17 @@ class GraphTransformerEncoder(nn.Module):
 
     @torch.compiler.disable
     def _record_packed_fallback(self, error: KhopLayoutTooLargeError) -> None:
-        """Counts a batch that ran on padded sequences and warns on the 1st, 2nd, 4th, ...
+        """Counts a batch that fell back to padded sequences; warns on the 1st, 2nd, 4th, ...
 
-        Kept out of the compiled region: Dynamo guards on a Python counter's value
-        and would recompile each time it changes.
+        Excluded from ``torch.compile``: Dynamo guards on the value of a Python
+        counter, so compiling this would recompile every time the count changes.
         """
         self._packed_fallback_count += 1
         count = self._packed_fallback_count
         if count & (count - 1) == 0:
             logger.warning(
-                f"Running a batch on padded sequences ({count} so far): {error}"
+                f"Running a batch on padded sequences ({count} so far) because "
+                f"the packed k-hop layout is too large: {error}"
             )
 
     def _encode_packed(
@@ -1887,9 +1905,9 @@ class GraphTransformerEncoder(nn.Module):
         """Encodes the anchors on packed tokens.
 
         Returns:
-            ``[num_anchor_nodes, hid_dim]`` final-norm anchor states, or None if
-            the batch's k-hop candidate set is too large to lay out (the caller
-            then runs the padded path).
+            ``[num_anchor_nodes, hid_dim]`` anchor states after the final norm, or
+            None if the batch's k-hop candidate set is too large to lay out. The
+            caller then runs the padded path.
         """
         node_type_offsets = get_node_type_offsets(projected_x_dict)
         node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
