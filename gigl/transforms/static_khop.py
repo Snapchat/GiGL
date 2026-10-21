@@ -2,24 +2,66 @@
 
 The sparse k-hop path in ``gigl.transforms.graph_transformer`` sizes its tensors
 from the data (sparse matmul, ``coalesce``, ``unique``, ``nonzero``, bool-mask
-indexing). The functions here build the same layout as its default
-(node-id-ordered, anchor-first) k-hop sequences from a dense ``[num_nodes, width]``
-neighbour table, using only sort, gather and scatter ops. Their only host read
-is the table width, the largest per-node degree over all edge types combined.
+indexing), which keeps it from compiling well and forces host syncs. This module
+builds the same layout as that path's default (node-id-ordered, anchor-first
+k-hop sequences) from a dense neighbour table, using only sort, gather and scatter
+ops whose shapes are known up front.
 
-Memory is ``O(num_anchors * width ** hop_distance)``, so this suits sampled
-subgraphs and small hop counts; ``khop_layout`` raises ``KhopLayoutTooLargeError``
-before building a layout whose candidate set exceeds a budget.
+How a layout is built::
+
+    edge_index [2, num_edges]
+        |  sort edges by source; an edge's slot is its rank in its source's group
+        v
+    neighbour table [num_nodes + 1, width]    width = largest degree (one host read)
+        |                                     row i = nodes one hop from i, -1 pads;
+        |                                     the extra last row is all -1
+        |  hop h: gather the rows of the hop h - 1 frontier -> [num_anchors, width ** h]
+        v
+    candidates [num_anchors, 1 + width + ... + width ** hop_distance]
+        |  sort each row by (node id, hop); the first copy of a node is its
+        |  first-reach hop, so drop repeats, padding and the anchor itself
+        v
+    anchor first, then neighbours in ascending node id, cut at max_seq_len
+        |
+        v
+    node_index, hop_index [num_anchors, max_seq_len] (-1 / 0 at padding), lengths
+        |
+        |  pack_sequences(lengths, max_seq_len)       (one host read: total tokens)
+        v
+    flat_index + PackedSequences(cu_seqlens, max_seq_len)  for gigl.nn.packed_attention
+
+Memory is ``O(num_anchors * width ** hop_distance)``: every walk of up to
+``hop_distance`` steps is a candidate before deduplication, so a hub node with a
+large degree blows it up quickly. ``khop_layout`` therefore counts the candidates
+before building anything and raises ``KhopLayoutTooLargeError`` when they exceed
+``max_candidates``. ``GraphTransformerEncoder`` catches it and runs that batch on
+the padded path instead.
+
+Host reads:
+  - the table width, the largest per-node degree over all edge types combined
+  - the total token count in ``pack_sequences``
 
 Example:
+    >>> edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
     >>> node_index, hop_index, lengths = khop_layout(
     ...     edge_index,
     ...     num_nodes=5,
     ...     anchor_indices=torch.arange(2),
     ...     hop_distance=2,
-    ...     max_seq_len=8,
-    ...     sampling_direction="in",
+    ...     max_seq_len=4,
+    ...     sampling_direction="out",
     ... )
+    >>> node_index.tolist()
+    [[0, 1, 2, -1], [1, 2, 3, -1]]
+    >>> hop_index.tolist()
+    [[0, 1, 2, 0], [0, 1, 2, 0]]
+    >>> lengths.tolist()
+    [3, 3]
+    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
+    >>> node_index.flatten()[flat_index].tolist()
+    [0, 1, 2, 1, 2, 3]
+    >>> packed.cu_seqlens.tolist()
+    [0, 3, 6]
 """
 
 from typing import Literal, NamedTuple

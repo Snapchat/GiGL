@@ -3,10 +3,65 @@
 A padded ``[num_sequences, max_seq_len, dim]`` batch spends most of its linear
 FLOPs on padding when lengths vary. Packing puts every valid token of every
 sequence into one ``[num_tokens, dim]`` buffer, so linears and FFNs run on real
-tokens only and attention runs per sequence.
+tokens only and attention runs per sequence, delimited by ``cu_seqlens``.
 
-Packing reads the token count back to the host once, so the buffer is exactly
-as large as the real tokens and no slot is wasted.
+Data flow of a packed forward::
+
+    padded grid [num_sequences, max_seq_len, ...]      lengths [num_sequences]
+        |                                                   |
+        |      pack_sequences(lengths, max_seq_len)  <------+
+        |          -> flat_index, PackedSequences(cu_seqlens, max_seq_len)
+        |  grid.flatten()[flat_index]
+        v
+    packed buffer [num_tokens, dim]
+        |
+        |  per layer, on real tokens only:
+        |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
+        |    packed_attention(q, k, v, packed, ...)
+        |        CUDA: gigl::varlen_attention_{forward,backward} custom ops
+        |        CPU:  SDPA on a padded grid (reference)
+        |    output linear + residual -> FFN + residual
+        v
+    anchor readout: rows cu_seqlens[:-1], the first token of every sequence
+
+``packed_attention`` is the entry point. On CUDA it calls the memory-efficient
+varlen kernel through two custom ops, ``gigl::varlen_attention_forward`` and
+``gigl::varlen_attention_backward``, wired together by an autograd function. The
+kernels sit behind custom ops so Inductor treats them as opaque: its layout rules
+for the aten attention ops need concrete strides and fail on the
+``[1, tokens, ...]`` views of a token count that is only known at run time.
+
+Constraints:
+  - The varlen kernel is CUDA only; other devices use the padded SDPA path.
+  - ``head_dim`` must be a multiple of 8 for the aligned kernels.
+  - Attention dropout is not supported: in torch 2.8 the varlen kernel draws one
+    dropout mask shared across heads and sequences.
+  - ``cu_seqlens`` is int32, so the token count must fit in int32.
+  - Packing reads the token count back to the host once, so the buffer is exactly
+    as large as the real tokens and no slot is wasted.
+
+Example:
+    >>> from gigl.transforms.static_khop import pack_sequences
+    >>> lengths = torch.tensor([3, 1, 2])
+    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=3)
+    >>> flat_index.tolist()
+    [0, 1, 2, 3, 6, 7]
+    >>> num_tokens = int(lengths.sum())
+    >>> query = key = value = torch.randn(num_tokens, 2, 8)
+    >>> output = packed_attention(
+    ...     query, key, value, packed, query_is_first_token=False
+    ... )
+    >>> output.shape
+    torch.Size([6, 2, 8])
+    >>> first_token_only = packed_attention(
+    ...     query[packed.cu_seqlens[:-1].long()],
+    ...     key,
+    ...     value,
+    ...     packed,
+    ...     query_is_first_token=True,
+    ... )
+    >>> first_token_only.shape
+    torch.Size([3, 2, 8])
 """
 
 from typing import Any, Callable, NamedTuple, cast
@@ -20,10 +75,7 @@ from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedSequences
 
-# The memory-efficient attention kernels sit behind custom ops, so Inductor treats
-# them as opaque instead of applying its layout rules for aten attention ops, which
-# need concrete strides and fail on the ``[1, tokens, ...]`` views of a token count
-# that is only known at run time.
+# The kernel pads the logsumexp's last dim to a multiple of this.
 _LSE_ALIGNMENT = 32
 
 
