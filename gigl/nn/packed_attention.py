@@ -19,25 +19,21 @@ Data flow of a packed forward::
         |  per layer, on real tokens only:
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, packed, ...)
-        |        CUDA: gigl::varlen_attention_{forward,backward} custom ops
+        |        CUDA: aten memory-efficient attention with cu_seqlens
         |        CPU:  SDPA on a padded grid (reference)
         |    output linear + residual -> FFN + residual
         v
     anchor readout: rows cu_seqlens[:-1], the first token of every sequence
 
-``packed_attention`` is the entry point. On CUDA it calls the memory-efficient
-varlen kernel through two custom ops, ``gigl::varlen_attention_forward`` and
-``gigl::varlen_attention_backward``, which an autograd function connects. The
-kernels are wrapped in custom ops so Inductor treats them as opaque. Inductor's
-layout rules for the aten attention ops need concrete strides, and they fail on
-the ``[1, tokens, ...]`` views here because the token count is only known at run
-time.
+``packed_attention`` is the entry point. On CUDA it calls aten's memory-efficient
+attention kernel with ``cu_seqlens``, and aten's own autograd formula supplies the
+backward.
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
   - ``head_dim`` must be a multiple of 8 for the aligned kernels.
-  - Attention dropout is not supported: in torch 2.8 the varlen kernel draws one
-    dropout mask shared across heads and sequences.
+  - Attention dropout is not supported; the kernel's varlen dropout has not been
+    tested against the padded path.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
   - Packing copies the total token count to the host once (a GPU sync), so the
     buffer holds exactly the real tokens.
@@ -85,309 +81,15 @@ Example:
     torch.Size([3, 2, 8])
 """
 
-from typing import Any, Callable, NamedTuple, cast
+from typing import Callable, cast
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Float32, Int32
+from jaxtyping import Float, Int32
 from torch import Tensor
-from torch.autograd.function import once_differentiable
 from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedSequences
-
-# The kernel pads the logsumexp's last dim to a multiple of this.
-_LSE_ALIGNMENT = 32
-
-
-def _varlen_attention_forward_kernel(
-    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
-    compute_logsumexp: bool,
-) -> tuple[
-    Float[Tensor, "num_query_tokens num_heads head_dim"],
-    Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
-]:
-    """Forward kernel of ``gigl::varlen_attention_forward``.
-
-    Args:
-        query: ``[num_query_tokens, num_heads, head_dim]``.
-        key: ``[num_key_tokens, num_heads, head_dim]``.
-        value: ``[num_key_tokens, num_heads, head_dim]``.
-        cu_seqlens_q: ``[num_sequences + 1]`` int32.
-        cu_seqlens_k: ``[num_sequences + 1]`` int32.
-        max_seqlen_q: Upper bound on any query sequence length.
-        max_seqlen_k: Upper bound on any key sequence length.
-        compute_logsumexp: Whether to compute the logsumexp the backward needs.
-
-    Returns:
-        - ``[num_query_tokens, num_heads, head_dim]`` attention output.
-        - ``[num_sequences, num_heads, padded_max_seqlen]`` float32 logsumexp,
-          with ``padded_max_seqlen`` zero unless ``compute_logsumexp``.
-    """
-    # The op's type stub declares every argument as ``...``. It returns
-    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
-    # first two are used.
-    efficient_attention_forward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_forward,
-    )
-    output, logsumexp = efficient_attention_forward(
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        0.0,
-        0,
-        compute_logsumexp,
-    )[:2]
-    return output.squeeze(0).contiguous(), logsumexp
-
-
-def _varlen_attention_forward_fake(
-    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
-    compute_logsumexp: bool,
-) -> tuple[
-    Float[Tensor, "num_query_tokens num_heads head_dim"],
-    Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
-]:
-    """Shape-only fake of the forward kernel."""
-    padded_q = -(-max_seqlen_q // _LSE_ALIGNMENT) * _LSE_ALIGNMENT
-    return (
-        torch.empty_like(query),
-        query.new_empty(
-            (
-                cu_seqlens_q.size(0) - 1,
-                query.size(1),
-                padded_q if compute_logsumexp else 0,
-            ),
-            dtype=torch.float32,
-        ),
-    )
-
-
-def _varlen_attention_backward_kernel(
-    grad_output: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    output: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
-) -> tuple[
-    Float[Tensor, "num_query_tokens num_heads head_dim"],
-    Float[Tensor, "num_key_tokens num_heads head_dim"],
-    Float[Tensor, "num_key_tokens num_heads head_dim"],
-]:
-    """Backward kernel of ``gigl::varlen_attention_backward``.
-
-    Args:
-        grad_output: ``[num_query_tokens, num_heads, head_dim]``.
-        query: ``[num_query_tokens, num_heads, head_dim]``.
-        key: ``[num_key_tokens, num_heads, head_dim]``.
-        value: ``[num_key_tokens, num_heads, head_dim]``.
-        output: ``[num_query_tokens, num_heads, head_dim]`` forward output.
-        logsumexp: ``[num_sequences, num_heads, padded_max_seqlen]`` forward logsumexp.
-        cu_seqlens_q: ``[num_sequences + 1]`` int32.
-        cu_seqlens_k: ``[num_sequences + 1]`` int32.
-        max_seqlen_q: Upper bound on any query sequence length.
-        max_seqlen_k: Upper bound on any key sequence length.
-
-    Returns:
-        The gradients of ``query``, ``key`` and ``value``, shaped like them.
-    """
-    # Dropout is off, so the kernel never reads these random-number-generator
-    # (Philox) placeholders.
-    philox_seed = torch.zeros((), dtype=torch.long)
-    philox_offset = torch.zeros((), dtype=torch.long)
-    efficient_attention_backward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_backward,
-    )
-    grad_query, grad_key, grad_value, _ = efficient_attention_backward(
-        grad_output.unsqueeze(0).contiguous(),
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
-        output.unsqueeze(0),
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        logsumexp,
-        0.0,
-        philox_seed,
-        philox_offset,
-        0,
-        False,
-    )
-    return (
-        grad_query.squeeze(0).contiguous(),
-        grad_key.squeeze(0).contiguous(),
-        grad_value.squeeze(0).contiguous(),
-    )
-
-
-def _varlen_attention_backward_fake(
-    grad_output: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    output: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
-) -> tuple[
-    Float[Tensor, "num_query_tokens num_heads head_dim"],
-    Float[Tensor, "num_key_tokens num_heads head_dim"],
-    Float[Tensor, "num_key_tokens num_heads head_dim"],
-]:
-    """Shape-only fake of the backward kernel."""
-    return (
-        torch.empty_like(query),
-        torch.empty_like(key),
-        torch.empty_like(value),
-    )
-
-
-def _register_custom_op(
-    name: str, schema: str, kernel: Callable[..., Any], fake: Callable[..., Any]
-) -> Any:
-    """Registers ``gigl::<name>``, or returns the op if it is already registered.
-
-    The schema is spelled out because ``torch.library.custom_op`` cannot infer
-    it from jaxtyping annotations.
-
-    A reload of this module in the same process must not register the op twice.
-    """
-    if hasattr(torch.ops.gigl, name):
-        return getattr(torch.ops.gigl, name)
-    op = torch.library.custom_op(f"gigl::{name}", mutates_args=(), schema=schema)(
-        kernel
-    )
-    op.register_fake(fake)
-    return op
-
-
-_varlen_attention_forward = _register_custom_op(
-    "varlen_attention_forward",
-    "(Tensor query, Tensor key, Tensor value, Tensor cu_seqlens_q,"
-    " Tensor cu_seqlens_k, SymInt max_seqlen_q, SymInt max_seqlen_k,"
-    " bool compute_logsumexp) -> (Tensor, Tensor)",
-    _varlen_attention_forward_kernel,
-    _varlen_attention_forward_fake,
-)
-_varlen_attention_backward = _register_custom_op(
-    "varlen_attention_backward",
-    "(Tensor grad_output, Tensor query, Tensor key, Tensor value, Tensor output,"
-    " Tensor logsumexp, Tensor cu_seqlens_q, Tensor cu_seqlens_k,"
-    " SymInt max_seqlen_q, SymInt max_seqlen_k) -> (Tensor, Tensor, Tensor)",
-    _varlen_attention_backward_kernel,
-    _varlen_attention_backward_fake,
-)
-
-
-class VarlenAttentionOutput(NamedTuple):
-    """Result of the varlen attention forward op.
-
-    Attributes:
-        output: Attention output, shaped like the query.
-        logsumexp: Per-row softmax normalizer the backward kernel needs; its last
-            dim is zero when the forward ran without ``compute_logsumexp``.
-    """
-
-    output: Float[Tensor, "num_query_tokens num_heads head_dim"]
-    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"]
-
-
-class _VarlenAttention(torch.autograd.Function):
-    """Memory-efficient varlen attention with the explicit backward kernel."""
-
-    @staticmethod
-    def forward(
-        ctx: Any,
-        query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-        key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-        value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-        cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-        cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-        max_seqlen_q: int,
-        max_seqlen_k: int,
-    ) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
-        needs_grad = any(ctx.needs_input_grad[:3])
-        attention = VarlenAttentionOutput(
-            *_varlen_attention_forward(
-                query,
-                key,
-                value,
-                cu_seqlens_q,
-                cu_seqlens_k,
-                max_seqlen_q,
-                max_seqlen_k,
-                needs_grad,
-            )
-        )
-        if needs_grad:
-            ctx.save_for_backward(
-                query,
-                key,
-                value,
-                attention.output,
-                attention.logsumexp,
-                cu_seqlens_q,
-                cu_seqlens_k,
-            )
-            ctx.max_seqlens = (max_seqlen_q, max_seqlen_k)
-        return attention.output
-
-    @staticmethod
-    @once_differentiable
-    def backward(ctx: Any, *grad_outputs: Any) -> Any:
-        (grad_output,) = grad_outputs
-        (
-            query,
-            key,
-            value,
-            output,
-            logsumexp,
-            cu_seqlens_q,
-            cu_seqlens_k,
-        ) = ctx.saved_tensors
-        max_seqlen_q, max_seqlen_k = ctx.max_seqlens
-        grad_query, grad_key, grad_value = _varlen_attention_backward(
-            grad_output,
-            query,
-            key,
-            value,
-            output,
-            logsumexp,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-        )
-        return grad_query, grad_key, grad_value, None, None, None, None
 
 
 def _varlen_attention(
@@ -404,14 +106,15 @@ def _varlen_attention(
     Query sequence ``i`` attends to key sequence ``i``. The kernel reads the
     sequence offsets on the device and takes the length bounds as host ints, so
     the call does not sync with the host. Differentiable in ``query``, ``key``
-    and ``value``.
+    and ``value`` through the autograd formula that aten registers for the
+    kernel.
 
     CUDA only. ``head_dim`` must suit the memory-efficient kernel (64 works in
     fp32, fp16 and bf16). The backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
-    Attention dropout is not supported: in torch 2.8 the varlen kernel draws one
-    dropout mask shared across heads and sequences.
+    Attention dropout is not supported; the kernel's varlen dropout has not been
+    tested against the padded path.
 
     Args:
         query: ``[num_query_tokens, num_heads, head_dim]``.
@@ -425,16 +128,32 @@ def _varlen_attention(
     Returns:
         ``[num_query_tokens, num_heads, head_dim]`` attention output.
     """
-    if not torch.is_grad_enabled():
-        # ``needs_input_grad`` does not reflect grad mode. Detaching the inputs
-        # makes it false, so the forward skips the logsumexp and saving tensors.
-        query, key, value = query.detach(), key.detach(), value.detach()
-    return cast(
-        Tensor,
-        _VarlenAttention.apply(
-            query, key, value, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
-        ),
+    # The backward needs the logsumexp; skip it when nothing will differentiate.
+    needs_grad = torch.is_grad_enabled() and any(
+        tensor.requires_grad for tensor in (query, key, value)
     )
+    # The op's type stub declares every argument as ``...``. It returns
+    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
+    # output is used. The kernel takes ``[batch, tokens, heads, head_dim]``, and
+    # ``cu_seqlens`` splits the single batch row into sequences.
+    efficient_attention_forward = cast(
+        Callable[..., tuple[Tensor, ...]],
+        torch.ops.aten._efficient_attention_forward,
+    )
+    output = efficient_attention_forward(
+        query.unsqueeze(0),
+        key.unsqueeze(0),
+        value.unsqueeze(0),
+        None,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        0.0,
+        0,
+        needs_grad,
+    )[0]
+    return output.squeeze(0)
 
 
 def _padded_packed_attention(
