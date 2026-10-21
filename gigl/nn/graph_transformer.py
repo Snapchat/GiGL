@@ -1187,12 +1187,15 @@ class GraphTransformerEncoder(nn.Module):
             or ``['hop_distance']`` when ``hop_distance`` will be embedded via
             ``anchor_based_input_embedding_dict``.
             The padded path reads the ``hop_distance`` attribute that
-            ``AddHeteroHopDistanceEncoding`` stored on ``data``; the packed path
-            computes the hop from the sequence layout instead. Its ``h_max`` must
-            therefore be at least this encoder's ``hop_distance``, and its
-            direction must match ``sampling_direction``, or the two paths
-            disagree. An embedding for ``hop_distance`` needs more than
-            ``hop_distance`` entries on a config that can run packed.
+            ``AddHeteroHopDistanceEncoding`` stored on ``data`` and raises if it
+            is missing. The packed path computes the hop from the sequence layout
+            instead, so it neither needs nor reads the attribute, and a pipeline
+            that skips the transform to save its all-pairs matrix works only on
+            CUDA. When the attribute is present, the transform's ``h_max`` must
+            be at least this encoder's ``hop_distance`` and its direction must
+            match ``sampling_direction``, or the two paths disagree. An embedding
+            for ``hop_distance`` needs more than ``hop_distance`` entries on a
+            config that can run packed.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1784,18 +1787,6 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
-            # The packed path does not read the attribute, but a missing one is an
-            # error on the padded path too, so a pipeline fails the same way on
-            # both.
-            if (
-                HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
-                and not hasattr(data, HOP_DISTANCE_FEATURE_NAME)
-            ):
-                raise ValueError(
-                    f"Anchor-based attribute '{HOP_DISTANCE_FEATURE_NAME}' not "
-                    "found in data. Make sure to apply the corresponding transform "
-                    "first."
-                )
             # Assign the packed result to a local before projecting. Do not write
             # ``self._project_output(self._encode_packed(...))``.
             # Under ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks

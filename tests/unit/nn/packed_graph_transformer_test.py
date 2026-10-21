@@ -281,16 +281,14 @@ class PackedPathTest(TestCase):
             _gradients(lambda: _run_packed(encoder, data), encoder),
         )
 
-    def test_packed_path_requires_the_hop_distance_attribute_like_the_padded_path(
-        self,
-    ) -> None:
+    def test_packed_path_runs_without_the_hop_distance_attribute(self) -> None:
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
+        expected = _run_packed(encoder, data)
         del data[_HOP]
+        torch.testing.assert_close(_run_packed(encoder, data), expected)
         with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
             encoder(data, anchor_node_type=_USER)
-        with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
-            _run_packed(encoder, data)
 
     def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
         # A transform with a smaller h_max stores different hops than the layout
@@ -652,6 +650,38 @@ class PackedPathCudaTest(TestCase):
         )
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        _assert_training_gradients_match(
+            self,
+            _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
+            _gradients(
+                lambda: cuda_encoder(cuda_data, anchor_node_type=_USER), cuda_encoder
+            ),
+            atol=1e-4,
+        )
+
+    @parameterized.expand(
+        [
+            param("three_hops", hop_distance=3),
+            param("hop_order", prioritize_hop_order=True, max_seq_len=10),
+        ]
+    )
+    def test_cuda_training_gradients_match_cpu_with_more_hops_and_hop_order(
+        self, _: str, hop_distance: int = 2, **overrides: object
+    ) -> None:
+        data = _random_batch(0, h_max=hop_distance)
+        cuda_data = _random_batch(0, h_max=hop_distance).to("cuda")
+        kwargs = _encoder_kwargs(
+            hid_dim=128,
+            hop_distance=hop_distance,
+            dropout_rate=0.0,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(hop_distance + 1, 128)}
+            ),
+            **overrides,
+        )
+        cpu_encoder = _materialized_encoder(data, kwargs).train()
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
         _assert_training_gradients_match(
             self,
             _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
