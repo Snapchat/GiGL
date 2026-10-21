@@ -1804,6 +1804,10 @@ class GraphTransformerEncoder(nn.Module):
             )
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
+            # Bound to a local, not passed inline to ``_project_output``: an inline call
+            # leaves the ``_encode_packed`` bound method on Dynamo's stack across the graph
+            # breaks inside it, and the guard on that fresh object recompiles every batch
+            # (``test_whole_encoder_compile_does_not_recompile_across_batches``).
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
