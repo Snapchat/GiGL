@@ -13,6 +13,7 @@ from typing import Any, Callable, NamedTuple, cast
 
 import torch
 import torch.nn.functional as F
+from jaxtyping import Float, Float32, Int32
 from torch import Tensor
 from torch.autograd.function import once_differentiable
 from torch_geometric.utils import to_dense_batch
@@ -36,6 +37,26 @@ def _varlen_attention_forward_kernel(
     max_seqlen_k: int,
     compute_logsumexp: bool,
 ) -> tuple[Tensor, Tensor]:
+    """Forward kernel of ``gigl::varlen_attention_forward``.
+
+    The types stay plain ``Tensor``: ``torch.library.custom_op`` infers the op
+    schema from the annotations and rejects jaxtyping types.
+
+    Args:
+        query: ``[num_query_tokens, num_heads, head_dim]``.
+        key: ``[num_key_tokens, num_heads, head_dim]``.
+        value: ``[num_key_tokens, num_heads, head_dim]``.
+        cu_seqlens_q: ``[num_sequences + 1]`` int32.
+        cu_seqlens_k: ``[num_sequences + 1]`` int32.
+        max_seqlen_q: Upper bound on any query sequence length.
+        max_seqlen_k: Upper bound on any key sequence length.
+        compute_logsumexp: Whether to compute the logsumexp the backward needs.
+
+    Returns:
+        - ``[num_query_tokens, num_heads, head_dim]`` attention output.
+        - ``[num_sequences, num_heads, padded_max_seqlen]`` float32 logsumexp,
+          with ``padded_max_seqlen`` zero unless ``compute_logsumexp``.
+    """
     # The op's stub types every argument as ``...``; it returns
     # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
     efficient_attention_forward = cast(
@@ -68,6 +89,7 @@ def _varlen_attention_forward_fake(
     max_seqlen_k: int,
     compute_logsumexp: bool,
 ) -> tuple[Tensor, Tensor]:
+    """Shape-only fake of the forward kernel, with the same plain-``Tensor`` types."""
     padded_q = -(-max_seqlen_q // _LSE_ALIGNMENT) * _LSE_ALIGNMENT
     return (
         torch.empty_like(query),
@@ -94,6 +116,25 @@ def _varlen_attention_backward_kernel(
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> tuple[Tensor, Tensor, Tensor]:
+    """Backward kernel of ``gigl::varlen_attention_backward``.
+
+    Plain ``Tensor`` types for the same reason as the forward kernel.
+
+    Args:
+        grad_output: ``[num_query_tokens, num_heads, head_dim]``.
+        query: ``[num_query_tokens, num_heads, head_dim]``.
+        key: ``[num_key_tokens, num_heads, head_dim]``.
+        value: ``[num_key_tokens, num_heads, head_dim]``.
+        output: ``[num_query_tokens, num_heads, head_dim]`` forward output.
+        logsumexp: ``[num_sequences, num_heads, padded_max_seqlen]`` forward logsumexp.
+        cu_seqlens_q: ``[num_sequences + 1]`` int32.
+        cu_seqlens_k: ``[num_sequences + 1]`` int32.
+        max_seqlen_q: Upper bound on any query sequence length.
+        max_seqlen_k: Upper bound on any key sequence length.
+
+    Returns:
+        The gradients of ``query``, ``key`` and ``value``, shaped like them.
+    """
     # Dropout is off, so the kernel never reads the Philox state.
     philox_seed = torch.zeros((), dtype=torch.long)
     philox_offset = torch.zeros((), dtype=torch.long)
@@ -138,6 +179,7 @@ def _varlen_attention_backward_fake(
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> tuple[Tensor, Tensor, Tensor]:
+    """Shape-only fake of the backward kernel, with the same plain-``Tensor`` types."""
     return (
         torch.empty_like(query),
         torch.empty_like(key),
@@ -180,8 +222,8 @@ class VarlenAttentionOutput(NamedTuple):
             dim is zero when the forward ran without ``compute_logsumexp``.
     """
 
-    output: Tensor
-    logsumexp: Tensor
+    output: Float[Tensor, "num_query_tokens num_heads head_dim"]
+    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"]
 
 
 class _VarlenAttention(torch.autograd.Function):
@@ -190,14 +232,14 @@ class _VarlenAttention(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx: Any,
-        query: Tensor,
-        key: Tensor,
-        value: Tensor,
-        cu_seqlens_q: Tensor,
-        cu_seqlens_k: Tensor,
+        query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+        key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+        value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+        cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+        cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
         max_seqlen_q: int,
         max_seqlen_k: int,
-    ) -> Tensor:
+    ) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
         needs_grad = any(ctx.needs_input_grad[:3])
         attention = VarlenAttentionOutput(
             *_varlen_attention_forward(
@@ -254,14 +296,14 @@ class _VarlenAttention(torch.autograd.Function):
 
 
 def _varlen_attention(
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
-    cu_seqlens_q: Tensor,
-    cu_seqlens_k: Tensor,
+    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
-) -> Tensor:
+) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
     """Attention over packed sequences with the CUDA memory-efficient varlen kernel.
 
     Query sequence ``i`` attends to key sequence ``i``. The kernel reads the
@@ -300,12 +342,12 @@ def _varlen_attention(
 
 
 def _padded_packed_attention(
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_tokens num_heads head_dim"],
     packed: PackedSequences,
     query_is_first_token: bool,
-) -> Tensor:
+) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention over packed sequences through SDPA on a padded grid.
 
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
@@ -364,12 +406,12 @@ def _padded_packed_attention(
 
 
 def packed_attention(
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_tokens num_heads head_dim"],
     packed: PackedSequences,
     query_is_first_token: bool,
-) -> Tensor:
+) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention over packed sequences: the CUDA varlen kernel, or SDPA on CPU.
 
     Args and returns are as in ``_padded_packed_attention``.

@@ -25,6 +25,7 @@ Example:
 from typing import Literal, NamedTuple
 
 import torch
+from jaxtyping import Int, Int32, Int64
 from torch import Tensor
 
 # Candidate cells (``num_anchors * (1 + width + ... + width ** hop_distance)``)
@@ -50,11 +51,13 @@ class PackedSequences(NamedTuple):
             rows) and the attention clamps it to the token count.
     """
 
-    cu_seqlens: Tensor
+    cu_seqlens: Int32[Tensor, "num_sequences_plus_one"]
     max_seq_len: int
 
 
-def pack_sequences(lengths: Tensor, max_seq_len: int) -> tuple[Tensor, PackedSequences]:
+def pack_sequences(
+    lengths: Int64[Tensor, "num_sequences"], max_seq_len: int
+) -> tuple[Int64[Tensor, "num_tokens"], PackedSequences]:
     """Locates the first ``lengths[i]`` positions of every sequence in a padded grid.
 
     Costs one host read, of the total token count. Gather any
@@ -77,10 +80,10 @@ def pack_sequences(lengths: Tensor, max_seq_len: int) -> tuple[Tensor, PackedSeq
 
 
 def _build_neighbor_table(
-    edge_index: Tensor,
+    edge_index: Int[Tensor, "2 num_edges"],
     num_nodes: int,
     sampling_direction: Literal["in", "out"] = "out",
-) -> Tensor:
+) -> Int64[Tensor, "num_nodes_plus_one width"]:
     """Builds a padded adjacency table for k-hop reachability.
 
     Row ``i`` lists the nodes one hop from node ``i``, padded with -1. With
@@ -128,11 +131,15 @@ def _build_neighbor_table(
 
 
 def _khop_sequence_layout(
-    neighbor_table: Tensor,
-    anchor_indices: Tensor,
+    neighbor_table: Int64[Tensor, "num_nodes_plus_one width"],
+    anchor_indices: Int[Tensor, "num_anchors"],
     hop_distance: int,
     max_seq_len: int,
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> tuple[
+    Int64[Tensor, "num_anchors max_seq_len"],
+    Int64[Tensor, "num_anchors max_seq_len"],
+    Int64[Tensor, "num_anchors"],
+]:
     """Lays out each anchor's k-hop neighbourhood as a fixed-length token sequence.
 
     Each sequence is the anchor, then every other node within ``hop_distance``
@@ -218,14 +225,18 @@ def _khop_sequence_layout(
 
 
 def khop_layout(
-    edge_index: Tensor,
+    edge_index: Int[Tensor, "2 num_edges"],
     num_nodes: int,
-    anchor_indices: Tensor,
+    anchor_indices: Int[Tensor, "num_anchors"],
     hop_distance: int,
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> tuple[
+    Int64[Tensor, "num_anchors max_seq_len"],
+    Int64[Tensor, "num_anchors max_seq_len"],
+    Int64[Tensor, "num_anchors"],
+]:
     """Builds the neighbour table and the k-hop layout of every anchor.
 
     Args:
