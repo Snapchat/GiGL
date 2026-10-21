@@ -194,7 +194,8 @@ check_lint_cpp:
 fix_lint_cpp:
 	$(MAKE) -C gigl-core fix_lint_cpp
 
-lint_test: check_format assert_yaml_configs_parse check_lint_cpp
+# precondition_tests runs here so a bumped GLT pin or an edited patch fails the lint job in CI.
+lint_test: precondition_tests check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
