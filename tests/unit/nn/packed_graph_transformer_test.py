@@ -16,6 +16,7 @@ from parameterized import param, parameterized
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch_geometric.data import HeteroData
 
+import gigl.nn.graph_transformer
 import gigl.nn.packed_attention
 from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
@@ -29,7 +30,11 @@ from gigl.nn.packed_attention import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.static_khop import PackedSequences, pack_sequences
+from gigl.transforms.static_khop import (
+    KhopLayoutTooLargeError,
+    PackedSequences,
+    pack_sequences,
+)
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -448,6 +453,61 @@ class PackedPathTest(TestCase):
                 )
         # The first batches may compile (static, then dynamic shapes); later ones reuse the graphs.
         self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
+
+    def test_too_large_layout_falls_back_and_logs_at_powers_of_two(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with (
+            mock.patch.object(encoder, "_use_packed_backend", return_value=True),
+            mock.patch.object(
+                gigl.nn.graph_transformer,
+                "khop_layout",
+                side_effect=KhopLayoutTooLargeError("too many candidates"),
+            ),
+            mock.patch.object(gigl.nn.graph_transformer, "logger") as logger,
+            torch.no_grad(),
+        ):
+            for _ in range(5):
+                encoder(data, anchor_node_type=_USER)
+        self.assertEqual(encoder._packed_fallback_count, 5)
+        messages = [call.args[0] for call in logger.warning.call_args_list]
+        self.assertEqual(len(messages), 3, messages)
+        for message, count in zip(messages, (1, 2, 4)):
+            self.assertIn(f"({count} so far)", message)
+            self.assertIn("too many candidates", message)
+
+    def test_fallback_under_compile_does_not_keep_recompiling(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        encoder = _materialized_encoder(_random_batch(0), _encoder_kwargs())
+        real_khop_layout = gigl.nn.graph_transformer.khop_layout
+        fall_back = {"now": False}
+
+        def khop_layout_or_too_large(*args: Any, **kwargs: Any) -> Any:
+            if fall_back["now"]:
+                raise KhopLayoutTooLargeError("too many candidates")
+            return real_khop_layout(*args, **kwargs)
+
+        graph_counts = []
+        with (
+            mock.patch.object(encoder, "_use_packed_backend", return_value=True),
+            mock.patch.object(
+                gigl.nn.graph_transformer,
+                "khop_layout",
+                side_effect=khop_layout_or_too_large,
+            ),
+        ):
+            compiled = torch.compile(encoder, backend="eager")
+            for seed in range(8):
+                fall_back["now"] = seed == 3
+                with torch.no_grad():
+                    compiled(_random_batch(seed), anchor_node_type=_USER)
+                graph_counts.append(
+                    torch._dynamo.utils.counters["stats"]["unique_graphs"]
+                )
+        self.assertEqual(encoder._packed_fallback_count, 1)
+        # The fallback batch may add graphs; batches after it reuse them.
+        self.assertEqual(graph_counts[5:], [graph_counts[5]] * 3, graph_counts)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")

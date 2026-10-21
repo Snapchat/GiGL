@@ -1252,7 +1252,8 @@ class GraphTransformerEncoder(nn.Module):
         as an anchor-based input, ``hid_dim // num_heads`` divisible by 8,
         ``hop_distance <= 2``, and ``attention_dropout_rate == 0``. All other
         configs and CPU run on padded sequences; a batch whose k-hop
-        candidate set is too large for the packed layout also runs padded.
+        candidate set is too large for the packed layout also runs padded (these are
+        counted and warned about on the 1st, 2nd, 4th, ... occurrence).
         Both paths give the same embeddings and gradients up to float error;
         with ``dropout_rate > 0``, train-mode dropout draws differ (same
         distribution). The reasons a config is not packed are logged at
@@ -1587,7 +1588,7 @@ class GraphTransformerEncoder(nn.Module):
                 "GraphTransformerEncoder runs on padded sequences: "
                 + "; ".join(blockers)
             )
-        self._has_logged_packed_fallback = False
+        self._packed_fallback_count = 0
 
     def _packed_backend_blockers(
         self, num_heads: int, attention_dropout_rate: float
@@ -1860,6 +1861,20 @@ class GraphTransformerEncoder(nn.Module):
             embeddings = F.normalize(embeddings, p=2, dim=-1)
         return embeddings
 
+    @torch.compiler.disable
+    def _record_packed_fallback(self, error: KhopLayoutTooLargeError) -> None:
+        """Counts a batch that ran on padded sequences and warns on the 1st, 2nd, 4th, ...
+
+        Kept out of the compiled region: Dynamo guards on a Python counter's value
+        and would recompile each time it changes.
+        """
+        self._packed_fallback_count += 1
+        count = self._packed_fallback_count
+        if count & (count - 1) == 0:
+            logger.warning(
+                f"Running a batch on padded sequences ({count} so far): {error}"
+            )
+
     def _encode_packed(
         self,
         projected_x_dict: dict[NodeType, Tensor],
@@ -1898,9 +1913,7 @@ class GraphTransformerEncoder(nn.Module):
                 sampling_direction=self._sampling_direction,
             )
         except KhopLayoutTooLargeError as error:
-            if not self._has_logged_packed_fallback:
-                logger.warning(f"Running a batch on padded sequences: {error}")
-                self._has_logged_packed_fallback = True
+            self._record_packed_fallback(error)
             return None
         flat_index, packed = pack_sequences(lengths, self._max_seq_len)
         token_node = node_index.flatten()[flat_index]
