@@ -119,10 +119,15 @@ lazy val assemblySettings = Seq(
   // Spark ships with an old version of Google's Protocol Buffers runtime that is not compatible with the current version.
   // In addition, it comes with incompatible versions of scala-collection-compat and shapeless.
   // Therefore, we need to shade these libraries.
+  // Dataproc 2.2.85+ also ships google-http-client and opencensus-api in /usr/lib/spark/jars without grpc-context.
+  // Spark's parent-first classloader resolves those from the image, where opencensus then fails to find
+  // io.grpc.Context, so we shade both to keep the GCS client on the copies bundled in this jar.
   assembly / assemblyShadeRules := Seq(
     ShadeRule.rename("com.google.protobuf.**" -> "shadeproto.@1").inAll,
     ShadeRule.rename("scala.collection.compat.**" -> "scalacompat.@1").inAll,
     ShadeRule.rename("shapeless.**" -> "shadeshapeless.@1").inAll,
+    ShadeRule.rename("com.google.api.client.**" -> "shadegoogleapiclient.@1").inAll,
+    ShadeRule.rename("io.opencensus.**" -> "shadeopencensus.@1").inAll,
   ),
   assembly / test := {}, // Disable tests when run sbt assembly
 )
