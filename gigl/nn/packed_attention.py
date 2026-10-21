@@ -42,6 +42,25 @@ Constraints:
   - Packing copies the total token count to the host once (a GPU sync), so the
     buffer holds exactly the real tokens.
 
+Results:
+  We have seen the following with this path. These are observations on one
+  production model, not benchmarks of this module alone.
+
+  One L4 GPU, 3-layer graph transformer (hidden 512, 8 heads), sequences of up
+  to 256 tokens holding about 90 real tokens on average, realistic batches,
+  steady state:
+    - Forward, no compile: 225 -> 76 ms per batch (~3.0x).
+    - Forward, per-layer ``torch.compile``: 53 ms per batch (~4.3x vs the
+      padded path without compile).
+    - Training step: 944 -> 364 ms (~2.6x).
+    - Peak GPU memory: 15.4 -> 6.8 GiB training, 6.9 -> 3.8 GiB forward.
+
+  120 L4 GPUs. These runs also include ``torch.compile`` and loader changes,
+  so the gain is not from packing alone:
+    - Training step: 6.62 -> 2.66 s (2.5x), peak memory 9.8 -> 4.3 GiB.
+    - Full-graph inference over ~230M nodes: 1884 -> 1014 s end to end (1.9x).
+      The model stopped being the bottleneck; sampling was.
+
 Example:
     >>> from gigl.transforms.static_khop import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
@@ -82,19 +101,19 @@ _LSE_ALIGNMENT = 32
 
 
 def _varlen_attention_forward_kernel(
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
-    cu_seqlens_q: Tensor,
-    cu_seqlens_k: Tensor,
+    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_logsumexp: bool,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[
+    Float[Tensor, "num_query_tokens num_heads head_dim"],
+    Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
+]:
     """Forward kernel of ``gigl::varlen_attention_forward``.
-
-    The types stay plain ``Tensor``: ``torch.library.custom_op`` infers the op
-    schema from the annotations and rejects jaxtyping types.
 
     Args:
         query: ``[num_query_tokens, num_heads, head_dim]``.
@@ -135,16 +154,19 @@ def _varlen_attention_forward_kernel(
 
 
 def _varlen_attention_forward_fake(
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
-    cu_seqlens_q: Tensor,
-    cu_seqlens_k: Tensor,
+    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_logsumexp: bool,
-) -> tuple[Tensor, Tensor]:
-    """Shape-only fake of the forward kernel, with the same plain-``Tensor`` types."""
+) -> tuple[
+    Float[Tensor, "num_query_tokens num_heads head_dim"],
+    Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
+]:
+    """Shape-only fake of the forward kernel."""
     padded_q = -(-max_seqlen_q // _LSE_ALIGNMENT) * _LSE_ALIGNMENT
     return (
         torch.empty_like(query),
@@ -160,20 +182,22 @@ def _varlen_attention_forward_fake(
 
 
 def _varlen_attention_backward_kernel(
-    grad_output: Tensor,
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
-    output: Tensor,
-    logsumexp: Tensor,
-    cu_seqlens_q: Tensor,
-    cu_seqlens_k: Tensor,
+    grad_output: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    output: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
+    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> tuple[
+    Float[Tensor, "num_query_tokens num_heads head_dim"],
+    Float[Tensor, "num_key_tokens num_heads head_dim"],
+    Float[Tensor, "num_key_tokens num_heads head_dim"],
+]:
     """Backward kernel of ``gigl::varlen_attention_backward``.
-
-    Plain ``Tensor`` types for the same reason as the forward kernel.
 
     Args:
         grad_output: ``[num_query_tokens, num_heads, head_dim]``.
@@ -224,18 +248,22 @@ def _varlen_attention_backward_kernel(
 
 
 def _varlen_attention_backward_fake(
-    grad_output: Tensor,
-    query: Tensor,
-    key: Tensor,
-    value: Tensor,
-    output: Tensor,
-    logsumexp: Tensor,
-    cu_seqlens_q: Tensor,
-    cu_seqlens_k: Tensor,
+    grad_output: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    output: Float[Tensor, "num_query_tokens num_heads head_dim"],
+    logsumexp: Float32[Tensor, "num_sequences num_heads padded_max_seqlen"],
+    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
+    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
-) -> tuple[Tensor, Tensor, Tensor]:
-    """Shape-only fake of the backward kernel, with the same plain-``Tensor`` types."""
+) -> tuple[
+    Float[Tensor, "num_query_tokens num_heads head_dim"],
+    Float[Tensor, "num_key_tokens num_heads head_dim"],
+    Float[Tensor, "num_key_tokens num_heads head_dim"],
+]:
+    """Shape-only fake of the backward kernel."""
     return (
         torch.empty_like(query),
         torch.empty_like(key),
@@ -244,26 +272,37 @@ def _varlen_attention_backward_fake(
 
 
 def _register_custom_op(
-    name: str, kernel: Callable[..., Any], fake: Callable[..., Any]
+    name: str, schema: str, kernel: Callable[..., Any], fake: Callable[..., Any]
 ) -> Any:
     """Registers ``gigl::<name>``, or returns the op if it is already registered.
+
+    The schema is spelled out because ``torch.library.custom_op`` cannot infer
+    it from jaxtyping annotations.
 
     A reload of this module in the same process must not register the op twice.
     """
     if hasattr(torch.ops.gigl, name):
         return getattr(torch.ops.gigl, name)
-    op = torch.library.custom_op(f"gigl::{name}", mutates_args=())(kernel)
+    op = torch.library.custom_op(f"gigl::{name}", mutates_args=(), schema=schema)(
+        kernel
+    )
     op.register_fake(fake)
     return op
 
 
 _varlen_attention_forward = _register_custom_op(
     "varlen_attention_forward",
+    "(Tensor query, Tensor key, Tensor value, Tensor cu_seqlens_q,"
+    " Tensor cu_seqlens_k, SymInt max_seqlen_q, SymInt max_seqlen_k,"
+    " bool compute_logsumexp) -> (Tensor, Tensor)",
     _varlen_attention_forward_kernel,
     _varlen_attention_forward_fake,
 )
 _varlen_attention_backward = _register_custom_op(
     "varlen_attention_backward",
+    "(Tensor grad_output, Tensor query, Tensor key, Tensor value, Tensor output,"
+    " Tensor logsumexp, Tensor cu_seqlens_q, Tensor cu_seqlens_k,"
+    " SymInt max_seqlen_q, SymInt max_seqlen_k) -> (Tensor, Tensor, Tensor)",
     _varlen_attention_backward_kernel,
     _varlen_attention_backward_fake,
 )
