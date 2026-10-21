@@ -1,9 +1,10 @@
 """Token packing and attention over packed variable-length sequences.
 
-A padded ``[num_sequences, max_seq_len, dim]`` batch spends most of its linear
-FLOPs on padding when lengths vary. Packing puts every valid token of every
-sequence into one ``[num_tokens, dim]`` buffer, so linears and FFNs run on real
-tokens only and attention runs per sequence, delimited by ``cu_seqlens``.
+When sequence lengths vary, most of the linear-layer FLOPs on a padded
+``[num_sequences, max_seq_len, dim]`` batch go to padding. Packing copies the
+real tokens of all sequences into one ``[num_tokens, dim]`` buffer. Linear layers
+and FFNs then run on real tokens only, and attention runs within each sequence,
+with sequence boundaries given by ``cu_seqlens``.
 
 Data flow of a packed forward::
 
@@ -26,10 +27,11 @@ Data flow of a packed forward::
 
 ``packed_attention`` is the entry point. On CUDA it calls the memory-efficient
 varlen kernel through two custom ops, ``gigl::varlen_attention_forward`` and
-``gigl::varlen_attention_backward``, wired together by an autograd function. The
-kernels sit behind custom ops so Inductor treats them as opaque: its layout rules
-for the aten attention ops need concrete strides and fail on the
-``[1, tokens, ...]`` views of a token count that is only known at run time.
+``gigl::varlen_attention_backward``, which an autograd function connects. The
+kernels are wrapped in custom ops so Inductor treats them as opaque. Inductor's
+layout rules for the aten attention ops need concrete strides, and they fail on
+the ``[1, tokens, ...]`` views here because the token count is only known at run
+time.
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
@@ -37,8 +39,8 @@ Constraints:
   - Attention dropout is not supported: in torch 2.8 the varlen kernel draws one
     dropout mask shared across heads and sequences.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
-  - Packing reads the token count back to the host once, so the buffer is exactly
-    as large as the real tokens and no slot is wasted.
+  - Packing copies the total token count to the host once (a GPU sync), so the
+    buffer holds exactly the real tokens.
 
 Example:
     >>> from gigl.transforms.static_khop import pack_sequences
@@ -109,8 +111,9 @@ def _varlen_attention_forward_kernel(
         - ``[num_sequences, num_heads, padded_max_seqlen]`` float32 logsumexp,
           with ``padded_max_seqlen`` zero unless ``compute_logsumexp``.
     """
-    # The op's stub types every argument as ``...``; it returns
-    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k).
+    # The op's type stub declares every argument as ``...``. It returns
+    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
+    # first two are used.
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_forward,
@@ -187,7 +190,8 @@ def _varlen_attention_backward_kernel(
     Returns:
         The gradients of ``query``, ``key`` and ``value``, shaped like them.
     """
-    # Dropout is off, so the kernel never reads the Philox state.
+    # Dropout is off, so the kernel never reads these random-number-generator
+    # (Philox) placeholders.
     philox_seed = torch.zeros((), dtype=torch.long)
     philox_offset = torch.zeros((), dtype=torch.long)
     efficient_attention_backward = cast(
@@ -359,8 +363,9 @@ def _varlen_attention(
     """Attention over packed sequences with the CUDA memory-efficient varlen kernel.
 
     Query sequence ``i`` attends to key sequence ``i``. The kernel reads the
-    sequence offsets on the device and takes the length bounds from the host,
-    so it never syncs. Differentiable in ``query``, ``key`` and ``value``.
+    sequence offsets on the device and takes the length bounds as host ints, so
+    the call does not sync with the host. Differentiable in ``query``, ``key``
+    and ``value``.
 
     CUDA only. ``head_dim`` must suit the memory-efficient kernel (64 works in
     fp32, fp16 and bf16). The backward is non-deterministic unless
@@ -382,8 +387,8 @@ def _varlen_attention(
         ``[num_query_tokens, num_heads, head_dim]`` attention output.
     """
     if not torch.is_grad_enabled():
-        # ``needs_input_grad`` ignores grad mode; detached inputs skip the
-        # logsumexp and the saved tensors.
+        # ``needs_input_grad`` does not reflect grad mode. Detaching the inputs
+        # makes it false, so the forward skips the logsumexp and saving tensors.
         query, key, value = query.detach(), key.detach(), value.detach()
     return cast(
         Tensor,
@@ -404,8 +409,8 @@ def _padded_packed_attention(
 
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
     with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    and unpacks the outputs. It runs on any device; it is the CPU path and
-    the reference for ``_varlen_attention``.
+    and unpacks the outputs. It runs on any device. It is the CPU path and the
+    reference that ``_varlen_attention`` is checked against.
 
     Args:
         query: ``[num_tokens, num_heads, head_dim]`` packed queries, or
