@@ -30,6 +30,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
+- `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
+  of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
+  unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
+- Sampling-worker shutdown (`DistSamplingProducer` and the Graph Store `SharedDistSamplingBackend`) waits at most one
+  `MP_STATUS_CHECK_INTERVAL` in total for workers to stop, instead of one interval per worker, before terminating the
+  stragglers by @kmontemayor2-sc
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786

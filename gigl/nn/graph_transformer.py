@@ -29,7 +29,7 @@ from gigl.transforms.graph_transformer import (
     SequenceAuxiliaryData,
     TokenInputData,
     _validate_reserved_anchor_feature_usage,
-    heterodata_to_graph_transformer_input,
+    tensors_to_graph_transformer_input,
 )
 
 
@@ -1511,7 +1511,7 @@ class GraphTransformerEncoder(nn.Module):
         """
         # Infer device from data if not provided
         if device is None:
-            device = next(iter(data.x_dict.values())).device
+            device = data[data.node_types[0]].x.device
 
         # Use first node type if not specified
         if anchor_node_type is None:
@@ -1519,10 +1519,13 @@ class GraphTransformerEncoder(nn.Module):
 
         # 0. Apply feature embedding if provided (without modifying original data)
         # 1. Project all node features to hid_dim
-        # Build a new x_dict with processed features to avoid in-place modifications
+        # Build a new x_dict with processed features to avoid in-place
+        # modifications. ``data.x_dict`` is avoided: it resolves through a regex
+        # in ``HeteroData.__getattr__``, and ``torch.compile`` guards on the
+        # global ``re`` cache, which other code mutates.
         projected_x_dict: dict[NodeType, torch.Tensor] = {}
-        for node_type, x in data.x_dict.items():
-            x_processed = x.to(device)
+        for node_type in data.node_types:
+            x_processed = data[node_type].x.to(device)
             feature_embedding_layer = None
             if (
                 self._feature_embedding_layer_dict is not None
@@ -1560,26 +1563,24 @@ class GraphTransformerEncoder(nn.Module):
                     )
             projected_x_dict[node_type] = x_projected
 
-        # Create a new HeteroData with projected features (avoiding in-place modification)
-        projected_data = torch_geometric.data.HeteroData()
-        for node_type in data.node_types:
-            projected_data[node_type].x = projected_x_dict[node_type]
-            # Copy batch_size if it exists
-            if hasattr(data[node_type], "batch_size"):
-                projected_data[node_type].batch_size = data[node_type].batch_size
+        # Plain dicts of the batch's edges, in the batch's edge type order.
+        edge_index_dict: dict[tuple[str, str, str], Tensor] = {}
+        edge_attr_dict: dict[tuple[str, str, str], Tensor] = {}
+        ppr_is_expanded_dict: dict[tuple[str, str, str], Tensor] = {}
         for edge_type in data.edge_types:
-            projected_data[edge_type].edge_index = data[edge_type].edge_index
-            if hasattr(data[edge_type], "edge_attr"):
-                projected_data[edge_type].edge_attr = data[edge_type].edge_attr
-            # Preserve PPR expansion provenance so the relation filter can drop a
-            # co-seeded positive's leaked edges (see heterodata_to_graph_transformer_input).
-            if hasattr(data[edge_type], PPR_EXPANDED_FEATURE_NAME):
-                setattr(
-                    projected_data[edge_type],
-                    PPR_EXPANDED_FEATURE_NAME,
-                    getattr(data[edge_type], PPR_EXPANDED_FEATURE_NAME),
+            edge_store = data[edge_type]
+            if "edge_index" not in edge_store:
+                continue
+            edge_index_dict[edge_type] = edge_store.edge_index
+            if getattr(edge_store, "edge_attr", None) is not None:
+                edge_attr_dict[edge_type] = edge_store.edge_attr
+            # PPR expansion provenance lets the relation filter drop a
+            # co-seeded positive's leaked edges.
+            if getattr(edge_store, PPR_EXPANDED_FEATURE_NAME, None) is not None:
+                ppr_is_expanded_dict[edge_type] = getattr(
+                    edge_store, PPR_EXPANDED_FEATURE_NAME
                 )
-        # Copy relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
+        # Relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
             attr_name
             for attr_name in (self._anchor_based_attention_bias_attr_names or [])
@@ -1589,32 +1590,42 @@ class GraphTransformerEncoder(nn.Module):
         relative_pe_attr_names.update(self._pairwise_attention_bias_attr_names or [])
         relative_pe_attr_names.discard(PPR_WEIGHT_FEATURE_NAME)
         relative_pe_attr_names.discard(PPR_RELATION_FEATURES_NAME)
-        if relative_pe_attr_names:
-            for attr_name in sorted(relative_pe_attr_names):
-                if hasattr(data, attr_name):
-                    setattr(projected_data, attr_name, getattr(data, attr_name))
-        # Typed-PPR per-edge-type channel masks (graph-level) drive the
-        # relation filter in the transform; carry them through the projection.
-        if hasattr(data, "ppr_relation_channel_masks"):
-            projected_data.ppr_relation_channel_masks = data.ppr_relation_channel_masks
+        graph_attr_dict = {
+            attr_name: getattr(data, attr_name)
+            for attr_name in sorted(relative_pe_attr_names)
+            if hasattr(data, attr_name)
+        }
 
         # 2. Build sequences and run transformer
         # If anchor_node_ids provided, use those; otherwise use first batch_size nodes
         if anchor_node_ids is not None:
             num_anchor_nodes = anchor_node_ids.size(0)
         else:
-            num_anchor_nodes = getattr(
-                projected_data[anchor_node_type],
-                "batch_size",
-                projected_data[anchor_node_type].num_nodes,
+            anchor_store = data[anchor_node_type]
+            num_anchor_nodes = (
+                anchor_store.batch_size
+                if hasattr(anchor_store, "batch_size")
+                else projected_x_dict[anchor_node_type].size(0)
             )
 
         (
             sequences,
             valid_mask,
             sequence_auxiliary_data,
-        ) = heterodata_to_graph_transformer_input(
-            data=projected_data,
+        ) = tensors_to_graph_transformer_input(
+            x_dict=projected_x_dict,
+            edge_index_dict=edge_index_dict,
+            edge_attr_dict=edge_attr_dict,
+            graph_attr_dict=graph_attr_dict,
+            ppr_is_expanded_dict=ppr_is_expanded_dict,
+            # Typed-PPR per-edge-type channel masks drive the relation filter.
+            # Check membership first: a missing-attribute lookup on HeteroData
+            # runs a regex, which torch.compile guards on.
+            ppr_relation_channel_masks=(
+                data.ppr_relation_channel_masks
+                if "ppr_relation_channel_masks" in data
+                else None
+            ),
             batch_size=num_anchor_nodes,
             max_seq_len=self._max_seq_len,
             anchor_node_type=anchor_node_type,
@@ -1636,7 +1647,7 @@ class GraphTransformerEncoder(nn.Module):
         )
 
         # Free memory after sequences are built
-        del projected_data
+        del projected_x_dict
 
         if sequences.size(-1) != self._hid_dim:
             raise ValueError(
