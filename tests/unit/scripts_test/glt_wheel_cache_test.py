@@ -215,6 +215,16 @@ class InstallGltWheelTest(TestCase):
 class CacheRootFromEnvironmentTest(TestCase):
     _CACHE_VARS = ("GIGL_GLT_WHEEL_CACHE", "GIGL_GLT_WHEEL_CACHE_DIR", "CI")
 
+    def setUp(self) -> None:
+        super().setUp()
+        # CI runs these tests as root, which disables the cache on its own; pin a regular uid so
+        # the positive cases test the environment logic, not the runner's identity.
+        geteuid_patch = mock.patch(
+            "gigl.scripts.post_install.os.geteuid", return_value=1000
+        )
+        geteuid_patch.start()
+        self.addCleanup(geteuid_patch.stop)
+
     def _environment(self, **overrides: str) -> dict[str, str]:
         environment = {k: v for k, v in os.environ.items() if k not in self._CACHE_VARS}
         environment.update(overrides)
