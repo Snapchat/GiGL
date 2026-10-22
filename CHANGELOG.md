@@ -34,8 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   https://github.com/Snapchat/GiGL/pull/788
 - Cache built GraphLearn-Torch wheels per machine (`~/.cache/gigl/glt-wheels/`, override with
   `GIGL_GLT_WHEEL_CACHE_DIR`) in `post_install.py`, keyed on the pinned commit, patch contents, build script, CPU/CUDA
-  variant, torch version, python version and platform, so only the first environment on a machine compiles GLT. Ninja
-  for the build now comes from the PyPI `ninja` package (`glt-build-backend` dependency group) instead of `apt` by
+  variant, torch version, python version and platform, so only the first environment on a machine compiles GLT. The
+  cache logs each wheel's sha256, can be disabled with `GIGL_GLT_WHEEL_CACHE=0`, and is off in CI and as root. Ninja for
+  the build now comes from the PyPI `ninja` package (`glt-build-backend` dependency group) instead of `apt` by
   @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/805
 - Add `SKIP_SCALA=1` to `make install_dev_deps` to skip the Scala toolchain download, and document the git worktree
   workflow in `CLAUDE.md` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/805

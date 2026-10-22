@@ -70,8 +70,9 @@ COPY .python-version .python-version
 COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
-# The wheel cache only helps repeated installs on one machine; an image build is one-shot, so keep it out of the layer.
-RUN GIGL_GLT_WHEEL_CACHE_DIR=/tmp/glt-wheels bash ./requirements/install_py_deps.sh --dev && rm -rf /tmp/glt-wheels
+# The wheel cache only helps repeated installs on one machine; an image build is one-shot. post_install.py
+# also turns it off when running as root, but say so explicitly so no wheel is ever written into the layer.
+RUN GIGL_GLT_WHEEL_CACHE=0 bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.

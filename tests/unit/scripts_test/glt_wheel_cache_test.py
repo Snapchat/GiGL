@@ -6,22 +6,26 @@ install and verify callables instead of mocks.
 """
 
 import fcntl
+import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from absl.testing import absltest
 
 from gigl.scripts.glt_wheel_cache import (
     cache_entry_lock,
     compute_cache_key,
+    describe_wheel,
     find_cached_wheel,
     publish_wheel,
     read_patches,
 )
-from gigl.scripts.post_install import install_glt_wheel
+from gigl.scripts.post_install import cache_root_from_environment, install_glt_wheel
 from tests.test_assets.test_case import TestCase
 
 
@@ -201,6 +205,60 @@ class InstallGltWheelTest(TestCase):
         self.verify_failures = 1
         with self.assertRaises(subprocess.CalledProcessError):
             self._run()
+
+    def test_disabled_cache_builds_and_installs_without_publishing(self) -> None:
+        install_glt_wheel(None, self._build, self._install, self._verify)
+        self.assertEqual(self.events, ["build", "install:built", "verify"])
+        self.assertFalse(self.entry.exists())
+
+
+class CacheRootFromEnvironmentTest(TestCase):
+    _CACHE_VARS = ("GIGL_GLT_WHEEL_CACHE", "GIGL_GLT_WHEEL_CACHE_DIR", "CI")
+
+    def _environment(self, **overrides: str) -> dict[str, str]:
+        environment = {k: v for k, v in os.environ.items() if k not in self._CACHE_VARS}
+        environment.update(overrides)
+        return environment
+
+    def test_defaults_to_the_home_cache_dir(self) -> None:
+        with mock.patch.dict(os.environ, self._environment(), clear=True):
+            self.assertEqual(
+                cache_root_from_environment(),
+                Path.home() / ".cache" / "gigl" / "glt-wheels",
+            )
+
+    def test_dir_override_is_used(self) -> None:
+        with mock.patch.dict(
+            os.environ, self._environment(GIGL_GLT_WHEEL_CACHE_DIR="/x/y"), clear=True
+        ):
+            self.assertEqual(cache_root_from_environment(), Path("/x/y"))
+
+    def test_disabled_by_switch_empty_dir_ci_or_root(self) -> None:
+        for name, overrides in {
+            "switch": {"GIGL_GLT_WHEEL_CACHE": "0"},
+            "empty dir": {"GIGL_GLT_WHEEL_CACHE_DIR": ""},
+            "ci": {"CI": "true"},
+        }.items():
+            with self.subTest(disabled_by=name):
+                with mock.patch.dict(
+                    os.environ, self._environment(**overrides), clear=True
+                ):
+                    self.assertIsNone(cache_root_from_environment())
+        with self.subTest(disabled_by="root"):
+            with mock.patch.dict(os.environ, self._environment(), clear=True):
+                with mock.patch("gigl.scripts.post_install.os.geteuid", return_value=0):
+                    self.assertIsNone(cache_root_from_environment())
+
+
+class DescribeWheelTest(TestCase):
+    def test_reports_size_and_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            wheel = Path(d) / "glt-0.whl"
+            wheel.write_bytes(b"built")
+            self.assertEqual(
+                describe_wheel(wheel),
+                f"{wheel} (size=5 bytes, sha256={hashlib.sha256(b'built').hexdigest()})",
+            )
 
 
 class CacheEntryLockTest(TestCase):

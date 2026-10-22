@@ -87,6 +87,26 @@ def read_patches(patches_dir: Path) -> list[bytes]:
     return [path.read_bytes() for path in paths]
 
 
+def describe_wheel(wheel: Path) -> str:
+    """Describes a wheel by path, size and sha256 for the install log.
+
+    Every hit, miss and publish logs this line, so a tampered or corrupt artifact can be traced
+    to the exact bytes that were installed.
+
+    Example:
+        >>> describe_wheel(Path("/tmp/glt-0.whl"))
+        '/tmp/glt-0.whl (size=5 bytes, sha256=...)'
+
+    Args:
+        wheel: Path of the wheel file.
+
+    Returns:
+        ``<path> (size=<bytes> bytes, sha256=<hex digest>)``.
+    """
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    return f"{wheel} (size={wheel.stat().st_size} bytes, sha256={digest})"
+
+
 def find_cached_wheel(cache_entry: Path) -> Path | None:
     """Finds the wheel in a cache entry.
 

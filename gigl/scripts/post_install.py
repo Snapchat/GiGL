@@ -25,6 +25,7 @@ from gigl.scripts.glt_wheel_cache import (
     GLT_COMMIT,
     cache_entry_lock,
     compute_cache_key,
+    describe_wheel,
     find_cached_wheel,
     publish_wheel,
     read_patches,
@@ -46,8 +47,43 @@ _SCRIPTS_DIR: Final = Path(__file__).parent
 GLT_CUDA_ARCH_LIST: Final = "7.5"
 
 
+def cache_root_from_environment() -> Path | None:
+    """Returns the wheel cache root, or None when the cache is disabled.
+
+    The cache only pays off on a developer machine that creates several environments. It is off
+    when ``GIGL_GLT_WHEEL_CACHE`` is ``0``, when ``GIGL_GLT_WHEEL_CACHE_DIR`` is set but empty, when
+    ``CI`` is set, or when running as root (image builds, CI runners), so no wheel is ever written
+    into an image layer or a shared runner's home directory.
+
+    Example:
+        >>> os.environ["GIGL_GLT_WHEEL_CACHE"] = "0"
+        >>> cache_root_from_environment() is None
+        True
+
+    Returns:
+        The cache root directory, ``GIGL_GLT_WHEEL_CACHE_DIR`` or ``~/.cache/gigl/glt-wheels``, or
+        None when the cache is disabled.
+    """
+    if os.environ.get("GIGL_GLT_WHEEL_CACHE") == "0":
+        print("GLT wheel cache disabled: GIGL_GLT_WHEEL_CACHE=0")
+        return None
+    cache_dir = os.environ.get("GIGL_GLT_WHEEL_CACHE_DIR")
+    if cache_dir == "":
+        print("GLT wheel cache disabled: GIGL_GLT_WHEEL_CACHE_DIR is empty")
+        return None
+    if "CI" in os.environ:
+        print("GLT wheel cache disabled: CI is set")
+        return None
+    if os.geteuid() == 0:
+        print("GLT wheel cache disabled: running as root")
+        return None
+    return (
+        Path(cache_dir) if cache_dir else Path.home() / ".cache" / "gigl" / "glt-wheels"
+    )
+
+
 def install_glt_wheel(
-    cache_entry: Path,
+    cache_entry: Path | None,
     build_wheel: Callable[[Path], None],
     install_wheel: Callable[[Path], None],
     verify: Callable[[], None],
@@ -59,6 +95,9 @@ def install_glt_wheel(
     The callables signal a bad wheel by raising ``subprocess.CalledProcessError``; any other
     exception propagates and leaves the entry in place.
 
+    With ``cache_entry`` None the cache is disabled: the wheel is built, installed and verified
+    from a temp dir and nothing is published.
+
     The caller must hold ``cache_entry_lock(cache_entry)`` so the check, eviction, build and publish
     of one key are serialized across processes.
 
@@ -69,14 +108,23 @@ def install_glt_wheel(
         GLT wheel cache miss: /tmp/cache/glt-key
 
     Args:
-        cache_entry: Cache entry directory for this wheel's cache key.
+        cache_entry: Cache entry directory for this wheel's cache key, or None to bypass the cache.
         build_wheel: Builds a wheel into the given directory.
         install_wheel: Installs the given wheel.
         verify: Checks that the patches are live in the installed wheel.
     """
+    if cache_entry is None:
+        with tempfile.TemporaryDirectory() as build_dir:
+            build_wheel(Path(build_dir))
+            (built_wheel,) = Path(build_dir).glob("*.whl")
+            print(f"Built GLT wheel: {describe_wheel(built_wheel)}")
+            install_wheel(built_wheel)
+        verify()
+        return
+
     cached_wheel = find_cached_wheel(cache_entry)
     if cached_wheel is not None:
-        print(f"GLT wheel cache hit: {cached_wheel}")
+        print(f"GLT wheel cache hit: {describe_wheel(cached_wheel)}")
         try:
             install_wheel(cached_wheel)
             verify()
@@ -93,6 +141,7 @@ def install_glt_wheel(
         build_wheel(Path(build_dir))
         (built_wheel,) = Path(build_dir).glob("*.whl")
         published_wheel = publish_wheel(built_wheel, cache_entry)
+    print(f"Published GLT wheel to cache: {describe_wheel(published_wheel)}")
     install_wheel(published_wheel)
     verify()
 
@@ -116,10 +165,7 @@ def main():
         python_tag=f"cp{sys.version_info.major}{sys.version_info.minor}",
         platform_tag=sysconfig.get_platform(),
     )
-    cache_root = Path(
-        os.environ.get("GIGL_GLT_WHEEL_CACHE_DIR")
-        or Path.home() / ".cache" / "gigl" / "glt-wheels"
-    )
+    cache_root = cache_root_from_environment()
 
     def build_wheel(output_dir: Path) -> None:
         subprocess.run(
@@ -157,10 +203,13 @@ def main():
             [sys.executable, str(_SCRIPTS_DIR / "verify_glt_patches.py")], check=True
         )
 
-    cache_entry = cache_root / cache_key
     try:
-        with cache_entry_lock(cache_entry):
-            install_glt_wheel(cache_entry, build_wheel, install_wheel, verify)
+        if cache_root is None:
+            install_glt_wheel(None, build_wheel, install_wheel, verify)
+        else:
+            cache_entry = cache_root / cache_key
+            with cache_entry_lock(cache_entry):
+                install_glt_wheel(cache_entry, build_wheel, install_wheel, verify)
     except (subprocess.CalledProcessError, OSError) as e:
         print(f"FATAL: GLT install failed: {e}")
         return 1
