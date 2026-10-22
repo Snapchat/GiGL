@@ -1,3 +1,4 @@
+from typing import Optional
 from unittest.mock import Mock, patch
 
 import torch
@@ -28,6 +29,7 @@ from tests.test_assets.test_case import TestCase
 _NUM_ENTITIES = 12
 _RAW_COLUMNS = 3
 _PACKED_COLUMNS = 5
+_LABEL_COLUMNS = 2
 
 
 class _CountingDistFeature(DistFeature):
@@ -55,6 +57,19 @@ def _features(seed: int) -> tuple[torch.Tensor, torch.Tensor]:
         0, 256, (_NUM_ENTITIES, _PACKED_COLUMNS), generator=generator, dtype=torch.uint8
     )
     return raw, packed
+
+
+def _labels(entity_type: Optional[str]) -> torch.Tensor:
+    """Global int64 label matrix of a type, with large values so that a byte or dtype mixup shows."""
+    seed = 100 + len(str(entity_type))
+    generator = torch.Generator().manual_seed(seed)
+    return torch.randint(
+        -(2**40), 2**40, (_NUM_ENTITIES, _LABEL_COLUMNS), generator=generator
+    )
+
+
+def _local_ids(rank: int, owner: torch.Tensor) -> torch.Tensor:
+    return torch.nonzero(owner == rank).flatten()
 
 
 def _local_stores(
@@ -89,6 +104,17 @@ def _lookup_on_partition(
     def hetero_or_homo(per_type: dict):
         return per_type if is_heterogeneous else per_type[None]
 
+    # Every type but the raw-only "story" has two label columns.
+    label_stores = {
+        t: Feature(
+            _labels(t)[_local_ids(rank, owner)],
+            id2index=id2idx(_local_ids(rank, owner)),
+            with_gpu=False,
+            dtype=torch.int64,
+        )
+        for t in types
+        if t != "story"
+    }
     pb = hetero_or_homo({t: owner for t in types})
     separate_raw = _CountingDistFeature(
         2, rank, hetero_or_homo(raw_stores), pb, False, router
@@ -103,6 +129,7 @@ def _lookup_on_partition(
         hetero_or_homo(packed_stores),
         pb,
         router,
+        labels=hetero_or_homo(label_stores),
     )
     assert fused is not None
     # Count the requests the fused feature serves instead of those of a plain one.
@@ -113,8 +140,13 @@ def _lookup_on_partition(
     matches = True
     for t in types:
         expected_raw, expected_packed = globals_by_type[t]
-        fused_raw, fused_packed = counting_fused.async_get(ids, t).wait()
+        fused_raw, fused_packed, fused_labels = counting_fused.async_get(ids, t).wait()
         matches &= fused_raw.is_contiguous()
+        if t in label_stores:
+            assert fused_labels is not None
+            matches &= torch.equal(fused_labels, _labels(t)[ids])
+        else:
+            matches &= fused_labels is None
         if t in raw_stores:
             raw = separate_raw.async_get(ids, t).wait()
             matches &= torch.equal(raw, expected_raw[ids])
@@ -162,9 +194,9 @@ class FusedFeatureStoreTest(TestCase):
         store = _store(raw, packed)
         ids = torch.tensor([3, 3, 0, 11])
 
-        local_raw, local_packed = store[ids]
+        local_raw, local_packed, _ = store[ids]
         served = store.cpu_get(ids)
-        split_raw, split_packed = store.split(served)
+        split_raw, split_packed, _ = store.split(served)
 
         assert local_packed is not None
         self.assertTrue(torch.equal(local_raw, raw[ids]))
@@ -180,7 +212,7 @@ class FusedFeatureStoreTest(TestCase):
     def test_a_single_served_row_splits_like_many(self) -> None:
         raw, packed = _features(2)
         store = _store(raw, packed)
-        split_raw, split_packed = store.split(store.cpu_get(torch.tensor([7])))
+        split_raw, split_packed, _ = store.split(store.cpu_get(torch.tensor([7])))
         self.assertTrue(torch.equal(split_raw, raw[7:8]))
         self.assertTrue(torch.equal(split_packed, packed[7:8]))
 
@@ -188,7 +220,7 @@ class FusedFeatureStoreTest(TestCase):
         raw, packed = _features(1)
         store = _store(raw, packed)
         served = store.cpu_get(torch.empty(0, dtype=torch.long))
-        split_raw, split_packed = store.split(served)
+        split_raw, split_packed, _ = store.split(served)
         self.assertEqual(served.shape, (0, _SERVED_ROW_BYTES))
         self.assertEqual(split_raw.shape, (0, _RAW_COLUMNS))
         self.assertEqual(split_packed.shape, (0, _PACKED_COLUMNS))
@@ -220,7 +252,7 @@ class FusedFeatureStoreTest(TestCase):
                     expected_raw = store._raw.cpu_get(ids)
                     expected_packed = store._packed.cpu_get(ids)
                     served = store.cpu_get(ids)
-                    split_raw, split_packed = store.split(served)
+                    split_raw, split_packed, _ = store.split(served)
                     self.assertEqual(split_raw.dtype, raw_dtype)
                     self.assertTrue(torch.equal(split_raw, expected_raw))
                     self.assertTrue(torch.equal(split_packed, expected_packed))
@@ -233,9 +265,9 @@ class FusedFeatureStoreTest(TestCase):
         )
         ids = torch.tensor([4, 4, 1])
 
-        local_raw, local_packed = store[ids]
+        local_raw, local_packed, _ = store[ids]
         served = store.cpu_get(ids)
-        split_raw, split_packed = store.split(served)
+        split_raw, split_packed, _ = store.split(served)
 
         self.assertIsNone(local_packed)
         self.assertTrue(torch.equal(local_raw, raw[ids]))
@@ -256,9 +288,9 @@ class FusedFeatureStoreTest(TestCase):
         )
         ids = torch.tensor([4, 4, 1])
 
-        local_raw, local_packed = store[ids]
+        local_raw, local_packed, _ = store[ids]
         served = store.cpu_get(ids)
-        split_raw, split_packed = store.split(served)
+        split_raw, split_packed, _ = store.split(served)
 
         self.assertEqual(local_raw.shape, (3, 0))
         self.assertEqual(local_raw.dtype, torch.float32)
@@ -269,6 +301,58 @@ class FusedFeatureStoreTest(TestCase):
         self.assertEqual(split_raw.shape, (3, 0))
         self.assertEqual(split_raw.dtype, torch.float32)
         self.assertTrue(torch.equal(split_packed, packed[ids]))
+
+    def test_labels_are_served_first_and_split_back_for_every_combination(self) -> None:
+        raw, packed = _features(5)
+        labels = _labels("user")
+        ids = torch.tensor([3, 0, 11, 3])
+
+        def feature(values: torch.Tensor, dtype: Optional[torch.dtype]) -> Feature:
+            return Feature(
+                values,
+                id2index=torch.arange(len(values)),
+                with_gpu=False,
+                dtype=dtype,
+            )
+
+        for raw_dtype in (torch.float32, torch.bfloat16, torch.float64):
+            for has_raw, has_packed in (
+                (True, True),
+                (True, False),
+                (False, True),
+                (False, False),
+            ):
+                raw_feature = feature(raw.to(raw_dtype), None) if has_raw else None
+                packed_feature = feature(packed, torch.uint8) if has_packed else None
+                store = FusedFeatureStore(
+                    raw_feature, packed_feature, feature(labels, torch.int64)
+                )
+                served = store.cpu_get(ids)
+                split_raw, split_packed, split_labels = store.split(served)
+                local_raw, local_packed, local_labels = store[ids]
+
+                self.assertEqual(served.shape[1] % 8, 0)
+                assert split_labels is not None and local_labels is not None
+                self.assertTrue(torch.equal(split_labels, labels[ids]))
+                self.assertTrue(torch.equal(local_labels, labels[ids]))
+                if has_raw:
+                    self.assertTrue(torch.equal(split_raw, raw.to(raw_dtype)[ids]))
+                    self.assertTrue(torch.equal(local_raw, raw.to(raw_dtype)[ids]))
+                else:
+                    self.assertEqual(split_raw.shape, (len(ids), 0))
+                if has_packed:
+                    self.assertTrue(torch.equal(split_packed, packed[ids]))
+                    assert local_packed is not None
+                    self.assertTrue(torch.equal(local_packed, packed[ids]))
+                else:
+                    self.assertEqual(split_packed.shape, (len(ids), 0))
+                    self.assertIsNone(local_packed)
+
+    def test_a_store_without_labels_has_no_label_rows(self) -> None:
+        raw, packed = _features(6)
+        store = _store(raw, packed)
+        _, _, labels = store[torch.tensor([1])]
+        self.assertIsNone(labels)
 
     def test_a_store_needs_at_least_one_part(self) -> None:
         with self.assertRaises(ValueError):
@@ -353,6 +437,29 @@ class BuildFusedDistFeatureTest(TestCase):
         assert sidecar_only_types is not None
         assert isinstance(sidecar_only_types.local_feature, dict)
         self.assertEqual(set(sidecar_only_types.local_feature), {"story"})
+
+    def test_a_type_with_only_labels_is_fused(self) -> None:
+        labels = Feature(
+            _labels("user"),
+            id2index=torch.arange(_NUM_ENTITIES),
+            with_gpu=False,
+            dtype=torch.int64,
+        )
+        owner = torch.zeros(_NUM_ENTITIES, dtype=torch.long)
+        router = Mock(spec=RpcDataPartitionRouter)
+
+        with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+            homogeneous = build_fused_dist_feature(
+                1, 0, None, None, owner, router, labels=labels
+            )
+            heterogeneous = build_fused_dist_feature(
+                1, 0, None, None, {"user": owner}, router, labels={"user": labels}
+            )
+
+        assert homogeneous is not None and heterogeneous is not None
+        assert isinstance(homogeneous.local_feature, FusedFeatureStore)
+        assert isinstance(heterogeneous.local_feature, dict)
+        self.assertEqual(set(heterogeneous.local_feature), {"user"})
 
     def test_no_stores_gives_no_fused_feature(self) -> None:
         owner = torch.zeros(_NUM_ENTITIES, dtype=torch.long)

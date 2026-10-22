@@ -7,7 +7,6 @@ from typing import Optional, Union
 import torch
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
-from graphlearn_torch.distributed.dist_feature import DistFeature
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
@@ -111,8 +110,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         """Initialize the sampler, its fused feature lookups, and the one-time sampling-error guard.
 
         Every node or edge type that has features, whether a raw float store, a packed ``uint8`` sidecar, or both, is
-        fetched through one ``FusedDistFeature`` per entity kind, with one request per partition per type. They are
-        stored in GLT's ``dist_node_feature`` and ``dist_edge_feature`` attributes.
+        fetched through one ``FusedDistFeature`` per entity kind, with one request per partition per type. Node labels
+        ride in the same request as the node features. They are stored in GLT's ``dist_node_feature`` and ``dist_edge_feature`` attributes.
 
         ``GLTDistNeighborSampler`` has no GiGL-owned state; we only add
         ``_sampling_error_sent`` so ``_send_adapter`` can forward at most one
@@ -132,16 +131,21 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         self.dist_node_feature: Optional[FusedDistFeature] = None
         self.dist_edge_feature: Optional[FusedDistFeature] = None
-        if collect_features and data is not None:
+        # GLT built its own label DistFeature, which this class never uses: labels travel in the fused node lookup.
+        # Its RPC callee stays registered, the same on every rank.
+        self.dist_node_labels = None
+        if data is not None:
             self.dist_node_feature = build_fused_dist_feature(
                 data.num_partitions,
                 data.partition_idx,
-                data.node_features,
-                data.node_quantized_features,
+                data.node_features if collect_features else None,
+                data.node_quantized_features if collect_features else None,
                 data.node_feat_pb,
                 self.rpc_router,
                 self.device,
+                labels=data.node_labels,
             )
+        if collect_features and data is not None:
             if self.with_edge:
                 self.dist_edge_feature = build_fused_dist_feature(
                     data.num_partitions,
@@ -321,16 +325,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (GLT 0.2.4).  The method name preserves GLT's original typo so that this
         override is matched correctly at runtime.
 
-        The only behavioural change from the GLT original is in the ``DistFeature``
-        label-fetch paths (both homogeneous and heterogeneous): GLT writes
-        ``nlabels.T[0]``, which silently discards all label columns beyond the first
-        and breaks multi-label node classification.  This override writes the full
-        ``nlabels`` tensor instead, avoiding the extra RPC call that a super()-then-
-        re-fetch approach would require.  The non-``DistFeature`` path (plain
-        ``torch.Tensor`` labels) is unchanged — it never applied ``.T[0]``.
+        Labels are fetched in the same fused request as the node features, so a batch makes one request per partition
+        per node type. GLT writes ``nlabels.T[0]``, which silently discards all label columns beyond the first and
+        breaks multi-label node classification. This override writes the full ``nlabels`` tensor, squeezed to 1-D only
+        when there is a single label column.
 
         This method also issues all independent ``async_get`` requests before
-        awaiting them, so label, node-feature, and edge-feature fetches can overlap.
+        awaiting them, so node and edge fetches can overlap.
 
         Features come from the fused lookups, one request per partition per type.
         A type that has features always gets ``nfeats`` / ``efeats``, which have zero
@@ -361,7 +362,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 result_map[f"#META.{k}"] = v
 
         futs: dict[str, asyncio.Future[torch.Tensor]] = {}
-        label_keys: set[str] = set()
+        # Result key of each fused lookup's raw matrix -> result key of its label rows, for lookups that return labels.
+        label_keys: dict[str, str] = {}
         # Result key of each fused lookup's raw matrix -> result key of its packed sidecar rows.
         packed_keys: dict[str, str] = {}
 
@@ -371,11 +373,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             entity_type: Optional[Union[NodeType, EdgeType]],
             raw_key: str,
             packed_key: str,
+            labels_key: Optional[str] = None,
         ) -> None:
             futs[raw_key] = wrap_torch_future(
                 feature.async_get(ids.to(torch.long), entity_type)
             )
             packed_keys[raw_key] = packed_key
+            if labels_key is not None:
+                label_keys[raw_key] = labels_key
 
         if is_hetero:
             for ntype, nodes in output.node.items():
@@ -398,23 +403,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                         )
             input_type = output.input_type
             assert input_type is not None
-            # TODO: fetch node labels in the same fused request as the features (separate PR).
-            if not isinstance(input_type, tuple):
-                if self.dist_node_labels is not None:
-                    if isinstance(self.dist_node_labels, DistFeature):
-                        result_key = f"{as_str(input_type)}.nlabels"
-                        futs[result_key] = wrap_torch_future(
-                            self.dist_node_labels.async_get(
-                                output.node[input_type], input_type
-                            )
-                        )
-                        label_keys.add(result_key)
-                    else:
-                        node_labels = self.dist_node_labels.get(input_type, None)
-                        if node_labels is not None:
-                            result_map[f"{as_str(input_type)}.nlabels"] = node_labels[
-                                output.node[input_type].to(node_labels.device)
-                            ]
             if self.dist_node_feature is not None:
                 for ntype, nodes in output.node.items():
                     if ntype in self.dist_node_feature.local_feature:
@@ -424,6 +412,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             ntype,
                             f"{as_str(ntype)}.nfeats",
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}",
+                            (
+                                f"{as_str(ntype)}.nlabels"
+                                if ntype == input_type
+                                else None
+                            ),
                         )
             if self.dist_edge_feature is not None:
                 for etype in self.edge_types:
@@ -463,16 +456,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             if self.with_edge:
                 result_map["eids"] = output.edge
-            if self.dist_node_labels is not None:
-                if isinstance(self.dist_node_labels, DistFeature):
-                    futs["nlabels"] = wrap_torch_future(
-                        self.dist_node_labels.async_get(output.node)
-                    )
-                    label_keys.add("nlabels")
-                else:
-                    result_map["nlabels"] = self.dist_node_labels[
-                        output.node.to(self.dist_node_labels.device)
-                    ]
             if self.dist_node_feature is not None:
                 request_features(
                     self.dist_node_feature,
@@ -480,6 +463,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     None,
                     "nfeats",
                     f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}",
+                    "nlabels",
                 )
             if self.dist_edge_feature is not None:
                 request_features(
@@ -494,20 +478,22 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         values = await asyncio.gather(*futs.values())
         for result_key, value in zip(futs, values):
-            if result_key in label_keys:
-                # DistFeature always returns [N, K]. We collapse K=1 to 1-D
+            value, packed, labels = value
+            if packed is not None:
+                result_map[packed_keys[result_key]] = packed
+            if labels is not None and result_key in label_keys:
+                # The fused lookup always returns [N, K]. We collapse K=1 to 1-D
                 # [N] to match GLT's convention and what downstream code
                 # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
                 # (K>1) keeps the full 2-D matrix.
                 # TODO (mkolodner-sc): Consider investigating always returning
                 # 2-D — this may be a breaking change for single-label
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                value = value if value.shape[1] > 1 else value.T[0]
-            if result_key in packed_keys:
-                value, packed = value
-                if packed is not None:
-                    result_map[packed_keys[result_key]] = packed
-            result_map[result_key] = value
+                result_map[label_keys[result_key]] = (
+                    labels if labels.shape[1] > 1 else labels.T[0]
+                )
+            if value.shape[1] > 0 or packed is not None:
+                result_map[result_key] = value
 
         return result_map
 
