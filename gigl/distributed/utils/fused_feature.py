@@ -113,12 +113,14 @@ class FusedFeatureStore:
 
         The raw rows have zero columns without a raw store and the sidecar rows are ``None`` without a sidecar.
         """
-        raw_rows = (
-            torch.empty(len(ids), 0, dtype=torch.float32)
-            if self._raw is None
-            else self._raw[ids]
-        )
-        packed_rows = None if self._packed is None else self._packed[ids]
+        if self._raw is None:
+            raw_rows = torch.empty(len(ids), 0, dtype=torch.float32)
+        else:
+            raw_rows = self._raw[ids]
+        if self._packed is None:
+            packed_rows = None
+        else:
+            packed_rows = self._packed[ids]
         return raw_rows, packed_rows
 
     def cpu_get(
@@ -284,9 +286,9 @@ class FusedDistFeature(DistFeature):
         local_raw_rows, local_packed_rows = local_rows
         if local_index.numel() == ids.numel():
             # Every id is local, so the local rows are already complete and in order.
-            return local_raw_rows.to(self.device), (
-                None if local_packed_rows is None else local_packed_rows.to(self.device)
-            )
+            if local_packed_rows is None:
+                return local_raw_rows.to(self.device), None
+            return local_raw_rows.to(self.device), local_packed_rows.to(self.device)
         raw_output = torch.empty(
             ids.shape[0],
             local_raw_rows.shape[1],
@@ -378,4 +380,6 @@ def build_fused_dist_feature(
 
 def _nonempty(raw: Optional[Feature]) -> Optional[Feature]:
     """A raw store with columns, or ``None`` for a missing or zero-width one."""
-    return raw if raw is not None and raw.shape[1] > 0 else None
+    if raw is not None and raw.shape[1] > 0:
+        return raw
+    return None
