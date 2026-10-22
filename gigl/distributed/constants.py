@@ -83,3 +83,15 @@ def sampling_worker_init_timeout_seconds() -> int:
     ``GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS`` moves both bounds coherently.
     """
     return SAMPLING_WORKER_INIT_TIMEOUT_MULTIPLIER * sampling_rpc_init_timeout_seconds()
+
+
+# Opt-in sampling/loader statistics: log one aggregated line every N batches (see
+# ``gigl.distributed.utils.sampling_stats``). Unset or ``0`` disables them.
+SAMPLING_STATS_EVERY_N_BATCHES_ENV: Final[str] = "GIGL_SAMPLING_STATS_EVERY_N_BATCHES"
+
+
+def sampling_stats_every_n_batches() -> int:
+    """Window length for sampling statistics, in batches; ``0`` (also unset or invalid) disables them."""
+    if os.environ.get(SAMPLING_STATS_EVERY_N_BATCHES_ENV, "0") in ("", "0"):
+        return 0
+    return _positive_int_from_env(SAMPLING_STATS_EVERY_N_BATCHES_ENV, 0)

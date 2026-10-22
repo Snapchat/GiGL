@@ -1,5 +1,9 @@
+import os
+import re
+import tempfile
 import unittest
 from collections.abc import Mapping, MutableMapping
+from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
@@ -10,6 +14,7 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.base_dist_loader import BaseDistLoader
+from gigl.distributed.constants import SAMPLING_STATS_EVERY_N_BATCHES_ENV
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -113,6 +118,47 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
     )
 
     shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_sampling_stats(
+    _,
+    dataset: DistDataset,
+    expected_data_count: int,
+    every_n_batches: int,
+):
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    assert loader._loader_stats is not None
+    loader_lines: list[str] = []
+    loader._loader_stats._log_fn = loader_lines.append
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        assert datum.x.shape[0] == datum.node.shape[0]
+        count += 1
+    assert count == expected_data_count
+
+    # Full windows, then the partial window flushed when the epoch ends.
+    batches_per_line = [_stats_fields(line)["batches"] for line in loader_lines]
+    expected = [str(every_n_batches)] * (expected_data_count // every_n_batches)
+    if expected_data_count % every_n_batches:
+        expected.append(str(expected_data_count % every_n_batches))
+    assert batches_per_line == expected, (batches_per_line, expected)
+    for line in loader_lines:
+        assert line.startswith("GLT_LOADER_STATS ")
+        for key in ("recv_wait_ms", "collate_ms", "msg_mb", "loadavg1", "wall_s"):
+            assert key in _stats_fields(line), (key, line)
+
+    shutdown_rpc()
+
+
+def _stats_fields(line: str) -> dict[str, str]:
+    return dict(re.findall(r"(\S+)=(\S+)", line))
 
 
 def _run_infinite_distributed_neighbor_loader(
@@ -498,6 +544,59 @@ class DistributedNeighborLoaderTest(TestCase):
             fn=_run_distributed_neighbor_loader,
             args=(dataset, expected_data_count),
         )
+
+    def test_distributed_neighbor_loader_with_sampling_stats(self):
+        # The sampling workers inherit the environment, so this runs the instrumented
+        # sampler, feature-fetch (local partition only), channel, and loader paths end to end.
+        # The workers are separate processes, so their lines are read back from the output
+        # the spawned processes share with this one.
+        expected_data_count = 2708
+        every_n_batches = 1000
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
+        )
+        with tempfile.TemporaryFile(mode="w+") as captured:
+            saved = [os.dup(1), os.dup(2)]
+            os.dup2(captured.fileno(), 1)
+            os.dup2(captured.fileno(), 2)
+            try:
+                with mock.patch.dict(
+                    os.environ,
+                    {SAMPLING_STATS_EVERY_N_BATCHES_ENV: str(every_n_batches)},
+                ):
+                    mp.spawn(
+                        fn=_run_distributed_neighbor_loader_with_sampling_stats,
+                        args=(dataset, expected_data_count, every_n_batches),
+                    )
+            finally:
+                os.dup2(saved[0], 1)
+                os.dup2(saved[1], 2)
+                os.close(saved[0])
+                os.close(saved[1])
+            captured.seek(0)
+            output = captured.read()
+
+        sampler_lines = re.findall(r"GLT_SAMPLING_STATS [^\n]*", output)
+        self.assertGreaterEqual(len(sampler_lines), 1)
+        batches = [int(_stats_fields(line)["batches"]) for line in sampler_lines]
+        # Every batch the workers produced is in exactly one line, partial window included.
+        self.assertEqual(sum(batches), expected_data_count)
+        for line in sampler_lines:
+            fields = _stats_fields(line)
+            for key in (
+                "hop_ms",
+                "induce_ms",
+                "nfeat_rpc_wait_ms",
+                "send_ms",
+                "msg_mb",
+                "wall_s",
+                "proc_cpu_s",
+            ):
+                self.assertIn(key, fields, msg=line)
 
     def test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(

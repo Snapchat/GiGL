@@ -1,24 +1,30 @@
 import asyncio
+import os
+import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass, replace
+from itertools import count
 from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
+from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.distributed.dist_feature import DistFeature
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
+    NeighborOutput,
     NodeSamplerInput,
     SamplerOutput,
 )
-from graphlearn_torch.typing import NodeType, as_str
+from graphlearn_torch.typing import EdgeType, NodeType, as_str
 from graphlearn_torch.utils import reverse_edge_type
 from jaxtyping import Int64
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import sampling_stats_every_n_batches
 from gigl.distributed.sampler import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
@@ -29,6 +35,12 @@ from gigl.distributed.sampler import (
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
+)
+from gigl.distributed.utils.sampling_stats import (
+    SamplingStats,
+    instrument_dist_feature,
+    instrument_rpc_callees,
+    tensor_map_bytes,
 )
 from gigl.utils.data_splitters import PADDING_NODE
 
@@ -94,6 +106,9 @@ class SampleLoopInputs:
 
 
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
+    # Distinguishes the stats lines of samplers that share a process (Graph Store servers host one per channel).
+    _stats_instance_ids = count()
+
     """Base class for GiGL distributed samplers.
 
     Extends GLT's DistNeighborSampler with shared utilities for preparing
@@ -149,6 +164,39 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 rpc_router=self.rpc_router,
                 device=self.device,
             )
+
+        # Opt-in sampling statistics (``GIGL_SAMPLING_STATS_EVERY_N_BATCHES``). ``None`` keeps
+        # every hook below on its untimed path.
+        self._stats: Optional[SamplingStats] = None
+        every_n_batches = sampling_stats_every_n_batches()
+        if every_n_batches > 0:
+            context = get_context()
+            scope = (
+                f"worker={context.rank if context is not None else -1} pid={os.getpid()} "
+                f"sampler={next(BaseDistNeighborSampler._stats_instance_ids)}"
+            )
+            self._stats = SamplingStats(
+                "GLT_SAMPLING_STATS", every_n_batches=every_n_batches, scope=scope
+            )
+            for name, feature in (
+                ("nfeat", self.dist_node_feature),
+                ("efeat", self.dist_edge_feature),
+                ("nqfeat", self.dist_node_quantized_feature),
+                ("eqfeat", self.dist_edge_quantized_feature),
+            ):
+                if feature is not None:
+                    instrument_dist_feature(feature, self._stats, name)
+            instrument_rpc_callees(self._stats)
+
+    def start_stats_window(self) -> None:
+        """Starts a fresh statistics window; no-op when statistics are off."""
+        if self._stats is not None:
+            self._stats.start_window()
+
+    def flush_stats(self) -> None:
+        """Logs the partial statistics window; no-op when statistics are off."""
+        if self._stats is not None:
+            self._stats.flush()
 
     def _prepare_sample_loop_inputs(
         self,
@@ -280,9 +328,15 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (in channel mode) so the consumer raises promptly, or re-raise (in
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
+        stats = self._stats
+        batch_start = time.perf_counter() if stats is not None else 0.0
         try:
             sampler_output = await async_func(*args, **kwargs)
+            sample_done = time.perf_counter() if stats is not None else 0.0
             res = await self._collate_fn(sampler_output)
+            if stats is not None:
+                stats.add("sample_ms", (sample_done - batch_start) * 1e3)
+                stats.add("collate_ms", (time.perf_counter() - sample_done) * 1e3)
         except Exception:
             logger.exception(
                 "Sampling coroutine failed; forwarding error to the loader."
@@ -305,7 +359,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             raise  # channel-less mode: propagates via run_task / torch RPC
         if self.channel is None:
             return res
-        self.channel.send(res)
+        if stats is None:
+            self.channel.send(res)
+            return None
+        with stats.timer("send_ms"):
+            self.channel.send(res)
+        stats.add("msg_mb", tensor_map_bytes(res) / 2**20)
+        stats.add("batch_ms", (time.perf_counter() - batch_start) * 1e3)
+        stats.batch_done()
         return None
 
     async def _collate_fn(
@@ -540,7 +601,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
-        values = await asyncio.gather(*futs.values())
+        if self._stats is None:
+            values = await asyncio.gather(*futs.values())
+        else:
+            with self._stats.timer("collate_wait_ms"):
+                values = await asyncio.gather(*futs.values())
         for result_key, value in zip(futs, values):
             if result_key in label_keys:
                 # DistFeature always returns [N, K]. We collapse K=1 to 1-D
@@ -554,6 +619,30 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             result_map[result_key] = value
 
         return result_map
+
+    async def _sample_one_hop(
+        self,
+        srcs: torch.Tensor,
+        num_nbr: int,
+        etype: Optional[EdgeType],
+    ) -> NeighborOutput:
+        """Sample one hop of neighbors for ``srcs``, timing it when statistics are on.
+
+        Args:
+            srcs: Source node ids for this hop.
+            num_nbr: Requested neighbors per source node.
+            etype: Edge type to sample along, or ``None`` for homogeneous graphs.
+
+        Returns:
+            The sampled neighbors of ``srcs`` in input order.
+        """
+        stats = self._stats
+        if stats is None:
+            return await super()._sample_one_hop(srcs, num_nbr, etype)
+        hop_start = time.perf_counter()
+        output = await super()._sample_one_hop(srcs, num_nbr, etype)
+        stats.add("hop_ms", (time.perf_counter() - hop_start) * 1e3)
+        return output
 
     async def _sample_from_nodes(
         self,

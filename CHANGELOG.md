@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation messages over the layout's
   edges with a fixed number of host syncs per forward, independent of the number of relations and layers by
   @kmontemayor2-sc
+- Add opt-in sampling and loader statistics: `GIGL_SAMPLING_STATS_EVERY_N_BATCHES=<N>` makes each sampling worker log a
+  `GLT_SAMPLING_STATS` line and each loader a `GLT_LOADER_STATS` line every N batches (stage latencies, message size,
+  CPU use), plus a final partial-window line at the end of an epoch. Off by default by @kmontemayor2-sc
 
 ### Changed
 
