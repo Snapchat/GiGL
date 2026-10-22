@@ -245,7 +245,6 @@ class FusedDistFeature(DistFeature):
         """
         remote_future = self._remote_selecting_get(ids, input_type)
         local_rows, local_index = self._local_selecting_get(ids, input_type)
-        store, _ = self._get_local_store(input_type)
         result_future: torch.futures.Future[
             tuple[
                 Float[torch.Tensor, "num_ids raw_dim"],
@@ -256,7 +255,7 @@ class FusedDistFeature(DistFeature):
         def on_done(*_: object) -> None:
             try:
                 result = self._stitch_fused(
-                    store, ids, local_rows, local_index, remote_future.wait()
+                    ids, local_rows, local_index, remote_future.wait()
                 )
             except Exception as e:
                 # torch types set_exception as taking the result type, not an exception.
@@ -269,7 +268,6 @@ class FusedDistFeature(DistFeature):
 
     def _stitch_fused(
         self,
-        store: FusedFeatureStore,
         ids: Int64[torch.Tensor, "num_ids"],
         local_rows: tuple[
             Float[torch.Tensor, "num_local raw_dim"],
@@ -309,15 +307,19 @@ class FusedDistFeature(DistFeature):
         raw_output[local_index] = local_raw_rows.to(self.device)
         if packed_output is not None and local_packed_rows is not None:
             packed_output[local_index] = local_packed_rows.to(self.device)
-        # Each remote partition answered with byte rows that hold every store the type has.
+        # Each remote partition answered with byte rows that hold every store the type has: the raw columns, then
+        # the sidecar columns. The layout is the one of FusedFeatureStore.split, read here without its per-call lookups.
+        raw_bytes = local_raw_rows.shape[1] * local_raw_rows.element_size()
         for remote_rows, remote_index in remotes:
-            remote_raw_rows, remote_packed_rows = store.split(
-                remote_rows.to(self.device)
-            )
+            remote_rows = remote_rows.to(self.device)
             remote_index = remote_index.to(self.device)
-            raw_output[remote_index] = remote_raw_rows
+            raw_output[remote_index] = remote_rows[:, :raw_bytes].view(
+                local_raw_rows.dtype
+            )
             if packed_output is not None:
-                packed_output[remote_index] = remote_packed_rows
+                packed_output[remote_index] = remote_rows[
+                    :, raw_bytes : raw_bytes + packed_output.shape[1]
+                ]
         return raw_output, packed_output
 
 

@@ -451,7 +451,6 @@ class FusedDistFeatureStitchTest(TestCase):
                     remote_positions = torch.nonzero(owner[ids] == 1).flatten()
 
                     stitched_raw, stitched_packed = feature._stitch_fused(
-                        store,
                         ids,
                         store[ids[local_positions]],
                         local_positions,
