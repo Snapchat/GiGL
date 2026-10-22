@@ -59,9 +59,23 @@ class FusedFeatureStore:
         torch.Size([2, 16])
         >>> rows[0, 12:].tolist()
         [7, 7, 0, 0]
-        >>> raw_rows, packed_rows = store.split(rows)
-        >>> raw_rows.shape, packed_rows.shape
-        (torch.Size([2, 3]), torch.Size([2, 2]))
+        >>> raw_rows, packed_rows, label_rows = store.split(rows)
+        >>> raw_rows.shape, packed_rows.shape, label_rows.shape
+        (torch.Size([2, 3]), torch.Size([2, 2]), torch.Size([2, 0]))
+
+        With one ``int64`` label column the row grows by 8 bytes, and the label bytes come first.
+
+        >>> labels = Feature(
+        ...     torch.arange(4).unsqueeze(1),
+        ...     id2index=torch.arange(4),
+        ...     with_gpu=False,
+        ...     dtype=torch.int64,
+        ... )
+        >>> rows = FusedFeatureStore(raw, packed, labels).cpu_get(torch.tensor([0, 2]))
+        >>> rows.shape
+        torch.Size([2, 24])
+        >>> FusedFeatureStore(raw, packed, labels).split(rows)[2].tolist()
+        [[0], [2]]
 
     Args:
         raw: Raw float feature store, or ``None`` if the type has none.
