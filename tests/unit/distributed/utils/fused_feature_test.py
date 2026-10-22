@@ -247,6 +247,34 @@ class BuildFusedDistFeatureTest(TestCase):
         assert isinstance(fused.local_feature, dict)
         self.assertEqual(set(fused.local_feature), {"story"})
 
+    def test_types_without_a_sidecar_are_not_fused(self) -> None:
+        raw, packed = _features(0)
+        raw_feature = Feature(raw, id2index=torch.arange(_NUM_ENTITIES), with_gpu=False)
+        sidecar = Feature(
+            packed,
+            id2index=torch.arange(_NUM_ENTITIES),
+            with_gpu=False,
+            dtype=torch.uint8,
+        )
+        owner = torch.zeros(_NUM_ENTITIES, dtype=torch.long)
+        router = Mock(spec=RpcDataPartitionRouter)
+        raw_by_type = {"user": raw_feature, "story": raw_feature}
+        owner_by_type = {"user": owner, "story": owner}
+
+        self.assertIsNone(
+            build_fused_dist_feature(1, 0, raw_feature, None, owner, router)
+        )
+        self.assertIsNone(
+            build_fused_dist_feature(1, 0, raw_by_type, None, owner_by_type, router)
+        )
+        with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+            fused = build_fused_dist_feature(
+                1, 0, raw_by_type, {"story": sidecar}, owner_by_type, router
+            )
+        assert fused is not None
+        assert isinstance(fused.local_feature, dict)
+        self.assertEqual(set(fused.local_feature), {"story"})
+
 
 class FusedDistFeatureTest(TestCase):
     def _run(self, is_heterogeneous: bool) -> dict:
