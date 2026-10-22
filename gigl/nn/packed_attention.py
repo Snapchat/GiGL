@@ -205,6 +205,7 @@ def _padded_packed_attention(
     Returns:
         Attention output shaped like ``query``.
     """
+    first_token = packed.cu_seqlens[:-1].long()
     lengths = packed.cu_seqlens[1:] - packed.cu_seqlens[:-1]
     num_sequences = lengths.numel()
     token_sequence = torch.repeat_interleave(
@@ -212,35 +213,31 @@ def _padded_packed_attention(
         lengths,
         output_size=key.size(0),
     )
-
-    key_grid, mask = to_dense_batch(
-        key, token_sequence, batch_size=num_sequences, max_num_nodes=packed.max_seq_len
-    )
-    value_grid, _ = to_dense_batch(
-        value,
+    if query_is_first_token:
+        # Run full attention with each sequence's query in its first row, then
+        # keep those rows.
+        query = torch.zeros_like(key).index_copy(0, first_token, query)
+    qkv_grid, mask = to_dense_batch(
+        torch.cat([query, key, value], dim=1),
         token_sequence,
         batch_size=num_sequences,
         max_num_nodes=packed.max_seq_len,
     )
-    key_grid, value_grid = key_grid.transpose(1, 2), value_grid.transpose(1, 2)
+    query_grid, key_grid, value_grid = (
+        grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
+    )
     attn_bias = torch.zeros(mask.shape, dtype=query.dtype, device=query.device)
     attn_bias = attn_bias.masked_fill(~mask, torch.finfo(query.dtype).min / 2.0)
-    attn_bias = attn_bias.view(num_sequences, 1, 1, -1)
-    if query_is_first_token:
-        return F.scaled_dot_product_attention(
-            query.unsqueeze(2), key_grid, value_grid, attn_mask=attn_bias
-        ).squeeze(2)
-    query_grid, _ = to_dense_batch(
-        query,
-        token_sequence,
-        batch_size=num_sequences,
-        max_num_nodes=packed.max_seq_len,
-    )
-    query_grid = query_grid.transpose(1, 2)
     output = F.scaled_dot_product_attention(
-        query_grid, key_grid, value_grid, attn_mask=attn_bias
+        query_grid,
+        key_grid,
+        value_grid,
+        attn_mask=attn_bias.view(num_sequences, 1, 1, -1),
     )
-    return output.transpose(1, 2)[mask]
+    output = output.transpose(1, 2)[mask]
+    if query_is_first_token:
+        return output[first_token]
+    return output
 
 
 def packed_attention(
