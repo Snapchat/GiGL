@@ -32,8 +32,9 @@ class FusedFeatureStore:
     a multiple of the raw dtype's size.
     The padding keeps every row aligned, so the raw columns of a received row can be read as floats without a copy.
 
-    A missing store has zero width. Without a raw store the raw dtype is ``float32``, the dtype the raw matrix is later
-    rebuilt as. Without a sidecar the row is the raw bytes alone, which need no padding.
+    A missing or zero-width store contributes no columns. Without a raw store the raw dtype is ``float32``, the dtype
+    the raw matrix is later rebuilt as. Without a sidecar the row is the raw bytes alone, which need no padding. A row
+    is never narrower than one raw element, so a type with no columns at all is served as one zero element.
 
     Both stores must be CPU stores.
 
@@ -59,7 +60,7 @@ class FusedFeatureStore:
         (torch.Size([2, 3]), torch.Size([2, 2]))
 
     Args:
-        raw: Raw float feature store with at least one column, or ``None`` if the type has none.
+        raw: Raw float feature store, or ``None`` if the type has none.
         packed: Packed ``uint8`` sidecar store with the same ids and id mapping as ``raw``, or ``None``.
 
     Raises:
@@ -101,7 +102,8 @@ class FusedFeatureStore:
     def _row_bytes(self) -> int:
         itemsize = self._raw_dtype.itemsize
         unpadded = self._raw_row_bytes + self._packed_dim
-        return (unpadded + itemsize - 1) // itemsize * itemsize
+        # A row is at least one element wide, as a zero-width byte view cannot be read as floats.
+        return max(itemsize, (unpadded + itemsize - 1) // itemsize * itemsize)
 
     def __getitem__(
         self, ids: Int64[torch.Tensor, "num_ids"]
@@ -330,8 +332,6 @@ def build_fused_dist_feature(
 ) -> Optional[FusedDistFeature]:
     """Builds a ``FusedDistFeature`` over every entity type that has a raw store, a packed sidecar, or both.
 
-    A raw store with no columns counts as missing.
-
     Args:
         num_partitions: Number of data partitions.
         partition_idx: Data partition of the current process.
@@ -352,19 +352,13 @@ def build_fused_dist_feature(
     if isinstance(raw_features, Feature) or isinstance(packed_features, Feature):
         assert raw_features is None or isinstance(raw_features, Feature)
         assert packed_features is None or isinstance(packed_features, Feature)
-        raw = _nonempty(raw_features)
-        if raw is None and packed_features is None:
-            return None
-        local_feature = FusedFeatureStore(raw, packed_features)
+        local_feature = FusedFeatureStore(raw_features, packed_features)
     else:
         raw_by_type = raw_features or {}
         packed_by_type = packed_features or {}
         local_feature = {
-            key: FusedFeatureStore(
-                _nonempty(raw_by_type.get(key)), packed_by_type.get(key)
-            )
+            key: FusedFeatureStore(raw_by_type.get(key), packed_by_type.get(key))
             for key in raw_by_type.keys() | packed_by_type.keys()
-            if _nonempty(raw_by_type.get(key)) is not None or key in packed_by_type
         }
         if not local_feature:
             return None
@@ -376,10 +370,3 @@ def build_fused_dist_feature(
         rpc_router,
         device,
     )
-
-
-def _nonempty(raw: Optional[Feature]) -> Optional[Feature]:
-    """A raw store with columns, or ``None`` for a missing or zero-width one."""
-    if raw is not None and raw.shape[1] > 0:
-        return raw
-    return None
