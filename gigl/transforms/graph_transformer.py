@@ -1826,14 +1826,47 @@ def _lookup_pairwise_relation_indices(
             device=device,
         )
         keep &= (owner_mask & relation_channel_mask_values[matched_relations]) != 0
-    matches = torch.stack(
-        [matched_relations, batch_indices, query_positions, key_positions],
-        dim=1,
-    )[keep]
-    if matches.size(0) == 0:
+    if not keep.any():
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     # Unique rows ordered by relation, then (batch, query, key).
-    return torch.unique(matches, dim=0)[:, [1, 2, 3, 0]]
+    return _unique_relation_indices(
+        batch_indices=batch_indices[keep],
+        query_positions=query_positions[keep],
+        key_positions=key_positions[keep],
+        relation_indices=matched_relations[keep],
+        num_sequences=node_index_sequences.size(0),
+        sequence_length=node_index_sequences.size(1),
+    )
+
+
+def _unique_relation_indices(
+    batch_indices: Tensor,
+    query_positions: Tensor,
+    key_positions: Tensor,
+    relation_indices: Tensor,
+    num_sequences: int,
+    sequence_length: int,
+) -> Tensor:
+    """Return the sorted unique ``[batch, query, key, relation]`` rows.
+
+    Equivalent to ``torch.unique(torch.stack([relation, batch, query, key],
+    dim=1), dim=0)[:, [1, 2, 3, 0]]`` but packs the four columns into one int64
+    key and runs a 1-D ``torch.unique``, which is much faster. Every column is
+    below its bound, so the keys are below ``num_relations * num_sequences *
+    sequence_length**2``, which cannot overflow int64 for realistic batches.
+    """
+    keys = (
+        (relation_indices * num_sequences + batch_indices) * sequence_length
+        + query_positions
+    ) * sequence_length + key_positions
+    unique_keys = torch.unique(keys)
+    key_out = unique_keys % sequence_length
+    unique_keys = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    query_out = unique_keys % sequence_length
+    unique_keys = torch.div(unique_keys, sequence_length, rounding_mode="floor")
+    batch_out = unique_keys % num_sequences
+    relation_out = torch.div(unique_keys, num_sequences, rounding_mode="floor")
+    return torch.stack([batch_out, query_out, key_out, relation_out], dim=1)
 
 
 def _get_sampled_frontier_batch_node_keys(
