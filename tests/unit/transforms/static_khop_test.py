@@ -1,5 +1,6 @@
 """The fixed-shape k-hop layout equals the sparse k-hop layout."""
 
+import itertools
 from typing import Any, Literal
 from unittest import mock
 
@@ -127,51 +128,32 @@ class StaticKhopLayoutTest(TestCase):
         self.assertTrue(torch.equal(nodes, expected_nodes))
         self.assertTrue(torch.equal(hops, expected_hops))
 
-    def test_matches_sparse_layout_on_adversarial_graphs(self) -> None:
-        for seed in range(4):
-            for direction in ("in", "out"):
-                for max_seq_len in (4, 16, 64):
-                    with self.subTest(seed=seed, direction=direction, L=max_seq_len):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 90, seed),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                        )
-
-    def test_matches_sparse_layout_at_three_and_four_hops(self) -> None:
-        for hop_distance in (3, 4):
-            for direction in ("in", "out"):
-                for max_seq_len in (4, 16, 64):
-                    with self.subTest(
-                        hop=hop_distance, direction=direction, L=max_seq_len
-                    ):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 70, hop_distance),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                            hop_distance=hop_distance,
-                        )
-
-    def test_hop_order_matches_the_hop_ordered_sparse_layout(self) -> None:
-        for hop_distance in (1, 2, 3):
-            for direction in ("in", "out"):
-                for max_seq_len in (3, 8, 64):
-                    with self.subTest(
-                        hop=hop_distance, direction=direction, L=max_seq_len
-                    ):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 70, hop_distance),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                            hop_distance=hop_distance,
-                            prioritize_hop_order=True,
-                        )
+    def test_matches_sparse_layout(self) -> None:
+        for (
+            hop_distance,
+            prioritize_hop_order,
+            direction,
+            max_seq_len,
+            seed,
+        ) in itertools.product(
+            (1, 2, 3, 4), (False, True), ("in", "out"), (3, 4, 16, 64), range(2)
+        ):
+            with self.subTest(
+                hop=hop_distance,
+                hop_order=prioritize_hop_order,
+                direction=direction,
+                L=max_seq_len,
+                seed=seed,
+            ):
+                self._assert_layouts_equal(
+                    _random_graph(40, 80, seed),
+                    num_nodes=40,
+                    num_anchors=10,
+                    max_seq_len=max_seq_len,
+                    direction=direction,
+                    hop_distance=hop_distance,
+                    prioritize_hop_order=prioritize_hop_order,
+                )
 
     def test_hop_order_truncation_drops_the_farthest_hops_first(self) -> None:
         # Anchor 0 has hop-1 neighbours 5 and 6 and hop-2 neighbours 1 and 2.
