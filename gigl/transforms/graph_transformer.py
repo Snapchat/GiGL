@@ -1826,14 +1826,16 @@ def _lookup_pairwise_relation_indices(
             device=device,
         )
         keep &= (owner_mask & relation_channel_mask_values[matched_relations]) != 0
-    if not keep.any():
+    # One host sync for the kept count; the column gathers below reuse it.
+    kept = keep.nonzero().squeeze(1)
+    if kept.numel() == 0:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
     # Unique rows ordered by relation, then (batch, query, key).
     return _unique_relation_indices(
-        batch_indices=batch_indices[keep],
-        query_positions=query_positions[keep],
-        key_positions=key_positions[keep],
-        relation_indices=matched_relations[keep],
+        batch_indices=batch_indices[kept],
+        query_positions=query_positions[kept],
+        key_positions=key_positions[kept],
+        relation_indices=matched_relations[kept],
         num_sequences=node_index_sequences.size(0),
         sequence_length=node_index_sequences.size(1),
     )
