@@ -13,6 +13,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
+    tensors_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -1381,6 +1382,44 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
                     "pairwise_distance_sparse_mismatch",
                 ],
             )
+
+
+class TestTensorsToGraphTransformerInput(TestCase):
+    def test_matches_heterodata_input_on_two_node_types(self) -> None:
+        data = create_simple_hetero_data()
+        expected = heterodata_to_graph_transformer_input(
+            data=data, batch_size=3, max_seq_len=4, anchor_node_type="user"
+        )
+        actual = tensors_to_graph_transformer_input(
+            x_dict={"user": data["user"].x, "item": data["item"].x},
+            edge_index_dict={
+                edge_type: data[edge_type].edge_index for edge_type in data.edge_types
+            },
+            batch_size=3,
+            max_seq_len=4,
+            anchor_node_type="user",
+        )
+        self.assertTrue(torch.equal(actual[0], expected[0]))
+        self.assertTrue(torch.equal(actual[1], expected[1]))
+
+    def test_edgeless_batch_has_only_anchor_tokens(self) -> None:
+        x = torch.arange(12.0).view(4, 3)
+        sequences, valid_mask, _ = tensors_to_graph_transformer_input(
+            x_dict={"user": x},
+            edge_index_dict={},
+            batch_size=2,
+            max_seq_len=3,
+            anchor_node_type="user",
+            padding_value=-1.0,
+        )
+        self.assertEqual(valid_mask.tolist(), [[True, False, False]] * 2)
+        self.assertEqual(
+            sequences.tolist(),
+            [
+                [[0, 1, 2], [-1, -1, -1], [-1, -1, -1]],
+                [[3, 4, 5], [-1, -1, -1], [-1, -1, -1]],
+            ],
+        )
 
 
 class TestPprRelationExpandedSourceFilter(TestCase):

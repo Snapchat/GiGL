@@ -270,13 +270,60 @@ class FusedFeatureStoreTest(TestCase):
         self.assertEqual(split_raw.dtype, torch.float32)
         self.assertTrue(torch.equal(split_packed, packed[ids]))
 
+    def test_zero_width_raw_stores_give_empty_raw_rows(self) -> None:
+        for raw_dtype in (torch.float32, torch.float64, torch.bfloat16):
+            for packed_columns in (0, 5):
+                for ids in (
+                    torch.tensor([5, 1, 1]),
+                    torch.tensor([2]),
+                    torch.empty(0, dtype=torch.long),
+                ):
+                    with self.subTest(
+                        raw_dtype=raw_dtype,
+                        packed_columns=packed_columns,
+                        num_ids=len(ids),
+                    ):
+                        packed = torch.randint(
+                            0, 255, (_NUM_ENTITIES, packed_columns), dtype=torch.uint8
+                        )
+                        store = FusedFeatureStore(
+                            Feature(
+                                torch.empty(_NUM_ENTITIES, 0, dtype=raw_dtype),
+                                id2index=torch.arange(_NUM_ENTITIES),
+                                with_gpu=False,
+                                dtype=raw_dtype,
+                            ),
+                            Feature(
+                                packed,
+                                id2index=torch.arange(_NUM_ENTITIES),
+                                with_gpu=False,
+                                dtype=torch.uint8,
+                            )
+                            if packed_columns
+                            else None,
+                        )
+
+                        local_raw, local_packed = store[ids]
+                        split_raw, split_packed = store.split(store.cpu_get(ids))
+
+                        for raw_rows in (local_raw, split_raw):
+                            self.assertEqual(raw_rows.shape, (len(ids), 0))
+                            self.assertEqual(raw_rows.dtype, raw_dtype)
+                        self.assertEqual(split_packed.shape, (len(ids), packed_columns))
+                        if packed_columns:
+                            self.assertTrue(torch.equal(split_packed, packed[ids]))
+                            assert local_packed is not None
+                            self.assertTrue(torch.equal(local_packed, packed[ids]))
+                        else:
+                            self.assertIsNone(local_packed)
+
     def test_a_store_needs_at_least_one_part(self) -> None:
         with self.assertRaises(ValueError):
             FusedFeatureStore(None, None)
 
 
 class BuildFusedDistFeatureTest(TestCase):
-    def test_types_without_raw_columns_are_fused_as_sidecar_only(self) -> None:
+    def test_zero_width_raw_stores_are_kept_with_no_columns(self) -> None:
         raw, packed = _features(0)
         no_raw_columns = Feature(
             torch.empty(_NUM_ENTITIES, 0),
@@ -311,11 +358,11 @@ class BuildFusedDistFeatureTest(TestCase):
             )
         assert homogeneous is not None
         assert isinstance(homogeneous.local_feature, FusedFeatureStore)
-        self.assertIsNone(homogeneous.local_feature._raw)
+        self.assertIs(homogeneous.local_feature._raw, no_raw_columns)
         assert fused is not None
         assert isinstance(fused.local_feature, dict)
         self.assertEqual(set(fused.local_feature), {"user", "story"})
-        self.assertIsNone(fused.local_feature["user"]._raw)
+        self.assertIs(fused.local_feature["user"]._raw, no_raw_columns)
         self.assertIsNotNone(fused.local_feature["story"]._raw)
 
     def test_types_without_a_sidecar_are_fused_as_raw_only(self) -> None:
@@ -361,6 +408,62 @@ class BuildFusedDistFeatureTest(TestCase):
         self.assertIsNone(
             build_fused_dist_feature(1, 0, {}, None, {"user": owner}, router)
         )
+
+
+class FusedDistFeatureStitchTest(TestCase):
+    def test_stitching_local_and_remote_rows_restores_the_requested_order(
+        self,
+    ) -> None:
+        owner = torch.arange(_NUM_ENTITIES) % 2
+        ids = torch.tensor([5, 0, 7, 7, 2, 11])
+        for raw_dtype in (torch.float32, torch.float64, torch.bfloat16):
+            for raw_columns, packed_columns in ((3, 5), (3, 0), (0, 5), (0, 0)):
+                with self.subTest(
+                    raw_dtype=raw_dtype,
+                    raw_columns=raw_columns,
+                    packed_columns=packed_columns,
+                ):
+                    raw = torch.randn(_NUM_ENTITIES, raw_columns).to(raw_dtype)
+                    packed = torch.randint(
+                        0, 255, (_NUM_ENTITIES, packed_columns), dtype=torch.uint8
+                    )
+                    store = FusedFeatureStore(
+                        Feature(
+                            raw,
+                            id2index=torch.arange(_NUM_ENTITIES),
+                            with_gpu=False,
+                            dtype=raw_dtype,
+                        ),
+                        Feature(
+                            packed,
+                            id2index=torch.arange(_NUM_ENTITIES),
+                            with_gpu=False,
+                            dtype=torch.uint8,
+                        )
+                        if packed_columns
+                        else None,
+                    )
+                    with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+                        feature = FusedDistFeature(
+                            2, 0, store, owner, Mock(spec=RpcDataPartitionRouter)
+                        )
+                    local_positions = torch.nonzero(owner[ids] == 0).flatten()
+                    remote_positions = torch.nonzero(owner[ids] == 1).flatten()
+
+                    stitched_raw, stitched_packed = feature._stitch_fused(
+                        ids,
+                        store[ids[local_positions]],
+                        local_positions,
+                        [(store.cpu_get(ids[remote_positions]), remote_positions)],
+                    )
+
+                    self.assertEqual(stitched_raw.dtype, raw_dtype)
+                    self.assertTrue(torch.equal(stitched_raw, raw[ids]))
+                    if packed_columns:
+                        assert stitched_packed is not None
+                        self.assertTrue(torch.equal(stitched_packed, packed[ids]))
+                    else:
+                        self.assertIsNone(stitched_packed)
 
 
 class FusedDistFeatureTest(TestCase):

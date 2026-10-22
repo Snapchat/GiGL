@@ -127,6 +127,39 @@ class TestGraphTransformerEncoder(TestCase):
         self.assertFalse(torch.isnan(user_embeddings).any())
         self.assertFalse(torch.isnan(item_embeddings).any())
 
+    def test_forward_ignores_edge_store_without_edge_index(self) -> None:
+        """An edge store holding only ``edge_attr`` does not change the output."""
+        data = _create_simple_hetero_data()
+        data_with_attr_only_store = copy.deepcopy(data)
+        data_with_attr_only_store["user", "rates", "item"].edge_attr = torch.randn(4, 3)
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = encoder(
+                data=data_with_attr_only_store,
+                anchor_node_type=self._user_node_type,
+            )
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_compiled_forward_matches_eager(self) -> None:
+        """``torch.compile`` of the whole encoder runs on a HeteroData batch.
+
+        The sparse k-hop layout still breaks the graph; this checks that
+        tracing succeeds and matches eager.
+        """
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = torch.compile(encoder)(
+                data=data, anchor_node_type=self._user_node_type
+            )
+
+        torch.testing.assert_close(actual, expected)
+
     def test_forward_with_l2_normalization(self) -> None:
         """Test that L2 normalization produces unit-length embeddings."""
         data = _create_simple_hetero_data()
@@ -317,7 +350,7 @@ class TestGraphTransformerEncoder(TestCase):
         }
 
         with patch(
-            "gigl.nn.graph_transformer.heterodata_to_graph_transformer_input",
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
             return_value=(sequences, valid_mask, sequence_auxiliary_data),
         ) as mock_transform:
             with torch.no_grad():
@@ -330,8 +363,8 @@ class TestGraphTransformerEncoder(TestCase):
         self.assertTrue(mock_transform.call_args.kwargs["prioritize_hop_order"])
 
     def test_forward_preserves_ppr_is_expanded(self) -> None:
-        # The encoder rebuilds a projected HeteroData; it must carry the PPR
-        # expansion provenance through, or the relation filter silently no-ops.
+        # The encoder must pass the PPR expansion provenance and channel masks
+        # to the transform, or the relation filter silently no-ops.
         user = self._user_node_type
         ppr_edge_type = (user, "ppr", user)
         data = HeteroData()
@@ -340,6 +373,7 @@ class TestGraphTransformerEncoder(TestCase):
         data[ppr_edge_type].edge_index = torch.tensor([[0, 0], [1, 2]])
         data[ppr_edge_type].edge_attr = torch.tensor([[0.9], [0.6]])
         data[ppr_edge_type].ppr_is_expanded = torch.tensor([True, False])
+        data.ppr_relation_channel_masks = {ppr_edge_type: 0b01}
 
         encoder = self._create_encoder(
             num_layers=0,
@@ -359,19 +393,21 @@ class TestGraphTransformerEncoder(TestCase):
             "token_input": None,
         }
         with patch(
-            "gigl.nn.graph_transformer.heterodata_to_graph_transformer_input",
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
             return_value=(sequences, valid_mask, aux),
         ) as mock_transform:
             with torch.no_grad():
                 encoder(data=data, anchor_node_type=user, device=self._device)
 
-        projected = mock_transform.call_args.kwargs["data"]
-        self.assertTrue(hasattr(projected[ppr_edge_type], "ppr_is_expanded"))
+        call_kwargs = mock_transform.call_args.kwargs
         self.assertTrue(
             torch.equal(
-                projected[ppr_edge_type].ppr_is_expanded,
+                call_kwargs["ppr_is_expanded_dict"][ppr_edge_type],
                 torch.tensor([True, False]),
             )
+        )
+        self.assertEqual(
+            call_kwargs["ppr_relation_channel_masks"], data.ppr_relation_channel_masks
         )
 
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
