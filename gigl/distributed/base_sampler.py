@@ -135,11 +135,16 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # Its RPC callee stays registered, the same on every rank.
         self.dist_node_labels = None
         if data is not None:
+            node_features = None
+            node_quantized_features = None
+            if collect_features:
+                node_features = data.node_features
+                node_quantized_features = data.node_quantized_features
             self.dist_node_feature = build_fused_dist_feature(
                 data.num_partitions,
                 data.partition_idx,
-                data.node_features if collect_features else None,
-                data.node_quantized_features if collect_features else None,
+                node_features,
+                node_quantized_features,
                 data.node_feat_pb,
                 self.rpc_router,
                 self.device,
@@ -406,17 +411,17 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_feature is not None:
                 for ntype, nodes in output.node.items():
                     if ntype in self.dist_node_feature.local_feature:
+                        # Only the seed node type has labels.
+                        labels_key = None
+                        if ntype == input_type:
+                            labels_key = f"{as_str(ntype)}.nlabels"
                         request_features(
                             self.dist_node_feature,
                             nodes,
                             ntype,
                             f"{as_str(ntype)}.nfeats",
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}",
-                            (
-                                f"{as_str(ntype)}.nlabels"
-                                if ntype == input_type
-                                else None
-                            ),
+                            labels_key,
                         )
             if self.dist_edge_feature is not None:
                 for etype in self.edge_types:
@@ -489,9 +494,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # TODO (mkolodner-sc): Consider investigating always returning
                 # 2-D — this may be a breaking change for single-label
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                result_map[label_keys[result_key]] = (
-                    labels if labels.shape[1] > 1 else labels.T[0]
-                )
+                if labels.shape[1] == 1:
+                    labels = labels.T[0]
+                result_map[label_keys[result_key]] = labels
             if value.shape[1] > 0 or packed is not None:
                 result_map[result_key] = value
 

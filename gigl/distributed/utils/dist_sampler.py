@@ -1,6 +1,9 @@
 """Sampler factory helpers shared across sampling producers."""
 
 import random
+import time
+from collections.abc import Sequence
+from multiprocessing.process import BaseProcess
 from typing import Optional, Union
 
 import torch
@@ -132,3 +135,25 @@ def create_dist_sampler(
             f"Unsupported sampler options type: {type(sampler_options)}"
         )
     return sampler
+
+
+def join_workers_with_shared_deadline(
+    workers: Sequence[BaseProcess], timeout: float
+) -> None:
+    """Joins the workers, waiting at most ``timeout`` seconds in total.
+
+    The deadline is shared by all workers, unlike GLT's shutdown, which waits ``timeout`` for each worker.
+
+    A worker that is mid-sample (for example, blocked sending to a full channel because the consumer stopped early)
+    never reads the stop command, so a per-worker wait costs ``len(workers) * timeout`` before the caller can
+    terminate the stragglers.
+
+    Workers still alive at the deadline are left running; the caller is responsible for terminating them.
+
+    Args:
+        workers: The worker processes to join.
+        timeout: The total number of seconds to wait across all workers.
+    """
+    deadline = time.monotonic() + timeout
+    for worker in workers:
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
