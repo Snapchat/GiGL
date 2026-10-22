@@ -71,29 +71,36 @@ def _local_stores(
 def _lookup_on_partition(
     rank: int, master_port: int, output: dict, is_heterogeneous: bool
 ) -> None:
+    """Looks up every type through GLT ``DistFeature`` objects and through the fused feature.
+
+    Heterogeneous data has a type with both stores, a raw-only type and a sidecar-only type.
+    """
     init_worker_group(world_size=2, rank=rank)
     init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
     router = RpcDataPartitionRouter(rpc_sync_data_partitions(2, rank))
     owner = torch.arange(_NUM_ENTITIES) % 2
-    types = ["user", "story"] if is_heterogeneous else [None]
+    types = ["user", "story", "ad"] if is_heterogeneous else [None]
     globals_by_type = {t: _features(seed) for seed, t in enumerate(types)}
     stores = {t: _local_stores(rank, *globals_by_type[t], owner) for t in types}
+    # "story" has no sidecar and "ad" has no raw store.
+    raw_stores = {t: stores[t][0] for t in types if t != "ad"}
+    packed_stores = {t: stores[t][1] for t in types if t != "story"}
 
     def hetero_or_homo(per_type: dict):
         return per_type if is_heterogeneous else per_type[None]
 
     pb = hetero_or_homo({t: owner for t in types})
     separate_raw = _CountingDistFeature(
-        2, rank, hetero_or_homo({t: stores[t][0] for t in types}), pb, False, router
+        2, rank, hetero_or_homo(raw_stores), pb, False, router
     )
     separate_packed = _CountingDistFeature(
-        2, rank, hetero_or_homo({t: stores[t][1] for t in types}), pb, False, router
+        2, rank, hetero_or_homo(packed_stores), pb, False, router
     )
     fused = build_fused_dist_feature(
         2,
         rank,
-        hetero_or_homo({t: stores[t][0] for t in types}),
-        hetero_or_homo({t: stores[t][1] for t in types}),
+        hetero_or_homo(raw_stores),
+        hetero_or_homo(packed_stores),
         pb,
         router,
     )
@@ -106,14 +113,22 @@ def _lookup_on_partition(
     matches = True
     for t in types:
         expected_raw, expected_packed = globals_by_type[t]
-        raw = separate_raw.async_get(ids, t).wait()
-        packed = separate_packed.async_get(ids, t).wait()
         fused_raw, fused_packed = counting_fused.async_get(ids, t).wait()
-        matches &= fused_raw.is_contiguous() and fused_packed.is_contiguous()
-        matches &= torch.equal(raw, expected_raw[ids])
-        matches &= torch.equal(packed, expected_packed[ids])
-        matches &= torch.equal(fused_raw, expected_raw[ids])
-        matches &= torch.equal(fused_packed, expected_packed[ids])
+        matches &= fused_raw.is_contiguous()
+        if t in raw_stores:
+            raw = separate_raw.async_get(ids, t).wait()
+            matches &= torch.equal(raw, expected_raw[ids])
+            matches &= torch.equal(fused_raw, expected_raw[ids])
+        else:
+            matches &= fused_raw.shape == (len(ids), 0)
+            matches &= fused_raw.dtype == torch.float32
+        if t in packed_stores:
+            packed = separate_packed.async_get(ids, t).wait()
+            matches &= fused_packed is not None and fused_packed.is_contiguous()
+            matches &= torch.equal(packed, expected_packed[ids])
+            matches &= torch.equal(fused_packed, expected_packed[ids])
+        else:
+            matches &= fused_packed is None
     barrier()
     output[rank] = (
         matches,
@@ -208,9 +223,56 @@ class FusedFeatureStoreTest(TestCase):
                     self.assertTrue(torch.equal(split_packed, expected_packed))
                     self.assertEqual(served.shape[1] % raw_dtype.itemsize, 0)
 
+    def test_raw_only_rows_are_the_raw_bytes_without_padding(self) -> None:
+        raw, _ = _features(0)
+        store = FusedFeatureStore(
+            Feature(raw, id2index=torch.arange(len(raw)), with_gpu=False), None
+        )
+        ids = torch.tensor([4, 4, 1])
+
+        local_raw, local_packed = store[ids]
+        served = store.cpu_get(ids)
+        split_raw, split_packed = store.split(served)
+
+        self.assertIsNone(local_packed)
+        self.assertTrue(torch.equal(local_raw, raw[ids]))
+        self.assertEqual(served.shape, (3, _RAW_COLUMNS * 4))
+        self.assertTrue(torch.equal(split_raw, raw[ids]))
+        self.assertEqual(split_packed.shape, (3, 0))
+
+    def test_sidecar_only_rows_have_a_float32_raw_matrix_without_columns(self) -> None:
+        _, packed = _features(0)
+        store = FusedFeatureStore(
+            None,
+            Feature(
+                packed,
+                id2index=torch.arange(len(packed)),
+                with_gpu=False,
+                dtype=torch.uint8,
+            ),
+        )
+        ids = torch.tensor([4, 4, 1])
+
+        local_raw, local_packed = store[ids]
+        served = store.cpu_get(ids)
+        split_raw, split_packed = store.split(served)
+
+        self.assertEqual(local_raw.shape, (3, 0))
+        self.assertEqual(local_raw.dtype, torch.float32)
+        self.assertTrue(torch.equal(local_packed, packed[ids]))
+        # Five sidecar bytes padded to a multiple of the float32 size.
+        self.assertEqual(served.shape, (3, 8))
+        self.assertEqual(split_raw.shape, (3, 0))
+        self.assertEqual(split_raw.dtype, torch.float32)
+        self.assertTrue(torch.equal(split_packed, packed[ids]))
+
+    def test_a_store_needs_at_least_one_part(self) -> None:
+        with self.assertRaises(ValueError):
+            FusedFeatureStore(None, None)
+
 
 class BuildFusedDistFeatureTest(TestCase):
-    def test_types_without_raw_columns_are_not_fused(self) -> None:
+    def test_types_without_raw_columns_are_fused_as_sidecar_only(self) -> None:
         raw, packed = _features(0)
         no_raw_columns = Feature(
             torch.empty(_NUM_ENTITIES, 0),
@@ -226,10 +288,10 @@ class BuildFusedDistFeatureTest(TestCase):
         owner = torch.zeros(_NUM_ENTITIES, dtype=torch.long)
         router = Mock(spec=RpcDataPartitionRouter)
 
-        self.assertIsNone(
-            build_fused_dist_feature(1, 0, no_raw_columns, sidecar, owner, router)
-        )
         with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+            homogeneous = build_fused_dist_feature(
+                1, 0, no_raw_columns, sidecar, owner, router
+            )
             fused = build_fused_dist_feature(
                 1,
                 0,
@@ -243,11 +305,16 @@ class BuildFusedDistFeatureTest(TestCase):
                 {"user": owner, "story": owner},
                 router,
             )
+        assert homogeneous is not None
+        assert isinstance(homogeneous.local_feature, FusedFeatureStore)
+        self.assertIsNone(homogeneous.local_feature._raw)
         assert fused is not None
         assert isinstance(fused.local_feature, dict)
-        self.assertEqual(set(fused.local_feature), {"story"})
+        self.assertEqual(set(fused.local_feature), {"user", "story"})
+        self.assertIsNone(fused.local_feature["user"]._raw)
+        self.assertIsNotNone(fused.local_feature["story"]._raw)
 
-    def test_types_without_a_sidecar_are_not_fused(self) -> None:
+    def test_types_without_a_sidecar_are_fused_as_raw_only(self) -> None:
         raw, packed = _features(0)
         raw_feature = Feature(raw, id2index=torch.arange(_NUM_ENTITIES), with_gpu=False)
         sidecar = Feature(
@@ -261,19 +328,35 @@ class BuildFusedDistFeatureTest(TestCase):
         raw_by_type = {"user": raw_feature, "story": raw_feature}
         owner_by_type = {"user": owner, "story": owner}
 
-        self.assertIsNone(
-            build_fused_dist_feature(1, 0, raw_feature, None, owner, router)
-        )
-        self.assertIsNone(
-            build_fused_dist_feature(1, 0, raw_by_type, None, owner_by_type, router)
-        )
         with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+            homogeneous = build_fused_dist_feature(
+                1, 0, raw_feature, None, owner, router
+            )
             fused = build_fused_dist_feature(
                 1, 0, raw_by_type, {"story": sidecar}, owner_by_type, router
             )
+            sidecar_only_types = build_fused_dist_feature(
+                1, 0, None, {"story": sidecar}, owner_by_type, router
+            )
+        assert homogeneous is not None
+        assert isinstance(homogeneous.local_feature, FusedFeatureStore)
+        self.assertIsNone(homogeneous.local_feature._packed)
         assert fused is not None
         assert isinstance(fused.local_feature, dict)
-        self.assertEqual(set(fused.local_feature), {"story"})
+        self.assertEqual(set(fused.local_feature), {"user", "story"})
+        self.assertIsNone(fused.local_feature["user"]._packed)
+        self.assertIsNotNone(fused.local_feature["story"]._packed)
+        assert sidecar_only_types is not None
+        assert isinstance(sidecar_only_types.local_feature, dict)
+        self.assertEqual(set(sidecar_only_types.local_feature), {"story"})
+
+    def test_no_stores_gives_no_fused_feature(self) -> None:
+        owner = torch.zeros(_NUM_ENTITIES, dtype=torch.long)
+        router = Mock(spec=RpcDataPartitionRouter)
+        self.assertIsNone(build_fused_dist_feature(1, 0, None, None, owner, router))
+        self.assertIsNone(
+            build_fused_dist_feature(1, 0, {}, None, {"user": owner}, router)
+        )
 
 
 class FusedDistFeatureTest(TestCase):
@@ -303,9 +386,10 @@ class FusedDistFeatureTest(TestCase):
             True
         ).items():
             self.assertTrue(matches, f"rank {rank} fetched different rows")
-            # Two node types, each fetched once from the other partition.
+            # Three node types, each fetched once from the other partition. The separate lookups need one
+            # request for each store a type has, which is 4 across the three types.
             self.assertEqual(separate_requests, 4)
-            self.assertEqual(fused_requests, 2)
+            self.assertEqual(fused_requests, 3)
 
 
 if __name__ == "__main__":
