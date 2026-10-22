@@ -1,18 +1,39 @@
-"""Fixed-shape k-hop sequence layout for sampled subgraphs.
+"""Builds each anchor's k-hop token sequence with fixed-shape tensor ops.
 
-The sparse k-hop path in ``gigl.transforms.graph_transformer`` creates tensors
-whose sizes depend on the data (sparse matmul, ``coalesce``, ``unique``,
-``nonzero``, bool-mask indexing). That compiles poorly and forces host syncs.
-This module builds the same layout as that path's default (anchor first, then
-neighbours in ascending node id) from a dense neighbour table. It uses only sort,
-gather and scatter ops, whose output shapes are known up front.
+This is the layout half of the packed backend of ``GraphTransformerEncoder``. For
+every anchor it picks which nodes become its tokens (the anchor, then its
+neighbours within ``hop_distance`` hops), and ``pack_sequences`` turns the padded
+result into the offsets that ``gigl.nn.packed_attention`` needs to run the
+transformer on real tokens only.
+
+Why this exists:
+  - Sequences are short and uneven (about 90 real tokens out of a 256-token
+    budget in our models), so a padded ``[num_sequences, max_seq_len]`` batch
+    spends most of its compute and memory on padding. Packing the real tokens
+    into one buffer, with ``cu_seqlens`` marking the boundaries, avoids that.
+  - The sparse k-hop path in ``gigl.transforms.graph_transformer`` (sparse
+    matmul, ``coalesce``, ``unique``, ``nonzero``, bool-mask indexing) produces
+    tensors whose sizes depend on the data. It needs many host syncs and blocks
+    ``torch.compile``. This module instead uses a dense neighbour table and only
+    sort, gather and scatter, whose output shapes are known up front. It
+    produces the same layout as that path's default: anchor first, then
+    neighbours in ascending node id.
+  - A dense table has one cost: the candidates before deduplication grow as
+    ``num_anchors * width ** hop_distance``, and one hub node sets ``width`` for
+    the whole batch. ``khop_layout`` counts the candidates before it builds
+    anything and raises ``KhopLayoutTooLargeError`` past ``max_candidates``.
+    ``GraphTransformerEncoder`` catches that and runs the batch on the padded
+    path.
+  - The whole path makes exactly two host reads (each is a GPU sync): the table
+    width (the largest per-node degree, all edge types combined) and, in
+    ``pack_sequences``, the total token count.
 
 How a layout is built::
 
     edge_index [2, num_edges]
         |  sort edges by source; an edge's slot is its rank in its source's group
         v
-    neighbour table [num_nodes + 1, width]    width = largest degree (one host read)
+    neighbour table [num_nodes + 1, width]    width = largest degree (host read 1)
         |                                     row i = nodes one hop from i, -1 pads;
         |                                     the extra last row is all -1
         |  hop h: gather the rows of the hop h - 1 frontier -> [num_anchors, width ** h]
@@ -27,20 +48,14 @@ How a layout is built::
         v
     layout [num_anchors, max_seq_len] of (node << hop_bits) | hop (-1 at padding), lengths
         |
-        |  pack_sequences(lengths, max_seq_len)       (one host read: total tokens)
+        |  pack_sequences(lengths, max_seq_len)       (host read 2: total tokens)
         v
     flat_index + PackedSequences(cu_seqlens, max_seq_len)  for gigl.nn.packed_attention
 
-Memory is ``O(num_anchors * width ** hop_distance)``. Every walk of up to
-``hop_distance`` steps is a candidate before deduplication, so a high-degree hub
-node makes this grow quickly. ``khop_layout`` therefore counts the candidates
-before building anything and raises ``KhopLayoutTooLargeError`` if they exceed
-``max_candidates``. ``GraphTransformerEncoder`` catches the error and runs that
-batch on the padded path instead.
-
-Host reads (each is a GPU sync):
-  - the table width: the largest per-node degree, with all edge types combined
-  - the total token count in ``pack_sequences``
+Constraints:
+  - Memory is ``O(num_anchors * width ** hop_distance)``; see
+    ``MAX_LAYOUT_CANDIDATES`` for the limit.
+  - ``cu_seqlens`` is int32, so the total token count must fit in int32.
 
 Example:
     >>> edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
@@ -107,12 +122,13 @@ class PackedSequences(NamedTuple):
 def pack_sequences(
     lengths: Int64[Tensor, "num_sequences"], max_seq_len: int
 ) -> tuple[Int64[Tensor, "num_tokens"], PackedSequences]:
-    """Finds the valid positions of every sequence in a padded grid.
+    """Computes what is needed to drop the padding from a padded grid of sequences.
 
-    Sequence ``i`` is valid in its first ``lengths[i]`` positions. This costs one
-    host read, of the total token count. To gather any
-    ``[num_sequences, max_seq_len]`` per-position tensor into packed order with
-    ``grid.flatten()[flat_index]``.
+    Sequence ``i`` is valid in its first ``lengths[i]`` positions. Any
+    ``[num_sequences, max_seq_len]`` per-position tensor gathers into packed
+    order with ``grid.flatten()[flat_index]``, and ``cu_seqlens`` marks where
+    each packed sequence starts. This costs one host read, of the total token
+    count; it is why the packed buffer holds exactly the real tokens.
 
     A length above ``max_seq_len`` is clamped to it, because the grid has no
     positions beyond that. Checking for it would cost another host read.
@@ -140,7 +156,7 @@ def _build_neighbor_table(
     max_candidates: int,
     sampling_direction: Literal["in", "out"] = "out",
 ) -> Int64[Tensor, "num_nodes_plus_one width"]:
-    """Builds a padded adjacency table for k-hop reachability.
+    """Builds the dense neighbour table that lets k-hop expansion run as gathers.
 
     Row ``i`` lists the nodes one hop from node ``i``, padded with -1. With
     ``sampling_direction="in"`` (GLT in-edge sampling, where edges point from
@@ -208,9 +224,10 @@ def _khop_sequence_layout(
     max_seq_len: int,
     prioritize_hop_order: bool = False,
 ) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
-    """Lays out each anchor's k-hop neighbourhood as a fixed-length token sequence.
+    """Picks the tokens of every anchor's k-hop neighbourhood, with fixed shapes.
 
-    Each sequence is the anchor, then every other node within ``hop_distance``
+    Gathering through the neighbour table, rather than sparse matrix ops, keeps
+    every tensor's shape independent of the data. Each sequence is the anchor, then every other node within ``hop_distance``
     hops in ascending node id, truncated to ``max_seq_len``. The sparse path gets
     the same order from ``coalesce``, so this layout equals
     ``_get_k_hop_neighbors_sparse`` followed by
@@ -277,7 +294,12 @@ def khop_layout(
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
     prioritize_hop_order: bool = False,
 ) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
-    """Builds the neighbour table and the k-hop layout of every anchor.
+    """Builds the k-hop token layout of every anchor; the entry point of this module.
+
+    Builds the neighbour table, checks the candidate budget, then expands and
+    deduplicates each anchor's neighbourhood into a padded
+    ``[num_anchors, max_seq_len]`` layout. Pass ``lengths`` to ``pack_sequences``
+    to drop the padding. A host read of the table width is the only sync here.
 
     Args:
         edge_index: ``[2, num_edges]`` int32 or int64 local node ids in
