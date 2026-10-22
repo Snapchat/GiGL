@@ -118,7 +118,6 @@ def pack_sequences(
     positions beyond that. Checking for it would cost another host read.
 
     Args:
-        lengths: ``[num_sequences]`` long valid length of each sequence.
         max_seq_len: Width of the padded grid.
 
     Returns:
@@ -157,9 +156,6 @@ def _build_neighbor_table(
     (padding) id selects that row, so it yields -1 again.
 
     Args:
-        edge_index: ``[2, num_edges]`` int32 or int64 local node ids in
-            ``[0, num_nodes)``.
-        num_nodes: Number of nodes.
         num_anchors: Number of anchors the layout will be built for.
         hop_distance: Number of hops the layout will expand.
         max_candidates: Maximum of the table cells plus the layout's candidates; see
@@ -225,27 +221,8 @@ def _khop_sequence_layout(
 
     A token's hop is the hop at which it is first reached; the anchor's is 0.
 
-    Memory is ``O(num_anchors * width ** hop_distance)``. The candidates are every
-    walk of up to ``hop_distance`` steps, which a per-row sort then deduplicates.
-
-    Args:
-        neighbor_table: ``[num_nodes + 1, width]`` table from ``_build_neighbor_table``.
-        anchor_indices: ``[num_anchors]`` int32 or int64 local node ids of the
-            anchors.
-        hop_distance: Number of hops to expand.
-        max_seq_len: Tokens per sequence, anchor included.
-        prioritize_hop_order: Order neighbours by hop before node id.
-
-    Returns:
-        - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell is
-          ``(node << hop_bits) | hop`` with the local node id and the first-reach
-          hop (the fewest hops from the anchor to the node, 0 at the anchor).
-          Column 0 is the anchor, followed by its neighbours in the order above.
-          Cells at and after the sequence length are -1.
-        - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
-          anchor included, so at least 1 and at most ``max_seq_len``.
-        - ``hop_bits``: Python int, ``hop_distance.bit_length()``, the bits the
-          hop takes in a cell.
+    Args and returns are as in ``khop_layout``, with the neighbour table from
+    ``_build_neighbor_table`` in place of the edges.
     """
     anchor_indices = anchor_indices.long()
     hop_bits = hop_distance.bit_length()

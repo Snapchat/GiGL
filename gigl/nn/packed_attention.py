@@ -109,12 +109,10 @@ def _varlen_attention(
     and ``value`` through the autograd formula that aten registers for the
     kernel.
 
-    CUDA only. ``head_dim`` must suit the memory-efficient kernel (64 works in
-    fp32, fp16 and bf16). The backward is non-deterministic unless
+    CUDA only; see the module docstring for the head dim and dropout limits. The
+    backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
-    Attention dropout is not supported; the kernel's varlen dropout has not been
-    tested against the padded path.
 
     This calls the private ``aten._efficient_attention_forward`` op because torch
     2.8 has no public attention API that takes ``cu_seqlens``:
@@ -140,16 +138,10 @@ def _varlen_attention(
     and keep this call for fp32.
 
     Args:
-        query: ``[num_query_tokens, num_heads, head_dim]``.
-        key: ``[num_key_tokens, num_heads, head_dim]``.
-        value: ``[num_key_tokens, num_heads, head_dim]``.
-        cu_seqlens_q: ``[num_sequences + 1]`` int32 query offsets.
-        cu_seqlens_k: ``[num_sequences + 1]`` int32 key offsets.
+        cu_seqlens_q: Query sequence offsets.
+        cu_seqlens_k: Key sequence offsets.
         max_seqlen_q: Upper bound on any query sequence length.
         max_seqlen_k: Upper bound on any key sequence length.
-
-    Returns:
-        ``[num_query_tokens, num_heads, head_dim]`` attention output.
     """
     # The backward needs the logsumexp; skip it when nothing will differentiate.
     needs_grad = torch.is_grad_enabled() and any(
@@ -194,10 +186,8 @@ def _padded_packed_attention(
     reference that ``_varlen_attention`` is checked against.
 
     Args:
-        query: ``[num_tokens, num_heads, head_dim]`` packed queries, or
-            ``[num_sequences, num_heads, head_dim]`` when ``query_is_first_token``.
-        key: ``[num_tokens, num_heads, head_dim]`` packed keys.
-        value: ``[num_tokens, num_heads, head_dim]`` packed values.
+        query: Packed queries, or one query per sequence when
+            ``query_is_first_token``.
         packed: Layout from ``pack_sequences``.
         query_is_first_token: ``query`` holds one query per sequence, the
             sequence's first token.
