@@ -204,8 +204,13 @@ def _run_quantized_homogeneous_ablp_loader(
     _: int,
     dataset: DistDataset,
     expected_edge_features: dict[tuple[int, int], torch.Tensor],
+    include_edge_features: bool = True,
 ) -> None:
-    """Assert homogeneous ABLP materializes partial packed features."""
+    """Assert homogeneous ABLP materializes partial packed features.
+
+    With ``include_edge_features=False`` the batches must carry no edge features (and
+    no sampled edge ids) but still carry the node features and labels.
+    """
     create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
@@ -213,6 +218,7 @@ def _run_quantized_homogeneous_ablp_loader(
         input_nodes=torch.tensor([0]),
         batch_size=1,
         pin_memory_device=torch.device("cpu"),
+        include_edge_features=include_edge_features,
     )
 
     expected_features = torch.tensor(
@@ -222,7 +228,13 @@ def _run_quantized_homogeneous_ablp_loader(
     for batch in loader:
         assert isinstance(batch, Data)
         assert_tensor_equality(batch.x, expected_features[batch.node])
-        for local_edge_index, edge_feature in zip(batch.edge_index.T, batch.edge_attr):
+        if not include_edge_features:
+            assert batch.edge_attr.shape == (0, 2), batch.edge_attr.shape
+            assert getattr(batch, "edge", None) is None
+        for local_edge_index, edge_feature in zip(
+            batch.edge_index.T,
+            batch.edge_attr if include_edge_features else [],
+        ):
             source, destination = batch.node[local_edge_index]
             # Outward sampling reverses the batch edge for message passing while
             # preserving the original edge's feature payload.
@@ -777,7 +789,15 @@ class DistABLPLoaderTest(TestCase):
             ),
         )
 
-    def test_homogeneous_ablp_materializes_quantized_features(self) -> None:
+    @parameterized.expand(
+        [
+            param("included", include_edge_features=True),
+            param("excluded", include_edge_features=False),
+        ]
+    )
+    def test_homogeneous_ablp_materializes_quantized_features(
+        self, _, include_edge_features: bool
+    ) -> None:
         """Scalar metadata supports quantized homogeneous ABLP batches."""
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
@@ -872,7 +892,7 @@ class DistABLPLoaderTest(TestCase):
         }
         mp.spawn(
             fn=_run_quantized_homogeneous_ablp_loader,
-            args=(dataset, expected_edge_features),
+            args=(dataset, expected_edge_features, include_edge_features),
         )
 
     @parameterized.expand(

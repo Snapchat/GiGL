@@ -38,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add opt-in sampling and loader statistics: `GIGL_SAMPLING_STATS_EVERY_N_BATCHES=<N>` makes each sampling worker log a
   `GLT_SAMPLING_STATS` line and each loader a `GLT_LOADER_STATS` line every N batches (stage latencies, message size,
   CPU use), plus a final partial-window line at the end of an epoch. Off by default by @kmontemayor2-sc
+- Add `include_edge_features` (default `True`) to `DistNeighborLoader` and `DistABLPLoader`; `False` skips edge-id
+  sampling and edge-feature requests for models that never read `edge_attr`, returning an empty `edge_attr` by
+  @kmontemayor2-sc
 
 ### Changed
 

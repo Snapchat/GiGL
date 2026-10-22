@@ -152,6 +152,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             )
         if (
             self.collect_features
+            and self.with_edge
             and data is not None
             and getattr(data, "edge_quantized_features", None) is not None
         ):
