@@ -29,6 +29,27 @@ class FusedFeatureStore:
     a multiple of the raw dtype's size.
     The padding keeps every row aligned, so the raw columns of a received row can be read as floats without a copy.
 
+    Example:
+        A ``float32`` raw store with 3 columns (12 bytes) and a 2-column ``uint8`` sidecar make 14 bytes, padded to 16.
+        Bytes 0-11 are the raw floats, bytes 12-13 the sidecar and bytes 14-15 zero padding.
+
+        >>> raw = Feature(torch.ones(4, 3), id2index=torch.arange(4), with_gpu=False)
+        >>> packed = Feature(
+        ...     torch.full((4, 2), 7, dtype=torch.uint8),
+        ...     id2index=torch.arange(4),
+        ...     with_gpu=False,
+        ...     dtype=torch.uint8,
+        ... )
+        >>> store = FusedFeatureStore(raw, packed)
+        >>> rows = store.cpu_get(torch.tensor([0, 2]))
+        >>> rows.shape
+        torch.Size([2, 16])
+        >>> rows[0, 12:].tolist()
+        [7, 7, 0, 0]
+        >>> raw_rows, packed_rows = store.split(rows)
+        >>> raw_rows.shape, packed_rows.shape
+        (torch.Size([2, 3]), torch.Size([2, 2]))
+
     Args:
         raw: Raw float feature store with at least one column.
         packed: Packed ``uint8`` sidecar store with the same ids and id mapping as ``raw``.

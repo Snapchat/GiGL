@@ -435,18 +435,20 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             result_map[f"{as_str(input_type)}.nlabels"] = node_labels[
                                 output.node[input_type].to(node_labels.device)
                             ]
-            for ntype, nodes in output.node.items():
-                node_store = _fused_store_for(self.dist_node_fused_feature, ntype)
-                if node_store is None:
-                    continue
-                assert self.dist_node_fused_feature is not None
-                raw_key = f"{as_str(ntype)}.nfeats"
-                futs[raw_key] = wrap_torch_future(
-                    self.dist_node_fused_feature.async_get(nodes.to(torch.long), ntype)
-                )
-                fused_results[raw_key] = (
-                    f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
-                )
+            if self.dist_node_fused_feature is not None:
+                for ntype, nodes in output.node.items():
+                    node_store = _fused_store_for(self.dist_node_fused_feature, ntype)
+                    if node_store is None:
+                        continue
+                    raw_key = f"{as_str(ntype)}.nfeats"
+                    futs[raw_key] = wrap_torch_future(
+                        self.dist_node_fused_feature.async_get(
+                            nodes.to(torch.long), ntype
+                        )
+                    )
+                    fused_results[raw_key] = (
+                        f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}"
+                    )
             if self.dist_node_feature is not None:
                 if self.use_all2all:
                     sorted_ntype = sorted(self.dist_node_feature.local_feature.keys())
