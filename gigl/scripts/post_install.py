@@ -136,7 +136,18 @@ def main():
         )  # fmt: skip
 
     def install_wheel(wheel: Path) -> None:
-        subprocess.run(["uv", "pip", "install", str(wheel)], check=True)
+        # pip is a declared runtime dependency of gigl, so it is present wherever gigl is, which uv is
+        # not (the documented path is `pip install gigl` then `gigl-post-install`). Installing through
+        # sys.executable targets the interpreter running this script. --no-deps keeps pip from resolving
+        # the wheel's torch requirement against PyPI; --force-reinstall makes a cache hit reinstall even
+        # when the same GLT version is already present.
+        subprocess.run(
+            [
+                sys.executable, "-m", "pip", "install",
+                "--force-reinstall", "--no-deps", "--disable-pip-version-check", str(wheel),
+            ],
+            check=True,
+        )  # fmt: skip
 
     def verify() -> None:
         # Applying a patch and SHIPPING it are different guarantees: this proves the installed .so
