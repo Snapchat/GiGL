@@ -20,12 +20,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
-- Fetch a node or edge type's raw float features and its packed quantized features with one request per partition
-  instead of two (`FusedFeatureStore` / `FusedDistFeature`, used by the samplers when a type has both stores), which
-  halves the feature RPCs of datasets that mix raw and quantized columns by @kmontemayor2-sc
+- Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
+  `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
+  used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
+  by @kmontemayor2-sc
 
 ### Changed
 
+- A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
+  only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
+  @kmontemayor2-sc
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
@@ -51,6 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 
+- Remove all-to-all feature collection from the samplers; GiGL never enabled it, and the sampler no longer receives
+  `use_all2all` by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
   dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING
