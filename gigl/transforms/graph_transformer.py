@@ -81,6 +81,7 @@ class SequenceAuxiliaryData(TypedDict):
 
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
+PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"
 
 
 def _validate_reserved_anchor_feature_usage(
@@ -337,6 +338,7 @@ def heterodata_to_graph_transformer_input(
 
     ppr_weight_sequences: Optional[Tensor] = None
     ppr_relation_feature_sequences: Optional[Tensor] = None
+    ppr_expanded_token_mask: Optional[Tensor] = None
     frontier_batch_node_keys: Optional[Tensor] = None
     if sequence_construction_method == "khop":
         homo_edge_index = homo_data.edge_index  # (2, num_edges)
@@ -441,6 +443,56 @@ def heterodata_to_graph_transformer_input(
                 PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
             ),
         )
+        # Drop relation edges whose source token the anchor did not expand.
+        # With include_sampled_edges, a co-seeded ABLP positive enters the
+        # anchor's sequence as a residual top-up node the anchor never expanded;
+        # its own push then supplies edges the anchor's solo sample never would.
+        # The per-edge ppr_is_expanded flag marks which tokens the anchor pushed.
+        ppr_edge_is_expanded_parts = [
+            getattr(data[et], PPR_EXPANDED_FEATURE_NAME, None) for et in ppr_edge_types
+        ]
+        if all(part is not None for part in ppr_edge_is_expanded_parts):
+            ppr_edge_is_expanded = torch.cat(
+                [
+                    part.to(device=device)
+                    for part in ppr_edge_is_expanded_parts
+                    if part is not None
+                ],
+                dim=0,
+            ).to(torch.long)
+            anchor_batch_by_homo_idx = torch.full(
+                (num_nodes,), -1, dtype=torch.long, device=device
+            )
+            anchor_batch_by_homo_idx[anchor_indices] = torch.arange(
+                anchor_indices.size(0), device=device
+            )
+            edge_anchor_batch = anchor_batch_by_homo_idx[ppr_homo_data.edge_index[0]]
+            anchored = edge_anchor_batch >= 0
+            # Membership via searchsorted over sorted (anchor, node) edge keys,
+            # avoiding a dense (batch * num_nodes) scratch tensor.
+            edge_keys = (
+                edge_anchor_batch[anchored] * num_nodes
+                + ppr_homo_data.edge_index[1][anchored]
+            )
+            sorted_edge_keys, edge_sort_perm = torch.sort(edge_keys)
+            sorted_edge_vals = ppr_edge_is_expanded[anchored][edge_sort_perm]
+            ppr_expanded_token_mask = torch.zeros(
+                valid_mask.shape, dtype=torch.long, device=device
+            )
+            token_batch, token_pos = torch.nonzero(valid_mask, as_tuple=True)
+            token_nodes = node_index_sequences[token_batch, token_pos]
+            if sorted_edge_keys.numel() > 0:
+                token_keys = token_batch * num_nodes + token_nodes
+                search = torch.searchsorted(sorted_edge_keys, token_keys).clamp(
+                    max=sorted_edge_keys.numel() - 1
+                )
+                matched = sorted_edge_keys[search] == token_keys
+                token_expanded = torch.zeros_like(token_keys, dtype=torch.long)
+                token_expanded[matched] = sorted_edge_vals[search[matched]]
+                ppr_expanded_token_mask[token_batch, token_pos] = token_expanded
+            if include_anchor_first and max_seq_len > 0:
+                # The anchor pushes itself in every channel, so mark all bits set.
+                ppr_expanded_token_mask[:, 0] = valid_mask[:, 0].to(torch.long) * -1
     else:
         raise ValueError(
             "sequence_construction_method must be one of ['khop', 'ppr'], "
@@ -498,6 +550,8 @@ def heterodata_to_graph_transformer_input(
         node_type_offsets=node_type_offsets,
         num_nodes=num_nodes,
         device=device,
+        expanded_token_mask=ppr_expanded_token_mask,
+        relation_channel_masks=getattr(data, "ppr_relation_channel_masks", None),
         frontier_batch_node_keys=frontier_batch_node_keys,
         sampling_direction=sampling_direction,
     )
@@ -1449,6 +1503,8 @@ def _lookup_pairwise_relation_indices(
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
+    expanded_token_mask: Optional[Tensor] = None,
+    relation_channel_masks: Optional[dict] = None,
     frontier_batch_node_keys: Optional[Tensor] = None,
     sampling_direction: Literal["in", "out"] = "out",
 ) -> Optional[Tensor]:
@@ -1462,6 +1518,14 @@ def _lookup_pairwise_relation_indices(
     node_idx`` keys), an edge is kept only when its expanded endpoint is in
     that anchor's frontier. K-hop sequences pass this so relation edges match
     the anchor's own sample; PPR sequences pass ``None``.
+
+    If ``expanded_token_mask`` is given (a per-token bitmask of the PPR channels
+    that pushed each token's node), an edge is kept only when the anchor expanded
+    its owner -- the query/target position, since GLT reverses sampled edges in
+    collation. For typed PPR, ``relation_channel_masks`` maps an edge type to the
+    channels allowed to fetch it, so the edge is kept only when the owner was
+    pushed in one of those channels. PPR sequences pass these; k-hop passes
+    ``None``.
     """
     if not relation_edge_types:
         return None
@@ -1522,6 +1586,32 @@ def _lookup_pairwise_relation_indices(
             relation_key_positions = relation_key_positions[in_frontier]
         if relation_batch_indices.numel() == 0:
             continue
+
+        relation_channel_mask = (
+            relation_channel_masks.get(edge_type.tuple_repr())
+            if relation_channel_masks is not None
+            else None
+        )
+        if expanded_token_mask is not None:
+            # Keep a relation only when the anchor's own push expanded the OWNER --
+            # the fetched node, which ppr_is_expanded describes. GLT reverses sampled
+            # edges in collation, so the owner is the target (query) position, not
+            # the source/key. For typed PPR the mask is a per-node channel bitmask:
+            # keep the edge only if the anchor pushed the owner in a channel whose
+            # allowlist contains this edge type (relation_channel_mask). Untyped PPR
+            # has no channel mask, so any nonzero (pushed) owner passes.
+            owner_mask = expanded_token_mask[
+                relation_batch_indices, relation_query_positions
+            ]
+            if relation_channel_mask is None:
+                keep = owner_mask != 0
+            else:
+                keep = (owner_mask & relation_channel_mask) != 0
+            relation_batch_indices = relation_batch_indices[keep]
+            relation_query_positions = relation_query_positions[keep]
+            relation_key_positions = relation_key_positions[keep]
+            if relation_batch_indices.numel() == 0:
+                continue
 
         relation_indices = torch.stack(
             [
