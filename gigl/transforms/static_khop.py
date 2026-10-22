@@ -216,10 +216,14 @@ def _khop_sequence_layout(
         prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
-        - ``[num_anchors, max_seq_len]`` long node ids, -1 at padding.
-        - ``[num_anchors, max_seq_len]`` long first-reach hops, 0 at the anchor
-          and at padding.
-        - ``[num_anchors]`` long sequence lengths (at least 1).
+        - ``node_index``: ``[num_anchors, max_seq_len]`` long local node ids.
+          Column 0 is the anchor, followed by its neighbours in the order above.
+          Cells at and after the sequence length are -1.
+        - ``hop_index``: ``[num_anchors, max_seq_len]`` long first-reach hops
+          (the fewest hops from the anchor to the node). 0 at the anchor and at
+          padding.
+        - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
+          anchor included, so at least 1 and at most ``max_seq_len``.
     """
     anchor_indices = anchor_indices.long()
     dump_row = neighbor_table.size(0) - 1
@@ -320,7 +324,16 @@ def khop_layout(
         prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
-        The outputs of ``_khop_sequence_layout``.
+        - ``node_index``: ``[num_anchors, max_seq_len]`` long local node ids.
+          Column 0 is the anchor, followed by its neighbours within
+          ``hop_distance`` hops, in ascending node id (or by hop, then node id,
+          with ``prioritize_hop_order``). Cells at and after the sequence length
+          are -1.
+        - ``hop_index``: ``[num_anchors, max_seq_len]`` long first-reach hops
+          (the fewest hops from the anchor to the node). 0 at the anchor and at
+          padding.
+        - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
+          anchor included, so at least 1 and at most ``max_seq_len``.
 
     Raises:
         KhopLayoutTooLargeError: If the candidate set exceeds ``max_candidates``.

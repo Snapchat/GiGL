@@ -1624,12 +1624,11 @@ class GraphTransformerEncoder(nn.Module):
         embedding_dict = self._anchor_based_input_embedding_dict
         if not self._supports_packed_backend or embedding_dict is None:
             return
-        hop_embedding = (
-            embedding_dict[HOP_DISTANCE_FEATURE_NAME]
-            if (HOP_DISTANCE_FEATURE_NAME in embedding_dict)
-            else None
+        if HOP_DISTANCE_FEATURE_NAME not in embedding_dict:
+            return
+        num_embeddings = getattr(
+            embedding_dict[HOP_DISTANCE_FEATURE_NAME], "num_embeddings", None
         )
-        num_embeddings = getattr(hop_embedding, "num_embeddings", None)
         if num_embeddings is not None and num_embeddings <= self._hop_distance:
             raise ValueError(
                 f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
@@ -1780,11 +1779,10 @@ class GraphTransformerEncoder(nn.Module):
             num_anchor_nodes = anchor_node_ids.size(0)
         else:
             anchor_store = data[anchor_node_type]
-            num_anchor_nodes = (
-                anchor_store.batch_size
-                if hasattr(anchor_store, "batch_size")
-                else projected_x_dict[anchor_node_type].size(0)
-            )
+            if hasattr(anchor_store, "batch_size"):
+                num_anchor_nodes = anchor_store.batch_size
+            else:
+                num_anchor_nodes = projected_x_dict[anchor_node_type].size(0)
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
             # Assign the packed result to a local before projecting. Do not write
@@ -1936,6 +1934,79 @@ class GraphTransformerEncoder(nn.Module):
     ) -> Optional[Tensor]:
         """Encodes the anchors on packed tokens.
 
+        ``khop_layout`` (``gigl.transforms.static_khop``) decides which nodes
+        each anchor sees. ``pack_sequences`` turns that padded grid into one flat
+        token buffer. Packed attention (``gigl.nn.packed_attention``) then keeps
+        every anchor's tokens apart using only ``cu_seqlens``.
+
+        Worked example, run on CPU. A graph of 6 nodes with edges
+        ``0->1, 0->2, 1->3, 2->3, 3->4, 4->5``, sampling direction ``"out"``,
+        anchors ``[0, 3]``, ``hop_distance=2``, ``max_seq_len=4``.
+
+        The neighbour table has one row per node (row ``i`` holds the nodes one hop
+        from ``i``) and an extra all ``-1`` row used for padding lookups::
+
+            row 0: [ 1,  2]    row 3: [ 4, -1]    row 6: [-1, -1]
+            row 1: [ 3, -1]    row 4: [ 5, -1]
+            row 2: [ 3, -1]    row 5: [-1, -1]
+
+        Each anchor's layout is the anchor, then its neighbours in ascending node
+        id with each node's first-reach hop, ``-1`` padding, and the length::
+
+            >>> from gigl.transforms.static_khop import khop_layout, pack_sequences
+            >>> edge_index = torch.tensor([[0, 0, 1, 2, 3, 4], [1, 2, 3, 3, 4, 5]])
+            >>> node_index, hop_index, lengths = khop_layout(
+            ...     edge_index,
+            ...     num_nodes=6,
+            ...     anchor_indices=torch.tensor([0, 3]),
+            ...     hop_distance=2,
+            ...     max_seq_len=4,
+            ... )
+            >>> node_index.tolist()
+            [[0, 1, 2, 3], [3, 4, 5, -1]]
+            >>> hop_index.tolist()
+            [[0, 1, 1, 2], [0, 1, 2, 0]]
+            >>> lengths.tolist()
+            [4, 3]
+
+        Anchor 0 reaches nodes 1 and 2 in one hop and node 3 in two. Anchor 3
+        reaches node 4 in one hop and node 5 in two, so its last slot is padding
+        (its hop is ``0`` there, which is never read).
+
+        ``pack_sequences`` drops the padding. ``flat_index`` selects the valid
+        cells of the flattened grid, and ``cu_seqlens`` marks where each sequence
+        starts::
+
+            >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
+            >>> flat_index.tolist()
+            [0, 1, 2, 3, 4, 5, 6]
+            >>> packed.cu_seqlens.tolist(), packed.max_seq_len
+            ([0, 4, 7], 4)
+            >>> node_index.flatten()[flat_index].tolist()
+            [0, 1, 2, 3, 3, 4, 5]
+            >>> hop_index.flatten()[flat_index].tolist()
+            [0, 1, 1, 2, 0, 1, 2]
+
+        With 8 grid cells and 7 valid ones, the cell ``[1, 3]`` (index 7) is the
+        only one dropped. In a real batch most of the grid is padding.
+
+        The token buffer ``x = node_features[token_node]`` has shape
+        ``[7, hidden]``. Rows 0 to 3 are anchor 0's tokens and rows 4 to 6 are
+        anchor 3's. The hop embedding is added per token from ``token_hop``.
+
+        Every layer then runs on ``[num_tokens, hidden]``. The norm, the q/k/v
+        projections, the output projection and the FFN act on each row alone, so
+        they never see sequence boundaries. Attention gets
+        ``cu_seqlens=[0, 4, 7]`` and calls the varlen kernel, so rows 0 to 3 only
+        attend to each other and rows 4 to 6 only to each other.
+
+        The first token of each sequence is the anchor, at row
+        ``cu_seqlens[:-1]``, here rows ``[0, 4]``. The last layer needs only those
+        rows as queries. It projects just those two rows and passes
+        ``cu_seqlens_q=arange(num_sequences + 1)`` (``[0, 1, 2]``) with one query
+        per sequence, while keys and values still cover all 7 tokens. Its output
+        is ``[num_anchors, hidden]`` and goes straight to the final norm.
+
         Returns:
             ``[num_anchor_nodes, hid_dim]`` anchor states after the final norm, or
             None if the batch's k-hop candidate set is too large to lay out. The
@@ -1979,11 +2050,10 @@ class GraphTransformerEncoder(nn.Module):
             ):
                 x = x + embedding_dict[HOP_DISTANCE_FEATURE_NAME](token_hop).to(x.dtype)
             else:
-                if self._token_input_projection is None:
-                    raise ValueError("Token-input projection is not initialized.")
-                x = x + self._token_input_projection(
-                    token_hop.unsqueeze(-1).to(x.dtype)
-                )
+                # A hop distance without an embedding is a continuous input, so
+                # the constructor created the projection.
+                token_projection = cast(nn.Module, self._token_input_projection)
+                x = x + token_projection(token_hop.unsqueeze(-1).to(x.dtype))
         for layer_index, encoder_layer in enumerate(self._encoder_layers):
             x = cast(GraphTransformerEncoderLayer, encoder_layer).forward_packed(
                 x,
