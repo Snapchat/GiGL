@@ -124,7 +124,8 @@ def _lookup_on_partition(
             matches &= fused_raw.dtype == torch.float32
         if t in packed_stores:
             packed = separate_packed.async_get(ids, t).wait()
-            matches &= fused_packed is not None and fused_packed.is_contiguous()
+            assert fused_packed is not None
+            matches &= fused_packed.is_contiguous()
             matches &= torch.equal(packed, expected_packed[ids])
             matches &= torch.equal(fused_packed, expected_packed[ids])
         else:
@@ -165,6 +166,7 @@ class FusedFeatureStoreTest(TestCase):
         served = store.cpu_get(ids)
         split_raw, split_packed = store.split(served)
 
+        assert local_packed is not None
         self.assertTrue(torch.equal(local_raw, raw[ids]))
         self.assertTrue(torch.equal(local_packed, packed[ids]))
         self.assertEqual(served.dtype, torch.uint8)
@@ -214,6 +216,7 @@ class FusedFeatureStoreTest(TestCase):
                     torch.tensor([2]),
                     torch.empty(0, dtype=torch.long),
                 ):
+                    assert store._raw is not None and store._packed is not None
                     expected_raw = store._raw.cpu_get(ids)
                     expected_packed = store._packed.cpu_get(ids)
                     served = store.cpu_get(ids)
@@ -259,6 +262,7 @@ class FusedFeatureStoreTest(TestCase):
 
         self.assertEqual(local_raw.shape, (3, 0))
         self.assertEqual(local_raw.dtype, torch.float32)
+        assert local_packed is not None
         self.assertTrue(torch.equal(local_packed, packed[ids]))
         # Five sidecar bytes padded to a multiple of the float32 size.
         self.assertEqual(served.shape, (3, 8))
