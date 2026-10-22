@@ -1966,27 +1966,29 @@ class GraphTransformerEncoder(nn.Module):
             row 2: [ 3, -1]    row 5: [-1, -1]
 
         Each anchor's layout is the anchor, then its neighbours in ascending node
-        id with each node's first-reach hop, ``-1`` padding, and the length::
+        id, ``-1`` padding, and the length. A cell holds the node id and the node's
+        first-reach hop as ``(node << hop_bits) | hop``, and ``hop_bits`` is 2
+        here::
 
             >>> from gigl.transforms.static_khop import khop_layout, pack_sequences
             >>> edge_index = torch.tensor([[0, 0, 1, 2, 3, 4], [1, 2, 3, 3, 4, 5]])
-            >>> node_index, hop_index, lengths = khop_layout(
+            >>> layout, lengths, hop_bits = khop_layout(
             ...     edge_index,
             ...     num_nodes=6,
             ...     anchor_indices=torch.tensor([0, 3]),
             ...     hop_distance=2,
             ...     max_seq_len=4,
             ... )
-            >>> node_index.tolist()
-            [[0, 1, 2, 3], [3, 4, 5, -1]]
-            >>> hop_index.tolist()
-            [[0, 1, 1, 2], [0, 1, 2, 0]]
+            >>> hop_bits
+            2
+            >>> layout.tolist()
+            [[0, 5, 9, 14], [12, 17, 22, -1]]
             >>> lengths.tolist()
             [4, 3]
 
-        Anchor 0 reaches nodes 1 and 2 in one hop and node 3 in two. Anchor 3
-        reaches node 4 in one hop and node 5 in two, so its last slot is padding
-        (its hop is ``0`` there, which is never read).
+        Anchor 0's cells decode to node 0 (hop 0), nodes 1 and 2 (hop 1) and node 3
+        (hop 2). Anchor 3 reaches node 4 in one hop and node 5 in two, so its last
+        cell is padding.
 
         ``pack_sequences`` drops the padding. ``flat_index`` selects the valid
         cells of the flattened grid, and ``cu_seqlens`` marks where each sequence
@@ -1997,17 +1999,18 @@ class GraphTransformerEncoder(nn.Module):
             [0, 1, 2, 3, 4, 5, 6]
             >>> packed.cu_seqlens.tolist(), packed.max_seq_len
             ([0, 4, 7], 4)
-            >>> node_index.flatten()[flat_index].tolist()
+            >>> token_cell = layout.flatten()[flat_index]
+            >>> (token_cell >> hop_bits).tolist()
             [0, 1, 2, 3, 3, 4, 5]
-            >>> hop_index.flatten()[flat_index].tolist()
+            >>> (token_cell & ((1 << hop_bits) - 1)).tolist()
             [0, 1, 1, 2, 0, 1, 2]
 
         With 8 grid cells and 7 valid ones, the cell ``[1, 3]`` (index 7) is the
         only one dropped. In a real batch most of the grid is padding.
 
-        The token buffer ``x = node_features[token_node]`` has shape
+        The token buffer ``x = node_features[token_cell >> hop_bits]`` has shape
         ``[7, hidden]``. Rows 0 to 3 are anchor 0's tokens and rows 4 to 6 are
-        anchor 3's. The hop embedding is added per token from ``token_hop``.
+        anchor 3's. The hop embedding is added per token from ``token_cell & ((1 << hop_bits) - 1)``.
 
         Every layer then runs on ``[num_tokens, hidden]``. The norm, the q/k/v
         projections, the output projection and the FFN act on each row alone, so
@@ -2039,7 +2042,7 @@ class GraphTransformerEncoder(nn.Module):
         else:
             anchor_local_indices = torch.arange(num_anchor_nodes, device=device)
         try:
-            node_index, hop_index, lengths = khop_layout(
+            layout, lengths, hop_bits = khop_layout(
                 edge_index,
                 num_nodes=node_features.size(0),
                 anchor_indices=node_type_offsets[anchor_node_type]
@@ -2053,11 +2056,10 @@ class GraphTransformerEncoder(nn.Module):
             self._record_packed_fallback(error)
             return None
         flat_index, packed = pack_sequences(lengths, self._max_seq_len)
-        token_node = node_index.flatten()[flat_index]
-        token_hop = hop_index.flatten()[flat_index]
-
-        x = node_features[token_node]
+        token_cell = layout.flatten()[flat_index]
+        x = node_features[token_cell >> hop_bits]
         if HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names:
+            token_hop = token_cell & ((1 << hop_bits) - 1)
             embedding_dict = self._anchor_based_input_embedding_dict
             if (
                 embedding_dict is not None

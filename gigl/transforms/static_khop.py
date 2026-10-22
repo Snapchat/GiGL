@@ -25,7 +25,7 @@ How a layout is built::
     with ``prioritize_hop_order``), cut at max_seq_len
         |
         v
-    node_index, hop_index [num_anchors, max_seq_len] (-1 / 0 at padding), lengths
+    layout [num_anchors, max_seq_len] of (node << hop_bits) | hop (-1 at padding), lengths
         |
         |  pack_sequences(lengths, max_seq_len)       (one host read: total tokens)
         v
@@ -44,7 +44,7 @@ Host reads (each is a GPU sync):
 
 Example:
     >>> edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
-    >>> node_index, hop_index, lengths = khop_layout(
+    >>> layout, lengths, hop_bits = khop_layout(
     ...     edge_index,
     ...     num_nodes=5,
     ...     anchor_indices=torch.arange(2),
@@ -52,14 +52,16 @@ Example:
     ...     max_seq_len=4,
     ...     sampling_direction="out",
     ... )
-    >>> node_index.tolist()
+    >>> hop_bits
+    2
+    >>> (layout >> hop_bits).tolist()
     [[0, 1, 2, -1], [1, 2, 3, -1]]
-    >>> hop_index.tolist()
-    [[0, 1, 2, 0], [0, 1, 2, 0]]
+    >>> (layout & 3).tolist()
+    [[0, 1, 2, 3], [0, 1, 2, 3]]
     >>> lengths.tolist()
     [3, 3]
     >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
-    >>> node_index.flatten()[flat_index].tolist()
+    >>> (layout.flatten()[flat_index] >> hop_bits).tolist()
     [0, 1, 2, 1, 2, 3]
     >>> packed.cu_seqlens.tolist()
     [0, 3, 6]
@@ -68,12 +70,14 @@ Example:
 from typing import Literal, NamedTuple
 
 import torch
+import torch.nn.functional as F
 from jaxtyping import Int, Int32, Int64
 from torch import Tensor
 
-# Maximum number of candidate cells, ``num_anchors * (1 + width + ... + width **
-# hop_distance)``, that ``khop_layout`` builds. The layout keeps about ten int64
-# tensors of this size alive at once, so the limit is about 2.5 GiB. The width is
+# Maximum number of int64 cells ``khop_layout`` builds: the candidates,
+# ``num_anchors * (1 + width + ... + width ** hop_distance)``, plus the neighbour
+# table, ``(num_nodes + 1) * width``. The layout keeps about ten int64 tensors of
+# the candidate size alive at once, so the limit is about 2.5 GiB. The width is
 # the largest degree in the whole batch, so one hub node can push every anchor
 # over the limit and send the batch to the padded path.
 MAX_LAYOUT_CANDIDATES = 2**25
@@ -132,6 +136,9 @@ def pack_sequences(
 def _build_neighbor_table(
     edge_index: Int[Tensor, "2 num_edges"],
     num_nodes: int,
+    num_anchors: int,
+    hop_distance: int,
+    max_candidates: int,
     sampling_direction: Literal["in", "out"] = "out",
 ) -> Int64[Tensor, "num_nodes_plus_one width"]:
     """Builds a padded adjacency table for k-hop reachability.
@@ -142,19 +149,28 @@ def _build_neighbor_table(
     ``heterodata_to_graph_transformer_input``.
 
     The table is as wide as the largest row (at least 1), which costs one host
-    read. Duplicate edges take one slot each.
+    read. The layout's size is checked right after that read and before the table
+    is allocated, because one hub node makes the table itself large. Duplicate
+    edges take one slot each.
 
     The table has an extra all -1 row at index ``num_nodes``. Looking up a -1
-    (padding) id is redirected to that row, so it yields -1 again.
+    (padding) id selects that row, so it yields -1 again.
 
     Args:
         edge_index: ``[2, num_edges]`` int32 or int64 local node ids in
             ``[0, num_nodes)``.
         num_nodes: Number of nodes.
+        num_anchors: Number of anchors the layout will be built for.
+        hop_distance: Number of hops the layout will expand.
+        max_candidates: Maximum of the table cells plus the layout's candidates; see
+            ``MAX_LAYOUT_CANDIDATES``.
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
 
     Returns:
         ``[num_nodes + 1, width]`` long neighbour table.
+
+    Raises:
+        KhopLayoutTooLargeError: If the table cells plus candidates exceed ``max_candidates``.
     """
     if sampling_direction == "in":
         source, target = edge_index[1], edge_index[0]
@@ -173,6 +189,15 @@ def _build_neighbor_table(
     degree = torch.zeros(num_nodes + 1, dtype=torch.long, device=device)
     degree.scatter_add_(0, source, torch.ones_like(source))
     width = max(int(degree.max()), 1)
+    num_candidates = num_anchors * sum(width**hop for hop in range(hop_distance + 1))
+    num_cells = num_candidates + (num_nodes + 1) * width
+    if num_cells > max_candidates:
+        raise KhopLayoutTooLargeError(
+            f"The k-hop layout needs {num_candidates} candidates for {num_anchors} "
+            f"anchors at width {width} and {hop_distance} hops, plus a "
+            f"{num_nodes + 1} x {width} neighbour table, more than the maximum of "
+            f"{max_candidates}."
+        )
     group_starts = torch.cumsum(degree, 0) - degree
     slot = torch.arange(source.numel(), device=device) - group_starts[sorted_source]
     table = torch.full((num_nodes + 1, width), -1, dtype=torch.long, device=device)
@@ -186,11 +211,7 @@ def _khop_sequence_layout(
     hop_distance: int,
     max_seq_len: int,
     prioritize_hop_order: bool = False,
-) -> tuple[
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors"],
-]:
+) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
     """Lays out each anchor's k-hop neighbourhood as a fixed-length token sequence.
 
     Each sequence is the anchor, then every other node within ``hop_distance``
@@ -216,82 +237,57 @@ def _khop_sequence_layout(
         prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
-        - ``node_index``: ``[num_anchors, max_seq_len]`` long local node ids.
+        - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell is
+          ``(node << hop_bits) | hop`` with the local node id and the first-reach
+          hop (the fewest hops from the anchor to the node, 0 at the anchor).
           Column 0 is the anchor, followed by its neighbours in the order above.
           Cells at and after the sequence length are -1.
-        - ``hop_index``: ``[num_anchors, max_seq_len]`` long first-reach hops
-          (the fewest hops from the anchor to the node). 0 at the anchor and at
-          padding.
         - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
           anchor included, so at least 1 and at most ``max_seq_len``.
+        - ``hop_bits``: Python int, ``hop_distance.bit_length()``, the bits the
+          hop takes in a cell.
     """
     anchor_indices = anchor_indices.long()
-    dump_row = neighbor_table.size(0) - 1
-    num_anchors = anchor_indices.numel()
-    device = anchor_indices.device
-
-    frontier = anchor_indices.unsqueeze(1)
-    candidate_parts = [frontier]
-    hop_parts = [torch.zeros_like(frontier)]
-    for hop in range(1, hop_distance + 1):
-        frontier = neighbor_table[torch.where(frontier >= 0, frontier, dump_row)]
-        frontier = frontier.flatten(1)
-        candidate_parts.append(frontier)
-        hop_parts.append(torch.full_like(frontier, hop))
-    candidates = torch.cat(candidate_parts, dim=1)
-    candidate_hops = torch.cat(hop_parts, dim=1)
-
-    # Sort on ``node * (hop_distance + 1) + hop``. This groups each node's copies
-    # with the smallest hop first, so the first copy carries the first-reach hop.
-    # Padding gets the largest key and sorts last.
-    hop_radix = hop_distance + 1
+    hop_bits = hop_distance.bit_length()
     padding_key = torch.iinfo(torch.long).max
-    keys = torch.where(
-        candidates >= 0, candidates * hop_radix + candidate_hops, padding_key
-    )
-    keys, _ = torch.sort(keys, dim=1)
-    nodes = torch.where(keys == padding_key, -1, keys // hop_radix)
-    hops = keys % hop_radix
-    is_first_copy = torch.cat(
-        [
-            torch.ones_like(nodes[:, :1], dtype=torch.bool),
-            nodes[:, 1:] != nodes[:, :-1],
-        ],
-        dim=1,
-    )
-    keep = is_first_copy & (nodes >= 0) & (nodes != anchor_indices.unsqueeze(1))
+
+    # A candidate's sort key is ``(node << hop_bits) | hop``. It groups each node's
+    # copies with the smallest hop first, so the first copy carries the
+    # first-reach hop. Padding gets the largest key and sorts last.
+    frontier = anchor_indices.unsqueeze(1)
+    key_parts = [frontier << hop_bits]
+    for hop in range(1, hop_distance + 1):
+        # A -1 id selects the all -1 last row of the table.
+        frontier = neighbor_table[frontier].flatten(1)
+        key_parts.append(
+            torch.where(frontier >= 0, (frontier << hop_bits) | hop, padding_key)
+        )
+    keys, _ = torch.sort(torch.cat(key_parts, dim=1), dim=1)
+    nodes = keys >> hop_bits
+    hops = keys & ((1 << hop_bits) - 1)
+    keep = (keys != padding_key) & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
     if prioritize_hop_order:
-        # Re-sort the kept neighbours by (hop, node id) so truncation below drops
+        # Re-sort the kept candidates by (hop, node id) so truncation below drops
         # the farthest hops first.
         node_radix = neighbor_table.size(0)
-        order_keys = torch.where(keep, hops * node_radix + nodes, padding_key)
-        order_keys, _ = torch.sort(order_keys, dim=1)
+        order_keys, _ = torch.sort(
+            torch.where(keep, hops * node_radix + nodes, padding_key), dim=1
+        )
         keep = order_keys != padding_key
-        nodes = torch.where(keep, order_keys % node_radix, -1)
-        hops = torch.where(keep, order_keys // node_radix, 0)
-    # Position 0 belongs to the anchor, so neighbours are numbered from 1.
-    positions = torch.cumsum(keep.long(), dim=1)
+        nodes = order_keys % node_radix
+        keys = (nodes << hop_bits) | (order_keys // node_radix)
+    # The anchor goes to column 0 below; the other kept candidates are numbered
+    # from 1 and cut at ``max_seq_len``.
+    keep = keep & (nodes != anchor_indices.unsqueeze(1))
+    positions = torch.cumsum(keep, dim=1)
     keep = keep & (positions < max_seq_len)
-    # Dropped candidates are scattered into a spare last column, which is cut off
-    # below.
-    positions = torch.where(keep, positions, max_seq_len)
-
-    node_index = torch.full(
-        (num_anchors, max_seq_len + 1), -1, dtype=torch.long, device=device
+    # Dropped candidates scatter into column 0, which the anchor overwrites.
+    layout = torch.full(
+        (anchor_indices.numel(), max_seq_len), -1, dtype=torch.long, device=keys.device
     )
-    node_index.scatter_(1, positions, torch.where(keep, nodes, -1))
-    hop_index = torch.zeros(
-        (num_anchors, max_seq_len + 1), dtype=torch.long, device=device
-    )
-    hop_index.scatter_(1, positions, torch.where(keep, hops, 0))
-    node_index = torch.cat(
-        [anchor_indices.unsqueeze(1), node_index[:, 1:max_seq_len]], dim=1
-    )
-    hop_index = torch.cat(
-        [torch.zeros_like(hop_index[:, :1]), hop_index[:, 1:max_seq_len]], dim=1
-    )
-    lengths = 1 + keep.sum(dim=1)
-    return node_index, hop_index, lengths
+    layout.scatter_(1, torch.where(keep, positions, 0), keys)
+    layout[:, 0] = anchor_indices << hop_bits
+    return layout, 1 + keep.sum(dim=1), hop_bits
 
 
 def khop_layout(
@@ -303,11 +299,7 @@ def khop_layout(
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
     prioritize_hop_order: bool = False,
-) -> tuple[
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors"],
-]:
+) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
     """Builds the neighbour table and the k-hop layout of every anchor.
 
     Args:
@@ -319,36 +311,34 @@ def khop_layout(
         hop_distance: Number of hops to expand.
         max_seq_len: Tokens per sequence, anchor included.
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
-        max_candidates: Maximum number of candidates; see
+        max_candidates: Maximum number of candidates plus neighbour-table cells; see
             ``MAX_LAYOUT_CANDIDATES``.
         prioritize_hop_order: Order neighbours by hop before node id.
 
     Returns:
-        - ``node_index``: ``[num_anchors, max_seq_len]`` long local node ids.
-          Column 0 is the anchor, followed by its neighbours within
-          ``hop_distance`` hops, in ascending node id (or by hop, then node id,
-          with ``prioritize_hop_order``). Cells at and after the sequence length
-          are -1.
-        - ``hop_index``: ``[num_anchors, max_seq_len]`` long first-reach hops
-          (the fewest hops from the anchor to the node). 0 at the anchor and at
-          padding.
+        - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell packs
+          a token's local node id and first-reach hop as
+          ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
+          ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
+          followed by its neighbours within ``hop_distance`` hops, in ascending
+          node id (or by hop, then node id, with ``prioritize_hop_order``). The
+          hop is the fewest hops from the anchor to the node. Cells at and after
+          the sequence length are -1, so only decode the valid ones.
         - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
           anchor included, so at least 1 and at most ``max_seq_len``.
+        - ``hop_bits``: Python int, ``hop_distance.bit_length()``.
 
     Raises:
-        KhopLayoutTooLargeError: If the candidate set exceeds ``max_candidates``.
+        KhopLayoutTooLargeError: If the table cells plus candidates exceed ``max_candidates``.
     """
-    neighbor_table = _build_neighbor_table(edge_index, num_nodes, sampling_direction)
-    width = neighbor_table.size(1)
-    num_candidates = anchor_indices.numel() * sum(
-        width**hop for hop in range(hop_distance + 1)
+    neighbor_table = _build_neighbor_table(
+        edge_index,
+        num_nodes,
+        anchor_indices.numel(),
+        hop_distance,
+        max_candidates,
+        sampling_direction,
     )
-    if num_candidates > max_candidates:
-        raise KhopLayoutTooLargeError(
-            f"The k-hop layout needs {num_candidates} candidates for "
-            f"{anchor_indices.numel()} anchors at width {width} and "
-            f"{hop_distance} hops, more than the maximum of {max_candidates}."
-        )
     return _khop_sequence_layout(
         neighbor_table,
         anchor_indices,
