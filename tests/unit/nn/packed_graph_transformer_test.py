@@ -98,6 +98,21 @@ def _encoder_kwargs(hetero: bool = False, **overrides: object) -> dict:
     return kwargs
 
 
+def _neighbor_readout_kwargs(
+    hop_distance: int = 2, hid_dim: int = 16, **overrides: Any
+) -> dict:
+    """Encoder kwargs for the default ``anchor_neighbor_attention`` readout."""
+    return _encoder_kwargs(
+        readout_mode="anchor_neighbor_attention",
+        hop_distance=hop_distance,
+        hid_dim=hid_dim,
+        anchor_based_input_embedding_dict=nn.ModuleDict(
+            {_HOP: nn.Embedding(hop_distance + 1, hid_dim)}
+        ),
+        **overrides,
+    )
+
+
 def _materialized_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEncoder:
     """An eval-mode encoder with its lazy modules materialized on ``data``."""
     encoder = GraphTransformerEncoder(**kwargs).eval()
@@ -323,6 +338,7 @@ class PackedPathTest(TestCase):
             param(
                 "neighbor_readout",
                 readout_mode="anchor_neighbor_attention",
+                supported=True,
             ),
             param("prioritize_hop_order", prioritize_hop_order=True, supported=True),
             param("relation_message", relation_message_mode="edge_type_linear"),
@@ -510,6 +526,113 @@ class PackedPathTest(TestCase):
         self.assertEqual(encoder._packed_fallback_count, 1)
         # The fallback batch may add graphs; batches after it reuse them.
         self.assertEqual(graph_counts[5:], [graph_counts[5]] * 3, graph_counts)
+
+
+class PackedNeighborReadoutTest(TestCase):
+    """The packed ``anchor_neighbor_attention`` readout matches the padded one."""
+
+    @parameterized.expand(
+        [
+            param("one_hop", hop_distance=1),
+            param("two_hops", hop_distance=2),
+            param("three_hops", hop_distance=3),
+            param("out_direction", sampling_direction="out"),
+            param("three_hops_out_direction", hop_distance=3, sampling_direction="out"),
+            param("hop_order", prioritize_hop_order=True, max_seq_len=10),
+            param(
+                "three_hops_hop_order_out_direction",
+                hop_distance=3,
+                prioritize_hop_order=True,
+                max_seq_len=10,
+                sampling_direction="out",
+            ),
+            param("truncated", max_seq_len=6),
+            param("no_layers", num_layers=0),
+        ]
+    )
+    def test_outputs_and_gradients_match_padded_path(
+        self, _: str, hop_distance: int = 2, **overrides: Any
+    ) -> None:
+        kwargs = _neighbor_readout_kwargs(
+            hop_distance=hop_distance, dropout_rate=0.0, **overrides
+        )
+        direction = cast(Literal["in", "out"], kwargs["sampling_direction"])
+        for seed in range(3):
+            data = _random_batch(seed, direction=direction, h_max=hop_distance)
+            encoder = _materialized_encoder(data, kwargs)
+            with self.subTest(seed=seed):
+                with torch.no_grad():
+                    torch.testing.assert_close(
+                        _run_packed(encoder, data),
+                        encoder(data, anchor_node_type=_USER),
+                        rtol=0,
+                        atol=1e-6,
+                    )
+                encoder.train()
+                padded = _gradients(
+                    lambda: encoder(data, anchor_node_type=_USER), encoder
+                )
+                packed = _gradients(lambda: _run_packed(encoder, data), encoder)
+                encoder.eval()
+                self.assertIn("_readout_attention.weight", packed[1])
+                _assert_training_gradients_match(self, padded, packed, atol=1e-5)
+
+    def test_matches_padded_path_with_explicit_anchors(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _neighbor_readout_kwargs())
+        anchor_node_ids = torch.tensor([7, 3, 3, 40, 0])
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder(data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_anchors_without_neighbours_match_padded_path(self) -> None:
+        # Nodes 3 and 4 have no edges, so their sequences hold only the anchor.
+        data = HeteroData()
+        data[_USER].x = torch.randn(6, 8)
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.tensor([[1, 2, 2], [0, 0, 1]])
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        encoder = _materialized_encoder(data, _neighbor_readout_kwargs())
+        anchor_node_ids = torch.tensor([0, 3, 1, 4])
+        with torch.no_grad():
+            actual = _run_packed(encoder, data, anchor_node_ids=anchor_node_ids)
+            expected = encoder(
+                data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+            )
+        self.assertTrue(actual.isfinite().all())
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+
+    def test_edgeless_batch_matches_padded_path(self) -> None:
+        data = HeteroData()
+        data[_USER].x = torch.randn(6, 8)
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.empty((2, 0), dtype=torch.long)
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        encoder = _materialized_encoder(data, _neighbor_readout_kwargs())
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_whole_encoder_compile_does_not_recompile_across_batches(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        encoder = _materialized_encoder(_random_batch(0), _neighbor_readout_kwargs())
+        graph_counts = []
+        with mock.patch.object(encoder, "_use_packed_backend", return_value=True):
+            compiled = torch.compile(encoder, backend="eager")
+            for seed in range(5):
+                with torch.no_grad():
+                    compiled(_random_batch(seed), anchor_node_type=_USER)
+                graph_counts.append(
+                    torch._dynamo.utils.counters["stats"]["unique_graphs"]
+                )
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
@@ -807,6 +930,79 @@ class PackedPathCudaTest(TestCase):
                     rtol=0,
                     atol=1e-4,
                 )
+
+    def test_cuda_neighbor_readout_gradients_match_cpu(self) -> None:
+        data = _random_batch(0)
+        cuda_data = _random_batch(0).to("cuda")
+        kwargs = _neighbor_readout_kwargs(
+            hid_dim=128,
+            dropout_rate=0.0,
+        )
+        cpu_encoder = _materialized_encoder(data, kwargs).train()
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
+        cuda_gradients = _gradients(
+            lambda: cuda_encoder(cuda_data, anchor_node_type=_USER), cuda_encoder
+        )
+        self.assertIn("_readout_attention.weight", cuda_gradients[1])
+        _assert_training_gradients_match(
+            self,
+            _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
+            cuda_gradients,
+            atol=1e-4,
+        )
+
+    def test_cuda_neighbor_readout_forward_matches_cpu_with_two_host_syncs(
+        self,
+    ) -> None:
+        device = torch.device("cuda")
+        kwargs = _neighbor_readout_kwargs(
+            hid_dim=128,
+        )
+        cpu_encoder = _materialized_encoder(_random_batch(0), kwargs)
+        cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
+        with torch.no_grad():
+            cuda_encoder(_random_batch(0).to(device), anchor_node_type=_USER)
+            for seed in range(3):
+                data = _random_batch(seed)
+                cuda_data = _random_batch(seed).to(device)
+                torch.cuda.synchronize()
+                torch.cuda.set_sync_debug_mode("warn")
+                try:
+                    with warnings.catch_warnings(record=True) as caught:
+                        warnings.simplefilter("always")
+                        actual = cuda_encoder(cuda_data, anchor_node_type=_USER)
+                finally:
+                    torch.cuda.set_sync_debug_mode("default")
+                syncs = [w for w in caught if "synchroniz" in str(w.message)]
+                self.assertEqual(len(syncs), 2, [str(w.message) for w in syncs])
+                torch.testing.assert_close(
+                    actual.cpu(),
+                    cpu_encoder(data, anchor_node_type=_USER),
+                    rtol=0,
+                    atol=1e-4,
+                )
+
+    def test_whole_encoder_inductor_compile_with_neighbor_readout_matches_eager(
+        self,
+    ) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        kwargs = _neighbor_readout_kwargs(
+            hid_dim=128,
+            dropout_rate=0.0,
+        )
+        encoder = _materialized_encoder(_random_batch(0), kwargs).to("cuda")
+        compiled = torch.compile(encoder)
+        graph_counts = []
+        for seed in range(5):
+            data = _random_batch(seed).to("cuda")
+            with torch.no_grad():
+                actual = compiled(data, anchor_node_type=_USER)
+                expected = encoder(data, anchor_node_type=_USER)
+            graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"])
+            torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
 
 if __name__ == "__main__":
