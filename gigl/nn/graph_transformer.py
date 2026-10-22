@@ -12,7 +12,7 @@ replacement as the encoder in ``LinkPredictionGNN``.
 """
 
 import math
-from typing import Callable, Literal, Optional, Union, cast
+from typing import Callable, Literal, NamedTuple, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -21,16 +21,31 @@ import torch_geometric.data.hetero_data
 from jaxtyping import Bool, Float, Int64
 from torch import Tensor
 
+from gigl.common.logger import Logger
+from gigl.nn.packed_attention import packed_attention
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
+    HOP_DISTANCE_FEATURE_NAME,
     PPR_EXPANDED_FEATURE_NAME,
     PPR_RELATION_FEATURES_NAME,
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
+    _lookup_pairwise_relation_indices,
     _validate_reserved_anchor_feature_usage,
+    concat_tensors,
+    get_node_type_offsets,
     tensors_to_graph_transformer_input,
+    to_homogeneous_edge_index,
 )
+from gigl.transforms.static_khop import (
+    KhopLayoutTooLargeError,
+    PackedSequences,
+    khop_layout,
+    pack_sequences,
+)
+
+logger = Logger()
 
 
 def _get_node_type_positional_encodings(
@@ -225,6 +240,60 @@ class FeedForwardNetwork(nn.Module):
             x = self._ffn(x)
 
         return x
+
+
+class PackedRelationEdges(NamedTuple):
+    """Relation edges between packed tokens, grouped by relation.
+
+    Attributes:
+        target: ``[num_edges]`` long row of each edge's target in the layer's
+            queries and outputs.
+        source: ``[num_edges]`` long packed token row of each edge's source.
+        relation: ``[num_edges]`` long relation of each edge.
+        segments: ``(relation, start, end)`` edge range of every relation, in
+            order, covering ``[0, num_edges)``; empty if there are no edges. They
+            are host values, so the per-relation transforms never read the device.
+        all_filtered: The batch has relation edges but none reach these outputs.
+    """
+
+    target: Tensor
+    source: Tensor
+    relation: Tensor
+    segments: tuple[tuple[int, int, int], ...]
+    all_filtered: bool = False
+
+
+def _get_relation_segments_from_bounds(
+    bounds: Sequence[int],
+) -> tuple[tuple[int, int, int], ...]:
+    """Returns a ``(relation, start, end)`` segment for every relation.
+
+    ``bounds[r]`` to ``bounds[r + 1]`` is relation ``r``'s edge range. A relation
+    without edges keeps an empty segment, so the number of segments is the number
+    of relations whatever the batch; no segments at all means no edges.
+    """
+    if bounds[-1] == 0:
+        return ()
+    return tuple(
+        (relation, bounds[relation], bounds[relation + 1])
+        for relation in range(len(bounds) - 1)
+    )
+
+
+def _get_relation_segments(
+    relation_indices: Tensor,
+) -> tuple[tuple[int, int, int], ...]:
+    """Returns the ``(relation, start, end)`` runs of equal consecutive relations.
+
+    Costs one host read.
+    """
+    relations, counts = torch.unique_consecutive(relation_indices, return_counts=True)
+    segments: list[tuple[int, int, int]] = []
+    start = 0
+    for relation, count in torch.stack([relations, counts]).t().tolist():
+        segments.append((relation, start, start + count))
+        start += count
+    return tuple(segments)
 
 
 class GraphTransformerEncoderLayer(nn.Module):
@@ -481,6 +550,88 @@ class GraphTransformerEncoderLayer(nn.Module):
             valid_mask=valid_mask,
             pairwise_relation_indices=pairwise_relation_indices,
         )
+
+    def forward_packed(
+        self,
+        x: Float[Tensor, "tokens model_dim"],
+        packed: PackedSequences,
+        first_token_output: bool = False,
+        relation_edges: Optional[PackedRelationEdges] = None,
+    ) -> Float[Tensor, "outputs model_dim"]:
+        """Runs the layer on packed tokens (see ``gigl.nn.packed_attention``).
+
+        Every sequence's tokens sit back to back in ``x`` and each token attends
+        only within its own sequence, with no attention bias. This needs
+        ``relation_attention_mode`` ``"none"`` and no attention dropout in
+        training.
+
+        Args:
+            x: ``(tokens, model_dim)`` packed token states.
+            packed: Layout of the sequences in ``x``.
+            first_token_output: Compute only each sequence's first token.
+            relation_edges: The relation edges, required with a relation message
+                mode. ``target`` indexes the output rows, so with
+                ``first_token_output`` it is the sequence index and the edges
+                into later tokens are left out.
+
+        Returns:
+            ``(tokens, model_dim)``, or ``(num_sequences, model_dim)`` with
+            ``first_token_output``.
+
+        Raises:
+            ValueError: If ``relation_attention_mode`` is not ``"none"``, if
+                ``relation_edges`` is missing with a relation message mode, or in
+                training with attention dropout.
+        """
+        if self._relation_attention_mode != "none":
+            raise ValueError(
+                "forward_packed supports relation_attention_mode 'none' only."
+            )
+        if self._relation_message_mode != "none" and relation_edges is None:
+            raise ValueError("relation_edges is required for relation messages.")
+        if self.training and self._attention_dropout_rate > 0:
+            raise ValueError(
+                "Packed attention does not apply attention dropout; set "
+                "attention_dropout_rate=0 or use forward."
+            )
+        x_norm = self._attention_norm(x)
+        key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        value = self._value_projection(x_norm).view(-1, self._num_heads, self._head_dim)
+        if first_token_output:
+            first_tokens = packed.cu_seqlens[:-1].long()
+            residual = x[first_tokens]
+            query_input = x_norm[first_tokens]
+        else:
+            residual = x
+            query_input = x_norm
+        query = self._query_projection(query_input).view(
+            -1, self._num_heads, self._head_dim
+        )
+        attention_output = packed_attention(
+            query, key, value, packed, query_is_first_token=first_token_output
+        ).reshape(-1, self._num_heads * self._head_dim)
+        x = residual + self._dropout(self._output_projection(attention_output))
+        if relation_edges is not None:
+            if relation_edges.segments:
+                uses_attention = self._relation_message_mode == "edge_type_attention"
+                messages = self._aggregate_relation_messages(
+                    source_features=x_norm[relation_edges.source],
+                    edge_queries=(
+                        query[relation_edges.target] if uses_attention else None
+                    ),
+                    edge_keys=key[relation_edges.source] if uses_attention else None,
+                    relation_indices=relation_edges.relation,
+                    relation_segments=relation_edges.segments,
+                    target_rows=relation_edges.target,
+                    num_target_rows=x.size(0),
+                )
+                x = x + self._dropout(messages)
+            elif self.training and relation_edges.all_filtered:
+                # Keep the relation parameters in the graph, as the padded path does
+                # when anchor filtering drops every edge.
+                x = x + self._zero_relation_parameter_dependency(x)
+        # The FFN acts on each row alone; its contract is (batch, sequence, dim).
+        return x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
 
     def _forward_query_prefix(
         self,
@@ -848,63 +999,20 @@ class GraphTransformerEncoderLayer(nn.Module):
         """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
-        messages = torch.zeros(
-            (batch_size, seq_len, x_norm.size(-1)),
-            dtype=x_norm.dtype,
-            device=x_norm.device,
-        )
         if pairwise_relation_indices.numel() == 0:
-            return messages
-        batch_indices = pairwise_relation_indices[:, 0]
-        target_indices = pairwise_relation_indices[:, 1]
-        source_indices = pairwise_relation_indices[:, 2]
-        relation_indices = pairwise_relation_indices[:, 3]
-
-        # Per-(relation, batch, target) in-degree for mean aggregation, computed
-        # globally up front so grouping order of the entries does not matter.
-        target_degrees = torch.zeros(
-            (self._num_relations, batch_size, seq_len),
-            dtype=x_norm.dtype,
-            device=x_norm.device,
+            return x_norm.new_zeros((batch_size, seq_len, x_norm.size(-1)))
+        batch_indices, target_indices, source_indices, relation_indices = (
+            pairwise_relation_indices.unbind(dim=1)
         )
-        target_degrees.index_put_(
-            (relation_indices, batch_indices, target_indices),
-            torch.ones(
-                relation_indices.size(0), dtype=x_norm.dtype, device=x_norm.device
-            ),
-            accumulate=True,
-        )
-        edge_degrees = target_degrees[relation_indices, batch_indices, target_indices]
-
-        relation_matrices = self._relation_message_matrices.to(dtype=x_norm.dtype)
-        unique_relation_indices, relation_counts = torch.unique_consecutive(
-            relation_indices,
-            return_counts=True,
-        )
-        relation_start = 0
-        for relation_idx_tensor, relation_count_tensor in zip(
-            unique_relation_indices,
-            relation_counts,
-        ):
-            relation_idx = int(relation_idx_tensor.item())
-            relation_end = relation_start + int(relation_count_tensor.item())
-            edge_batch_indices = batch_indices[relation_start:relation_end]
-            edge_target_indices = target_indices[relation_start:relation_end]
-            edge_source_indices = source_indices[relation_start:relation_end]
-
-            source_features = x_norm[edge_batch_indices, edge_source_indices]
-            edge_messages = source_features @ relation_matrices[relation_idx].t()
-            edge_messages = edge_messages / edge_degrees[
-                relation_start:relation_end
-            ].unsqueeze(-1)
-            messages.index_put_(
-                (edge_batch_indices, edge_target_indices),
-                edge_messages.to(dtype=messages.dtype),
-                accumulate=True,
-            )
-            relation_start = relation_end
-
-        return messages
+        return self._aggregate_relation_messages(
+            source_features=x_norm[batch_indices, source_indices],
+            edge_queries=None,
+            edge_keys=None,
+            relation_indices=relation_indices,
+            relation_segments=_get_relation_segments(relation_indices),
+            target_rows=batch_indices * seq_len + target_indices,
+            num_target_rows=batch_size * seq_len,
+        ).view(batch_size, seq_len, -1)
 
     def _compute_relation_attention_messages(
         self,
@@ -941,111 +1049,140 @@ class GraphTransformerEncoderLayer(nn.Module):
         Returns:
             Message tensor of shape ``(batch_size, seq_len, model_dim)``.
         """
+        if pairwise_relation_indices.numel() == 0:
+            return x_norm.new_zeros((batch_size, seq_len, x_norm.size(-1)))
+        batch_indices, target_indices, source_indices, relation_indices = (
+            pairwise_relation_indices.unbind(dim=1)
+        )
+        return self._aggregate_relation_messages(
+            source_features=x_norm[batch_indices, source_indices],
+            edge_queries=query[batch_indices, :, target_indices],
+            edge_keys=key[batch_indices, :, source_indices],
+            relation_indices=relation_indices,
+            relation_segments=_get_relation_segments(relation_indices),
+            target_rows=batch_indices * seq_len + target_indices,
+            num_target_rows=batch_size * seq_len,
+        ).view(batch_size, seq_len, -1)
+
+    def _aggregate_relation_messages(
+        self,
+        source_features: Tensor,
+        edge_queries: Optional[Tensor],
+        edge_keys: Optional[Tensor],
+        relation_indices: Tensor,
+        relation_segments: Sequence[tuple[int, int, int]],
+        target_rows: Tensor,
+        num_target_rows: int,
+    ) -> Tensor:
+        """Sums each target's per-relation messages from its incoming edges.
+
+        This is the layout-independent core of ``_compute_relation_messages`` and
+        ``_compute_relation_attention_messages`` and of the packed path. Edge
+        ``e`` sends ``W_relation[e] @ source_features[e]``, weighted per head by
+        a softmax of the relation-transformed query/key scores over the target's
+        edges of that relation (``edge_queries`` and ``edge_keys`` given) or by
+        the mean over them (both ``None``).
+
+        Args:
+            source_features: ``(num_edges, model_dim)`` source token states.
+            edge_queries: ``(num_edges, num_heads, head_dim)`` target queries,
+                or ``None`` for mean aggregation.
+            edge_keys: ``(num_edges, num_heads, head_dim)`` source keys, or
+                ``None`` for mean aggregation.
+            relation_indices: ``(num_edges,)`` relation of each edge.
+            relation_segments: ``(relation, start, end)`` edge ranges covering
+                ``[0, num_edges)`` in order, empty ranges allowed; the
+                per-relation transforms run on these slices.
+            target_rows: ``(num_edges,)`` output row of each edge's target.
+            num_target_rows: Number of output rows.
+
+        Returns:
+            ``(num_target_rows, model_dim)`` messages; zero rows for targets
+            without edges.
+        """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
-        if self._relation_message_attention_matrices is None:
-            raise ValueError("Relation message attention matrices are not initialized.")
-        if self._relation_message_attention_priors is None:
-            raise ValueError("Relation message attention priors are not initialized.")
-        messages = torch.zeros(
-            (batch_size, seq_len, x_norm.size(-1)),
-            dtype=x_norm.dtype,
-            device=x_norm.device,
-        )
-        if pairwise_relation_indices.numel() == 0:
-            return messages
-        batch_indices = pairwise_relation_indices[:, 0]
-        target_indices = pairwise_relation_indices[:, 1]
-        source_indices = pairwise_relation_indices[:, 2]
-        relation_indices = pairwise_relation_indices[:, 3]
-
-        # Gather per-edge queries/keys: (num_edges, num_heads, head_dim).
-        edge_queries = query[batch_indices, :, target_indices]
-        edge_keys = key[batch_indices, :, source_indices]
-
-        relation_attention_matrices = self._relation_message_attention_matrices.to(
-            dtype=edge_queries.dtype
-        )
-        relation_attention_priors = self._relation_message_attention_priors.to(
-            dtype=edge_queries.dtype
-        )
-        unique_relation_indices, relation_counts = torch.unique_consecutive(
-            relation_indices,
-            return_counts=True,
-        )
-        score_parts: list[Tensor] = []
-        relation_start = 0
-        for relation_idx_tensor, relation_count_tensor in zip(
-            unique_relation_indices,
-            relation_counts,
-        ):
-            relation_idx = int(relation_idx_tensor.item())
-            relation_end = relation_start + int(relation_count_tensor.item())
-            transformed_keys = torch.einsum(
-                "ehd,hdf->ehf",
-                edge_keys[relation_start:relation_end],
-                relation_attention_matrices[relation_idx],
-            )
-            slice_scores = (
-                edge_queries[relation_start:relation_end] * transformed_keys
-            ).sum(dim=-1)
-            score_parts.append(
-                slice_scores
-                * relation_attention_priors[relation_idx]
-                / math.sqrt(self._head_dim)
-            )
-            relation_start = relation_end
-        scores = torch.cat(score_parts, dim=0)  # (num_edges, num_heads)
-
-        # Numerically stable scatter-softmax per (relation, batch, target) group
-        # and head. Group buffers are (num_relations * batch * seq, num_heads) —
-        # tiny compared to any (seq, seq) tensor.
-        group_indices = (
-            relation_indices * batch_size + batch_indices
-        ) * seq_len + target_indices
+        num_edges, model_dim = source_features.shape
+        # One group per (relation, target) and head.
+        group_indices = relation_indices * num_target_rows + target_rows
         head_group_indices = group_indices.unsqueeze(-1).expand(-1, self._num_heads)
-        num_groups = self._num_relations * batch_size * seq_len
-        group_score_max = scores.new_full(
-            (num_groups, self._num_heads), torch.finfo(scores.dtype).min
-        )
-        group_score_max.scatter_reduce_(
-            0, head_group_indices, scores.detach(), reduce="amax", include_self=True
-        )
-        normalized_scores = torch.exp(
-            scores - group_score_max.gather(0, head_group_indices)
-        )
-        group_denominators = scores.new_zeros(
-            (num_groups, self._num_heads)
-        ).scatter_add(0, head_group_indices, normalized_scores)
-        edge_weights = normalized_scores / group_denominators.gather(
-            0, head_group_indices
-        )  # (num_edges, num_heads), sums to 1 per (relation, target) and head
+        num_groups = self._num_relations * num_target_rows
 
-        relation_matrices = self._relation_message_matrices.to(dtype=x_norm.dtype)
-        relation_start = 0
-        for relation_idx_tensor, relation_count_tensor in zip(
-            unique_relation_indices,
-            relation_counts,
-        ):
-            relation_idx = int(relation_idx_tensor.item())
-            relation_end = relation_start + int(relation_count_tensor.item())
-            edge_batch_indices = batch_indices[relation_start:relation_end]
-            edge_target_indices = target_indices[relation_start:relation_end]
-            edge_source_indices = source_indices[relation_start:relation_end]
-
-            source_features = x_norm[edge_batch_indices, edge_source_indices]
-            edge_messages = source_features @ relation_matrices[relation_idx].t()
-            weighted_messages = edge_messages.view(
-                -1, self._num_heads, self._head_dim
-            ) * edge_weights[relation_start:relation_end].unsqueeze(-1)
-            messages.index_put_(
-                (edge_batch_indices, edge_target_indices),
-                weighted_messages.reshape(-1, x_norm.size(-1)).to(dtype=messages.dtype),
-                accumulate=True,
+        if edge_queries is None or edge_keys is None:
+            group_degrees = source_features.new_zeros(num_groups).index_add_(
+                0, group_indices, source_features.new_ones(num_edges)
             )
-            relation_start = relation_end
+            edge_weights = (1.0 / group_degrees[group_indices]).unsqueeze(-1)
+        else:
+            if self._relation_message_attention_matrices is None:
+                raise ValueError(
+                    "Relation message attention matrices are not initialized."
+                )
+            if self._relation_message_attention_priors is None:
+                raise ValueError(
+                    "Relation message attention priors are not initialized."
+                )
+            relation_attention_matrices = self._relation_message_attention_matrices.to(
+                dtype=edge_queries.dtype
+            )
+            relation_attention_priors = self._relation_message_attention_priors.to(
+                dtype=edge_queries.dtype
+            )
+            scores = torch.cat(
+                [
+                    (
+                        edge_queries[start:end]
+                        * torch.einsum(
+                            "ehd,hdf->ehf",
+                            edge_keys[start:end],
+                            relation_attention_matrices[relation_idx],
+                        )
+                    ).sum(dim=-1)
+                    * relation_attention_priors[relation_idx]
+                    / math.sqrt(self._head_dim)
+                    for relation_idx, start, end in relation_segments
+                ],
+                dim=0,
+            )  # (num_edges, num_heads)
 
-        return messages
+            # Numerically stable scatter-softmax per group and head. Group buffers
+            # are (num_relations * num_target_rows, num_heads) -- tiny compared
+            # to any (seq, seq) tensor.
+            group_score_max = scores.new_full(
+                (num_groups, self._num_heads), torch.finfo(scores.dtype).min
+            )
+            group_score_max.scatter_reduce_(
+                0, head_group_indices, scores.detach(), reduce="amax", include_self=True
+            )
+            normalized_scores = torch.exp(
+                scores - group_score_max.gather(0, head_group_indices)
+            )
+            group_denominators = scores.new_zeros(
+                (num_groups, self._num_heads)
+            ).scatter_add(0, head_group_indices, normalized_scores)
+            # Sums to 1 per (relation, target) and head.
+            edge_weights = normalized_scores / group_denominators.gather(
+                0, head_group_indices
+            )
+
+        relation_matrices = self._relation_message_matrices.to(
+            dtype=source_features.dtype
+        )
+        edge_messages = torch.cat(
+            [
+                source_features[start:end] @ relation_matrices[relation_idx].t()
+                for relation_idx, start, end in relation_segments
+            ],
+            dim=0,
+        )  # (num_edges, model_dim)
+        weighted_messages = (
+            edge_messages.view(num_edges, -1, model_dim // self._num_heads)
+            * edge_weights.unsqueeze(-1)
+        ).reshape(num_edges, model_dim)
+        messages = source_features.new_zeros((num_target_rows, model_dim))
+        return messages.index_put_(
+            (target_rows,), weighted_messages.to(dtype=messages.dtype), accumulate=True
+        )
 
 
 class GraphTransformerEncoder(nn.Module):
@@ -1176,6 +1313,24 @@ class GraphTransformerEncoder(nn.Module):
             bias broadcastable (no per-layer (seq, seq) bias materialization).
 
     Notes:
+        On CUDA, configs run on packed tokens (one ``[tokens, hid_dim]`` buffer, a
+        varlen attention kernel, no padding FLOPs) when they use ``"khop"``
+        sequences without ``prioritize_hop_order``, ``readout_mode="anchor_only"``,
+        relation modes ``"none"``, no attention biases, at most ``"hop_distance"``
+        as an anchor-based input, ``hid_dim // num_heads`` divisible by 8,
+        ``hop_distance <= 2``, and ``attention_dropout_rate == 0``. All other
+        configs and CPU run on padded sequences; a batch whose k-hop
+        candidate set is too large for the packed layout also runs padded.
+        Both paths give the same embeddings and gradients up to float error;
+        with ``dropout_rate > 0``, train-mode dropout draws differ (same
+        distribution). The reasons a config is not packed are logged at
+        construction. The packed path
+        derives ``hop_distance`` from the layout (first-reach directed hop in
+        ``sampling_direction``) and ignores the batch attribute; that equals
+        ``AddHeteroHopDistanceEncoding(is_undirected=False,
+        sampling_direction=<same>, h_max >= hop_distance)``. It costs two host
+        reads per batch.
+
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
         forward first, passing ``anchor_node_ids``/``anchor_node_type`` for the
@@ -1255,6 +1410,11 @@ class GraphTransformerEncoder(nn.Module):
                 "{'anchor_neighbor_attention', 'anchor_only'}, "
                 f"got '{readout_mode}'"
             )
+
+        if max_seq_len < 1:
+            raise ValueError(f"max_seq_len must be at least 1, got {max_seq_len}")
+        if hop_distance < 0:
+            raise ValueError(f"hop_distance must be non-negative, got {hop_distance}")
 
         self._hid_dim = hid_dim
         self._out_dim = out_dim
@@ -1487,12 +1647,61 @@ class GraphTransformerEncoder(nn.Module):
         # Output projection: hid_dim -> out_dim
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
+        self._attention_dropout_rate = attention_dropout_rate
+        blockers = self._packed_backend_blockers(num_heads, attention_dropout_rate)
+        self._supports_packed_backend = not blockers
+        if blockers:
+            logger.info(
+                "GraphTransformerEncoder runs on padded sequences: "
+                + "; ".join(blockers)
+            )
+        self._has_logged_packed_fallback = False
+
+    def _packed_backend_blockers(
+        self, num_heads: int, attention_dropout_rate: float
+    ) -> list[str]:
+        """Lists why this config cannot run on packed tokens; empty if it can."""
+        blockers: list[str] = []
+        if self._sequence_construction_method != "khop":
+            blockers.append("sequence_construction_method is not 'khop'")
+        if self._prioritize_hop_order:
+            blockers.append("prioritize_hop_order is set")
+        if self._readout_mode != "anchor_only":
+            blockers.append("readout_mode is not 'anchor_only'")
+        if self._relation_attention_mode != "none":
+            blockers.append("relation_attention_mode is not 'none'")
+        if self._anchor_based_attention_bias_attr_names:
+            blockers.append("anchor-based attention biases are set")
+        if self._pairwise_attention_bias_attr_names:
+            blockers.append("pairwise attention biases are set")
+        if not set(self._anchor_based_input_attr_names or ()) <= {
+            HOP_DISTANCE_FEATURE_NAME
+        }:
+            blockers.append("anchor-based inputs other than hop_distance are set")
+        # The CUDA memory-efficient varlen kernel only has aligned kernels
+        # for head dims divisible by 8; SDPA falls back for other dims.
+        if (self._hid_dim // num_heads) % 8 != 0:
+            blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
+        # Packed memory is O(anchors * width ** hop_distance), which beyond
+        # two hops can far exceed the padded path's.
+        if self._hop_distance > 2:
+            blockers.append("hop_distance is above 2")
+        # The torch 2.8 varlen kernel draws one dropout mask shared by all heads
+        # and sequences. Rejecting it here keeps training and eval on one path.
+        if attention_dropout_rate > 0:
+            blockers.append("attention_dropout_rate is above 0")
+        return blockers
+
+    def _use_packed_backend(self, device: torch.device) -> bool:
+        """Whether this forward runs on packed tokens (a supported config on CUDA)."""
+        return self._supports_packed_backend and device.type == "cuda"
+
     def forward(
         self,
         data: torch_geometric.data.hetero_data.HeteroData,
         anchor_node_type: Optional[NodeType] = None,
         anchor_node_ids: Optional[Int64[Tensor, "anchors"]] = None,
-        device: Optional[torch.device] = None,
+        device: Optional[Union[str, torch.device]] = None,
     ) -> Float[torch.Tensor, "anchors output_dim"]:
         """Run the forward pass of the Graph Transformer encoder.
 
@@ -1512,6 +1721,8 @@ class GraphTransformerEncoder(nn.Module):
         # Infer device from data if not provided
         if device is None:
             device = data[data.node_types[0]].x.device
+        else:
+            device = torch.device(device)
 
         # Use first node type if not specified
         if anchor_node_type is None:
@@ -1580,6 +1791,34 @@ class GraphTransformerEncoder(nn.Module):
                 ppr_is_expanded_dict[edge_type] = getattr(
                     edge_store, PPR_EXPANDED_FEATURE_NAME
                 )
+        # 2. Build sequences and run transformer
+        # If anchor_node_ids provided, use those; otherwise use first batch_size nodes
+        if anchor_node_ids is not None:
+            num_anchor_nodes = anchor_node_ids.size(0)
+        else:
+            anchor_store = data[anchor_node_type]
+            num_anchor_nodes = (
+                anchor_store.batch_size
+                if hasattr(anchor_store, "batch_size")
+                else projected_x_dict[anchor_node_type].size(0)
+            )
+
+        if num_anchor_nodes > 0 and self._use_packed_backend(device):
+            # Bound to a local, not passed inline to ``_project_output``: an inline call
+            # leaves the ``_encode_packed`` bound method on Dynamo's stack across the graph
+            # breaks inside it, and the guard on that fresh object recompiles every batch
+            # (``test_whole_encoder_compile_does_not_recompile_across_batches``).
+            packed_embeddings = self._encode_packed(
+                projected_x_dict=projected_x_dict,
+                edge_index_dict=edge_index_dict,
+                anchor_node_type=anchor_node_type,
+                num_anchor_nodes=num_anchor_nodes,
+                anchor_node_ids=anchor_node_ids,
+                device=device,
+            )
+            if packed_embeddings is not None:
+                return self._project_output(packed_embeddings)
+
         # Relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
             attr_name
@@ -1595,18 +1834,6 @@ class GraphTransformerEncoder(nn.Module):
             for attr_name in sorted(relative_pe_attr_names)
             if hasattr(data, attr_name)
         }
-
-        # 2. Build sequences and run transformer
-        # If anchor_node_ids provided, use those; otherwise use first batch_size nodes
-        if anchor_node_ids is not None:
-            num_anchor_nodes = anchor_node_ids.size(0)
-        else:
-            anchor_store = data[anchor_node_type]
-            num_anchor_nodes = (
-                anchor_store.batch_size
-                if hasattr(anchor_store, "batch_size")
-                else projected_x_dict[anchor_node_type].size(0)
-            )
 
         (
             sequences,
@@ -1684,12 +1911,226 @@ class GraphTransformerEncoder(nn.Module):
                 "pairwise_relation_indices"
             ],
         )
-        embeddings = self._output_projection(embeddings)
+        return self._project_output(embeddings)
 
+    def _project_output(self, embeddings: Tensor) -> Tensor:
+        """Projects encoder outputs to ``out_dim`` and optionally L2-normalizes."""
+        embeddings = self._output_projection(embeddings)
         if self._should_l2_normalize_embedding_layer_output:
             embeddings = F.normalize(embeddings, p=2, dim=-1)
-
         return embeddings
+
+    def _encode_packed(
+        self,
+        projected_x_dict: dict[NodeType, Tensor],
+        edge_index_dict: dict[tuple[str, str, str], Tensor],
+        anchor_node_type: NodeType,
+        num_anchor_nodes: int,
+        anchor_node_ids: Optional[Tensor],
+        device: torch.device,
+    ) -> Optional[Tensor]:
+        """Encodes the anchors on packed tokens.
+
+        Returns:
+            ``[num_anchor_nodes, hid_dim]`` final-norm anchor states, or None if
+            the batch's k-hop candidate set is too large to lay out (the caller
+            then runs the padded path).
+        """
+        node_type_offsets = get_node_type_offsets(projected_x_dict)
+        node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
+        edge_index = to_homogeneous_edge_index(
+            edge_index_dict=edge_index_dict,
+            node_type_offsets=node_type_offsets,
+            device=device,
+        )
+        if anchor_node_ids is not None:
+            anchor_local_indices = anchor_node_ids.to(device)
+        else:
+            anchor_local_indices = torch.arange(num_anchor_nodes, device=device)
+        try:
+            node_index, hop_index, lengths = khop_layout(
+                edge_index,
+                num_nodes=node_features.size(0),
+                anchor_indices=node_type_offsets[anchor_node_type]
+                + anchor_local_indices,
+                hop_distance=self._hop_distance,
+                max_seq_len=self._max_seq_len,
+                sampling_direction=self._sampling_direction,
+            )
+        except KhopLayoutTooLargeError as error:
+            if not self._has_logged_packed_fallback:
+                logger.warning(f"Running a batch on padded sequences: {error}")
+                self._has_logged_packed_fallback = True
+            return None
+        flat_index, packed = pack_sequences(lengths, self._max_seq_len)
+        relation_edges: Optional[tuple[PackedRelationEdges, PackedRelationEdges]] = None
+        if self._relation_message_mode != "none":
+            relation_edges = self._build_packed_relation_edges(
+                edge_index_dict=edge_index_dict,
+                node_type_offsets=node_type_offsets,
+                num_nodes=node_features.size(0),
+                node_index=node_index,
+                hop_index=hop_index,
+                lengths=lengths,
+                packed=packed,
+            )
+        token_node = node_index.flatten()[flat_index]
+        token_hop = hop_index.flatten()[flat_index]
+
+        x = node_features[token_node]
+        if HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names:
+            embedding_dict = self._anchor_based_input_embedding_dict
+            if (
+                embedding_dict is not None
+                and HOP_DISTANCE_FEATURE_NAME in embedding_dict
+            ):
+                x = x + embedding_dict[HOP_DISTANCE_FEATURE_NAME](token_hop).to(x.dtype)
+            else:
+                if self._token_input_projection is None:
+                    raise ValueError("Token-input projection is not initialized.")
+                x = x + self._token_input_projection(
+                    token_hop.unsqueeze(-1).to(x.dtype)
+                )
+        for layer_index, encoder_layer in enumerate(self._encoder_layers):
+            is_last_layer = layer_index == len(self._encoder_layers) - 1
+            x = self._run_packed_layer(
+                cast(GraphTransformerEncoderLayer, encoder_layer),
+                x,
+                packed,
+                first_token_output=is_last_layer,
+                relation_edges=(
+                    None if relation_edges is None else relation_edges[is_last_layer]
+                ),
+            )
+        if len(self._encoder_layers) == 0:
+            x = x[packed.cu_seqlens[:-1].long()]
+        return self._final_norm(x)
+
+    def _run_packed_layer(
+        self,
+        layer: GraphTransformerEncoderLayer,
+        x: Tensor,
+        packed: PackedSequences,
+        first_token_output: bool,
+        relation_edges: Optional[PackedRelationEdges],
+    ) -> Tensor:
+        """Runs one layer on packed tokens.
+
+        A subclass can override this to wrap the call, for example in
+        ``torch.utils.checkpoint.checkpoint``. The layer reads no host values,
+        so it can be recomputed.
+        """
+        return layer.forward_packed(
+            x,
+            packed,
+            first_token_output=first_token_output,
+            relation_edges=relation_edges,
+        )
+
+    def _build_packed_relation_edges(
+        self,
+        edge_index_dict: dict[tuple[str, str, str], Tensor],
+        node_type_offsets: dict[NodeType, int],
+        num_nodes: int,
+        node_index: Tensor,
+        hop_index: Tensor,
+        lengths: Tensor,
+        packed: PackedSequences,
+    ) -> tuple[PackedRelationEdges, PackedRelationEdges]:
+        """Matches the batch's edges to packed token pairs.
+
+        Uses the padded path's edge matcher on the layout, so the edges are the
+        ones it would give the padded sequences: those between two kept tokens
+        whose target (``"in"`` sampling) or source (``"out"``) is fewer than
+        ``hop_distance`` hops from the anchor.
+
+        Args:
+            edge_index_dict: Batch edges by edge type.
+            node_type_offsets: Offset of each node type in the homogeneous ids.
+            num_nodes: Number of nodes over all node types.
+            node_index: ``[num_anchors, max_seq_len]`` layout node ids.
+            hop_index: ``[num_anchors, max_seq_len]`` layout hops.
+            lengths: ``[num_anchors]`` sequence lengths.
+            packed: Layout of the packed tokens.
+
+        Returns:
+            The edges for the layers that compute every token, and those for
+            the last layer, which computes only the anchors.
+        """
+        device = node_index.device
+        valid_mask = torch.arange(self._max_seq_len, device=device) < lengths.unsqueeze(
+            1
+        )
+        # Sorted batch * num_nodes + node keys of the tokens fewer than hop_distance
+        # hops out; the rest sort last as a key no edge has.
+        batch_node_keys = (
+            torch.arange(node_index.size(0), device=device).unsqueeze(1) * num_nodes
+            + node_index
+        )
+        frontier_keys, _ = (
+            torch.where(
+                valid_mask & (hop_index < self._hop_distance),
+                batch_node_keys,
+                torch.iinfo(torch.long).max,
+            )
+            .flatten()
+            .sort()
+        )
+        relation_edges = _lookup_pairwise_relation_indices(
+            edge_index_dict=edge_index_dict,
+            node_index_sequences=node_index,
+            valid_mask=valid_mask,
+            relation_edge_types=self._relation_attention_edge_types,
+            node_type_offsets=node_type_offsets,
+            num_nodes=num_nodes,
+            device=device,
+            frontier_batch_node_keys=frontier_keys,
+            sampling_direction=self._sampling_direction,
+        )
+        if relation_edges is None:
+            raise ValueError("Relation edge types are not initialized.")
+
+        first_tokens = packed.cu_seqlens[:-1].long()
+        batch_indices, target_positions, source_positions, relations = (
+            relation_edges.unbind(dim=1)
+        )
+        relations = relations.contiguous()
+        edge_first_tokens = first_tokens[batch_indices]
+        source_rows = edge_first_tokens + source_positions
+        # The last layer computes only the anchors, so it keeps the edges into
+        # position 0. Sorting on (not anchor, relation) puts them first, grouped by
+        # relation; stability keeps each relation's edges in lookup order.
+        num_relations = len(self._relation_attention_edge_types)
+        is_not_anchor_edge = (target_positions != 0).long()
+        anchor_sort_keys, anchor_order = torch.sort(
+            is_not_anchor_edge * num_relations + relations, stable=True
+        )
+        # Each relation's edges are contiguous, so one host read of both layouts'
+        # relation boundaries gives all the segments.
+        relation_ids = torch.arange(num_relations + 1, device=relations.device)
+        all_bounds, anchor_bounds = torch.stack(
+            [
+                torch.searchsorted(relations, relation_ids),
+                torch.searchsorted(anchor_sort_keys, relation_ids),
+            ]
+        ).tolist()
+        num_anchor_edges = anchor_bounds[-1]
+        anchor_edges = anchor_order[:num_anchor_edges]
+        return (
+            PackedRelationEdges(
+                target=edge_first_tokens + target_positions,
+                source=source_rows,
+                relation=relations,
+                segments=_get_relation_segments_from_bounds(all_bounds),
+            ),
+            PackedRelationEdges(
+                target=batch_indices[anchor_edges],
+                source=source_rows[anchor_edges],
+                relation=relations[anchor_edges],
+                segments=_get_relation_segments_from_bounds(anchor_bounds),
+                all_filtered=all_bounds[-1] > 0 and num_anchor_edges == 0,
+            ),
+        )
 
     def _get_sequence_positional_encoding(
         self,
