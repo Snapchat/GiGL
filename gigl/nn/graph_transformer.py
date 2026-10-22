@@ -551,9 +551,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             query, key, value, packed, query_is_first_token=first_token_output
         ).reshape(-1, self._num_heads * self._head_dim)
         x = residual + self._dropout(self._output_projection(attention_output))
-        # The FFN treats each row independently but expects (batch, sequence, dim)
-        # input, so add a leading batch dim of 1.
-        return x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
+        return x + self._ffn(self._ffn_norm(x))
 
     def _forward_query_prefix(
         self,
@@ -1606,7 +1604,7 @@ class GraphTransformerEncoder(nn.Module):
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
         self._attention_dropout_rate = attention_dropout_rate
-        blockers = self._packed_backend_blockers(num_heads, attention_dropout_rate)
+        blockers = self._packed_backend_blockers()
         self._supports_packed_backend = not blockers
         if blockers:
             logger.info(
@@ -1614,33 +1612,27 @@ class GraphTransformerEncoder(nn.Module):
                 "tokens, because: " + "; ".join(blockers)
             )
         self._packed_fallback_count = 0
-        self._check_hop_embedding_covers_packed_hops()
-
-    def _check_hop_embedding_covers_packed_hops(self) -> None:
-        """Raises if the hop embedding cannot index the hops the packed path produces.
-
-        The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
-        padded path only looks up the values stored on the batch, so only configs
-        that can run packed are checked.
-        """
-        embedding_dict = self._anchor_based_input_embedding_dict
-        if not self._supports_packed_backend or embedding_dict is None:
-            return
-        if HOP_DISTANCE_FEATURE_NAME not in embedding_dict:
-            return
-        num_embeddings = getattr(
-            embedding_dict[HOP_DISTANCE_FEATURE_NAME], "num_embeddings", None
-        )
-        if num_embeddings is not None and num_embeddings <= self._hop_distance:
-            raise ValueError(
-                f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
-                f"entries, but hop_distance={self._hop_distance} needs at least "
-                f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
+        # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
+        # padded path only looks up the values stored on the batch, so only configs
+        # that can run packed are checked.
+        if (
+            self._supports_packed_backend
+            and self._anchor_based_input_embedding_dict is not None
+            and HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_embedding_dict
+        ):
+            num_embeddings = getattr(
+                self._anchor_based_input_embedding_dict[HOP_DISTANCE_FEATURE_NAME],
+                "num_embeddings",
+                None,
             )
+            if num_embeddings is not None and num_embeddings <= self._hop_distance:
+                raise ValueError(
+                    f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
+                    f"entries, but hop_distance={self._hop_distance} needs at least "
+                    f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
+                )
 
-    def _packed_backend_blockers(
-        self, num_heads: int, attention_dropout_rate: float
-    ) -> list[str]:
+    def _packed_backend_blockers(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
         blockers: list[str] = []
         if self._sequence_construction_method != "khop":
@@ -1655,14 +1647,12 @@ class GraphTransformerEncoder(nn.Module):
             blockers.append("anchor-based attention biases are set")
         if self._pairwise_attention_bias_attr_names:
             blockers.append("pairwise attention biases are set")
-        if not set(self._anchor_based_input_attr_names or ()) <= {
-            HOP_DISTANCE_FEATURE_NAME
-        }:
+        if not set(self._anchor_based_input_attr_names) <= {HOP_DISTANCE_FEATURE_NAME}:
             blockers.append("anchor-based inputs other than hop_distance are set")
         # The CUDA memory-efficient varlen kernel only has aligned variants for
         # head dims divisible by 8. For other dims, the padded path's SDPA picks
         # a different kernel.
-        if (self._hid_dim // num_heads) % 8 != 0:
+        if (self._hid_dim // self._num_heads) % 8 != 0:
             blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
@@ -1672,7 +1662,7 @@ class GraphTransformerEncoder(nn.Module):
         # The varlen kernel's dropout has not been tested against the padded
         # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
         # training and eval on the same path.
-        if attention_dropout_rate > 0:
+        if self._attention_dropout_rate > 0:
             blockers.append("attention_dropout_rate is above 0")
         return blockers
 
@@ -1787,17 +1777,6 @@ class GraphTransformerEncoder(nn.Module):
                 num_anchor_nodes = projected_x_dict[anchor_node_type].size(0)
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
-            # Assign the packed result to a local before projecting. Do not write
-            # ``self._project_output(self._encode_packed(...))``.
-            # Under ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks
-            # because it reads sizes back from the GPU. After a break, Dynamo resumes
-            # with any half-evaluated expression saved, and on the next call it checks
-            # that the saved object is the same one. Here that object would be the
-            # bound method ``self._project_output``, which Python creates anew on every
-            # attribute access. The check would fail and the encoder would recompile on
-            # every batch. With the result held in a local, nothing is pending across
-            # the break. Covered by
-            # ``test_whole_encoder_compile_does_not_recompile_across_batches``.
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
@@ -1807,9 +1786,10 @@ class GraphTransformerEncoder(nn.Module):
                 device=device,
             )
             if packed_embeddings is not None:
-                return self._project_output(packed_embeddings)
-            if not hasattr(data, HOP_DISTANCE_FEATURE_NAME) and (
-                HOP_DISTANCE_FEATURE_NAME in (self._anchor_based_input_attr_names or [])
+                return packed_embeddings
+            if (
+                HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
+                and not hasattr(data, HOP_DISTANCE_FEATURE_NAME)
             ):
                 raise ValueError(
                     "This batch's k-hop layout is too large for the packed path, "
@@ -2026,7 +2006,8 @@ class GraphTransformerEncoder(nn.Module):
         is ``[num_anchors, hidden]`` and goes straight to the final norm.
 
         Returns:
-            ``[num_anchor_nodes, hid_dim]`` anchor states after the final norm, or
+            ``[num_anchor_nodes, out_dim]`` embeddings after the final norm and output
+            projection, or
             None if the batch's k-hop candidate set is too large to lay out. The
             caller then runs the padded path.
         """
@@ -2079,7 +2060,7 @@ class GraphTransformerEncoder(nn.Module):
             )
         if len(self._encoder_layers) == 0:
             x = x[packed.cu_seqlens[:-1].long()]
-        return self._final_norm(x)
+        return self._project_output(self._final_norm(x))
 
     def _get_sequence_positional_encoding(
         self,
