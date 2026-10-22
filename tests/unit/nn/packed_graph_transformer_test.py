@@ -75,6 +75,18 @@ def _random_batch(
     return AddHeteroHopDistanceEncoding(h_max=h_max, sampling_direction=direction)(data)
 
 
+def _oversized_layout_batch() -> HeteroData:
+    """One anchor behind a hub with more neighbours than the layout budget allows at two hops."""
+    num_nodes = 6000
+    data = HeteroData()
+    data[_USER].x = torch.randn(num_nodes, 8)
+    data[_USER].batch_size = 1
+    data[_FOLLOWS.tuple_repr()].edge_index = torch.stack(
+        [torch.arange(1, num_nodes), torch.zeros(num_nodes - 1, dtype=torch.long)]
+    )
+    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+
+
 def _encoder_kwargs(hetero: bool = False, **overrides: object) -> dict:
     kwargs: dict = dict(
         node_type_to_feat_dim_map={_USER: 8, _ITEM: 8} if hetero else {_USER: 8},
@@ -290,6 +302,22 @@ class PackedPathTest(TestCase):
         with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
             encoder(data, anchor_node_type=_USER)
 
+    def test_fallback_batch_without_the_hop_distance_attribute_raises(self) -> None:
+        data = _oversized_layout_batch()
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        del data[_HOP]
+        with self.assertRaisesRegex(ValueError, "AddHeteroHopDistanceEncoding"):
+            _run_packed(encoder, data)
+        # Without the hop input the same batch falls back and runs.
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                anchor_based_input_attr_names=None,
+                anchor_based_input_embedding_dict=None,
+            ),
+        )
+        self.assertEqual(_run_packed(encoder, data).shape, (1, 8))
+
     def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
         # A transform with a smaller h_max stores different hops than the layout
         # derives; the packed path follows the layout.
@@ -387,15 +415,7 @@ class PackedPathTest(TestCase):
         )
 
     def test_batch_with_an_oversized_layout_runs_on_the_padded_path(self) -> None:
-        # One hub with more neighbours than the layout budget allows at two hops.
-        num_nodes = 6000
-        data = HeteroData()
-        data[_USER].x = torch.randn(num_nodes, 8)
-        data[_USER].batch_size = 1
-        data[_FOLLOWS.tuple_repr()].edge_index = torch.stack(
-            [torch.arange(1, num_nodes), torch.zeros(num_nodes - 1, dtype=torch.long)]
-        )
-        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        data = _oversized_layout_batch()
         encoder = _materialized_encoder(data, _encoder_kwargs(sampling_direction="in"))
         with (
             torch.no_grad(),

@@ -1189,13 +1189,15 @@ class GraphTransformerEncoder(nn.Module):
             The padded path reads the ``hop_distance`` attribute that
             ``AddHeteroHopDistanceEncoding`` stored on ``data`` and raises if it
             is missing. The packed path computes the hop from the sequence layout
-            instead, so it neither needs nor reads the attribute, and a pipeline
-            that skips the transform to save its all-pairs matrix works only on
-            CUDA. When the attribute is present, the transform's ``h_max`` must
-            be at least this encoder's ``hop_distance`` and its direction must
-            match ``sampling_direction``, or the two paths disagree. An embedding
-            for ``hop_distance`` needs more than ``hop_distance`` entries on a
-            config that can run packed.
+            instead, so it runs without the attribute. A batch whose k-hop layout
+            is too large falls back to the padded path, though, and that batch
+            raises if the attribute is missing. Add the transform to the pipeline
+            (``is_undirected=False``, ``sampling_direction`` equal to this
+            encoder's, ``h_max`` at least this encoder's ``hop_distance``) unless
+            every batch is sure to fit the layout budget. When the attribute is
+            present, it must match this encoder's ``hop_distance`` and direction,
+            or the two paths disagree. An embedding for ``hop_distance`` needs more
+            than ``hop_distance`` entries on a config that can run packed.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1806,6 +1808,19 @@ class GraphTransformerEncoder(nn.Module):
             )
             if packed_embeddings is not None:
                 return self._project_output(packed_embeddings)
+            if not hasattr(data, HOP_DISTANCE_FEATURE_NAME) and (
+                HOP_DISTANCE_FEATURE_NAME in (self._anchor_based_input_attr_names or [])
+            ):
+                raise ValueError(
+                    "This batch's k-hop layout is too large for the packed path, "
+                    "so it runs on padded sequences, which read the "
+                    f"'{HOP_DISTANCE_FEATURE_NAME}' attribute, and the batch has "
+                    "none. Add AddHeteroHopDistanceEncoding(is_undirected=False, "
+                    f"sampling_direction='{self._sampling_direction}', "
+                    f"h_max>={self._hop_distance}) to the pipeline, or sample fewer "
+                    "neighbours per node so every batch fits the layout budget "
+                    "(gigl.transforms.static_khop.MAX_LAYOUT_CANDIDATES)."
+                )
 
         # Relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
