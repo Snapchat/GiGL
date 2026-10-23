@@ -12,7 +12,7 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import KhopLayoutTooLargeError
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_sequences
 from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase
 
@@ -223,6 +223,18 @@ class StaticKhopLayoutTest(TestCase):
         with mock.patch.object(torch, "full", side_effect=AssertionError("allocated")):
             with self.assertRaises(KhopLayoutTooLargeError):
                 khop_layout(edge_index, num_nodes, torch.tensor([5]), 2, 8)
+
+    def test_pack_sequences_layout(self) -> None:
+        flat_index, packed = pack_sequences(torch.tensor([2, 1, 3]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 3, 6, 7, 8])
+        self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
+        self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
+        self.assertEqual(packed.max_seq_len, 3)
+
+        # A length above the grid width is clamped, so the offsets match the indices.
+        flat_index, packed = pack_sequences(torch.tensor([5, 1]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 2, 3])
+        self.assertEqual(packed.cu_seqlens.tolist(), [0, 3, 4])
 
 
 if __name__ == "__main__":
