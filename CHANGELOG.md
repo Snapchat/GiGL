@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
+- Fetch node labels in the same fused request as the node features, so a batch makes one feature request per remote
+  partition per node type instead of two; the `y` labels in batches are unchanged by @kmontemayor2-sc
 - `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
   of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
   unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
