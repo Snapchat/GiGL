@@ -112,8 +112,12 @@ no-build-isolation-package = ["gigl-core"]
 # uv does not install them automatically, so they must be present in the ambient
 # environment before any gigl-core build (uv sync, uv build, Dockerfiles).
 gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
+# is on PATH when the build runs, so the PyPI binary is found.
+glt-build-backend = ["ninja"]
 dev = [
   { include-group = "gigl-core-build-backend" },
+  { include-group = "glt-build-backend" },
   { include-group = "docs" },
   { include-group = "lint" },
   { include-group = "test" },
@@ -264,7 +268,7 @@ include = ["gigl*", "snapchat*"]
 [tool.setuptools.package-data]
 # Include dep_vars.env from the root directory
 "gigl" = ["dep_vars.env", "**/*.yaml"]
-"gigl.scripts" = ["*.sh"]
+"gigl.scripts" = ["*.sh", "patches/*.patch"]
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
