@@ -100,6 +100,7 @@ from torch_geometric.utils import to_dense_batch
 from gigl.transforms.static_khop import PackedSequences
 
 
+@torch.compiler.disable
 def _njt_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
@@ -116,6 +117,10 @@ def _njt_attention(
     sequence ``i``. Passing the length bounds as host ints keeps the call from
     syncing with the host. ``F.scaled_dot_product_attention`` dispatches jagged
     inputs to the memory-efficient kernel on CUDA.
+
+    Jagged nested tensors do not compile under dynamic shapes (Inductor fails
+    with ``Cannot convert symbols to int``), so this runs eagerly. A compiled
+    layer splits into a graph before and a graph after this call.
 
     Args:
         query_offsets: Query sequence offsets.
