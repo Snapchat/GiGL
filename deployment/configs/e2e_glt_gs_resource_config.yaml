@@ -1,3 +1,8 @@
+# Machine shapes here are chosen for availability in us-central1 CI, not for speed:
+# CPU-only pools use E2. The compute pools keep N1 + 2 T4 x 2 replicas so e2e covers
+# torch.distributed with CUDA. In practice, pick more performant types (for example
+# N2 or C3 for storage, A100 or L4 for training).
+#
 # Diffs from e2e_glt_resource_config.yaml
 # - Swap vertex_ai_inferencer_config for vertex_ai_graph_store_inferencer_config
 # - Swap vertex_ai_trainer_config for vertex_ai_graph_store_trainer_config
@@ -11,7 +16,7 @@ defaults:
 trainer_resource_config:
   vertex_ai_graph_store_trainer_config:
     graph_store_pool:
-      machine_type: n2-highmem-32
+      machine_type: e2-highmem-32
       gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
       gpu_limit: 0
       num_replicas: 2
@@ -23,7 +28,7 @@ trainer_resource_config:
 inferencer_resource_config:
   vertex_ai_graph_store_inferencer_config:
     graph_store_pool:
-      machine_type: n2-highmem-32
+      machine_type: e2-highmem-32
       gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
       gpu_limit: 0
       num_replicas: 2
