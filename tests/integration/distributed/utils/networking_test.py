@@ -22,7 +22,7 @@ from tests.test_assets.test_case import TestCase
 # run time only, so the queue bound below covers the wait for capacity.
 _INTEGRATION_JOB_TIMEOUT_S = 30 * 60
 # Bound on time spent waiting for capacity. Without it a starved job sits queued for
-# about 96 minutes before Vertex AI fails it, which alone eats a third of the 3h
+# about 96 minutes before Vertex AI fails it, which alone eats more than half of the 3h
 # Cloud Build budget.
 _INTEGRATION_JOB_QUEUE_TIMEOUT_S = 10 * 60
 
