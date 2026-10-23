@@ -1,6 +1,8 @@
 """The fixed-shape k-hop layout equals the sparse k-hop layout."""
 
-from typing import Literal
+import itertools
+from typing import Any, Literal
+from unittest import mock
 
 import torch
 from absl.testing import absltest
@@ -10,10 +12,22 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_sequences
+from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase
 
 _CPU = torch.device("cpu")
+
+
+def khop_layout(
+    *args: Any, **kwargs: Any
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """``khop_layout`` with the cells decoded: node ids, first-reach hops (0 at padding), lengths."""
+    layout, lengths, hop_bits = _khop_layout(*args, **kwargs)
+    valid = layout >= 0
+    nodes = torch.where(valid, layout >> hop_bits, -1)
+    hops = torch.where(valid, layout & ((1 << hop_bits) - 1), 0)
+    return nodes, hops, lengths
 
 
 def _random_graph(num_nodes: int, num_edges: int, seed: int) -> torch.Tensor:
@@ -114,51 +128,32 @@ class StaticKhopLayoutTest(TestCase):
         self.assertTrue(torch.equal(nodes, expected_nodes))
         self.assertTrue(torch.equal(hops, expected_hops))
 
-    def test_matches_sparse_layout_on_adversarial_graphs(self) -> None:
-        for seed in range(4):
-            for direction in ("in", "out"):
-                for max_seq_len in (4, 16, 64):
-                    with self.subTest(seed=seed, direction=direction, L=max_seq_len):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 90, seed),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                        )
-
-    def test_matches_sparse_layout_at_three_and_four_hops(self) -> None:
-        for hop_distance in (3, 4):
-            for direction in ("in", "out"):
-                for max_seq_len in (4, 16, 64):
-                    with self.subTest(
-                        hop=hop_distance, direction=direction, L=max_seq_len
-                    ):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 70, hop_distance),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                            hop_distance=hop_distance,
-                        )
-
-    def test_hop_order_matches_the_hop_ordered_sparse_layout(self) -> None:
-        for hop_distance in (1, 2, 3):
-            for direction in ("in", "out"):
-                for max_seq_len in (3, 8, 64):
-                    with self.subTest(
-                        hop=hop_distance, direction=direction, L=max_seq_len
-                    ):
-                        self._assert_layouts_equal(
-                            _random_graph(40, 70, hop_distance),
-                            num_nodes=40,
-                            num_anchors=10,
-                            max_seq_len=max_seq_len,
-                            direction=direction,
-                            hop_distance=hop_distance,
-                            prioritize_hop_order=True,
-                        )
+    def test_matches_sparse_layout(self) -> None:
+        for (
+            hop_distance,
+            prioritize_hop_order,
+            direction,
+            max_seq_len,
+            seed,
+        ) in itertools.product(
+            (1, 2, 3, 4), (False, True), ("in", "out"), (3, 4, 16, 64), range(2)
+        ):
+            with self.subTest(
+                hop=hop_distance,
+                hop_order=prioritize_hop_order,
+                direction=direction,
+                L=max_seq_len,
+                seed=seed,
+            ):
+                self._assert_layouts_equal(
+                    _random_graph(40, 80, seed),
+                    num_nodes=40,
+                    num_anchors=10,
+                    max_seq_len=max_seq_len,
+                    direction=direction,
+                    hop_distance=hop_distance,
+                    prioritize_hop_order=prioritize_hop_order,
+                )
 
     def test_hop_order_truncation_drops_the_farthest_hops_first(self) -> None:
         # Anchor 0 has hop-1 neighbours 5 and 6 and hop-2 neighbours 1 and 2.
@@ -210,12 +205,36 @@ class StaticKhopLayoutTest(TestCase):
                     self.assertTrue(torch.equal(actual_tensor, expected_tensor))
 
     def test_rejects_a_layout_over_the_candidate_budget(self) -> None:
-        # Width 3 at two hops is 1 + 3 + 9 = 13 candidates per anchor.
+        # Width 3 at two hops is 1 + 3 + 9 = 13 candidates per anchor, plus a
+        # 5 x 3 neighbour table.
         edge_index = torch.tensor([[0, 0, 0], [1, 2, 3]])
         anchors = torch.arange(2)
-        khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=26)
+        khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=41)
         with self.assertRaises(KhopLayoutTooLargeError):
-            khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=25)
+            khop_layout(edge_index, 4, anchors, 2, 8, max_candidates=40)
+
+    def test_rejects_a_huge_hub_table_before_allocating_it(self) -> None:
+        # One anchor passes the candidate check on its own (1 + 3000 + 3000 ** 2
+        # is about 9M), but a 200k-node table of that width would be 4.8 GB.
+        num_nodes = 200_000
+        edge_index = torch.stack(
+            [torch.zeros(3000, dtype=torch.long), torch.arange(1, 3001)]
+        )
+        with mock.patch.object(torch, "full", side_effect=AssertionError("allocated")):
+            with self.assertRaises(KhopLayoutTooLargeError):
+                khop_layout(edge_index, num_nodes, torch.tensor([5]), 2, 8)
+
+    def test_pack_sequences_layout(self) -> None:
+        flat_index, packed = pack_sequences(torch.tensor([2, 1, 3]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 3, 6, 7, 8])
+        self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
+        self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
+        self.assertEqual(packed.max_seq_len, 3)
+
+        # A length above the grid width is clamped, so the offsets match the indices.
+        flat_index, packed = pack_sequences(torch.tensor([5, 1]), 3)
+        self.assertEqual(flat_index.tolist(), [0, 1, 2, 3])
+        self.assertEqual(packed.cu_seqlens.tolist(), [0, 3, 4])
 
 
 if __name__ == "__main__":

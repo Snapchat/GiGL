@@ -552,9 +552,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             query, key, value, packed, query_is_first_token=first_token_output
         ).reshape(-1, self._num_heads * self._head_dim)
         x = residual + self._dropout(self._output_projection(attention_output))
-        # The FFN treats each row independently but expects (batch, sequence, dim)
-        # input, so add a leading batch dim of 1.
-        return x + self._ffn(self._ffn_norm(x).unsqueeze(0)).squeeze(0)
+        return x + self._ffn(self._ffn_norm(x))
 
     def _forward_query_prefix(
         self,
@@ -1192,13 +1190,15 @@ class GraphTransformerEncoder(nn.Module):
             The padded path reads the ``hop_distance`` attribute that
             ``AddHeteroHopDistanceEncoding`` stored on ``data`` and raises if it
             is missing. The packed path computes the hop from the sequence layout
-            instead, so it neither needs nor reads the attribute, and a pipeline
-            that skips the transform to save its all-pairs matrix works only on
-            CUDA. When the attribute is present, the transform's ``h_max`` must
-            be at least this encoder's ``hop_distance`` and its direction must
-            match ``sampling_direction``, or the two paths disagree. An embedding
-            for ``hop_distance`` needs more than ``hop_distance`` entries on a
-            config that can run packed.
+            instead, so it runs without the attribute. A batch whose k-hop layout
+            is too large falls back to the padded path, though, and that batch
+            raises if the attribute is missing. Add the transform to the pipeline
+            (``is_undirected=False``, ``sampling_direction`` equal to this
+            encoder's, ``h_max`` at least this encoder's ``hop_distance``) unless
+            every batch is sure to fit the layout budget. When the attribute is
+            present, it must match this encoder's ``hop_distance`` and direction,
+            or the two paths disagree. An embedding for ``hop_distance`` needs more
+            than ``hop_distance`` entries on a config that can run packed.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1606,7 +1606,7 @@ class GraphTransformerEncoder(nn.Module):
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
         self._attention_dropout_rate = attention_dropout_rate
-        blockers = self._packed_backend_blockers(num_heads, attention_dropout_rate)
+        blockers = self._packed_backend_blockers()
         self._supports_packed_backend = not blockers
         if blockers:
             logger.info(
@@ -1614,34 +1614,27 @@ class GraphTransformerEncoder(nn.Module):
                 "tokens, because: " + "; ".join(blockers)
             )
         self._packed_fallback_count = 0
-        self._check_hop_embedding_covers_packed_hops()
-
-    def _check_hop_embedding_covers_packed_hops(self) -> None:
-        """Raises if the hop embedding cannot index the hops the packed path produces.
-
-        The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
-        padded path only looks up the values stored on the batch, so only configs
-        that can run packed are checked.
-        """
-        embedding_dict = self._anchor_based_input_embedding_dict
-        if not self._supports_packed_backend or embedding_dict is None:
-            return
-        hop_embedding = (
-            embedding_dict[HOP_DISTANCE_FEATURE_NAME]
-            if (HOP_DISTANCE_FEATURE_NAME in embedding_dict)
-            else None
-        )
-        num_embeddings = getattr(hop_embedding, "num_embeddings", None)
-        if num_embeddings is not None and num_embeddings <= self._hop_distance:
-            raise ValueError(
-                f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
-                f"entries, but hop_distance={self._hop_distance} needs at least "
-                f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
+        # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
+        # padded path only looks up the values stored on the batch, so only configs
+        # that can run packed are checked.
+        if (
+            self._supports_packed_backend
+            and self._anchor_based_input_embedding_dict is not None
+            and HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_embedding_dict
+        ):
+            num_embeddings = getattr(
+                self._anchor_based_input_embedding_dict[HOP_DISTANCE_FEATURE_NAME],
+                "num_embeddings",
+                None,
             )
+            if num_embeddings is not None and num_embeddings <= self._hop_distance:
+                raise ValueError(
+                    f"The '{HOP_DISTANCE_FEATURE_NAME}' embedding has {num_embeddings} "
+                    f"entries, but hop_distance={self._hop_distance} needs at least "
+                    f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
+                )
 
-    def _packed_backend_blockers(
-        self, num_heads: int, attention_dropout_rate: float
-    ) -> list[str]:
+    def _packed_backend_blockers(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
         blockers: list[str] = []
         if self._sequence_construction_method != "khop":
@@ -1654,14 +1647,12 @@ class GraphTransformerEncoder(nn.Module):
             blockers.append("anchor-based attention biases are set")
         if self._pairwise_attention_bias_attr_names:
             blockers.append("pairwise attention biases are set")
-        if not set(self._anchor_based_input_attr_names or ()) <= {
-            HOP_DISTANCE_FEATURE_NAME
-        }:
+        if not set(self._anchor_based_input_attr_names) <= {HOP_DISTANCE_FEATURE_NAME}:
             blockers.append("anchor-based inputs other than hop_distance are set")
         # The CUDA memory-efficient varlen kernel only has aligned variants for
         # head dims divisible by 8. For other dims, the padded path's SDPA picks
         # a different kernel.
-        if (self._hid_dim // num_heads) % 8 != 0:
+        if (self._hid_dim // self._num_heads) % 8 != 0:
             blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
@@ -1671,7 +1662,7 @@ class GraphTransformerEncoder(nn.Module):
         # The varlen kernel's dropout has not been tested against the padded
         # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
         # training and eval on the same path.
-        if attention_dropout_rate > 0:
+        if self._attention_dropout_rate > 0:
             blockers.append("attention_dropout_rate is above 0")
         return blockers
 
@@ -1780,24 +1771,12 @@ class GraphTransformerEncoder(nn.Module):
             num_anchor_nodes = anchor_node_ids.size(0)
         else:
             anchor_store = data[anchor_node_type]
-            num_anchor_nodes = (
-                anchor_store.batch_size
-                if hasattr(anchor_store, "batch_size")
-                else projected_x_dict[anchor_node_type].size(0)
-            )
+            if hasattr(anchor_store, "batch_size"):
+                num_anchor_nodes = anchor_store.batch_size
+            else:
+                num_anchor_nodes = projected_x_dict[anchor_node_type].size(0)
 
         if num_anchor_nodes > 0 and self._use_packed_backend(device):
-            # Assign the packed result to a local before projecting. Do not write
-            # ``self._project_output(self._encode_packed(...))``.
-            # Under ``torch.compile(encoder)``, ``_encode_packed`` has graph breaks
-            # because it reads sizes back from the GPU. After a break, Dynamo resumes
-            # with any half-evaluated expression saved, and on the next call it checks
-            # that the saved object is the same one. Here that object would be the
-            # bound method ``self._project_output``, which Python creates anew on every
-            # attribute access. The check would fail and the encoder would recompile on
-            # every batch. With the result held in a local, nothing is pending across
-            # the break. Covered by
-            # ``test_whole_encoder_compile_does_not_recompile_across_batches``.
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
@@ -1807,7 +1786,21 @@ class GraphTransformerEncoder(nn.Module):
                 device=device,
             )
             if packed_embeddings is not None:
-                return self._project_output(packed_embeddings)
+                return packed_embeddings
+            if (
+                HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
+                and not hasattr(data, HOP_DISTANCE_FEATURE_NAME)
+            ):
+                raise ValueError(
+                    "This batch's k-hop layout is too large for the packed path, "
+                    "so it runs on padded sequences, which read the "
+                    f"'{HOP_DISTANCE_FEATURE_NAME}' attribute, and the batch has "
+                    "none. Add AddHeteroHopDistanceEncoding(is_undirected=False, "
+                    f"sampling_direction='{self._sampling_direction}', "
+                    f"h_max>={self._hop_distance}) to the pipeline, or sample fewer "
+                    "neighbours per node so every batch fits the layout budget "
+                    "(gigl.transforms.static_khop.MAX_LAYOUT_CANDIDATES)."
+                )
 
         # Relative-encoding attributes (e.g., hop_distance stored as sparse matrix)
         relative_pe_attr_names = {
@@ -1936,11 +1929,89 @@ class GraphTransformerEncoder(nn.Module):
     ) -> Optional[Tensor]:
         """Encodes the anchors on packed tokens.
 
+        ``khop_layout`` (``gigl.transforms.static_khop``) decides which nodes
+        each anchor sees. ``pack_sequences`` turns that padded grid into one flat
+        token buffer. Packed attention (``gigl.nn.packed_attention``) then keeps
+        every anchor's tokens apart using only ``cu_seqlens``.
+
+        Worked example, run on CPU. A graph of 6 nodes with edges
+        ``0->1, 0->2, 1->3, 2->3, 3->4, 4->5``, sampling direction ``"out"``,
+        anchors ``[0, 3]``, ``hop_distance=2``, ``max_seq_len=4``.
+
+        The neighbour table has one row per node (row ``i`` holds the nodes one hop
+        from ``i``) and an extra all ``-1`` row used for padding lookups::
+
+            row 0: [ 1,  2]    row 3: [ 4, -1]    row 6: [-1, -1]
+            row 1: [ 3, -1]    row 4: [ 5, -1]
+            row 2: [ 3, -1]    row 5: [-1, -1]
+
+        Each anchor's layout is the anchor, then its neighbours in ascending node
+        id, ``-1`` padding, and the length. A cell holds the node id and the node's
+        first-reach hop as ``(node << hop_bits) | hop``, and ``hop_bits`` is 2
+        here::
+
+            >>> from gigl.transforms.static_khop import khop_layout, pack_sequences
+            >>> edge_index = torch.tensor([[0, 0, 1, 2, 3, 4], [1, 2, 3, 3, 4, 5]])
+            >>> layout, lengths, hop_bits = khop_layout(
+            ...     edge_index,
+            ...     num_nodes=6,
+            ...     anchor_indices=torch.tensor([0, 3]),
+            ...     hop_distance=2,
+            ...     max_seq_len=4,
+            ... )
+            >>> hop_bits
+            2
+            >>> layout.tolist()
+            [[0, 5, 9, 14], [12, 17, 22, -1]]
+            >>> lengths.tolist()
+            [4, 3]
+
+        Anchor 0's cells decode to node 0 (hop 0), nodes 1 and 2 (hop 1) and node 3
+        (hop 2). Anchor 3 reaches node 4 in one hop and node 5 in two, so its last
+        cell is padding.
+
+        ``pack_sequences`` drops the padding. ``flat_index`` selects the valid
+        cells of the flattened grid, and ``cu_seqlens`` marks where each sequence
+        starts::
+
+            >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
+            >>> flat_index.tolist()
+            [0, 1, 2, 3, 4, 5, 6]
+            >>> packed.cu_seqlens.tolist(), packed.max_seq_len
+            ([0, 4, 7], 4)
+            >>> token_cell = layout.flatten()[flat_index]
+            >>> (token_cell >> hop_bits).tolist()
+            [0, 1, 2, 3, 3, 4, 5]
+            >>> (token_cell & ((1 << hop_bits) - 1)).tolist()
+            [0, 1, 1, 2, 0, 1, 2]
+
+        With 8 grid cells and 7 valid ones, the cell ``[1, 3]`` (index 7) is the
+        only one dropped. In a real batch most of the grid is padding.
+
+        The token buffer ``x = node_features[token_cell >> hop_bits]`` has shape
+        ``[7, hidden]``. Rows 0 to 3 are anchor 0's tokens and rows 4 to 6 are
+        anchor 3's. The hop embedding is added per token from ``token_cell & ((1 << hop_bits) - 1)``.
+
+        Every layer then runs on ``[num_tokens, hidden]``. The norm, the q/k/v
+        projections, the output projection and the FFN act on each row alone, so
+        they never see sequence boundaries. Attention gets
+        ``cu_seqlens=[0, 4, 7]`` and calls the varlen kernel, so rows 0 to 3 only
+        attend to each other and rows 4 to 6 only to each other.
+
+        The first token of each sequence is the anchor, at row
+        ``cu_seqlens[:-1]``, here rows ``[0, 4]``. The last layer needs only those
+        rows as queries. It projects just those two rows and passes
+        ``cu_seqlens_q=arange(num_sequences + 1)`` (``[0, 1, 2]``) with one query
+        per sequence, while keys and values still cover all 7 tokens. Its output
+        is ``[num_anchors, hidden]`` and goes straight to the final norm.
+        With ``readout_mode="anchor_neighbor_attention"`` the last layer runs on all
+        tokens instead, and ``_packed_neighbor_readout`` adds each anchor's
+        attention-weighted neighbours to it.
+
         Returns:
-            ``[num_anchor_nodes, hid_dim]`` anchor states after the final norm (with
-            ``readout_mode="anchor_neighbor_attention"``, plus the attention-weighted
-            neighbours), or None if the batch's k-hop candidate set is too large to
-            lay out. The caller then runs the padded path.
+            ``[num_anchor_nodes, out_dim]`` embeddings after the final norm, the readout
+            and the output projection, or None if the batch's k-hop candidate set is
+            too large to lay out. The caller then runs the padded path.
         """
         node_type_offsets = get_node_type_offsets(projected_x_dict)
         node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
@@ -1954,7 +2025,7 @@ class GraphTransformerEncoder(nn.Module):
         else:
             anchor_local_indices = torch.arange(num_anchor_nodes, device=device)
         try:
-            node_index, hop_index, lengths = khop_layout(
+            layout, lengths, hop_bits = khop_layout(
                 edge_index,
                 num_nodes=node_features.size(0),
                 anchor_indices=node_type_offsets[anchor_node_type]
@@ -1968,11 +2039,10 @@ class GraphTransformerEncoder(nn.Module):
             self._record_packed_fallback(error)
             return None
         flat_index, packed = pack_sequences(lengths, self._max_seq_len)
-        token_node = node_index.flatten()[flat_index]
-        token_hop = hop_index.flatten()[flat_index]
-
-        x = node_features[token_node]
+        token_cell = layout.flatten()[flat_index]
+        x = node_features[token_cell >> hop_bits]
         if HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names:
+            token_hop = token_cell & ((1 << hop_bits) - 1)
             embedding_dict = self._anchor_based_input_embedding_dict
             if (
                 embedding_dict is not None
@@ -1980,11 +2050,10 @@ class GraphTransformerEncoder(nn.Module):
             ):
                 x = x + embedding_dict[HOP_DISTANCE_FEATURE_NAME](token_hop).to(x.dtype)
             else:
-                if self._token_input_projection is None:
-                    raise ValueError("Token-input projection is not initialized.")
-                x = x + self._token_input_projection(
-                    token_hop.unsqueeze(-1).to(x.dtype)
-                )
+                # A hop distance without an embedding is a continuous input, so
+                # the constructor created the projection.
+                token_projection = cast(nn.Module, self._token_input_projection)
+                x = x + token_projection(token_hop.unsqueeze(-1).to(x.dtype))
         # Only the anchor token is read out with ``anchor_only``, so the last layer
         # can skip the other tokens. The neighbour readout needs all of them.
         anchor_only = self._readout_mode == "anchor_only"
@@ -1998,8 +2067,12 @@ class GraphTransformerEncoder(nn.Module):
         if anchor_only:
             if len(self._encoder_layers) == 0:
                 x = x[packed.cu_seqlens[:-1].long()]
-            return self._final_norm(x)
-        return self._packed_neighbor_readout(self._final_norm(x), flat_index, packed)
+            embeddings = self._final_norm(x)
+        else:
+            embeddings = self._packed_neighbor_readout(
+                self._final_norm(x), flat_index, packed
+            )
+        return self._project_output(embeddings)
 
     def _packed_neighbor_readout(
         self,
