@@ -83,6 +83,7 @@ class SequenceAuxiliaryData(TypedDict):
     token_input: Optional[TokenInputData]
 
 
+HOP_DISTANCE_FEATURE_NAME = "hop_distance"
 PPR_WEIGHT_FEATURE_NAME = "ppr_weight"
 PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
 PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"
@@ -475,8 +476,8 @@ def tensors_to_graph_transformer_input(
     device = x_dict[anchor_node_type].device
 
     # Concatenate into one homogeneous id space for neighborhood extraction.
-    node_type_offsets = _get_node_type_offsets(x_dict)
-    homo_x = _concat_tensors(list(x_dict.values()), dim=0)
+    node_type_offsets = get_node_type_offsets(x_dict)
+    homo_x = concat_tensors(list(x_dict.values()), dim=0)
     num_nodes = homo_x.size(0)
 
     # Find offset for anchor_node_type in homogeneous graph
@@ -497,7 +498,7 @@ def tensors_to_graph_transformer_input(
     ppr_expanded_token_mask: Optional[Tensor] = None
     frontier_batch_node_keys: Optional[Tensor] = None
     if sequence_construction_method == "khop":
-        homo_edge_index = _to_homogeneous_edge_index(
+        homo_edge_index = to_homogeneous_edge_index(
             edge_index_dict=edge_index_dict,
             node_type_offsets=node_type_offsets,
             device=device,
@@ -738,7 +739,15 @@ def tensors_to_graph_transformer_input(
     )
 
 
-def _get_node_type_offsets(x_dict: dict[NodeType, Tensor]) -> dict[NodeType, int]:
+def get_node_type_offsets(x_dict: dict[NodeType, Tensor]) -> dict[NodeType, int]:
+    """Returns the row offset of each node type in the concatenated node features.
+
+    Args:
+        x_dict: Node features by node type, in concatenation order.
+
+    Returns:
+        The offset of each node type's first row.
+    """
     offsets: dict[NodeType, int] = {}
     offset = 0
     for node_type, x in x_dict.items():
@@ -747,12 +756,12 @@ def _get_node_type_offsets(x_dict: dict[NodeType, Tensor]) -> dict[NodeType, int
     return offsets
 
 
-def _concat_tensors(parts: list[Tensor], dim: int) -> Tensor:
+def concat_tensors(parts: list[Tensor], dim: int) -> Tensor:
     """``torch.cat`` that returns a single part as is, without a copy."""
     return parts[0] if len(parts) == 1 else torch.cat(parts, dim=dim)
 
 
-def _to_homogeneous_edge_index(
+def to_homogeneous_edge_index(
     edge_index_dict: dict[EdgeType, Tensor],
     node_type_offsets: dict[NodeType, int],
     device: torch.device,
@@ -760,10 +769,16 @@ def _to_homogeneous_edge_index(
     """Concatenates edge indices the way ``HeteroData.to_homogeneous`` does.
 
     Each edge type's ids are shifted by its node type offsets, and edge types
-    keep ``edge_index_dict``'s order.
+    keep ``edge_index_dict``'s order. The edge indices' dtype is kept.
+
+    Args:
+        edge_index_dict: ``[2, num_edges]`` local edge index by edge type.
+        node_type_offsets: Offsets from ``get_node_type_offsets``.
+        device: Device of the result.
 
     Returns:
-        ``[2, num_edges]`` edge index; ``[2, 0]`` if there are no edges.
+        ``[2, num_edges]`` edge index on ``device``; a long ``[2, 0]`` if there
+        are no edges.
     """
     edge_index_parts: list[Tensor] = []
     for (src_type, _, dst_type), edge_index in edge_index_dict.items():
@@ -776,7 +791,7 @@ def _to_homogeneous_edge_index(
         edge_index_parts.append(edge_index)
     if not edge_index_parts:
         return torch.zeros((2, 0), dtype=torch.long, device=device)
-    return _concat_tensors(edge_index_parts, dim=1)
+    return concat_tensors(edge_index_parts, dim=1).to(device)
 
 
 def _validate_ppr_sequence_input(

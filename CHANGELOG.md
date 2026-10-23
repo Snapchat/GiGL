@@ -20,6 +20,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
+  layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
+  readout, relation modes `none`, no attention biases, `hop_distance` as the only anchor-based input, a head dim
+  divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of `prioritize_hop_order`.
+  Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
+  counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
+  float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
+  `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
+  with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
+  without it. A config that can run packed now raises a `ValueError` at construction if its `hop_distance` embedding has
+  `hop_distance` or fewer entries by @kmontemayor2-sc
 
 ### Changed
 
