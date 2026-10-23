@@ -19,6 +19,7 @@ import torch
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -31,6 +32,7 @@ from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
 from gigl.env.distributed import GraphStoreInfo
+from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
@@ -49,6 +51,13 @@ def build_storage_dataset(
     should_load_tensors_in_parallel: bool = True,
     ssl_positive_label_percentage: Optional[float] = None,
     max_labels_per_anchor_node: Optional[int] = None,
+    node_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
+    ] = None,
+    edge_lossless_codecs: Optional[
+        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
+    ] = None,
+    strict_lossless_compression: bool = False,
 ) -> DistDataset:
     """Build a :class:`DistDataset` for a storage node from a task config.
 
@@ -78,6 +87,12 @@ def build_storage_dataset(
         max_labels_per_anchor_node: Optional cap for how many labels to
             materialize per anchor node when the storage server serves ABLP
             input.
+        node_lossless_codecs: Optional lossless compression of node feature columns, see
+            :func:`~gigl.distributed.dataset_factory.build_dataset`. Clients pick up the compressed layout from the
+            quantization metadata the storage server serves, so compute nodes need no configuration.
+        edge_lossless_codecs: Optional lossless compression of main edge feature columns, see
+            :func:`~gigl.distributed.dataset_factory.build_dataset`.
+        strict_lossless_compression: See :func:`~gigl.distributed.dataset_factory.build_dataset`.
 
     Returns:
         A partitioned :class:`DistDataset` ready to be served.
@@ -98,6 +113,9 @@ def build_storage_dataset(
         partitioner_class=DistRangePartitioner,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
+        node_lossless_codecs=node_lossless_codecs,
+        edge_lossless_codecs=edge_lossless_codecs,
+        strict_lossless_compression=strict_lossless_compression,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
     return dataset

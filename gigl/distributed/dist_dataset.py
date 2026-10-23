@@ -1000,6 +1000,15 @@ class DistDataset(glt.distributed.DistDataset):
             logger.info(
                 "Initialized node quantized features for homogeneous graph to dataset"
             )
+        self._describe_packed_node_features_as_logical()
+
+    def _describe_packed_node_features_as_logical(self) -> None:
+        """Makes ``node_feature_info`` report the logical width of node types that have packed columns."""
+        self._node_feature_info = _with_logical_feature_info(
+            self._node_feature_info,
+            self._node_quantized_features,
+            self._node_quantization_metadata,
+        )
 
     def _initialize_node_labels(
         self,
@@ -1119,6 +1128,11 @@ class DistDataset(glt.distributed.DistDataset):
                 with_gpu=False,
                 dtype=torch.uint8,
             )
+        self._edge_feature_info = _with_logical_feature_info(
+            self._edge_feature_info,
+            self._edge_quantized_features,
+            self._edge_quantization_metadata,
+        )
 
     def build(
         self,
@@ -1574,6 +1588,48 @@ def _prepare_feature_data(
         return features_per_entity_type, id_to_index_per_entity_type
     else:
         return None, None
+
+
+def _with_logical_feature_info(
+    feature_info: Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]],
+    packed_features: Optional[Union[Feature, dict[_EntityType, Feature]]],
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata, dict[_EntityType, FeatureQuantizationMetadata]
+        ]
+    ],
+) -> Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]]:
+    """Reports the logical float32 width of every entity type that has packed columns.
+
+    The raw float store only holds the columns that are not packed, but loaders and models see (and placeholders for
+    unsampled types must have) the full logical feature width.
+
+    Args:
+        feature_info: Feature info derived from the raw float store.
+        packed_features: Packed sidecar store(s) of the dataset.
+        metadata: Quantization metadata describing the packed columns; a single value applies to every type.
+
+    Returns:
+        ``feature_info`` with the entries of packed types replaced by their logical width.
+    """
+    if metadata is None or packed_features is None:
+        return feature_info
+    if isinstance(packed_features, Mapping):
+        logical_info: dict[_EntityType, FeatureInfo] = {}
+        if feature_info is not None and not isinstance(feature_info, FeatureInfo):
+            logical_info.update(feature_info)
+        for entity_type in packed_features:
+            entity_metadata = (
+                metadata
+                if isinstance(metadata, FeatureQuantizationMetadata)
+                else metadata[entity_type]
+            )
+            logical_info[entity_type] = FeatureInfo(
+                dim=entity_metadata.feature_dim, dtype=torch.float32
+            )
+        return logical_info
+    assert isinstance(metadata, FeatureQuantizationMetadata)
+    return FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
 
 
 ## Pickling Registration

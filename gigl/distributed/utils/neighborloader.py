@@ -360,13 +360,13 @@ def _materialize_quantized_features(
         feature_attribute: PyG attribute that stores the feature tensor.
 
     Raises:
-        ValueError: If expected raw feature columns are absent or have an
-            unexpected dimension.
+        ValueError: If the raw feature columns have an unexpected dimension.
+            Sidecar-only types arrive with a zero-column raw matrix.
     """
     dequantized = dequantize_torch_tensor(
         packed_features, metadata=quantization_metadata
     )
-    raw_features = getattr(store, feature_attribute, None)
+    raw_features = getattr(store, feature_attribute)
     materialized_features = dequantized.new_empty(
         (dequantized.size(0), quantization_metadata.feature_dim)
     )
@@ -375,16 +375,11 @@ def _materialize_quantized_features(
     )
     materialized_features[:, scatter_idx.quantized] = dequantized
 
-    if raw_features is None and quantization_metadata.raw_feature_dim:
+    if raw_features.size(1) != quantization_metadata.raw_feature_dim:
         raise ValueError(
-            f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+            f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
         )
-    if raw_features is not None:
-        if raw_features.size(1) != quantization_metadata.raw_feature_dim:
-            raise ValueError(
-                f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
-            )
-        materialized_features[:, scatter_idx.raw] = raw_features
+    materialized_features[:, scatter_idx.raw] = raw_features
     setattr(store, feature_attribute, materialized_features)
 
 

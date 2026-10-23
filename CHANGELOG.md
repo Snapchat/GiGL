@@ -20,9 +20,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
+  `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
+  used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
+  by @kmontemayor2-sc
+- Extend the packed feature sidecar used by feature quantization with a lossless region: `FeatureQuantizationMetadata`
+  can describe categorical id columns stored as `int8`/`uint8`/`int16`/`int32`
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`) after the n-bit quantized columns, and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry them without further changes by
+  @kmontemayor2-sc
+- Add opt-in lossless compression of categorical id node feature columns: `build_dataset(node_lossless_codecs=...)` (or
+  `compress_node_features: "True"` in the trainer/inferencer args, with `derive_node_lossless_codecs` declaring the
+  codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so
+  sampling, RPC and the host-to-device copy move fewer bytes. Declared columns are checked against the data on every
+  rank, and columns that do not fit stay float32 by @kmontemayor2-sc
+- Extend lossless feature compression to main edge features: `build_dataset(edge_lossless_codecs=...)` and the
+  `compress_edge_features` task-config arg, with `derive_edge_lossless_codecs` declaring codecs from the feature schema
+  (the sampling-weight feature, if any, is excluded); `build_storage_dataset` accepts the node and edge codecs too by
+  @kmontemayor2-sc
 
 ### Changed
 
+- A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
+  only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
+  @kmontemayor2-sc
 - `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
   of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
   unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
@@ -54,6 +75,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Removed
 
+- Remove all-to-all feature collection from the samplers; GiGL never enabled it, and the sampler no longer receives
+  `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
   dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING

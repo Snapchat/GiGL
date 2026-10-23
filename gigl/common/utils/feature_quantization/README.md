@@ -37,6 +37,15 @@ The NumPy/Torch split is intentional:
 `FeatureQuantizationMetadata` is the contract between those two steps. It records the bit width, packed feature
 dimension, logical feature positions, and the statistics needed to invert the compression step.
 
+## Lossless Columns
+
+The packed sidecar also carries lossless columns: categorical id columns stored as narrow integers (`int8`, `uint8`,
+`uint8_bias1` for ids in `[-1, 254]`, `int16`, `int32`; `bfloat16` is available for real-valued columns but lossy) by
+`lossless.FeatureCodec`. A row of the sidecar holds the quantized region first (padded to four bytes) and then the
+lossless region, and `FeatureQuantizationMetadata.lossless_feature_indices` / `lossless_column_kinds` describe it. The
+loader decodes both regions with `dequantize_torch_tensor` and scatters them with the raw columns, so the rest of the
+pipeline treats the two kinds of packed column uniformly.
+
 ## Current Built-In Scheme
 
 The current implementation supports `1`, `2`, `4`, and `8` bit quantization. Codes are packed high-bits-first into

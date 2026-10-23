@@ -9,11 +9,15 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.sampler import EDGE_PACKED_FEATURES_METADATA_KEY
+from gigl.distributed.sampler import (
+    EDGE_PACKED_FEATURES_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
+)
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -419,12 +423,17 @@ def _run_featureless_edge_ids_absent(
     )
     count = 0
     edge_ids_absent = True
+    packed_features_absent = True
     for datum in loader:
         assert isinstance(datum, Data)
         if getattr(datum, "edge", None) is not None:
             edge_ids_absent = False
+        # Unquantized node features have no sidecar, so no packed-feature key may leak onto the batch.
+        if getattr(datum, NODE_PACKED_FEATURES_METADATA_KEY, None) is not None:
+            packed_features_absent = False
         count += 1
     holder["edge_ids_absent"] = edge_ids_absent
+    holder["packed_features_absent"] = packed_features_absent
     holder["count"] = count
     shutdown_rpc()
 
@@ -873,6 +882,68 @@ class DistributedNeighborLoaderTest(TestCase):
             args=(dataset, expected_features),
         )
 
+    def test_distributed_neighbor_loader_materializes_lossless_packed_node_features(
+        self,
+    ) -> None:
+        raw_node_features = torch.tensor([[10.0, 20.0], [30.0, 40.0]])
+        lossless_codec = FeatureCodec(("int16", "uint8_bias1"))
+        lossless_columns = torch.tensor([[-1.0, 254.0], [300.0, -1.0]])
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=6,
+            quantized_feature_indices=(0, 2),
+            clip_min=0.0,
+            clip_max=3.0,
+            lossless_feature_indices=(4, 5),
+            lossless_column_kinds=lossless_codec.column_dtypes,
+        )
+        # The two-bit region (codes [0, 3] and [2, 1], see the test above) is padded to the
+        # start of the lossless region, which holds the id columns as narrow integers.
+        quantized_region = torch.tensor([[48], [144]], dtype=torch.uint8)
+        packed = torch.cat(
+            [
+                torch.nn.functional.pad(
+                    quantized_region,
+                    (0, metadata.lossless_byte_offset - quantized_region.shape[1]),
+                ),
+                lossless_codec.encode(lossless_columns),
+            ],
+            dim=1,
+        )
+        expected_features = torch.tensor(
+            [[0.0, 10.0, 3.0, 20.0, -1.0, 254.0], [2.0, 30.0, 1.0, 40.0, 300.0, -1.0]]
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=metadata,
+        )
+        dataset.build(
+            partition_output=PartitionOutput(
+                node_partition_book=torch.zeros(2),
+                edge_partition_book=torch.zeros(2),
+                partitioned_edge_index=GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1], [1, 0]]), edge_ids=None
+                ),
+                partitioned_node_features=FeaturePartitionData(
+                    feats=raw_node_features, ids=torch.arange(2)
+                ),
+                partitioned_node_quantized_features=FeaturePartitionData(
+                    feats=packed, ids=torch.arange(2)
+                ),
+                partitioned_edge_features=None,
+                partitioned_positive_labels=None,
+                partitioned_negative_labels=None,
+                partitioned_node_labels=None,
+            )
+        )
+
+        mp.spawn(
+            fn=_run_quantized_feature_neighbor_loader,
+            args=(dataset, expected_features),
+        )
+
     def test_heterogeneous_loader_supports_partially_quantized_node_types(
         self,
     ) -> None:
@@ -1122,6 +1193,7 @@ class WithEdgeDerivationTest(TestCase):
         proc.join(timeout=120)
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
+        self.assertTrue(holder["packed_features_absent"])
 
 
 class SamplingSeedTest(TestCase):
@@ -1336,7 +1408,8 @@ def _run_incoming_heterogeneous_quantized_edge_feature_neighbor_loader(
     assert isinstance(edge_quantization_metadata, dict)
     assert set(edge_feature_info) == {_USER_TO_STORY}
     assert set(edge_quantization_metadata) == {_USER_TO_STORY}
-    assert edge_feature_info[_USER_TO_STORY].dim == 2
+    # The dataset describes the logical width: two raw columns plus two packed ones.
+    assert edge_feature_info[_USER_TO_STORY].dim == 4
     assert edge_quantization_metadata[_USER_TO_STORY].feature_dim == 4
 
     batch = next(iter(loader))
