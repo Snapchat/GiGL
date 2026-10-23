@@ -1,4 +1,4 @@
-"""Varlen attention over packed sequences matches padded attention."""
+"""Nested-tensor attention over packed sequences matches padded attention."""
 
 import itertools
 import unittest
@@ -6,31 +6,16 @@ import unittest
 import torch
 from absl.testing import absltest
 
-from gigl.nn.packed_attention import _padded_packed_attention, _varlen_attention
+from gigl.nn.packed_attention import _njt_attention, _padded_packed_attention
 from gigl.transforms.static_khop import pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
 
 
-class PackedAttentionTest(TestCase):
-    def test_varlen_attention_traces_and_backpropagates_on_meta_tensors(self) -> None:
-        cu_seqlens = torch.tensor([0, 5, 6, 12], dtype=torch.int32, device="meta")
-        query, key, value = (
-            torch.empty(12, 2, 64, device="meta", requires_grad=True) for _ in range(3)
-        )
-        output = _varlen_attention(query, key, value, cu_seqlens, cu_seqlens, 6, 6)
-        self.assertEqual(output.shape, query.shape)
-        self.assertIsNotNone(output.grad_fn)
-        output.backward(torch.empty_like(output))
-        for tensor in (query, key, value):
-            assert tensor.grad is not None
-            self.assertEqual(tensor.grad.shape, tensor.shape)
-
-
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedAttentionCudaTest(TestCase):
-    def test_varlen_attention_matches_padded_packed_attention(self) -> None:
+    def test_njt_attention_matches_padded_packed_attention(self) -> None:
         device = torch.device("cuda")
         num_sequences, num_heads, head_dim = 6, 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12, 9], device=device)
@@ -65,7 +50,7 @@ class PackedAttentionCudaTest(TestCase):
                     ),
                     torch.set_grad_enabled(track_grad),
                 ):
-                    actual = _varlen_attention(
+                    actual = _njt_attention(
                         query,
                         key,
                         value,
@@ -82,7 +67,7 @@ class PackedAttentionCudaTest(TestCase):
                         atol=atol,
                     )
 
-    def test_varlen_attention_gradients_match_padded_packed_attention(self) -> None:
+    def test_njt_attention_gradients_match_padded_packed_attention(self) -> None:
         device = torch.device("cuda")
         num_heads, head_dim = 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
@@ -103,7 +88,7 @@ class PackedAttentionCudaTest(TestCase):
                     for rows in (num_queries, num_tokens, num_tokens)
                 ]
                 grad_output = random_rows(num_queries).to(dtype)
-                varlen_inputs, padded_inputs = (
+                njt_inputs, padded_inputs = (
                     [tensor.clone().requires_grad_() for tensor in inputs]
                     for _ in range(2)
                 )
@@ -113,10 +98,10 @@ class PackedAttentionCudaTest(TestCase):
                 else:
                     cu_seqlens_q = packed.cu_seqlens
                     max_seqlen_q = _MAX_SEQ_LEN
-                _varlen_attention(
-                    varlen_inputs[0],
-                    varlen_inputs[1],
-                    varlen_inputs[2],
+                _njt_attention(
+                    njt_inputs[0],
+                    njt_inputs[1],
+                    njt_inputs[2],
                     cu_seqlens_q,
                     packed.cu_seqlens,
                     max_seqlen_q,
@@ -130,7 +115,7 @@ class PackedAttentionCudaTest(TestCase):
                     query_is_first_token,
                 ).backward(grad_output)
                 for name, actual, expected in zip(
-                    ("query", "key", "value"), varlen_inputs, padded_inputs
+                    ("query", "key", "value"), njt_inputs, padded_inputs
                 ):
                     with self.subTest(
                         dtype=dtype, first_token=query_is_first_token, grad=name

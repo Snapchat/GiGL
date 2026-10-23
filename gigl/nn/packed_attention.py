@@ -12,11 +12,9 @@ Why this exists:
     most of the linear-layer, FFN and attention work on a padded
     ``[num_sequences, max_seq_len, dim]`` batch is spent on padding. Packed
     tokens spend it only on real ones.
-  - On CUDA this calls aten's memory-efficient varlen attention kernel directly.
-    That op is private because torch 2.8 has no public attention API that takes
-    ``cu_seqlens``; ``_varlen_attention`` explains why the public options do not
-    fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
-    own autograd formula supplies the backward.
+  - On CUDA the packed buffers are wrapped as jagged nested tensors and go
+    through ``F.scaled_dot_product_attention``, which runs the memory-efficient
+    varlen kernel. That kernel runs in fp32, which inference needs for accuracy.
   - On CPU the same inputs go through SDPA on a padded grid. That is the
     reference the CUDA path is tested against, and it lets the packed backend run
     anywhere.
@@ -37,17 +35,17 @@ Data flow of a packed forward::
         |  per layer, on real tokens only:
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, packed, ...)
-        |        CUDA: aten memory-efficient attention with cu_seqlens
+        |        CUDA: SDPA on jagged nested tensors
         |        CPU:  SDPA on a padded grid (reference)
         |    output linear + residual -> FFN + residual
         v
     anchor readout: rows cu_seqlens[:-1], the first token of every sequence
 
 Constraints:
-  - The varlen kernel is CUDA only; other devices use the padded SDPA path.
+  - The nested-tensor path is CUDA only; other devices use the padded SDPA path.
   - ``head_dim`` must be a multiple of 8 for the aligned kernels.
-  - Attention dropout is not supported; the kernel's varlen dropout has not been
-    tested against the padded path.
+  - Attention dropout is not supported; it has not been tested against the padded
+    path.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
 
 Example:
@@ -93,8 +91,6 @@ Results:
       The model stopped being the bottleneck; sampling was.
 """
 
-from typing import Callable, cast
-
 import torch
 import torch.nn.functional as F
 from jaxtyping import Float, Int32
@@ -104,83 +100,41 @@ from torch_geometric.utils import to_dense_batch
 from gigl.transforms.static_khop import PackedSequences
 
 
-def _varlen_attention(
+def _njt_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
     value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
+    query_offsets: Int32[Tensor, "num_sequences_plus_one"],
+    key_offsets: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
 ) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
-    """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
+    """Runs attention on packed sequences without padding, through jagged nested tensors.
 
-    Query sequence ``i`` attends to key sequence ``i``, so padded positions cost
-    nothing. The kernel reads the sequence offsets on the device and takes the
-    length bounds as host ints, so the call does not sync with the host (it can
-    be compiled). Differentiable in ``query``, ``key`` and ``value`` through the
-    autograd formula that aten registers for the kernel.
-
-    CUDA only; see the module docstring for the head dim and dropout limits. The
-    backward is non-deterministic unless
-    ``torch.use_deterministic_algorithms(True)``, and it needs
-    ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
-
-    This calls the private ``aten._efficient_attention_forward`` op because torch
-    2.8 has no public attention API that takes ``cu_seqlens``:
-
-    - ``F.scaled_dot_product_attention`` only takes padded
-      ``[batch, heads, seq, dim]`` inputs.
-    - Jagged nested tensors reach the same kernel through SDPA, but do not trace
-      under ``torch.compile`` and sync with the host to find the min and max
-      sequence lengths.
-    - FlexAttention compiles, but its 128-token blocks waste more work than
-      varlen on short sequences.
-    - The memory-efficient kernel runs in fp32, which inference needs for
-      accuracy. Flash Attention kernels support fp16 and bf16 only.
-
-    Because the op is private, its arguments can change between torch releases.
-    The CUDA tests compare this call with the padded path, so such a change fails
-    tests rather than silently changing outputs.
-
-    TODO(kmonte): when GiGL moves to torch >= 2.10, try the public
-    ``torch.nn.attention.varlen.varlen_attn``. It takes the same packed inputs
-    but wraps Flash Attention, so check fp32 support, backward and
-    ``torch.compile`` before switching. If it lacks fp32, use it for bf16 only
-    and keep this call for fp32.
+    Each flat ``[num_tokens, num_heads, head_dim]`` buffer is wrapped as a jagged
+    nested tensor with the given offsets, and query sequence ``i`` attends to key
+    sequence ``i``. Passing the length bounds as host ints keeps the call from
+    syncing with the host. ``F.scaled_dot_product_attention`` dispatches jagged
+    inputs to the memory-efficient kernel on CUDA.
 
     Args:
-        cu_seqlens_q: Query sequence offsets.
-        cu_seqlens_k: Key sequence offsets.
+        query_offsets: Query sequence offsets.
+        key_offsets: Key sequence offsets.
         max_seqlen_q: Upper bound on any query sequence length.
         max_seqlen_k: Upper bound on any key sequence length.
     """
-    # The backward needs the logsumexp; skip it when nothing will differentiate.
-    needs_grad = torch.is_grad_enabled() and any(
-        tensor.requires_grad for tensor in (query, key, value)
+
+    def jagged(tokens: Tensor, offsets: Tensor, max_seqlen: int) -> Tensor:
+        return torch.nested.nested_tensor_from_jagged(
+            tokens, offsets, min_seqlen=1, max_seqlen=max_seqlen
+        ).transpose(1, 2)
+
+    output = F.scaled_dot_product_attention(
+        jagged(query, query_offsets, max_seqlen_q),
+        jagged(key, key_offsets, max_seqlen_k),
+        jagged(value, key_offsets, max_seqlen_k),
     )
-    # The op's type stub declares every argument as ``...``. It returns
-    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
-    # output is used. The kernel takes ``[batch, tokens, heads, head_dim]``, and
-    # ``cu_seqlens`` splits the single batch row into sequences.
-    efficient_attention_forward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_forward,
-    )
-    output = efficient_attention_forward(
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        0.0,
-        0,
-        needs_grad,
-    )[0]
-    return output.squeeze(0)
+    return output.transpose(1, 2).values()
 
 
 def _padded_packed_attention(
@@ -194,7 +148,7 @@ def _padded_packed_attention(
 
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
     with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    and unpacks the outputs. ``_varlen_attention`` is checked against this.
+    and unpacks the outputs. ``_njt_attention`` is checked against this.
 
     Args:
         query: Packed queries, or one query per sequence when
@@ -250,7 +204,7 @@ def packed_attention(
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
 
-    Uses the CUDA varlen kernel on GPU and padded SDPA elsewhere. With
+    Uses jagged nested tensors on GPU and padded SDPA elsewhere. With
     ``query_is_first_token``, only each sequence's first token is queried, which
     is all the anchor readout of the last layer needs.
 
@@ -266,7 +220,7 @@ def packed_attention(
     else:
         cu_seqlens_q = packed.cu_seqlens
         max_seqlen_q = min(packed.max_seq_len, query.size(0))
-    return _varlen_attention(
+    return _njt_attention(
         query,
         key,
         value,
