@@ -93,41 +93,37 @@ Results:
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int32
+from jaxtyping import Float
 from torch import Tensor
 from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedSequences
 
 
-@torch.compiler.disable
-def _njt_attention(
-    query: Float[Tensor, "num_query_tokens num_heads head_dim"],
-    key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    query_offsets: Int32[Tensor, "num_sequences_plus_one"],
-    key_offsets: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
-) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
-    """Runs attention on packed sequences without padding, through jagged nested tensors.
+def _njt_forward(
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_tokens num_heads head_dim"],
+    packed: PackedSequences,
+    query_is_first_token: bool,
+) -> Float[Tensor, "num_queries num_heads head_dim"]:
+    """Wraps the flat buffers as jagged nested tensors and runs SDPA on them.
 
-    Each flat ``[num_tokens, num_heads, head_dim]`` buffer is wrapped as a jagged
-    nested tensor with the given offsets, and query sequence ``i`` attends to key
-    sequence ``i``. Passing the length bounds as host ints keeps the call from
-    syncing with the host. ``F.scaled_dot_product_attention`` dispatches jagged
-    inputs to the memory-efficient kernel on CUDA.
-
-    Jagged nested tensors do not compile under dynamic shapes (Inductor fails
-    with ``Cannot convert symbols to int``), so this runs eagerly. A compiled
-    layer splits into a graph before and a graph after this call.
-
-    Args:
-        query_offsets: Query sequence offsets.
-        key_offsets: Key sequence offsets.
-        max_seqlen_q: Upper bound on any query sequence length.
-        max_seqlen_k: Upper bound on any key sequence length.
+    Each buffer becomes a jagged nested tensor with the sequence offsets, and
+    query sequence ``i`` attends to key sequence ``i``. Passing the length bounds
+    as host ints keeps the call from syncing with the host.
+    ``F.scaled_dot_product_attention`` dispatches jagged inputs to the
+    memory-efficient kernel on CUDA.
     """
+    max_seqlen_k = min(packed.max_seq_len, key.size(0))
+    if query_is_first_token:
+        query_offsets = torch.arange(
+            packed.cu_seqlens.size(0), dtype=torch.int32, device=query.device
+        )
+        max_seqlen_q = 1
+    else:
+        query_offsets = packed.cu_seqlens
+        max_seqlen_q = min(packed.max_seq_len, query.size(0))
 
     def jagged(tokens: Tensor, offsets: Tensor, max_seqlen: int) -> Tensor:
         return torch.nested.nested_tensor_from_jagged(
@@ -136,10 +132,60 @@ def _njt_attention(
 
     output = F.scaled_dot_product_attention(
         jagged(query, query_offsets, max_seqlen_q),
-        jagged(key, key_offsets, max_seqlen_k),
-        jagged(value, key_offsets, max_seqlen_k),
+        jagged(key, packed.cu_seqlens, max_seqlen_k),
+        jagged(value, packed.cu_seqlens, max_seqlen_k),
     )
     return output.transpose(1, 2).values()
+
+
+class _NjtAttention(torch.autograd.Function):
+    """Jagged nested attention that saves only dense tensors for the backward.
+
+    A jagged nested tensor carries a fresh nested-int size on every construction,
+    so saving one for backward makes a checkpointed layer's recompute disagree
+    with its forward (``CheckpointError``). This function saves the dense inputs
+    and rebuilds the nested tensors in the backward.
+    """
+
+    @staticmethod
+    def forward(ctx, query, key, value, packed, query_is_first_token):
+        ctx.save_for_backward(query, key, value)
+        ctx.packed = packed
+        ctx.query_is_first_token = query_is_first_token
+        with torch.no_grad():
+            return _njt_forward(query, key, value, packed, query_is_first_token)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        query, key, value = (
+            tensor.detach().requires_grad_() for tensor in ctx.saved_tensors
+        )
+        with torch.enable_grad():
+            output = _njt_forward(
+                query, key, value, ctx.packed, ctx.query_is_first_token
+            )
+        grads = torch.autograd.grad(output, (query, key, value), grad_output)
+        return (*grads, None, None)
+
+
+@torch.compiler.disable
+def _njt_attention(
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_tokens num_heads head_dim"],
+    packed: PackedSequences,
+    query_is_first_token: bool,
+) -> Float[Tensor, "num_queries num_heads head_dim"]:
+    """Runs attention on packed sequences without padding, through jagged nested tensors.
+
+    Jagged nested tensors do not compile under dynamic shapes, so this runs
+    eagerly: a compiled layer splits into a graph before and a graph after this
+    call. It takes the layout rather than sizes so no symbolic size crosses the
+    graph break.
+
+    Args and returns are as in ``_padded_packed_attention``.
+    """
+    return _NjtAttention.apply(query, key, value, packed, query_is_first_token)
 
 
 def _padded_packed_attention(
@@ -217,20 +263,4 @@ def packed_attention(
     """
     if not query.is_cuda:
         return _padded_packed_attention(query, key, value, packed, query_is_first_token)
-    if query_is_first_token:
-        cu_seqlens_q = torch.arange(
-            packed.cu_seqlens.size(0), dtype=torch.int32, device=query.device
-        )
-        max_seqlen_q = 1
-    else:
-        cu_seqlens_q = packed.cu_seqlens
-        max_seqlen_q = min(packed.max_seq_len, query.size(0))
-    return _njt_attention(
-        query,
-        key,
-        value,
-        cu_seqlens_q,
-        packed.cu_seqlens,
-        max_seqlen_q,
-        min(packed.max_seq_len, key.size(0)),
-    )
+    return _njt_attention(query, key, value, packed, query_is_first_token)

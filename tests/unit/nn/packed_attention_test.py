@@ -36,14 +36,6 @@ class PackedAttentionCudaTest(TestCase):
                 expected = _padded_packed_attention(
                     query, key, value, packed, query_is_first_token
                 )
-                if query_is_first_token:
-                    cu_seqlens_q = torch.arange(
-                        num_sequences + 1, dtype=torch.int32, device=device
-                    )
-                    max_seqlen_q = 1
-                else:
-                    cu_seqlens_q = packed.cu_seqlens
-                    max_seqlen_q = _MAX_SEQ_LEN
                 with (
                     self.subTest(
                         dtype=dtype, first_token=query_is_first_token, grad=track_grad
@@ -51,13 +43,7 @@ class PackedAttentionCudaTest(TestCase):
                     torch.set_grad_enabled(track_grad),
                 ):
                     actual = _njt_attention(
-                        query,
-                        key,
-                        value,
-                        cu_seqlens_q,
-                        packed.cu_seqlens,
-                        max_seqlen_q,
-                        _MAX_SEQ_LEN,
+                        query, key, value, packed, query_is_first_token
                     )
                     self.assertEqual(actual.requires_grad, track_grad)
                     torch.testing.assert_close(
@@ -92,20 +78,12 @@ class PackedAttentionCudaTest(TestCase):
                     [tensor.clone().requires_grad_() for tensor in inputs]
                     for _ in range(2)
                 )
-                if query_is_first_token:
-                    cu_seqlens_q = torch.arange(6, dtype=torch.int32, device=device)
-                    max_seqlen_q = 1
-                else:
-                    cu_seqlens_q = packed.cu_seqlens
-                    max_seqlen_q = _MAX_SEQ_LEN
                 _njt_attention(
                     njt_inputs[0],
                     njt_inputs[1],
                     njt_inputs[2],
-                    cu_seqlens_q,
-                    packed.cu_seqlens,
-                    max_seqlen_q,
-                    _MAX_SEQ_LEN,
+                    packed,
+                    query_is_first_token,
                 ).backward(grad_output)
                 _padded_packed_attention(
                     padded_inputs[0],
