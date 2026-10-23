@@ -18,8 +18,13 @@ from tests.test_assets.test_case import TestCase
 
 # Short timeout so a broken fresh image fails fast instead of hanging CI until the
 # outer Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
-# directly (it does not apply the 24h launch_job default).
+# directly (it does not apply the 24h launch_job default). Vertex AI applies it to
+# run time only, so the queue bound below covers the wait for capacity.
 _INTEGRATION_JOB_TIMEOUT_S = 30 * 60
+# Bound on time spent waiting for capacity. Without it a starved job sits queued for
+# about 96 minutes before Vertex AI fails it, which alone eats a third of the 3h
+# Cloud Build budget.
+_INTEGRATION_JOB_QUEUE_TIMEOUT_S = 10 * 60
 
 
 def _assert_graph_store_info(num_storage_nodes: int, num_compute_nodes: int) -> None:
@@ -109,13 +114,10 @@ class NetworkingUtilsIntegrationTest(TestCase):
         self._file_loader.delete_files([self._remote_resource_config_uri])
         super().tearDown()
 
+    # One multi-node shape is enough to check the topology arithmetic, and each
+    # launched cluster is one more chance to wait on regional capacity.
     @parameterized.expand(
         [
-            param(
-                "Test with 1 compute node and 1 storage node",
-                compute_nodes=1,
-                storage_nodes=1,
-            ),
             param(
                 "Test with 2 compute nodes and 2 storage nodes",
                 compute_nodes=2,
@@ -149,15 +151,17 @@ class NetworkingUtilsIntegrationTest(TestCase):
             container_uri=self._src_cpu_image_uri,
             replica_count=compute_nodes,
             command=command,
-            machine_type="n2-standard-8",
+            # E2 shapes: chosen for availability in us-central1, not for speed.
+            machine_type="e2-standard-8",
             environment_variables=resource_config_env_vars,
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            queue_timeout_s=_INTEGRATION_JOB_QUEUE_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=self._src_cpu_image_uri,
             replica_count=storage_nodes,
-            machine_type="n1-standard-4",
+            machine_type="e2-standard-4",
             command=command,
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
         )
