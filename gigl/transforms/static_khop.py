@@ -196,8 +196,7 @@ def _build_neighbor_table(
     # A stable sort groups each node's edges, and an edge's slot is its rank in
     # that group. Degrees are counted with ``scatter_add_`` because ``bincount``
     # would sync with the host on CUDA.
-    order = torch.argsort(source, stable=True)
-    sorted_source = source[order]
+    sorted_source, order = torch.sort(source, stable=True)
     degree = torch.zeros(num_nodes + 1, dtype=torch.long, device=device)
     degree.scatter_add_(0, source, torch.ones_like(source))
     width = max(int(degree.max()), 1)
@@ -256,7 +255,7 @@ def _khop_sequence_layout(
         key_parts.append(
             torch.where(frontier >= 0, (frontier << hop_bits) | hop, padding_key)
         )
-    keys, _ = torch.sort(torch.cat(key_parts, dim=1), dim=1)
+    keys = torch.sort(torch.cat(key_parts, dim=1), dim=1).values
     nodes = keys >> hop_bits
     hops = keys & ((1 << hop_bits) - 1)
     keep = (keys != padding_key) & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
@@ -264,9 +263,9 @@ def _khop_sequence_layout(
         # Re-sort the kept candidates by (hop, node id) so truncation below drops
         # the farthest hops first.
         node_radix = neighbor_table.size(0)
-        order_keys, _ = torch.sort(
+        order_keys = torch.sort(
             torch.where(keep, hops * node_radix + nodes, padding_key), dim=1
-        )
+        ).values
         keep = order_keys != padding_key
         nodes = order_keys % node_radix
         keys = (nodes << hop_bits) | (order_keys // node_radix)
