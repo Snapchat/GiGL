@@ -12,11 +12,13 @@ Why this exists:
     most of the linear-layer, FFN and attention work on a padded
     ``[num_sequences, max_seq_len, dim]`` batch is spent on padding. Packed
     tokens spend it only on real ones.
-  - On CUDA this calls aten's memory-efficient varlen attention kernel directly.
-    That op is private because torch 2.8 has no public attention API that takes
-    ``cu_seqlens``; ``_varlen_attention`` explains why the public options do not
-    fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
-    own autograd formula supplies the backward.
+  - On CUDA this calls FlexAttention (``torch.nn.attention.flex_attention``, a
+    public API) with a block mask that keeps each sequence to itself. The mask is
+    built from ``cu_seqlens`` with tensor ops only, so there is no host sync and
+    the layers compile once for any token count. It runs in fp32, which
+    inference needs for accuracy, and FlexAttention supplies the backward.
+    FlexAttention can also add per-score terms through ``score_mod``, which is
+    where attention biases such as PPR scores would go.
   - On CPU the same inputs go through SDPA on a padded grid. That is the
     reference the CUDA path is tested against, and it lets the packed backend run
     anywhere.
@@ -37,18 +39,23 @@ Data flow of a packed forward::
         |  per layer, on real tokens only:
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, packed, ...)
-        |        CUDA: aten memory-efficient attention with cu_seqlens
+        |        CUDA: FlexAttention with a block mask built from cu_seqlens
         |        CPU:  SDPA on a padded grid (reference)
         |    output linear + residual -> FFN + residual
         v
     anchor readout: rows cu_seqlens[:-1], the first token of every sequence
 
 Constraints:
-  - The varlen kernel is CUDA only; other devices use the padded SDPA path.
-  - ``head_dim`` must be a multiple of 8 for the aligned kernels.
-  - Attention dropout is not supported; the kernel's varlen dropout has not been
-    tested against the padded path.
+  - FlexAttention runs on CUDA only; other devices use the padded SDPA path.
+  - Attention dropout is not supported.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
+  - Each mask block covers 128 tokens, so on average a query block also visits
+    the neighbouring sequences' tokens in its blocks and masks them out. With
+    about 90 real tokens per sequence this costs little next to the linears.
+  - Torch 2.8 builds the mask tensors in the compiled region with a flexible
+    layout that FlexAttention rejects, so they go through ``_fixed_layout``.
+  - Fewer than 128 queries (the anchor-only layer on a small batch) take
+    FlexAttention's decoding kernel, which needs the 128-token mask blocks.
 
 Example:
     >>> from gigl.transforms.static_khop import pack_sequences
@@ -79,7 +86,10 @@ Results:
 
   One L4 GPU, 3-layer graph transformer (hidden 512, 8 heads), sequences of up
   to 256 tokens holding about 90 real tokens on average, realistic batches,
-  steady state:
+  steady state. The first three figures were measured with aten's memory-
+  efficient varlen kernel in place of FlexAttention; against it, FlexAttention
+  ran 0.1% slower to 3.7% faster in forward and 2% to 3% slower in a training
+  step (see the FlexAttention comparison below):
     - Forward, no compile: 225 -> 76 ms per batch (~3.0x).
     - Forward, per-layer ``torch.compile``: 53 ms per batch (~4.3x vs the
       padded path without compile).
@@ -93,94 +103,171 @@ Results:
       The model stopped being the bottleneck; sampling was.
 """
 
-from typing import Callable, cast
+from typing import Callable
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int32
+from jaxtyping import Float, Int32, Int64
 from torch import Tensor
+from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedSequences
 
+_BLOCK_SIZE = 128
+_compiled_flex_attention = torch.compile(flex_attention)
 
-def _varlen_attention(
+
+@torch.library.custom_op("gigl::fixed_layout", mutates_args=())
+def _fixed_layout(tensor: Tensor) -> Tensor:
+    """Returns a copy of ``tensor`` whose memory layout Inductor treats as fixed.
+
+    Inductor lowers a custom op as an extern call, and an extern call's output
+    has a fixed layout. FlexAttention needs that for every tensor that its masks
+    read or that make up the BlockMask. Tensors computed inside the same
+    compiled region have a flexible layout, which fails with "convert
+    FlexibleLayout to FixedLayout first" on torch 2.8.
+    """
+    return tensor.clone()
+
+
+@_fixed_layout.register_fake
+def _(tensor: Tensor) -> Tensor:
+    return torch.empty_like(tensor)
+
+
+class _DocumentMask:
+    """``mask_mod`` letting each token attend to the tokens of its own sequence.
+
+    The sequence ids are a tensor attribute, so every batch runs the same
+    function code and ``torch.compile`` has nothing to guard on per batch.
+    """
+
+    def __init__(self, sequence: Int64[Tensor, "num_tokens"]) -> None:
+        self._sequence = sequence
+
+    def __call__(
+        self, batch: Tensor, head: Tensor, query_index: Tensor, key_index: Tensor
+    ) -> Tensor:
+        return self._sequence[query_index] == self._sequence[key_index]
+
+
+class _FirstTokenMask:
+    """``mask_mod`` for one query per sequence: query ``i`` attends to the tokens of sequence ``i``."""
+
+    def __init__(self, sequence: Int64[Tensor, "num_tokens"]) -> None:
+        self._sequence = sequence
+
+    def __call__(
+        self, batch: Tensor, head: Tensor, query_index: Tensor, key_index: Tensor
+    ) -> Tensor:
+        return self._sequence[key_index] == query_index
+
+
+def _block_mask(
+    mask_mod: Callable[..., Tensor],
+    num_queries: int,
+    num_tokens: int,
+    first_key: Int64[Tensor, "num_query_blocks"],
+    end_key: Int64[Tensor, "num_query_blocks"],
+) -> BlockMask:
+    """Builds a BlockMask whose query block ``i`` visits the key blocks covering ``[first_key[i], end_key[i])``.
+
+    It uses ``BlockMask.from_kv_blocks`` instead of ``create_block_mask``, which
+    would evaluate the mask on a dense ``num_queries x num_tokens`` grid (2.4 GB
+    for 49k tokens). Only tensor ops on the sequence offsets run, so there is no
+    host sync, and with symbolic sizes the whole thing compiles once. Every
+    visited block applies ``mask_mod``.
+    """
+    num_key_blocks = (num_tokens + _BLOCK_SIZE - 1) // _BLOCK_SIZE
+    first_block = first_key // _BLOCK_SIZE
+    num_visited = ((end_key + _BLOCK_SIZE - 1) // _BLOCK_SIZE - first_block).to(
+        torch.int32
+    )
+    # The visited blocks come first in each row; the remaining entries only keep
+    # the row a permutation and sit past ``num_visited``.
+    key_blocks = torch.arange(num_key_blocks, device=first_key.device)
+    indices = ((first_block[:, None] + key_blocks[None, :]) % num_key_blocks).to(
+        torch.int32
+    )
+    mask = BlockMask.from_kv_blocks(
+        num_visited[None, None],
+        indices[None, None],
+        BLOCK_SIZE=_BLOCK_SIZE,
+        mask_mod=mask_mod,
+        seq_lengths=(num_queries, num_tokens),
+    )
+    return BlockMask(
+        mask.seq_lengths,
+        _fixed_layout(mask.kv_num_blocks),
+        _fixed_layout(mask.kv_indices),
+        None,
+        None,
+        _fixed_layout(mask.q_num_blocks),
+        _fixed_layout(mask.q_indices),
+        None,
+        None,
+        mask.BLOCK_SIZE,
+        mask.mask_mod,
+    )
+
+
+def _flex_packed_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
     value: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
-    cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
+    cu_seqlens: Int32[Tensor, "num_sequences_plus_one"],
+    query_is_first_token: bool,
 ) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
-    """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
+    """Runs attention on packed sequences without padding, with FlexAttention on CUDA.
 
-    Query sequence ``i`` attends to key sequence ``i``, so padded positions cost
-    nothing. The kernel reads the sequence offsets on the device and takes the
-    length bounds as host ints, so the call does not sync with the host (it can
-    be compiled). Differentiable in ``query``, ``key`` and ``value`` through the
-    autograd formula that aten registers for the kernel.
-
-    CUDA only; see the module docstring for the head dim and dropout limits. The
-    backward is non-deterministic unless
-    ``torch.use_deterministic_algorithms(True)``, and it needs
-    ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
-
-    This calls the private ``aten._efficient_attention_forward`` op because torch
-    2.8 has no public attention API that takes ``cu_seqlens``:
-
-    - ``F.scaled_dot_product_attention`` only takes padded
-      ``[batch, heads, seq, dim]`` inputs.
-    - Jagged nested tensors reach the same kernel through SDPA, but do not trace
-      under ``torch.compile`` and sync with the host to find the min and max
-      sequence lengths.
-    - FlexAttention compiles, but its 128-token blocks waste more work than
-      varlen on short sequences.
-    - The memory-efficient kernel runs in fp32, which inference needs for
-      accuracy. Flash Attention kernels support fp16 and bf16 only.
-
-    Because the op is private, its arguments can change between torch releases.
-    The CUDA tests compare this call with the padded path, so such a change fails
-    tests rather than silently changing outputs.
-
-    TODO(kmonte): when GiGL moves to torch >= 2.10, try the public
-    ``torch.nn.attention.varlen.varlen_attn``. It takes the same packed inputs
-    but wraps Flash Attention, so check fp32 support, backward and
-    ``torch.compile`` before switching. If it lacks fp32, use it for bf16 only
-    and keep this call for fp32.
+    The BlockMask is built here from ``cu_seqlens``, so inside a compiled
+    region it follows the traced sizes: a layer compiled with the token
+    dimension marked dynamic compiles once. Differentiable in ``query``,
+    ``key`` and ``value``.
 
     Args:
-        cu_seqlens_q: Query sequence offsets.
-        cu_seqlens_k: Key sequence offsets.
-        max_seqlen_q: Upper bound on any query sequence length.
-        max_seqlen_k: Upper bound on any key sequence length.
+        cu_seqlens: Sequence offsets; the keys are all the tokens they cover.
+        query_is_first_token: ``query`` holds one query per sequence.
     """
-    # The backward needs the logsumexp; skip it when nothing will differentiate.
-    needs_grad = torch.is_grad_enabled() and any(
-        tensor.requires_grad for tensor in (query, key, value)
+    cu_seqlens = cu_seqlens.long()
+    num_tokens = key.size(0)
+    # Counting the offsets at or below a token gives its sequence plus one.
+    # Slicing ``cu_seqlens`` here would leave Inductor a view it cannot lower.
+    sequence = _fixed_layout(
+        torch.searchsorted(
+            cu_seqlens, torch.arange(num_tokens, device=key.device), right=True
+        )
+        - 1
     )
-    # The op's type stub declares every argument as ``...``. It returns
-    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
-    # output is used. The kernel takes ``[batch, tokens, heads, head_dim]``, and
-    # ``cu_seqlens`` splits the single batch row into sequences.
-    efficient_attention_forward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_forward,
+    if query_is_first_token:
+        num_queries = cu_seqlens.size(0) - 1
+        first_query = torch.arange(0, num_queries, _BLOCK_SIZE, device=key.device)
+        last_query = (first_query + _BLOCK_SIZE).clamp(max=num_queries) - 1
+        mask = _block_mask(
+            _FirstTokenMask(sequence),
+            num_queries,
+            num_tokens,
+            cu_seqlens[first_query],
+            cu_seqlens[last_query + 1],
+        )
+    else:
+        first_query = torch.arange(0, num_tokens, _BLOCK_SIZE, device=key.device)
+        last_query = (first_query + _BLOCK_SIZE).clamp(max=num_tokens) - 1
+        mask = _block_mask(
+            _DocumentMask(sequence),
+            num_tokens,
+            num_tokens,
+            cu_seqlens[sequence[first_query]],
+            cu_seqlens[sequence[last_query] + 1],
+        )
+    output = _compiled_flex_attention(
+        query.transpose(0, 1).unsqueeze(0),
+        key.transpose(0, 1).unsqueeze(0),
+        value.transpose(0, 1).unsqueeze(0),
+        block_mask=mask,
     )
-    output = efficient_attention_forward(
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
-        cu_seqlens_q,
-        cu_seqlens_k,
-        max_seqlen_q,
-        max_seqlen_k,
-        0.0,
-        0,
-        needs_grad,
-    )[0]
-    return output.squeeze(0)
+    return output.squeeze(0).transpose(0, 1)
 
 
 def _padded_packed_attention(
@@ -250,7 +337,7 @@ def packed_attention(
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
 
-    Uses the CUDA varlen kernel on GPU and padded SDPA elsewhere. With
+    Uses FlexAttention with a document mask on GPU and padded SDPA elsewhere. With
     ``query_is_first_token``, only each sequence's first token is queried, which
     is all the anchor readout of the last layer needs.
 
@@ -258,20 +345,6 @@ def packed_attention(
     """
     if not query.is_cuda:
         return _padded_packed_attention(query, key, value, packed, query_is_first_token)
-    if query_is_first_token:
-        cu_seqlens_q = torch.arange(
-            packed.cu_seqlens.size(0), dtype=torch.int32, device=query.device
-        )
-        max_seqlen_q = 1
-    else:
-        cu_seqlens_q = packed.cu_seqlens
-        max_seqlen_q = min(packed.max_seq_len, query.size(0))
-    return _varlen_attention(
-        query,
-        key,
-        value,
-        cu_seqlens_q,
-        packed.cu_seqlens,
-        max_seqlen_q,
-        min(packed.max_seq_len, key.size(0)),
+    return _flex_packed_attention(
+        query, key, value, packed.cu_seqlens, query_is_first_token
     )
