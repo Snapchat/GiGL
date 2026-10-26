@@ -12,7 +12,8 @@ WHY THIS EXISTS
     They can use 3x the memory (the bitmap count), reject an int32 topology, or crash when edge
     ids are requested from a graph that has none.
 
-    The unit tests in ``tests/unit/utils/glt_int32_indices_test.py`` cover the same ground in far
+    The unit tests in ``tests/unit/utils/glt_int32_indices_test.py`` (column ids) and
+    ``tests/unit/utils/glt_int32_indptr_test.py`` (row pointers) cover the same ground in far
     more detail, but they SKIP on an unpatched wheel by design -- GiGL's CI runs against the
     released graphlearn_torch, where failing would be wrong. So the test suite cannot be the gate
     for the image, and this script cannot be the detailed test. Both exist, deliberately.
