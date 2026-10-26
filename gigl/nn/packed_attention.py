@@ -86,10 +86,10 @@ Results:
 
   One L4 GPU, 3-layer graph transformer (hidden 512, 8 heads), sequences of up
   to 256 tokens holding about 90 real tokens on average, realistic batches,
-  steady state. The first three figures were measured with aten's memory-
-  efficient varlen kernel in place of FlexAttention; against it, FlexAttention
-  ran 0.1% slower to 3.7% faster in forward and 2% to 3% slower in a training
-  step (see the FlexAttention comparison below):
+  steady state. The figures below were measured with aten's memory-efficient
+  varlen kernel in place of FlexAttention. Against that kernel, FlexAttention
+  measured about 2% faster in a compiled forward (three runs each) and about 5%
+  slower in a compiled training step (three to four runs each):
     - Forward, no compile: 225 -> 76 ms per batch (~3.0x).
     - Forward, per-layer ``torch.compile``: 53 ms per batch (~4.3x vs the
       padded path without compile).
