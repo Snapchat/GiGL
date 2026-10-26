@@ -2,9 +2,9 @@
 
 ``graphlearn_torch.utils.coo_to_csr`` delegates to ``torch_sparse.SparseTensor``, which builds a
 composite sort key, sorts it, and gathers row and col through the permutation while the caller's
-originals are still live. Seven full-size int64 arrays exist at the peak, measured at 7.25x one
-int64 array on 400M edges. At a multi-billion-edge partition that is hundreds of GiB and the
-conversion, not the graph, is what exhausts the host.
+originals are still live. Seven full-size int64 arrays exist at the peak (~7x one int64 array),
+so at a multi-billion-edge partition that is hundreds of GiB and the conversion, not the graph,
+is what exhausts the host.
 
 This implementation is a two-pass counting sort: degrees give the exact output layout up front,
 so the output is allocated once and written in place, and the input is consumed in chunks so
@@ -274,7 +274,7 @@ def build_csr_from_coo(
             sample edge IDs.
 
     Returns:
-        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
+        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, int32 when ``num_edges`` < 2^31 and int64 otherwise, and ``indices``
         of shape ``[num_edges]``, int32 when ``col`` is int32 and int64 otherwise, plus optional
         int64 ``edge_ids`` of shape ``[num_edges]`` in CSR order. Empty input returns an empty
         ID tensor when retention is enabled and ``None`` otherwise.
@@ -292,6 +292,11 @@ def build_csr_from_coo(
     num_edges = row.numel()
     # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
     indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
+    # The indptr values are edge offsets in [0, num_edges], so they fit int32 exactly when
+    # num_edges does. Halving the indptr matters because it is sized to the row dimension
+    # (one entry per source node, i.e. the global node count), which dominates resident graph
+    # memory on billion-node partitions -- unlike `indices`, which is per-partition and small.
+    indptr_dtype = torch.int32 if num_edges < 2**31 else torch.int64
     row_max = -1
     if num_edges:
         row_max = int(row.max().item())
@@ -302,7 +307,7 @@ def build_csr_from_coo(
 
     # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
     # allocate_preshared.
-    indptr = allocate_preshared((num_rows + 1,), torch.int64)
+    indptr = allocate_preshared((num_rows + 1,), indptr_dtype)
     if num_edges == 0:
         # A rank can own no edges of some edge type.
         indptr.zero_()
@@ -315,7 +320,9 @@ def build_csr_from_coo(
             edge_ids=edge_ids,
         )
     indptr[0] = 0
-    torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
+    torch.cumsum(
+        torch.bincount(row, minlength=num_rows).to(indptr.dtype), dim=0, out=indptr[1:]
+    )
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands

@@ -1,0 +1,338 @@
+diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
+index 59694fd..1bd6d7c 100644
+--- a/graphlearn_torch/csrc/cpu/graph.cc
++++ b/graphlearn_torch/csrc/cpu/graph.cc
+@@ -100,7 +100,23 @@ void Graph::InitCPUGraphFromCSR(
+   CheckEq<int64_t>(indptr.dim(), 1);
+   CheckEq<int64_t>(indices.dim(), 1);
+
+-  row_ptr_ = indptr.data_ptr<int64_t>();
++  // Row pointers (indptr) may be int32 (edge_count < 2^31, so the offsets fit -- checked below)
++  // or int64. Exactly one of row_ptr_ / row_ptr32_ is set; samplers dispatch on RowIsInt32(), and
++  // samplers that have not been taught the int32 layout reject it loudly at their own entry points.
++  TORCH_CHECK(indptr.is_contiguous(),
++              "InitCPUGraphFromCSR requires contiguous indptr: the row array is indexed as flat "
++              "storage by the samplers, so a strided view would read the wrong offsets");
++  row_is_int32_ = (indptr.scalar_type() == torch::kInt32);
++  if (row_is_int32_) {
++    row_ptr32_ = indptr.data_ptr<int32_t>();
++    row_ptr_ = nullptr;
++  } else {
++    TORCH_CHECK(indptr.scalar_type() == torch::kInt64,
++                "InitCPUGraphFromCSR requires int32 or int64 indptr, got ",
++                indptr.scalar_type());
++    row_ptr_ = indptr.data_ptr<int64_t>();
++    row_ptr32_ = nullptr;
++  }
+   row_count_ = indptr.size(0) - 1;
+   edge_count_ = indices.size(0);
+   // Column ids may be int32 (node id domain < 2^31 -- checked below) or int64. Exactly one of
+diff --git a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
+index 4f2a34e..67e4d31 100644
+--- a/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
++++ b/graphlearn_torch/csrc/cpu/random_negative_sampler.cc
+@@ -28,6 +28,10 @@ std::tuple<torch::Tensor, torch::Tensor> CPURandomNegativeSampler::Sample(
+               "CPURandomNegativeSampler has not been taught the int32 column-id layout; "
+               "initialize this graph with int64 indices or extend the sampler "
+               "(see Graph::ColIsInt32)");
++  TORCH_CHECK(!graph_->RowIsInt32(),
++              "CPURandomNegativeSampler has not been taught the int32 row-pointer layout; "
++              "initialize this graph with int64 indptr or extend the sampler "
++              "(see Graph::RowIsInt32)");
+   const int64_t* col_idx = graph_->GetColIdx();
+   int64_t row_num = graph_->GetRowCount();
+   int64_t col_num = graph_->GetColCount();
+diff --git a/graphlearn_torch/csrc/cpu/random_sampler.cc b/graphlearn_torch/csrc/cpu/random_sampler.cc
+index 1547197..9fe52d1 100644
+--- a/graphlearn_torch/csrc/cpu/random_sampler.cc
++++ b/graphlearn_torch/csrc/cpu/random_sampler.cc
+@@ -74,13 +74,38 @@ void UniformSampleImpl(const ColT* col_begin,
+   }
+ }
+
+-template <typename ColT>
++// Per-node neighbor count, generic over the row-pointer storage type RowT (int32 or int64; see
++// Graph::RowIsInt32). The indptr values are edge offsets in [0, edge_count]; degrees are computed
++// in int64 regardless, so narrowing the stored indptr never narrows the arithmetic.
++template <typename RowT>
++void FillNbrsNumImpl(const int64_t* nodes,
++                     const int32_t bs,
++                     const int32_t req_num,
++                     const int64_t row_count,
++                     const RowT* row_ptr,
++                     int64_t* out_nbr_num) {
++  at::parallel_for(0, bs, 1, [&](int32_t start, int32_t end){
++    for(int32_t i = start; i < end; i++){
++      auto v = nodes[i];
++      if (v < row_count) {
++        out_nbr_num[i] = std::min(static_cast<int64_t>(req_num),
++          static_cast<int64_t>(row_ptr[v+1]) - static_cast<int64_t>(row_ptr[v]));
++      } else {
++        out_nbr_num[i] = 0;
++      }
++    }
++  });
++}
++
++// Generic over both the row-pointer type RowT and the column-id type ColT. row_ptr[v] indexes
++// col_idx; the two narrow independently (see Graph::RowIsInt32 / Graph::ColIsInt32).
++template <typename RowT, typename ColT>
+ void CSRRowWiseSampleImpl(const int64_t* nodes,
+                           const int64_t* nbrs_offset,
+                           const int32_t bs,
+                           const int32_t req_num,
+                           const int64_t row_count,
+-                          const int64_t* row_ptr,
++                          const RowT* row_ptr,
+                           const ColT* col_idx,
+                           int64_t* out_nbrs) {
+   at::parallel_for(0, bs, 1, [&](int32_t start, int32_t end){
+@@ -94,13 +119,13 @@ void CSRRowWiseSampleImpl(const int64_t* nodes,
+   });
+ }
+
+-template <typename ColT>
++template <typename RowT, typename ColT>
+ void CSRRowWiseSampleImpl(const int64_t* nodes,
+                           const int64_t* nbrs_offset,
+                           const int32_t bs,
+                           const int32_t req_num,
+                           const int64_t row_count,
+-                          const int64_t* row_ptr,
++                          const RowT* row_ptr,
+                           const ColT* col_idx,
+                           const int64_t* edge_ids,
+                           int64_t* out_nbrs,
+@@ -124,13 +149,16 @@ CPURandomSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
+   if (req_num < 0) req_num = std::numeric_limits<int32_t>::max();
+   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
+   int64_t bs = nodes.size(0);
+-  const auto row_ptr = graph_->GetRowPtr();
+-  const auto col_idx = graph_->GetColIdx();
+   const auto row_count = graph_->GetRowCount();
++  const bool row_is_int32 = graph_->RowIsInt32();
+
+   torch::Tensor nbrs_num = torch::empty(bs, nodes.options());
+   auto nbrs_num_ptr = nbrs_num.data_ptr<int64_t>();
+-  FillNbrsNum(nodes_ptr, bs, req_num, row_count, row_ptr, nbrs_num_ptr);
++  if (row_is_int32) {
++    FillNbrsNumImpl(nodes_ptr, bs, req_num, row_count, graph_->GetRowPtr32(), nbrs_num_ptr);
++  } else {
++    FillNbrsNumImpl(nodes_ptr, bs, req_num, row_count, graph_->GetRowPtr(), nbrs_num_ptr);
++  }
+   int64_t nbrs_offset[bs + 1];
+   nbrs_offset[0] = 0;
+   for(int64_t i = 1; i <= bs; ++i) {
+@@ -138,12 +166,24 @@ CPURandomSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
+   }
+
+   torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
+-  if (graph_->ColIsInt32()) {
+-    CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
+-      row_ptr, graph_->GetColIdx32(), nbrs.data_ptr<int64_t>());
++  int64_t* out_nbrs = nbrs.data_ptr<int64_t>();
++  // Dispatch independently on the row-pointer and column-id storage dtypes.
++  if (row_is_int32) {
++    if (graph_->ColIsInt32()) {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++        graph_->GetRowPtr32(), graph_->GetColIdx32(), out_nbrs);
++    } else {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++        graph_->GetRowPtr32(), graph_->GetColIdx(), out_nbrs);
++    }
+   } else {
+-    CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
+-      row_ptr, col_idx, nbrs.data_ptr<int64_t>());
++    if (graph_->ColIsInt32()) {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++        graph_->GetRowPtr(), graph_->GetColIdx32(), out_nbrs);
++    } else {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++        graph_->GetRowPtr(), graph_->GetColIdx(), out_nbrs);
++    }
+   }
+   return std::make_tuple(nbrs, nbrs_num);
+ }
+@@ -153,14 +193,17 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
+   if (req_num < 0) req_num = std::numeric_limits<int32_t>::max();
+   const int64_t* nodes_ptr = nodes.data_ptr<int64_t>();
+   int64_t bs = nodes.size(0);
+-  const auto row_ptr = graph_->GetRowPtr();
+-  const auto col_idx = graph_->GetColIdx();
+   const auto edge_ids = graph_->GetEdgeId();
+   const auto row_count = graph_->GetRowCount();
++  const bool row_is_int32 = graph_->RowIsInt32();
+
+   torch::Tensor nbrs_num = torch::empty(bs, nodes.options());
+   auto nbrs_num_ptr = nbrs_num.data_ptr<int64_t>();
+-  FillNbrsNum(nodes_ptr, bs, req_num, row_count, row_ptr, nbrs_num_ptr);
++  if (row_is_int32) {
++    FillNbrsNumImpl(nodes_ptr, bs, req_num, row_count, graph_->GetRowPtr32(), nbrs_num_ptr);
++  } else {
++    FillNbrsNumImpl(nodes_ptr, bs, req_num, row_count, graph_->GetRowPtr(), nbrs_num_ptr);
++  }
+   int64_t nbrs_offset[bs + 1];
+   nbrs_offset[0] = 0;
+   for(int64_t i = 1; i <= bs; ++i) {
+@@ -177,35 +220,31 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
+
+   torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
+   torch::Tensor out_eid = torch::empty(nbrs_offset[bs], nodes.options());
+-  if (graph_->ColIsInt32()) {
+-    CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
+-                         row_ptr, graph_->GetColIdx32(), edge_ids,
+-                         nbrs.data_ptr<int64_t>(), out_eid.data_ptr<int64_t>());
++  int64_t* out_nbrs = nbrs.data_ptr<int64_t>();
++  int64_t* out_eid_ptr = out_eid.data_ptr<int64_t>();
++  // Dispatch independently on the row-pointer and column-id storage dtypes.
++  if (row_is_int32) {
++    if (graph_->ColIsInt32()) {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++                           graph_->GetRowPtr32(), graph_->GetColIdx32(), edge_ids,
++                           out_nbrs, out_eid_ptr);
++    } else {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++                           graph_->GetRowPtr32(), graph_->GetColIdx(), edge_ids,
++                           out_nbrs, out_eid_ptr);
++    }
+   } else {
+-    CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
+-                         row_ptr, col_idx, edge_ids,
+-                         nbrs.data_ptr<int64_t>(), out_eid.data_ptr<int64_t>());
++    if (graph_->ColIsInt32()) {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++                           graph_->GetRowPtr(), graph_->GetColIdx32(), edge_ids,
++                           out_nbrs, out_eid_ptr);
++    } else {
++      CSRRowWiseSampleImpl(nodes_ptr, nbrs_offset, bs, req_num, row_count,
++                           graph_->GetRowPtr(), graph_->GetColIdx(), edge_ids,
++                           out_nbrs, out_eid_ptr);
++    }
+   }
+   return std::make_tuple(nbrs, nbrs_num, out_eid);
+ }
+
+-void CPURandomSampler::FillNbrsNum(const int64_t* nodes,
+-                                   const int32_t bs,
+-                                   const int32_t req_num,
+-                                   const int64_t row_count,
+-                                   const int64_t* row_ptr,
+-                                   int64_t* out_nbr_num) {
+-  at::parallel_for(0, bs, 1, [&](int32_t start, int32_t end){
+-    for(int32_t i = start; i < end; i++){
+-      auto v = nodes[i];
+-      if (v < row_count) {
+-        out_nbr_num[i] = std::min(static_cast<int64_t>(req_num),
+-          row_ptr[v+1]-row_ptr[v]);
+-      } else {
+-        out_nbr_num[i] = 0;
+-      }
+-    }
+-  });
+-}
+-
+-}  // namespace graphlearn_torch
+\ No newline at end of file
++}  // namespace graphlearn_torch
+diff --git a/graphlearn_torch/csrc/cpu/random_sampler.h b/graphlearn_torch/csrc/cpu/random_sampler.h
+index e19b173..b4c67f4 100644
+--- a/graphlearn_torch/csrc/cpu/random_sampler.h
++++ b/graphlearn_torch/csrc/cpu/random_sampler.h
+@@ -33,16 +33,13 @@ public:
+   SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) override;
+
+ private:
+-  void FillNbrsNum(const int64_t* nodes, const int32_t bs,
+-    const int32_t req_num,  const int64_t row_count,
+-    const int64_t* row_ptr, int64_t* out_nbr_num);
+-
+-  // The row-wise sampling helpers are file-local templates in random_sampler.cc, generic over
+-  // the column-id storage type (int64 or int32; see Graph::ColIsInt32). Outputs are always
+-  // int64 -- the storage dtype is an implementation detail of the graph, not of the API.
++  // The row-wise sampling helpers (neighbor-count fill + CSR row sampling) are file-local
++  // templates in random_sampler.cc, generic over the row-pointer type (int64 or int32; see
++  // Graph::RowIsInt32) and the column-id type (int64 or int32; see Graph::ColIsInt32). Outputs are
++  // always int64 -- the storage dtype is an implementation detail of the graph, not of the API.
+
+ };
+
+ } // namespace graphlearn_torch
+
+-#endif // GRAPHLEARN_TORCH_CPU_RANDOM_SAMPLER_H_
+\ No newline at end of file
++#endif // GRAPHLEARN_TORCH_CPU_RANDOM_SAMPLER_H_
+diff --git a/graphlearn_torch/csrc/cpu/subgraph_op.cc b/graphlearn_torch/csrc/cpu/subgraph_op.cc
+index cb903c0..80b8274 100644
+--- a/graphlearn_torch/csrc/cpu/subgraph_op.cc
++++ b/graphlearn_torch/csrc/cpu/subgraph_op.cc
+@@ -68,6 +68,10 @@ void CPUSubGraphOp::Induce(const std::vector<int64_t>& nodes,
+               "CPUSubGraphOp has not been taught the int32 column-id layout; "
+               "initialize this graph with int64 indices or extend the sampler "
+               "(see Graph::ColIsInt32)");
++  TORCH_CHECK(!graph_->RowIsInt32(),
++              "CPUSubGraphOp has not been taught the int32 row-pointer layout; "
++              "initialize this graph with int64 indptr or extend the sampler "
++              "(see Graph::RowIsInt32)");
+   const auto indices = graph_->GetColIdx();
+   const auto edge_ids = graph_->GetEdgeId();
+   const auto row_count = graph_->GetRowCount();
+diff --git a/graphlearn_torch/csrc/cpu/weighted_sampler.cc b/graphlearn_torch/csrc/cpu/weighted_sampler.cc
+index 5b115d5..d2e2655 100644
+--- a/graphlearn_torch/csrc/cpu/weighted_sampler.cc
++++ b/graphlearn_torch/csrc/cpu/weighted_sampler.cc
+@@ -32,6 +32,10 @@ CPUWeightedSampler::Sample(const torch::Tensor& nodes, int32_t req_num) {
+               "CPUWeightedSampler has not been taught the int32 column-id layout; "
+               "initialize this graph with int64 indices or extend the sampler "
+               "(see Graph::ColIsInt32)");
++  TORCH_CHECK(!graph_->RowIsInt32(),
++              "CPUWeightedSampler has not been taught the int32 row-pointer layout; "
++              "initialize this graph with int64 indptr or extend the sampler "
++              "(see Graph::RowIsInt32)");
+   const auto col_idx = graph_->GetColIdx();
+   const auto row_count = graph_->GetRowCount();
+   const auto edge_weights = graph_->GetEdgeWeight();
+@@ -63,6 +67,10 @@ CPUWeightedSampler::SampleWithEdge(
+               "CPUWeightedSampler has not been taught the int32 column-id layout; "
+               "initialize this graph with int64 indices or extend the sampler "
+               "(see Graph::ColIsInt32)");
++  TORCH_CHECK(!graph_->RowIsInt32(),
++              "CPUWeightedSampler has not been taught the int32 row-pointer layout; "
++              "initialize this graph with int64 indptr or extend the sampler "
++              "(see Graph::RowIsInt32)");
+   const auto col_idx = graph_->GetColIdx();
+   const auto edge_ids = graph_->GetEdgeId();
+   const auto row_count = graph_->GetRowCount();
+diff --git a/graphlearn_torch/include/graph.h b/graphlearn_torch/include/graph.h
+index 4a24485..c04f574 100644
+--- a/graphlearn_torch/include/graph.h
++++ b/graphlearn_torch/include/graph.h
+@@ -91,6 +91,20 @@ public:
+     return col_is_int32_;
+   }
+
++  // int32 row-pointer (indptr) support, CPU sampling only. The indptr length is row_count+1 and
++  // its values are edge offsets in [0, edge_count]; when edge_count < 2^31 the indptr array halves
++  // by storing int32 (checked at init). Exactly one of row_ptr_ / row_ptr32_ is set. Samplers that
++  // have not been taught the int32 layout must call RowIsInt32() and reject it LOUDLY rather than
++  // read reinterpreted garbage. GetRowPtr32() and GetColIdx32() are independent -- a graph may be
++  // int32 on either, both, or neither.
++  const int32_t* GetRowPtr32() const {
++    return row_ptr32_;
++  }
++
++  bool RowIsInt32() const {
++    return row_is_int32_;
++  }
++
+   const int64_t* GetEdgeId() const {
+     return edge_id_;
+   }
+@@ -136,6 +150,8 @@ private:
+   int64_t*  col_idx_;
+   int32_t*  col_idx32_{nullptr};
+   bool      col_is_int32_{false};
++  int32_t*  row_ptr32_{nullptr};
++  bool      row_is_int32_{false};
+   int64_t*  edge_id_;
+   float*    edge_weight_;
+   std::vector<void*>  registered_ptrs_;

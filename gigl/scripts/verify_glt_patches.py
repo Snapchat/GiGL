@@ -356,6 +356,77 @@ def verify_queue_teardown() -> bool:
     return no_leak and survives
 
 
+def verify_int32_indptr() -> bool:
+    """int32 indptr (row pointers) must be accepted AND sample identically to int64.
+
+    The indptr is sized to the row dimension (one entry per source node), so at a global-node-sized
+    partition it dominates resident graph memory; 0003 narrows it to int32 when the edge offsets fit.
+    Row- and column-id widths are independent, so this checks int32-row / int64-col AND the
+    both-int32 layout the GiGL partitioners actually build. The identical-sampling property is the
+    one whose failure is SILENT.
+    """
+    from graphlearn_torch import py_graphlearn_torch as pywrap
+
+    indptr_vals = [0, 3, 3, 6]
+    columns = [5, 2, 9, 1, 7, 4]
+    indptr64 = torch.tensor(indptr_vals, dtype=torch.int64)
+    indptr32 = torch.tensor(indptr_vals, dtype=torch.int32)
+    cols64 = torch.tensor(columns, dtype=torch.int64)
+    cols32 = torch.tensor(columns, dtype=torch.int32)
+    seeds = torch.tensor([0, 2], dtype=torch.int64)
+
+    try:
+        graph_row32 = build_cpu_csr_graph(indptr32, cols64)
+    except RuntimeError as error:
+        return _check(
+            "int32 indptr: accepts int32 indptr", False, str(error).splitlines()[0]
+        )
+    accepted = _check("int32 indptr: accepts int32 indptr", True)
+
+    graph64 = build_cpu_csr_graph(indptr64, cols64)
+    neighbors64, degrees64 = pywrap.CPURandomSampler(graph64.graph_handler).sample(
+        seeds, 8
+    )
+    neighbors_row32, degrees_row32 = pywrap.CPURandomSampler(
+        graph_row32.graph_handler
+    ).sample(seeds, 8)
+    row32_identical = _check(
+        "int32 indptr: int32-row/int64-col samples identically to int64",
+        bool(torch.equal(neighbors64, neighbors_row32))
+        and bool(torch.equal(degrees64, degrees_row32)),
+        f"{neighbors_row32.tolist()} vs {neighbors64.tolist()}",
+    )
+    int64_out = _check(
+        "int32 indptr: sampled ids stay int64",
+        neighbors_row32.dtype == torch.int64,
+        str(neighbors_row32.dtype),
+    )
+
+    graph_both32 = build_cpu_csr_graph(indptr32, cols32)
+    neighbors_both32, degrees_both32 = pywrap.CPURandomSampler(
+        graph_both32.graph_handler
+    ).sample(seeds, 8)
+    both32_identical = _check(
+        "int32 indptr: both-int32 (row+col) samples identically to int64",
+        bool(torch.equal(neighbors64, neighbors_both32))
+        and bool(torch.equal(degrees64, degrees_both32)),
+        f"{neighbors_both32.tolist()} vs {neighbors64.tolist()}",
+    )
+
+    # A sampler that was not taught the int32 row layout must raise, not read the nullptr row_ptr_.
+    rejects = False
+    try:
+        pywrap.CPUWeightedSampler(graph_row32.graph_handler).sample(seeds, 2)
+    except RuntimeError as error:
+        rejects = "int32" in str(error)
+    guarded = _check(
+        "int32 indptr: untaught samplers reject int32 row loudly",
+        rejects,
+        "a silent nullptr read would be the alternative",
+    )
+    return accepted and row32_identical and int64_out and both32_identical and guarded
+
+
 def main() -> int:
     print(f"Verifying GLT patches against {Graph.__module__}")
     results = {
@@ -363,6 +434,7 @@ def main() -> int:
         "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
         "0001-glt-csr-col-count-and-int32-indices (missing edge ids)": verify_cpu_random_missing_edge_ids(),
         "0002-glt-unpin-shm-queue-on-teardown": verify_queue_teardown(),
+        "0003-glt-int32-indptr": verify_int32_indptr(),
     }
     failed = [name for name, passed in results.items() if not passed]
     if failed:
