@@ -55,12 +55,12 @@ then
     # commits on the fork, pin to it, and retire this apply loop.
     # Local patches applied on top of the pinned commit, in order. The CSR patch replaces the
     # at::_unique distinct-count in InitCPUGraphFromCSR with an exact bitmap count: _unique's
-    # sort allocates ~3x the size of `indices` transiently, which is tens of GiB at a
-    # multi-billion-edge partition and OOM-kills the graph init on hosts whose budget
+    # sort allocates ~3x the size of `indices` transiently (measured 3.00x at 200M edges), which
+    # is ~94 GiB at a 4.2B-edge partition and OOM-kills the graph init on hosts whose budget
     # assumes init holds no copy of the topology. `patch` rather than `git apply` so failure
     # modes are the familiar reject files; `--forward` + explicit failure so a re-run or an
     # upstream change that absorbs the fix stops the build LOUDLY instead of shipping an
-    # unpatched wheel that dies deep into a large distributed job.
+    # unpatched wheel that dies 3 hours into a 16-GPU job.
     for glt_patch in "${GIGL_SCRIPTS_DIR}"/patches/*.patch; do
         echo "Applying ${glt_patch}"
         patch -p1 --forward < "${glt_patch}" || { echo "FATAL: ${glt_patch} did not apply"; exit 1; }
@@ -80,7 +80,7 @@ then
         # 10.0 = Blackwell support i.e. B200 - CUDA 12.6 or later
         # 12.0 = Blackwell support i.e. RTX6000 - CUDA 12.8 or later
         # List of Nvidia GPUS: https://developer.nvidia.com/cuda-gpus
-        TORCH_CUDA_ARCH_LIST="8.9" WITH_CUDA="ON" python setup.py bdist_wheel
+        TORCH_CUDA_ARCH_LIST="7.5" WITH_CUDA="ON" python setup.py bdist_wheel
     else
         echo "Will use CPU for GLT..."
         WITH_CUDA="OFF" python setup.py bdist_wheel
