@@ -74,7 +74,7 @@ CI authenticates to GCP through Workload Identity Federation with two service ac
 | PR/test (`untrusted-external-…`) | Every workflow job that does not run in the `release` environment          | `writer` on `gigl-base-images`; `reader` on `public-gigl`                       |
 | Release (`gigl-release`)         | `create_release.yml` job `release_gigl_kfp_pipeline`; all of `release.yml` | `writer` on `public-gigl`, `gigl`, `gigl-cu128`; `reader` on `gigl-base-images` |
 
-Both workflows read the service account email from the secret `GCP_SERVICE_ACCOUNT_EMAIL`. The `release` GitHub
+All workflows read the service account email from the secret `GCP_SERVICE_ACCOUNT_EMAIL`. The `release` GitHub
 environment defines its own copy of that secret holding the release account, and an environment secret overrides the
 repository secret of the same name. So a job gets the release account only when it declares `environment: release`.
 
@@ -83,11 +83,13 @@ tokens whose `sub` is `repo:Snapchat/GiGL:environment:release` and whose `job_wo
 `refs/heads/main` or `release.yml` on a `refs/heads/release/v*` branch. A PR job cannot obtain that token, so it cannot
 impersonate the release account even if it names it.
 
-Two consequences. `create_release.yml` must be dispatched from `main`; the `release` environment only admits `main` and
-`release/v**` branches, so a dispatch from another branch fails at the environment check. And the gate's floor is repo
-write access: anyone who can create a `release/v*` branch can run `release.yml` from it. Closing that needs a ruleset
-that restricts creation of `release/v**` branches, and `bump_version` pushing with a dedicated GitHub App token that is
-the only bypass actor; the shared `GITHUB_TOKEN` cannot be the bypass, because every workflow holds it.
+Two consequences. `create_release.yml` must be dispatched from `main`. The `release` environment's branch policy must
+admit `main` for that job to start at all; a dispatch from any other branch fails at the environment check, or at the
+WIF token exchange if the branch is a `release/v*` branch. And the gate's floor is repo write access: anyone who can
+create a `release/v*` branch can run `release.yml` from it. Closing that needs a ruleset that restricts creation of
+branches matching the same pattern as the environment policy, and `bump_version` pushing with a dedicated GitHub App
+token that is the only bypass actor. Every workflow's `GITHUB_TOKEN` acts as the same GitHub Actions app, so a bypass
+for that app would cover every workflow.
 
 When you add a new publish target (a registry, a bucket path), grant it to the release account only, and run the
 publishing step in a job that declares `environment: release`. Do not widen the PR/test account.
