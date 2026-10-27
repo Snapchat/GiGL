@@ -12,7 +12,11 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_sequences
+from gigl.transforms.static_khop import (
+    KhopLayoutTooLargeError,
+    pack_khop_layout,
+    pack_sequences,
+)
 from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase
 
@@ -225,16 +229,53 @@ class StaticKhopLayoutTest(TestCase):
                 khop_layout(edge_index, num_nodes, torch.tensor([5]), 2, 8)
 
     def test_pack_sequences_layout(self) -> None:
-        flat_index, packed = pack_sequences(torch.tensor([2, 1, 3]), 3)
-        self.assertEqual(flat_index.tolist(), [0, 1, 3, 6, 7, 8])
-        self.assertEqual(packed.cu_seqlens.tolist(), [0, 2, 3, 6])
-        self.assertEqual(packed.cu_seqlens.dtype, torch.int32)
-        self.assertEqual(packed.max_seq_len, 3)
+        layout = pack_sequences(torch.tensor([2, 1, 3]), 3)
+        self.assertEqual(layout.flat_index.tolist(), [0, 1, 3, 6, 7, 8])
+        self.assertEqual(layout.cu_seqlens.tolist(), [0, 2, 3, 6])
+        self.assertEqual(layout.cu_seqlens.dtype, torch.int32)
+        self.assertEqual(layout.max_seq_len, 3)
 
         # A length above the grid width is clamped, so the offsets match the indices.
-        flat_index, packed = pack_sequences(torch.tensor([5, 1]), 3)
-        self.assertEqual(flat_index.tolist(), [0, 1, 2, 3])
-        self.assertEqual(packed.cu_seqlens.tolist(), [0, 3, 4])
+        layout = pack_sequences(torch.tensor([5, 1]), 3)
+        self.assertEqual(layout.flat_index.tolist(), [0, 1, 2, 3])
+        self.assertEqual(layout.cu_seqlens.tolist(), [0, 3, 4])
+
+    def test_pack_sequences_layout_fields(self) -> None:
+        lengths = torch.tensor([3, 1, 2])
+        node_grid = torch.arange(100, 109).view(3, 3)
+        layout = pack_sequences(
+            lengths,
+            max_seq_len=3,
+            node_grid=node_grid,
+            attr_grids={"hop": node_grid % 3},
+        )
+        self.assertEqual(layout.flat_index.tolist(), [0, 1, 2, 3, 6, 7])
+        self.assertEqual(layout.sequence_id.tolist(), [0, 0, 0, 1, 2, 2])
+        self.assertEqual(layout.position.tolist(), [0, 1, 2, 0, 0, 1])
+        self.assertEqual(layout.node_index.tolist(), [100, 101, 102, 103, 106, 107])
+        self.assertEqual(layout.token_attrs["hop"].tolist(), [1, 2, 0, 1, 1, 2])
+        self.assertEqual(layout.cu_seqlens.tolist(), [0, 3, 4, 6])
+        self.assertEqual(layout.cu_seqlens.dtype, torch.int32)
+        self.assertIsNone(layout.relation_edges)
+
+    def test_pack_sequences_without_a_node_grid_uses_the_flat_index(self) -> None:
+        layout = pack_sequences(torch.tensor([2, 1]), max_seq_len=2)
+        self.assertEqual(layout.node_index.tolist(), layout.flat_index.tolist())
+
+    def test_pack_khop_layout_matches_khop_layout(self) -> None:
+        edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
+        layout = pack_khop_layout(
+            edge_index,
+            num_nodes=5,
+            anchor_indices=torch.arange(2),
+            hop_distance=2,
+            max_seq_len=4,
+        )
+        self.assertEqual(layout.node_index.tolist(), [0, 1, 2, 1, 2, 3])
+        self.assertEqual(
+            layout.token_attrs["hop_distance"].tolist(), [0, 1, 2, 0, 1, 2]
+        )
+        self.assertEqual(layout.cu_seqlens.tolist(), [0, 3, 6])
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ class PackedAttentionCudaTest(TestCase):
         num_sequences, num_heads, head_dim = 6, 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12, 9], device=device)
         num_tokens = int(lengths.sum())
-        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
         for dtype, atol in ((torch.float32, 1e-4), (torch.bfloat16, 5e-2)):
             for query_is_first_token, track_grad in itertools.product(
@@ -87,7 +87,7 @@ class PackedAttentionCudaTest(TestCase):
         num_heads, head_dim = 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
         num_tokens = int(lengths.sum())
-        _, packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
 
         def random_rows(num_rows: int) -> torch.Tensor:

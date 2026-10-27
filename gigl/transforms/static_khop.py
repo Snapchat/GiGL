@@ -50,7 +50,8 @@ How a layout is built::
         |
         |  pack_sequences(lengths, max_seq_len)       (host read 2: total tokens)
         v
-    flat_index + PackedSequences(cu_seqlens, max_seq_len)  for gigl.nn.packed_attention
+    PackedLayout(cu_seqlens, max_seq_len, flat_index, sequence_id, position,
+    node_index, token_attrs)  for gigl.nn.packed_attention
 
 Constraints:
   - Memory is ``O(num_anchors * width ** hop_distance)``; see
@@ -75,14 +76,14 @@ Example:
     [[0, 1, 2, 3], [0, 1, 2, 3]]
     >>> lengths.tolist()
     [3, 3]
-    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
-    >>> (layout.flatten()[flat_index] >> hop_bits).tolist()
+    >>> packed = pack_sequences(lengths, max_seq_len=4)
+    >>> (layout.flatten()[packed.flat_index] >> hop_bits).tolist()
     [0, 1, 2, 1, 2, 3]
     >>> packed.cu_seqlens.tolist()
     [0, 3, 6]
 """
 
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, Optional
 
 import torch
 import torch.nn.functional as F
@@ -102,8 +103,29 @@ class KhopLayoutTooLargeError(ValueError):
     """The k-hop layout would have more candidates than the allowed maximum."""
 
 
-class PackedSequences(NamedTuple):
-    """Where each sequence lives in the packed token buffer.
+class PackedRelationEdges(NamedTuple):
+    """Relation edges between packed tokens, grouped by relation.
+
+    Attributes:
+        target: ``[num_edges]`` long row of each edge's target in the layer's
+            queries and outputs.
+        source: ``[num_edges]`` long packed token row of each edge's source.
+        relation: ``[num_edges]`` long relation of each edge.
+        segments: ``(relation, start, end)`` edge range of every relation, in
+            order, covering ``[0, num_edges)``; empty if there are no edges. They
+            are host values, so the per-relation transforms never read the device.
+        all_filtered: The batch has relation edges but none reach these outputs.
+    """
+
+    target: Tensor
+    source: Tensor
+    relation: Tensor
+    segments: tuple[tuple[int, int, int], ...]
+    all_filtered: bool = False
+
+
+class PackedLayout(NamedTuple):
+    """Where each sequence lives in the packed token buffer, and what each token is.
 
     Attributes:
         cu_seqlens: ``[num_sequences + 1]`` int32 cumulative sequence lengths,
@@ -113,15 +135,36 @@ class PackedSequences(NamedTuple):
         max_seq_len: Python int upper bound on any sequence length. It must be at
             least the longest sequence, or the attention kernel skips rows. The
             attention clamps it to the token count.
+        flat_index: ``[num_tokens]`` long indices of the valid cells of the
+            flattened ``[num_sequences, max_seq_len]`` grid, sequence by sequence.
+        sequence_id: ``[num_tokens]`` long sequence of each token,
+            ``flat_index // max_seq_len``.
+        position: ``[num_tokens]`` long position of each token within its
+            sequence, ``flat_index % max_seq_len``. Position 0 is the anchor.
+        node_index: ``[num_tokens]`` long row of each token in the concatenated
+            node features.
+        token_attrs: Per-token values the builder knows, each
+            ``[num_tokens, ...]``.
+        relation_edges: Relation edges in token coordinates, when the builder
+            makes them.
     """
 
     cu_seqlens: Int32[Tensor, "num_sequences_plus_one"]
     max_seq_len: int
+    flat_index: Int64[Tensor, "num_tokens"]
+    sequence_id: Int64[Tensor, "num_tokens"]
+    position: Int64[Tensor, "num_tokens"]
+    node_index: Int64[Tensor, "num_tokens"]
+    token_attrs: dict[str, Tensor]
+    relation_edges: Optional[PackedRelationEdges] = None
 
 
 def pack_sequences(
-    lengths: Int64[Tensor, "num_sequences"], max_seq_len: int
-) -> tuple[Int64[Tensor, "num_tokens"], PackedSequences]:
+    lengths: Int64[Tensor, "num_sequences"],
+    max_seq_len: int,
+    node_grid: Optional[Int64[Tensor, "num_sequences max_seq_len"]] = None,
+    attr_grids: Optional[dict[str, Tensor]] = None,
+) -> PackedLayout:
     """Computes what is needed to drop the padding from a padded grid of sequences.
 
     Sequence ``i`` is valid in its first ``lengths[i]`` positions. Any
@@ -134,18 +177,37 @@ def pack_sequences(
     positions beyond that. Checking for it would cost another host read.
 
     Args:
+        lengths: ``[num_sequences]`` number of valid positions of each sequence.
         max_seq_len: Width of the padded grid.
+        node_grid: ``[num_sequences, max_seq_len]`` node row of each cell. If
+            None, ``node_index`` is the flat index.
+        attr_grids: ``[num_sequences, max_seq_len, ...]`` grids to gather into
+            ``token_attrs``, by name.
 
     Returns:
-        - ``[num_tokens]`` long indices of the valid positions in the flattened
-          grid, sequence by sequence.
-        - The packed layout.
+        The packed layout, without relation edges.
     """
     lengths = lengths.clamp(max=max_seq_len)
     valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
     cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
     flat_index = valid.flatten().nonzero().squeeze(1)
-    return flat_index, PackedSequences(cu_seqlens.to(torch.int32), max_seq_len)
+    if node_grid is None:
+        node_index = flat_index
+    else:
+        node_index = node_grid.flatten()[flat_index]
+    token_attrs = {}
+    if attr_grids is not None:
+        for name, grid in attr_grids.items():
+            token_attrs[name] = grid.flatten(0, 1)[flat_index]
+    return PackedLayout(
+        cu_seqlens=cu_seqlens.to(torch.int32),
+        max_seq_len=max_seq_len,
+        flat_index=flat_index,
+        sequence_id=flat_index // max_seq_len,
+        position=flat_index % max_seq_len,
+        node_index=node_index,
+        token_attrs=token_attrs,
+    )
 
 
 def _build_neighbor_table(
@@ -343,4 +405,41 @@ def khop_layout(
         hop_distance,
         max_seq_len,
         prioritize_hop_order,
+    )
+
+
+def pack_khop_layout(
+    edge_index: Int[Tensor, "2 num_edges"],
+    num_nodes: int,
+    anchor_indices: Int[Tensor, "num_anchors"],
+    hop_distance: int,
+    max_seq_len: int,
+    sampling_direction: Literal["in", "out"] = "out",
+    max_candidates: int = MAX_LAYOUT_CANDIDATES,
+    prioritize_hop_order: bool = False,
+) -> PackedLayout:
+    """Builds the k-hop token layout of every anchor and packs it.
+
+    Runs ``khop_layout``, decodes each cell into its node and hop, and calls
+    ``pack_sequences``. The arguments are those of ``khop_layout``.
+
+    Returns:
+        The packed layout. ``node_index`` is the node of each token and
+        ``token_attrs["hop_distance"]`` is its ``[num_tokens]`` long hop.
+    """
+    layout, lengths, hop_bits = khop_layout(
+        edge_index,
+        num_nodes,
+        anchor_indices,
+        hop_distance,
+        max_seq_len,
+        sampling_direction=sampling_direction,
+        max_candidates=max_candidates,
+        prioritize_hop_order=prioritize_hop_order,
+    )
+    return pack_sequences(
+        lengths,
+        max_seq_len,
+        node_grid=layout >> hop_bits,
+        attr_grids={"hop_distance": layout & ((1 << hop_bits) - 1)},
     )

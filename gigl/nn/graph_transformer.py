@@ -12,7 +12,7 @@ replacement as the encoder in ``LinkPredictionGNN``.
 """
 
 import math
-from typing import Callable, Literal, NamedTuple, Optional, Sequence, Union, cast
+from typing import Callable, Literal, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -41,7 +41,8 @@ from gigl.transforms.graph_transformer import (
 )
 from gigl.transforms.static_khop import (
     KhopLayoutTooLargeError,
-    PackedSequences,
+    PackedLayout,
+    PackedRelationEdges,
     khop_layout,
     pack_sequences,
 )
@@ -241,27 +242,6 @@ class FeedForwardNetwork(nn.Module):
             x = self._ffn(x)
 
         return x
-
-
-class PackedRelationEdges(NamedTuple):
-    """Relation edges between packed tokens, grouped by relation.
-
-    Attributes:
-        target: ``[num_edges]`` long row of each edge's target in the layer's
-            queries and outputs.
-        source: ``[num_edges]`` long packed token row of each edge's source.
-        relation: ``[num_edges]`` long relation of each edge.
-        segments: ``(relation, start, end)`` edge range of every relation, in
-            order, covering ``[0, num_edges)``; empty if there are no edges. They
-            are host values, so the per-relation transforms never read the device.
-        all_filtered: The batch has relation edges but none reach these outputs.
-    """
-
-    target: Tensor
-    source: Tensor
-    relation: Tensor
-    segments: tuple[tuple[int, int, int], ...]
-    all_filtered: bool = False
 
 
 def _get_relation_segments_from_bounds(
@@ -555,7 +535,7 @@ class GraphTransformerEncoderLayer(nn.Module):
     def forward_packed(
         self,
         x: Float[Tensor, "tokens model_dim"],
-        packed: PackedSequences,
+        packed: PackedLayout,
         first_token_output: bool = False,
         relation_edges: Optional[PackedRelationEdges] = None,
     ) -> Float[Tensor, "outputs model_dim"]:
@@ -2037,7 +2017,8 @@ class GraphTransformerEncoder(nn.Module):
         cells of the flattened grid, and ``cu_seqlens`` marks where each sequence
         starts::
 
-            >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
+            >>> packed = pack_sequences(lengths, max_seq_len=4)
+            >>> flat_index = packed.flat_index
             >>> flat_index.tolist()
             [0, 1, 2, 3, 4, 5, 6]
             >>> packed.cu_seqlens.tolist(), packed.max_seq_len
@@ -2101,7 +2082,8 @@ class GraphTransformerEncoder(nn.Module):
         except KhopLayoutTooLargeError as error:
             self._record_packed_fallback(error)
             return None
-        flat_index, packed = pack_sequences(lengths, self._max_seq_len)
+        packed = pack_sequences(lengths, self._max_seq_len)
+        flat_index = packed.flat_index
         relation_edges: Optional[tuple[PackedRelationEdges, PackedRelationEdges]] = None
         if self._relation_message_mode != "none":
             hop_mask = (1 << hop_bits) - 1
@@ -2160,7 +2142,7 @@ class GraphTransformerEncoder(nn.Module):
         self,
         x: Float[Tensor, "tokens hid_dim"],
         flat_index: Int64[Tensor, "tokens"],
-        packed: PackedSequences,
+        packed: PackedLayout,
     ) -> Float[Tensor, "sequences hid_dim"]:
         """Packed version of the ``anchor_neighbor_attention`` readout.
 
@@ -2197,7 +2179,7 @@ class GraphTransformerEncoder(nn.Module):
         self,
         layer: GraphTransformerEncoderLayer,
         x: Tensor,
-        packed: PackedSequences,
+        packed: PackedLayout,
         first_token_output: bool,
         relation_edges: Optional[PackedRelationEdges],
     ) -> Tensor:
@@ -2222,7 +2204,7 @@ class GraphTransformerEncoder(nn.Module):
         node_index: Tensor,
         hop_index: Tensor,
         lengths: Tensor,
-        packed: PackedSequences,
+        packed: PackedLayout,
     ) -> tuple[PackedRelationEdges, PackedRelationEdges]:
         """Matches the batch's edges to packed token pairs.
 

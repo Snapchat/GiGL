@@ -29,7 +29,7 @@ Data flow of a packed forward::
     padded grid [num_sequences, max_seq_len, ...]      lengths [num_sequences]
         |                                                   |
         |      pack_sequences(lengths, max_seq_len)  <------+
-        |          -> flat_index, PackedSequences(cu_seqlens, max_seq_len)
+        |          -> PackedLayout(cu_seqlens, max_seq_len, flat_index, ...)
         |  grid.flatten()[flat_index]
         v
     packed buffer [num_tokens, dim]
@@ -53,8 +53,8 @@ Constraints:
 Example:
     >>> from gigl.transforms.static_khop import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
-    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=3)
-    >>> flat_index.tolist()
+    >>> packed = pack_sequences(lengths, max_seq_len=3)
+    >>> packed.flat_index.tolist()
     [0, 1, 2, 3, 6, 7]
     >>> num_tokens = int(lengths.sum())
     >>> query = key = value = torch.randn(num_tokens, 2, 8)
@@ -101,7 +101,7 @@ from jaxtyping import Float, Int32
 from torch import Tensor
 from torch_geometric.utils import to_dense_batch
 
-from gigl.transforms.static_khop import PackedSequences
+from gigl.transforms.static_khop import PackedLayout
 
 
 def _varlen_attention(
@@ -187,7 +187,7 @@ def _padded_packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
     value: Float[Tensor, "num_tokens num_heads head_dim"],
-    packed: PackedSequences,
+    packed: PackedLayout,
     query_is_first_token: bool,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
@@ -245,7 +245,7 @@ def packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
     value: Float[Tensor, "num_tokens num_heads head_dim"],
-    packed: PackedSequences,
+    packed: PackedLayout,
     query_is_first_token: bool,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
