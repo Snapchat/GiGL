@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             torch-variant: cpu
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
