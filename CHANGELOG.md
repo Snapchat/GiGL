@@ -23,8 +23,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
   (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
-  readout, `relation_attention_mode` `none`, any `relation_message_mode`, no attention biases, `hop_distance` as the only anchor-based input, a head dim
-  divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of `prioritize_hop_order`.
+  readout, `relation_attention_mode` `none`, any `relation_message_mode`, no pairwise attention biases, no `ppr_weight`
+  or `ppr_relation_features`, a head dim divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and
+  either value of `prioritize_hop_order`. Anchor-relative attributes work as token inputs and as a per-key attention
+  bias. An attribute other than `hop_distance` is looked up in its sparse CSR matrix, which reads a value back from the
+  device and has data-dependent shapes, so such a config does not whole-encoder compile and loses the fixed host-sync
+  count.
   Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
   counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
   float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives

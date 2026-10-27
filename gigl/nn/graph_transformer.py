@@ -32,6 +32,8 @@ from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
+    _get_sparse_feature_matrices,
+    _lookup_csr_values,
     _lookup_pairwise_relation_indices,
     _validate_reserved_anchor_feature_usage,
     concat_tensors,
@@ -1716,12 +1718,14 @@ class GraphTransformerEncoder(nn.Module):
             blockers.append("sequence_construction_method is not 'khop'")
         if self._relation_attention_mode != "none":
             blockers.append("relation_attention_mode is not 'none'")
-        if self._anchor_based_attention_bias_attr_names:
-            blockers.append("anchor-based attention biases are set")
         if self._pairwise_attention_bias_attr_names:
             blockers.append("pairwise attention biases are set")
-        if not set(self._anchor_based_input_attr_names) <= {HOP_DISTANCE_FEATURE_NAME}:
-            blockers.append("anchor-based inputs other than hop_distance are set")
+        ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
+        if ppr_attr_names & (
+            set(self._anchor_based_attention_bias_attr_names)
+            | set(self._anchor_based_input_attr_names)
+        ):
+            blockers.append("ppr_weight or ppr_relation_features is set")
         # The CUDA memory-efficient varlen kernel only has aligned variants for
         # head dims divisible by 8. For other dims, the padded path's SDPA picks
         # a different kernel.
@@ -1857,6 +1861,7 @@ class GraphTransformerEncoder(nn.Module):
                 num_anchor_nodes=num_anchor_nodes,
                 anchor_node_ids=anchor_node_ids,
                 device=device,
+                data=data,
             )
             if packed_embeddings is not None:
                 return packed_embeddings
@@ -1999,6 +2004,7 @@ class GraphTransformerEncoder(nn.Module):
         num_anchor_nodes: int,
         anchor_node_ids: Optional[Tensor],
         device: torch.device,
+        data: torch_geometric.data.hetero_data.HeteroData,
     ) -> Optional[Tensor]:
         """Encodes the anchors on packed tokens.
 
@@ -2079,17 +2085,20 @@ class GraphTransformerEncoder(nn.Module):
             anchor_local_indices = anchor_node_ids.to(device)
         else:
             anchor_local_indices = torch.arange(num_anchor_nodes, device=device)
+        anchor_node_index = node_type_offsets[anchor_node_type] + anchor_local_indices
         layout = self._build_packed_layout(
             edge_index=edge_index,
             num_nodes=node_features.size(0),
-            anchor_indices=node_type_offsets[anchor_node_type] + anchor_local_indices,
+            anchor_indices=anchor_node_index,
             edge_index_dict=edge_index_dict,
             node_type_offsets=node_type_offsets,
         )
         if layout is None:
             return None
-        x = self._packed_token_inputs(node_features[layout.node_index], layout)
-        bias = self._packed_attention_bias(layout)
+        x = self._packed_token_inputs(
+            node_features[layout.node_index], layout, anchor_node_index, data
+        )
+        bias = self._packed_attention_bias(layout, anchor_node_index, data)
         x = self._run_packed_layers(x, layout, bias)
         return self._project_output(self._packed_readout(x, layout))
 
@@ -2139,32 +2148,129 @@ class GraphTransformerEncoder(nn.Module):
             )
         )
 
+    def _packed_anchor_relative_features(
+        self,
+        attr_names: Sequence[str],
+        layout: PackedLayout,
+        anchor_node_index: Int64[Tensor, "num_sequences"],
+        data: torch_geometric.data.hetero_data.HeteroData,
+    ) -> Float[Tensor, "num_tokens num_attrs"]:
+        """Looks up each token's value of the anchor-relative attributes.
+
+        The hop distance comes from the layout. Any other attribute is a sparse CSR
+        matrix on the batch, indexed by (anchor, token node). It is looked up with
+        ``_lookup_csr_values``, which reads the longest row's length back from the
+        device and has data-dependent shapes.
+
+        Args:
+            attr_names: Attributes to look up, one output column each.
+            layout: Layout of the sequences.
+            anchor_node_index: Homogeneous node id of each sequence's anchor.
+            data: The batch holding the sparse attributes.
+
+        Returns:
+            ``[num_tokens, len(attr_names)]`` values, 0 where a matrix has no entry.
+
+        Raises:
+            ValueError: If a sparse attribute is not on ``data``.
+        """
+        sparse_attr_names = [
+            name for name in attr_names if name != HOP_DISTANCE_FEATURE_NAME
+        ]
+        matrices = {}
+        if sparse_attr_names:
+            graph_attr_dict = {
+                name: getattr(data, name) for name in sparse_attr_names if name in data
+            }
+            matrices = dict(
+                zip(
+                    sparse_attr_names,
+                    _get_sparse_feature_matrices(
+                        graph_attr_dict=graph_attr_dict,
+                        attr_names=sparse_attr_names,
+                        missing_attr_error_prefix="Anchor-based attribute",
+                    ),
+                )
+            )
+        columns: list[Tensor] = []
+        for name in attr_names:
+            if name == HOP_DISTANCE_FEATURE_NAME:
+                columns.append(layout.token_attrs[HOP_DISTANCE_FEATURE_NAME].float())
+            else:
+                columns.append(
+                    _lookup_csr_values(
+                        csr_matrix=matrices[name],
+                        row_indices=anchor_node_index[layout.sequence_id],
+                        col_indices=layout.node_index,
+                    )
+                )
+        return torch.stack(columns, dim=-1)
+
     def _packed_token_inputs(
         self,
         x: Float[Tensor, "tokens hid_dim"],
         layout: PackedLayout,
+        anchor_node_index: Int64[Tensor, "num_sequences"],
+        data: torch_geometric.data.hetero_data.HeteroData,
     ) -> Float[Tensor, "tokens hid_dim"]:
-        """Adds the hop distance input to the packed token features.
+        """Adds the anchor-relative inputs to the packed token features.
 
-        An embedding is added when the hop distance has one. Otherwise the hop
-        distance is a continuous input and goes through the token projection.
+        Attributes with an embedding add the embedding of their value. The others
+        are concatenated and go through the token projection.
+
+        Args:
+            x: Token features.
+            layout: Layout of the sequences.
+            anchor_node_index: Homogeneous node id of each sequence's anchor.
+            data: The batch holding the sparse attributes.
         """
-        if HOP_DISTANCE_FEATURE_NAME not in self._anchor_based_input_attr_names:
-            return x
-        token_hop = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
         embedding_dict = self._anchor_based_input_embedding_dict
-        if embedding_dict is not None and HOP_DISTANCE_FEATURE_NAME in embedding_dict:
-            return x + embedding_dict[HOP_DISTANCE_FEATURE_NAME](token_hop).to(x.dtype)
-        # A hop distance without an embedding is a continuous input, so the
-        # constructor created the projection.
-        token_projection = cast(nn.Module, self._token_input_projection)
-        return x + token_projection(token_hop.unsqueeze(-1).to(x.dtype))
+        if embedding_dict is not None:
+            for attr_name, embedding_layer in embedding_dict.items():
+                indices = self._packed_anchor_relative_features(
+                    [attr_name], layout, anchor_node_index, data
+                )
+                x = x + embedding_layer(indices.squeeze(-1).long()).to(x.dtype)
+        if self._continuous_anchor_input_attr_names:
+            continuous = self._packed_anchor_relative_features(
+                self._continuous_anchor_input_attr_names,
+                layout,
+                anchor_node_index,
+                data,
+            )
+            token_projection = cast(nn.Module, self._token_input_projection)
+            x = x + token_projection(continuous.to(x.dtype))
+        return x
 
     def _packed_attention_bias(
-        self, layout: PackedLayout
+        self,
+        layout: PackedLayout,
+        anchor_node_index: Int64[Tensor, "num_sequences"],
+        data: torch_geometric.data.hetero_data.HeteroData,
     ) -> Optional[PackedAttentionBias]:
-        """The attention bias shared by every layer, or None for no bias."""
-        return None
+        """The attention bias shared by every layer, or None for no bias.
+
+        Args:
+            layout: Layout of the sequences.
+            anchor_node_index: Homogeneous node id of each sequence's anchor.
+            data: The batch holding the sparse attributes.
+
+        Returns:
+            A per-key bias from the anchor-relative attention-bias attributes, or
+            None when there are none.
+        """
+        projection = self._anchor_pe_attention_bias_projection
+        if projection is None:
+            return None
+        features = self._packed_anchor_relative_features(
+            self._anchor_based_attention_bias_attr_names,
+            layout,
+            anchor_node_index,
+            data,
+        )
+        return PackedAttentionBias(
+            per_key=projection(features.to(projection.weight.dtype))
+        )
 
     def _run_packed_layers(
         self,
@@ -2189,16 +2295,13 @@ class GraphTransformerEncoder(nn.Module):
             relation_edges = layout.relation_edges
             if first_token_output and relation_edges is not None:
                 relation_edges = _anchor_relation_edges(relation_edges, layout)
-            layer_kwargs = {}
-            if bias is not None:
-                layer_kwargs["bias"] = bias
             x = self._run_packed_layer(
                 cast(GraphTransformerEncoderLayer, encoder_layer),
                 x,
                 layout,
                 first_token_output,
                 relation_edges,
-                **layer_kwargs,
+                bias=bias,
             )
         if anchor_only and num_layers == 0:
             return x[layout.cu_seqlens[:-1].long()]
@@ -2270,8 +2373,7 @@ class GraphTransformerEncoder(nn.Module):
 
         A subclass can override this to wrap the call, for example in
         ``torch.utils.checkpoint.checkpoint``. The layer reads no host values,
-        so it can be recomputed. ``_run_packed_layers`` passes ``bias`` only when
-        there is one.
+        so it can be recomputed.
 
         Args:
             layer: The layer to run.
