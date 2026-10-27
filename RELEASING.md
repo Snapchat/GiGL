@@ -85,8 +85,9 @@ impersonate the release account even if it names it.
 
 Two consequences. `create_release.yml` must be dispatched from `main`; the `release` environment only admits `main` and
 `release/v**` branches, so a dispatch from another branch fails at the environment check. And the gate's floor is repo
-write access: anyone who can create a `release/v*` branch can run `release.yml` from it. A ruleset that restricts
-creation of `release/v*` branches (with a bypass for GitHub Actions, which creates them in `bump_version`) closes that.
+write access: anyone who can create a `release/v*` branch can run `release.yml` from it. Closing that needs a ruleset
+that restricts creation of `release/v**` branches, and `bump_version` pushing with a dedicated GitHub App token that is
+the only bypass actor; the shared `GITHUB_TOKEN` cannot be the bypass, because every workflow holds it.
 
 When you add a new publish target (a registry, a bucket path), grant it to the release account only, and run the
 publishing step in a job that declares `environment: release`. Do not widen the PR/test account.
