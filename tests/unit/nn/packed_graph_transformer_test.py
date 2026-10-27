@@ -228,6 +228,33 @@ def _assert_training_gradients_match(
 
 
 class PackedPathTest(TestCase):
+    def test_anchor_only_readout_shape_does_not_depend_on_layer_count(self) -> None:
+        # Every sequence has length 1 on an edgeless batch.
+        data = HeteroData()
+        data[_USER].x = torch.randn(20, 8)
+        data[_USER].batch_size = 12
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.empty(2, 0, dtype=torch.long)
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        for num_layers in (0, 2):
+            with self.subTest(num_layers=num_layers):
+                encoder = _materialized_encoder(
+                    data, _encoder_kwargs(num_layers=num_layers)
+                )
+                layer_outputs = []
+                run_layers = encoder._run_packed_layers
+
+                def record(*args: Any) -> torch.Tensor:
+                    layer_outputs.append(run_layers(*args))
+                    return layer_outputs[-1]
+
+                with (
+                    mock.patch.object(encoder, "_run_packed_layers", record),
+                    torch.no_grad(),
+                ):
+                    output = _run_packed(encoder, data)
+                self.assertEqual([o.shape for o in layer_outputs], [(12, 16)])
+                self.assertEqual(output.shape, (12, 8))
+
     @parameterized.expand(
         [
             param("one_layer", num_layers=1),
@@ -601,21 +628,21 @@ class PackedPathTest(TestCase):
         encoder = _materialized_encoder(
             _random_batch(0), _encoder_kwargs(readout_mode=readout_mode)
         )
-        real_khop_layout = gigl.nn.graph_transformer.khop_layout
+        real_pack_khop_layout = gigl.nn.graph_transformer.pack_khop_layout
         fall_back = {"now": False}
 
-        def khop_layout_or_too_large(*args: Any, **kwargs: Any) -> Any:
+        def pack_khop_layout_or_too_large(*args: Any, **kwargs: Any) -> Any:
             if fall_back["now"]:
                 raise KhopLayoutTooLargeError("too many candidates")
-            return real_khop_layout(*args, **kwargs)
+            return real_pack_khop_layout(*args, **kwargs)
 
         graph_counts = []
         with (
             mock.patch.object(encoder, "_use_packed_backend", return_value=True),
             mock.patch.object(
                 gigl.nn.graph_transformer,
-                "khop_layout",
-                side_effect=khop_layout_or_too_large,
+                "pack_khop_layout",
+                side_effect=pack_khop_layout_or_too_large,
             ),
         ):
             compiled = torch.compile(encoder, backend="eager")
