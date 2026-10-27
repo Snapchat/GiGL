@@ -16,7 +16,7 @@ defaults:
 trainer_resource_config:
   vertex_ai_graph_store_trainer_config:
     graph_store_pool:
-      machine_type: e2-highmem-32
+      machine_type: e2-highmem-8
       gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
       gpu_limit: 0
       num_replicas: 2
@@ -28,7 +28,7 @@ trainer_resource_config:
 inferencer_resource_config:
   vertex_ai_graph_store_inferencer_config:
     graph_store_pool:
-      machine_type: e2-highmem-32
+      machine_type: e2-highmem-8
       gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
       gpu_limit: 0
       num_replicas: 2
