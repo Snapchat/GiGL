@@ -287,7 +287,9 @@ def _anchor_relation_edges(
     """
     into_anchor = layout.position[edges.target] == 0
     relations = edges.relation[into_anchor]
-    num_relations = edges.segments[-1][0] + 1 if edges.segments else 0
+    num_relations = 0
+    if edges.segments:
+        num_relations = edges.segments[-1][0] + 1
     bounds = torch.searchsorted(
         relations, torch.arange(num_relations + 1, device=relations.device)
     ).tolist()
@@ -2000,69 +2002,50 @@ class GraphTransformerEncoder(nn.Module):
     ) -> Optional[Tensor]:
         """Encodes the anchors on packed tokens.
 
-        ``khop_layout`` (``gigl.transforms.static_khop``) decides which nodes
-        each anchor sees. ``pack_sequences`` turns that padded grid into one flat
-        token buffer. Packed attention (``gigl.nn.packed_attention``) then keeps
-        every anchor's tokens apart using only ``cu_seqlens``.
+        ``_build_packed_layout`` calls ``pack_khop_layout``
+        (``gigl.transforms.static_khop``), which decides which nodes each anchor
+        sees and packs them into one flat token buffer described by a
+        ``PackedLayout``. Packed attention (``gigl.nn.packed_attention``) then
+        keeps every anchor's tokens apart using only ``cu_seqlens``.
 
         Worked example, run on CPU. A graph of 6 nodes with edges
         ``0->1, 0->2, 1->3, 2->3, 3->4, 4->5``, sampling direction ``"out"``,
         anchors ``[0, 3]``, ``hop_distance=2``, ``max_seq_len=4``.
 
-        The neighbour table has one row per node (row ``i`` holds the nodes one hop
-        from ``i``) and an extra all ``-1`` row used for padding lookups::
+        Each anchor's sequence is the anchor, then its neighbours in ascending
+        node id. Anchor 0 sees node 0 (hop 0), nodes 1 and 2 (hop 1) and node 3
+        (hop 2). Anchor 3 sees node 4 in one hop and node 5 in two, so its fourth
+        grid cell is padding::
 
-            row 0: [ 1,  2]    row 3: [ 4, -1]    row 6: [-1, -1]
-            row 1: [ 3, -1]    row 4: [ 5, -1]
-            row 2: [ 3, -1]    row 5: [-1, -1]
-
-        Each anchor's layout is the anchor, then its neighbours in ascending node
-        id, ``-1`` padding, and the length. A cell holds the node id and the node's
-        first-reach hop as ``(node << hop_bits) | hop``, and ``hop_bits`` is 2
-        here::
-
-            >>> from gigl.transforms.static_khop import khop_layout, pack_sequences
+            >>> from gigl.transforms.static_khop import pack_khop_layout
             >>> edge_index = torch.tensor([[0, 0, 1, 2, 3, 4], [1, 2, 3, 3, 4, 5]])
-            >>> layout, lengths, hop_bits = khop_layout(
+            >>> layout = pack_khop_layout(
             ...     edge_index,
             ...     num_nodes=6,
             ...     anchor_indices=torch.tensor([0, 3]),
             ...     hop_distance=2,
             ...     max_seq_len=4,
             ... )
-            >>> hop_bits
-            2
-            >>> layout.tolist()
-            [[0, 5, 9, 14], [12, 17, 22, -1]]
-            >>> lengths.tolist()
-            [4, 3]
-
-        Anchor 0's cells decode to node 0 (hop 0), nodes 1 and 2 (hop 1) and node 3
-        (hop 2). Anchor 3 reaches node 4 in one hop and node 5 in two, so its last
-        cell is padding.
-
-        ``pack_sequences`` drops the padding. ``flat_index`` selects the valid
-        cells of the flattened grid, and ``cu_seqlens`` marks where each sequence
-        starts::
-
-            >>> packed = pack_sequences(lengths, max_seq_len=4)
-            >>> flat_index = packed.flat_index
-            >>> flat_index.tolist()
-            [0, 1, 2, 3, 4, 5, 6]
-            >>> packed.cu_seqlens.tolist(), packed.max_seq_len
+            >>> layout.cu_seqlens.tolist(), layout.max_seq_len
             ([0, 4, 7], 4)
-            >>> token_cell = layout.flatten()[flat_index]
-            >>> (token_cell >> hop_bits).tolist()
+            >>> layout.node_index.tolist()
             [0, 1, 2, 3, 3, 4, 5]
-            >>> (token_cell & ((1 << hop_bits) - 1)).tolist()
+            >>> layout.token_attrs["hop_distance"].tolist()
             [0, 1, 1, 2, 0, 1, 2]
+            >>> layout.sequence_id.tolist()
+            [0, 0, 0, 0, 1, 1, 1]
+            >>> layout.position.tolist()
+            [0, 1, 2, 3, 0, 1, 2]
 
-        With 8 grid cells and 7 valid ones, the cell ``[1, 3]`` (index 7) is the
-        only one dropped. In a real batch most of the grid is padding.
+        ``flat_index`` selects the valid cells of the flattened
+        ``[num_anchors, max_seq_len]`` grid. With 8 grid cells and 7 valid ones it
+        is ``[0, 1, 2, 3, 4, 5, 6]``, and the cell ``[1, 3]`` (index 7) is the only
+        one dropped. In a real batch most of the grid is padding.
 
-        The token buffer ``x = node_features[token_cell >> hop_bits]`` has shape
+        The token buffer ``x = node_features[layout.node_index]`` has shape
         ``[7, hidden]``. Rows 0 to 3 are anchor 0's tokens and rows 4 to 6 are
-        anchor 3's. The hop embedding is added per token from ``token_cell & ((1 << hop_bits) - 1)``.
+        anchor 3's. The hop embedding is added per token from
+        ``token_attrs["hop_distance"]``.
 
         Every layer then runs on ``[num_tokens, hidden]``. The norm, the q/k/v
         projections, the output projection and the FFN act on each row alone, so
@@ -2168,7 +2151,7 @@ class GraphTransformerEncoder(nn.Module):
         """
         if HOP_DISTANCE_FEATURE_NAME not in self._anchor_based_input_attr_names:
             return x
-        token_hop = layout.token_attrs["hop_distance"]
+        token_hop = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
         embedding_dict = self._anchor_based_input_embedding_dict
         if embedding_dict is not None and HOP_DISTANCE_FEATURE_NAME in embedding_dict:
             return x + embedding_dict[HOP_DISTANCE_FEATURE_NAME](token_hop).to(x.dtype)
@@ -2337,7 +2320,7 @@ class GraphTransformerEncoder(nn.Module):
         node_index[layout.flat_index] = layout.node_index
         node_index = node_index.view(num_sequences, layout.max_seq_len)
         hop_index = torch.zeros(grid_size, dtype=torch.long, device=device)
-        hop_index[layout.flat_index] = layout.token_attrs["hop_distance"]
+        hop_index[layout.flat_index] = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
         hop_index = hop_index.view(num_sequences, layout.max_seq_len)
         lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
         valid_mask = torch.arange(
