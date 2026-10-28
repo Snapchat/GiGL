@@ -118,17 +118,24 @@ def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
     return F.pad(tensor, (0, multiple - remainder))
 
 
+def _rescale_query(query: Tensor, padded_dim: int) -> Tensor:
+    """Scales q by ``sqrt(padded_dim / head_dim)`` so the kernel's scores use the unpadded head dim.
+
+    The kernel scales scores by ``1 / sqrt(padded_dim)``. An explicit ``scale`` is
+    not passed because torch 2.8's meta backward rejects it, and compiled training
+    traces that meta backward.
+    """
+    return query * math.sqrt(padded_dim / query.size(-1))
+
+
 def _pad_query_key(query: Tensor, key: Tensor) -> tuple[Tensor, Tensor]:
     """Zero-pads q and k to a multiple of 8 and rescales q for the padded head dim.
 
-    The kernel scales scores by ``1 / sqrt(d_pad)``; multiplying q by
-    ``sqrt(d_pad / d)`` makes ``q' . k' / sqrt(d_pad) == q . k / sqrt(d)``.
+    Multiplying q by ``sqrt(d_pad / d)`` makes
+    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d)``.
     """
-    head_dim = query.size(-1)
-    query, key = _pad_head_dim(query), _pad_head_dim(key)
-    # The kernel scales by the padded dim. An explicit ``scale`` is not passed
-    # because torch 2.8's meta backward rejects it, and compiled training needs it.
-    query = query * math.sqrt(query.size(-1) / head_dim)
+    key = _pad_head_dim(key)
+    query = _pad_head_dim(_rescale_query(query, key.size(-1)))
     return query, key
 
 
@@ -147,9 +154,8 @@ def _fold_per_key_bias(
     the key dtype.
     """
     head_dim = query.size(-1)
-    padded_dim = _pad_head_dim(query.new_empty(head_dim + 1)).size(-1)
-    # The kernel scales by the padded dim; see ``_pad_query_key``.
-    query = query * math.sqrt(padded_dim / head_dim)
+    padded_dim = (head_dim + 1 + 7) // 8 * 8
+    query = _rescale_query(query, padded_dim)
     ones = torch.ones_like(query[..., :1])
     key_bias = (per_key.to(key.dtype) * math.sqrt(padded_dim)).unsqueeze(-1)
     query = _pad_head_dim(torch.cat([query, ones], dim=-1))

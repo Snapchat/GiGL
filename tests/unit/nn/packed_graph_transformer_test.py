@@ -974,7 +974,7 @@ class PackedPathCudaTest(TestCase):
             param("head_dim_10", hid_dim=20),
             param(
                 "anchor_bias",
-                anchor_based_attention_bias_attr_names=["hop_distance"],
+                anchor_based_attention_bias_attr_names=[_HOP],
             ),
         ]
     )

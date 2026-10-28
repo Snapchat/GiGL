@@ -268,55 +268,6 @@ class PackedAttentionCudaTest(TestCase):
                             atol=atol,
                         )
 
-    def test_varlen_head_dim_12_matches_cpu_reference(self) -> None:
-        device = torch.device("cuda")
-        num_heads, head_dim = 2, 12
-        lengths = torch.tensor([5, 1, 24, 3, 12])
-        num_tokens = int(lengths.sum())
-        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
-        cuda_packed = pack_sequences(lengths.to(device), _MAX_SEQ_LEN)
-        generator = torch.Generator().manual_seed(0)
-        for query_is_first_token in (False, True):
-            num_queries = 5 if query_is_first_token else num_tokens
-            cpu_inputs = [
-                torch.randn(rows, num_heads, head_dim, generator=generator)
-                for rows in (num_queries, num_tokens, num_tokens)
-            ]
-            grad_output = torch.randn(
-                num_queries, num_heads, head_dim, generator=generator
-            )
-            cpu_leaves, cuda_leaves = (
-                [tensor.clone().requires_grad_() for tensor in group]
-                for group in (cpu_inputs, [t.to(device) for t in cpu_inputs])
-            )
-            expected = _padded_packed_attention(
-                cpu_leaves[0],
-                cpu_leaves[1],
-                cpu_leaves[2],
-                packed,
-                query_is_first_token,
-            )
-            expected.backward(grad_output)
-            actual = packed_attention(
-                cuda_leaves[0],
-                cuda_leaves[1],
-                cuda_leaves[2],
-                cuda_packed,
-                query_is_first_token,
-            )
-            actual.backward(grad_output.to(device))
-            with self.subTest(first_token=query_is_first_token):
-                self.assertEqual(actual.shape, expected.shape)
-                torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=1e-4)
-                for name, cuda_leaf, cpu_leaf in zip(
-                    ("query", "key", "value"), cuda_leaves, cpu_leaves
-                ):
-                    assert cuda_leaf.grad is not None and cpu_leaf.grad is not None
-                    with self.subTest(grad=name):
-                        torch.testing.assert_close(
-                            cuda_leaf.grad.cpu(), cpu_leaf.grad, rtol=0, atol=1e-4
-                        )
-
     def _assert_matches_cpu_reference(
         self,
         head_dim: int,
@@ -324,8 +275,9 @@ class PackedAttentionCudaTest(TestCase):
         dtype: torch.dtype = torch.float32,
         atol: float = 1e-4,
         check_gradients: bool = True,
+        with_per_key: bool = True,
     ) -> None:
-        """Compares ``packed_attention`` with a per-key bias on CUDA to the CPU padded reference."""
+        """Compares ``packed_attention`` on CUDA to the CPU padded reference, with or without a per-key bias."""
         device = torch.device("cuda")
         num_heads = 2
         lengths = torch.tensor([5, 1, 24, 3, 12])
@@ -338,21 +290,27 @@ class PackedAttentionCudaTest(TestCase):
             torch.randn(rows, num_heads, head_dim, generator=generator)
             for rows in (num_queries, num_tokens, num_tokens)
         ]
-        cpu_inputs.append(torch.randn(num_tokens, num_heads, generator=generator))
+        if with_per_key:
+            cpu_inputs.append(torch.randn(num_tokens, num_heads, generator=generator))
         grad_output = torch.randn(num_queries, num_heads, head_dim, generator=generator)
         cpu_leaves = [tensor.clone().requires_grad_() for tensor in cpu_inputs]
         cuda_leaves = [
             tensor.to(device, dtype).requires_grad_() for tensor in cpu_inputs[:3]
         ]
-        # The bias stays fp32 so the fold's cast to the key dtype is exercised.
-        cuda_leaves.append(cpu_inputs[3].to(device).requires_grad_())
+        cpu_bias = None
+        cuda_bias = None
+        if with_per_key:
+            # The bias stays fp32 so the fold's cast to the key dtype is exercised.
+            cuda_leaves.append(cpu_inputs[3].to(device).requires_grad_())
+            cpu_bias = PackedAttentionBias(per_key=cpu_leaves[3])
+            cuda_bias = PackedAttentionBias(per_key=cuda_leaves[3])
         expected = _padded_packed_attention(
             cpu_leaves[0],
             cpu_leaves[1],
             cpu_leaves[2],
             packed,
             query_is_first_token,
-            PackedAttentionBias(per_key=cpu_leaves[3]),
+            cpu_bias,
         )
         actual = packed_attention(
             cuda_leaves[0],
@@ -360,7 +318,7 @@ class PackedAttentionCudaTest(TestCase):
             cuda_leaves[2],
             cuda_packed,
             query_is_first_token,
-            PackedAttentionBias(per_key=cuda_leaves[3]),
+            cuda_bias,
         )
         self.assertEqual(actual.shape, expected.shape)
         torch.testing.assert_close(
@@ -371,12 +329,23 @@ class PackedAttentionCudaTest(TestCase):
         expected.backward(grad_output)
         actual.backward(grad_output.to(device, dtype))
         for name, cuda_leaf, cpu_leaf in zip(
-            ("query", "key", "value", "per_key"), cuda_leaves, cpu_leaves
+            ("query", "key", "value", "per_key")[: len(cuda_leaves)],
+            cuda_leaves,
+            cpu_leaves,
         ):
             assert cuda_leaf.grad is not None and cpu_leaf.grad is not None
             with self.subTest(grad=name):
                 torch.testing.assert_close(
                     cuda_leaf.grad.float().cpu(), cpu_leaf.grad, rtol=0, atol=atol
+                )
+
+    def test_varlen_head_dim_12_matches_cpu_reference(self) -> None:
+        for query_is_first_token in (False, True):
+            with self.subTest(first_token=query_is_first_token):
+                self._assert_matches_cpu_reference(
+                    head_dim=12,
+                    query_is_first_token=query_is_first_token,
+                    with_per_key=False,
                 )
 
     def test_varlen_per_key_bias_matches_cpu_reference(self) -> None:
