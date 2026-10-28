@@ -652,14 +652,14 @@ def build_dataset_from_task_config_uri(
         f"Provided edge direction from args must be one of `in` or `out`, got {sample_edge_direction}"
     )
 
-    should_use_range_partitioning = bool(
-        str_to_bool(args.get("should_use_range_partitioning", "True"))
+    should_use_range_partitioning = str_to_bool(
+        args.get("should_use_range_partitioning", "True")
     )
 
-    should_load_tensors_in_parallel = bool(
-        str_to_bool(args.get("should_load_tensors_in_parallel", "True"))
+    should_load_tensors_in_parallel = str_to_bool(
+        args.get("should_load_tensors_in_parallel", "True")
     )
-    retain_edge_ids = bool(strtobool(args.get("retain_edge_ids", "True")))
+    retain_edge_ids = str_to_bool(args.get("retain_edge_ids", "True"))
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."

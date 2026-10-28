@@ -200,8 +200,8 @@ class NodeAnchorBasedLinkPredictionModelingTaskSpec(
 
         # Retrieval-specific Task Parameters
         softmax_temp = float(kwargs.get("softmax_temp", 0.07))
-        should_remove_accidental_hits = bool(
-            str_to_bool(kwargs.get("should_remove_accidental_hits", "True"))
+        should_remove_accidental_hits = str_to_bool(
+            kwargs.get("should_remove_accidental_hits", "True")
         )
         task = base_task(
             temperature=softmax_temp,
