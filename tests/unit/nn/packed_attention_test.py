@@ -8,6 +8,8 @@ from absl.testing import absltest
 
 from gigl.nn.packed_attention import (
     PackedAttentionBias,
+    _pad_head_dim,
+    _pad_query_key,
     _padded_packed_attention,
     _varlen_attention,
     packed_attention,
@@ -31,6 +33,25 @@ class PackedAttentionTest(TestCase):
         for tensor in (query, key, value):
             assert tensor.grad is not None
             self.assertEqual(tensor.grad.shape, tensor.shape)
+
+    def test_pad_head_dim_zero_pads_the_last_dim_to_a_multiple_of_8(self) -> None:
+        tensor = torch.randn(5, 2, 12)
+        padded = _pad_head_dim(tensor)
+        self.assertEqual(padded.shape, (5, 2, 16))
+        torch.testing.assert_close(padded[..., :12], tensor)
+        self.assertEqual(padded[..., 12:].abs().sum().item(), 0.0)
+        self.assertEqual(_pad_head_dim(torch.randn(5, 2, 16)).shape, (5, 2, 16))
+
+    def test_padded_query_key_scores_match_the_unpadded_scores(self) -> None:
+        query, key = torch.randn(6, 2, 12), torch.randn(6, 2, 12)
+        padded_query, padded_key = _pad_query_key(query, key)
+        self.assertEqual(padded_query.shape[-1], 16)
+        torch.testing.assert_close(
+            torch.einsum("qhd,khd->hqk", padded_query, padded_key) / 16**0.5,
+            torch.einsum("qhd,khd->hqk", query, key) / 12**0.5,
+            rtol=0,
+            atol=1e-5,
+        )
 
     def _bias_inputs(self):
         lengths = [3, 1, 2]
@@ -211,6 +232,55 @@ class PackedAttentionCudaTest(TestCase):
                             expected.grad.float(),
                             rtol=0,
                             atol=atol,
+                        )
+
+    def test_varlen_head_dim_12_matches_cpu_reference(self) -> None:
+        device = torch.device("cuda")
+        num_heads, head_dim = 2, 12
+        lengths = torch.tensor([5, 1, 24, 3, 12])
+        num_tokens = int(lengths.sum())
+        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        cuda_packed = pack_sequences(lengths.to(device), _MAX_SEQ_LEN)
+        generator = torch.Generator().manual_seed(0)
+        for query_is_first_token in (False, True):
+            num_queries = 5 if query_is_first_token else num_tokens
+            cpu_inputs = [
+                torch.randn(rows, num_heads, head_dim, generator=generator)
+                for rows in (num_queries, num_tokens, num_tokens)
+            ]
+            grad_output = torch.randn(
+                num_queries, num_heads, head_dim, generator=generator
+            )
+            cpu_leaves, cuda_leaves = (
+                [tensor.clone().requires_grad_() for tensor in group]
+                for group in (cpu_inputs, [t.to(device) for t in cpu_inputs])
+            )
+            expected = _padded_packed_attention(
+                cpu_leaves[0],
+                cpu_leaves[1],
+                cpu_leaves[2],
+                packed,
+                query_is_first_token,
+            )
+            expected.backward(grad_output)
+            actual = packed_attention(
+                cuda_leaves[0],
+                cuda_leaves[1],
+                cuda_leaves[2],
+                cuda_packed,
+                query_is_first_token,
+            )
+            actual.backward(grad_output.to(device))
+            with self.subTest(first_token=query_is_first_token):
+                self.assertEqual(actual.shape, expected.shape)
+                torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=1e-4)
+                for name, cuda_leaf, cpu_leaf in zip(
+                    ("query", "key", "value"), cuda_leaves, cpu_leaves
+                ):
+                    assert cuda_leaf.grad is not None and cpu_leaf.grad is not None
+                    with self.subTest(grad=name):
+                        torch.testing.assert_close(
+                            cuda_leaf.grad.cpu(), cpu_leaf.grad, rtol=0, atol=1e-4
                         )
 
 

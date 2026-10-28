@@ -45,7 +45,9 @@ Data flow of a packed forward::
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
-  - ``head_dim`` must be a multiple of 8 for the aligned kernels.
+  - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
+    ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
+    q so the kernel's scores match the unpadded head dim.
   - A ``PackedAttentionBias`` is part of the call. The CPU path applies it; the
     varlen kernel takes none of it yet, so on CUDA a bias raises
     ``NotImplementedError``.
@@ -96,6 +98,7 @@ Results:
       The model stopped being the bottleneck; sampling was.
 """
 
+import math
 from typing import Callable, NamedTuple, Optional, cast
 
 import torch
@@ -107,15 +110,37 @@ from torch_geometric.utils import to_dense_batch
 from gigl.transforms.static_khop import PackedLayout
 
 
+def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
+    """Zero-pads the last dim of ``tensor`` up to a multiple of ``multiple``."""
+    remainder = tensor.size(-1) % multiple
+    if remainder == 0:
+        return tensor
+    return F.pad(tensor, (0, multiple - remainder))
+
+
+def _pad_query_key(query: Tensor, key: Tensor) -> tuple[Tensor, Tensor]:
+    """Zero-pads q and k to a multiple of 8 and rescales q for the padded head dim.
+
+    The kernel scales scores by ``1 / sqrt(d_pad)``; multiplying q by
+    ``sqrt(d_pad / d)`` makes ``q' . k' / sqrt(d_pad) == q . k / sqrt(d)``.
+    """
+    head_dim = query.size(-1)
+    query, key = _pad_head_dim(query), _pad_head_dim(key)
+    # The kernel scales by the padded dim. An explicit ``scale`` is not passed
+    # because torch 2.8's meta backward rejects it, and compiled training needs it.
+    query = query * math.sqrt(query.size(-1) / head_dim)
+    return query, key
+
+
 def _varlen_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads value_dim"],
     cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
     cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
-) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
+) -> Float[Tensor, "num_query_tokens num_heads value_dim"]:
     """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
 
     Query sequence ``i`` attends to key sequence ``i``, so padded positions cost
@@ -124,8 +149,12 @@ def _varlen_attention(
     be compiled). Differentiable in ``query``, ``key`` and ``value`` through the
     autograd formula that aten registers for the kernel.
 
-    CUDA only; see the module docstring for the head dim and dropout limits. The
-    backward is non-deterministic unless
+    CUDA only; see the module docstring for the dropout limit. The head dims of
+    ``query`` and ``key`` must be a multiple of 8; ``value`` may differ. The
+    kernel scales scores by ``1 / sqrt(head_dim)`` of the head dim it is given.
+    It picks its tile size from the head dim, so a padded head dim can move
+    the call to the next size tier (64 padded to 72 lands in the tier for dims up
+    to 128). The backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
 
@@ -328,6 +357,10 @@ def packed_attention(
         raise NotImplementedError("the FlexAttention backend is not in yet")
     if bias is not None and bias.per_key is not None:
         raise NotImplementedError("the varlen kernel takes no per-key bias yet")
+    head_dim = query.size(-1)
+    if head_dim % 8 != 0:
+        query, key = _pad_query_key(query, key)
+        value = _pad_head_dim(value)
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
             layout.cu_seqlens.size(0), dtype=torch.int32, device=query.device
@@ -336,7 +369,7 @@ def packed_attention(
     else:
         cu_seqlens_q = layout.cu_seqlens
         max_seqlen_q = min(layout.max_seq_len, query.size(0))
-    return _varlen_attention(
+    output = _varlen_attention(
         query,
         key,
         value,
@@ -345,3 +378,4 @@ def packed_attention(
         max_seqlen_q,
         min(layout.max_seq_len, key.size(0)),
     )
+    return output[..., :head_dim]

@@ -344,6 +344,7 @@ class PackedPathTest(TestCase):
                 relation_message_mode="edge_type_attention",
                 readout_mode=_NEIGHBOR_READOUT,
             ),
+            param("head_dim_10", hid_dim=20, num_heads=2),
         ]
     )
     def test_matches_padded_path(
@@ -552,7 +553,8 @@ class PackedPathTest(TestCase):
         # A config that always runs padded reads the batch's own hop values.
         encoder = GraphTransformerEncoder(
             **_encoder_kwargs(
-                num_heads=4, anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
+                pairwise_attention_bias_attr_names=["x"],
+                anchor_based_input_embedding_dict=nn.ModuleDict(too_small),
             )
         )
         self.assertFalse(encoder._supports_packed_backend)
@@ -592,7 +594,8 @@ class PackedPathTest(TestCase):
                 anchor_based_attention_bias_attr_names=[_HOP, "hop_times_two"],
                 supported=True,
             ),
-            param("head_dim_not_multiple_of_8", num_heads=4),
+            param("head_dim_4", num_heads=4, supported=True),
+            param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
             param("attention_dropout", attention_dropout_rate=0.1),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
@@ -968,6 +971,7 @@ class PackedPathCudaTest(TestCase):
                 anchor_based_input_attr_names=["hop_times_two"],
                 anchor_based_input_embedding_dict=None,
             ),
+            param("head_dim_10", hid_dim=20),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
@@ -983,7 +987,12 @@ class PackedPathCudaTest(TestCase):
         if anchors is not None:
             anchor_node_ids = torch.tensor(anchors)
         kwargs = _encoder_kwargs(
-            hid_dim=128, hop_distance=hop_distance, dropout_rate=0.0, **overrides
+            **{
+                "hid_dim": 128,
+                "hop_distance": hop_distance,
+                "dropout_rate": 0.0,
+                **overrides,
+            }
         )
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")

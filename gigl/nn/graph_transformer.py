@@ -1726,11 +1726,6 @@ class GraphTransformerEncoder(nn.Module):
             | set(self._anchor_based_input_attr_names)
         ):
             blockers.append("ppr_weight or ppr_relation_features is set")
-        # The CUDA memory-efficient varlen kernel only has aligned variants for
-        # head dims divisible by 8. For other dims, the padded path's SDPA picks
-        # a different kernel.
-        if (self._hid_dim // self._num_heads) % 8 != 0:
-            blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
         # every batch would exceed it.
