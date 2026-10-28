@@ -35,7 +35,9 @@ steps:
         source ~/.profile
         docker version
         docker buildx create --driver=docker-container --use
-        docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+        # Pinned by digest: this image runs --privileged, so a repointed :latest tag would be arbitrary
+        # root code in every CI job. Refresh the digest deliberately (see RELEASING.md).
+        docker run --rm --privileged multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
         uv pip install -e .

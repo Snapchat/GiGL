@@ -20,6 +20,8 @@ Welcome to the GiGL User Guide. This guide provides detailed documentation to he
 
    overview/what_is_gigl
    overview/architecture
+   overview/in_memory_subgraph_sampling
+   overview/graph_store_conversion
 
 
 .. toctree::

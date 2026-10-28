@@ -33,7 +33,7 @@ on:
 jobs:
   # First job: Bump version and create release branch
   bump_version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -46,7 +46,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Machine for bumping version
       uses: ./.github/actions/setup-python-tools
@@ -132,7 +132,7 @@ jobs:
   # One leg per Python minor, each run in that minor's builder image.
   release_gigl_kfp_pipeline:
     needs: bump_version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python: ["3.11", "3.12", "3.13"]
@@ -143,7 +143,7 @@ jobs:
 
     steps:
     - name: Checkout release branch
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
@@ -214,7 +214,7 @@ jobs:
       - bump_version
       - release_gigl_kfp_pipeline
       # - release_dev_workbench_image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -222,7 +222,7 @@ jobs:
 
     steps:
     - name: Checkout release branch
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
