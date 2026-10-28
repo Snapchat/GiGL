@@ -73,7 +73,7 @@ def launch_single_pool_job(
         raise ValueError(
             f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
         )
-    vertex_ai_job_name = _build_vertex_ai_job_name(
+    vertex_ai_job_name = build_vertex_ai_job_name(
         job_name=job_name,
         component=component,
     )
@@ -152,7 +152,7 @@ def launch_graph_store_enabled_job(
         raise ValueError(
             f"Invalid component: {component}. Expected one of: {_LAUNCHABLE_COMPONENTS}"
         )
-    vertex_ai_job_name = _build_vertex_ai_job_name(
+    vertex_ai_job_name = build_vertex_ai_job_name(
         job_name=job_name,
         component=component,
     )
@@ -328,7 +328,7 @@ def _build_job_config(
     return job_config
 
 
-def _build_vertex_ai_job_name(job_name: str, component: GiGLComponents) -> str:
+def build_vertex_ai_job_name(job_name: str, component: GiGLComponents) -> str:
     """Build the Vertex AI CustomJob display name from a raw GiGL job name.
 
     Args:
