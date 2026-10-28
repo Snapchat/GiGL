@@ -1,6 +1,8 @@
 """Unit tests for the argument handling and host checks of scripts.smoke_test_image."""
 
 import os
+import sys
+from types import SimpleNamespace
 from unittest import mock
 
 from absl.testing import absltest
@@ -93,6 +95,27 @@ class SmokeTestImageChecksTest(TestCase):
                 self.assertRaises(
                     AssertionError, smoke_test_image.check_nvidia_driver_path
                 )
+
+
+class SmokeTestImageTorchVariantTest(TestCase):
+    @staticmethod
+    def _fake_torch(version: str, cuda: str | None) -> mock._patch_dict:
+        torch = SimpleNamespace(__version__=version, version=SimpleNamespace(cuda=cuda))
+        return mock.patch.dict(sys.modules, {"torch": torch})
+
+    def test_matching_variants_pass(self) -> None:
+        with self._fake_torch("2.8.0+cu128", "12.8"):
+            smoke_test_image.check_torch_variant("cu128")
+        with self._fake_torch("2.8.0+cpu", None):
+            smoke_test_image.check_torch_variant("cpu")
+
+    def test_wrong_variant_fails(self) -> None:
+        with self._fake_torch("2.8.0+cpu", None):
+            with self.assertRaises(AssertionError):
+                smoke_test_image.check_torch_variant("cu128")
+        with self._fake_torch("2.8.0+cu128", "12.8"):
+            with self.assertRaises(AssertionError):
+                smoke_test_image.check_torch_variant("cpu")
 
 
 if __name__ == "__main__":

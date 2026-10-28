@@ -38,6 +38,11 @@ Example:
         $ python scripts/smoke_test_image.py --python 3.11 \
             --imports torch,graphlearn_torch,gigl_core
 
+    In a build job that must have this torch variant, whatever the runner's hardware::
+
+        $ python scripts/smoke_test_image.py --python 3.11 --imports torch \
+            --torch-variant cu128
+
     On a GPU host, where the driver is mounted and ``torchrec`` joins the cuda preset::
 
         $ python scripts/smoke_test_image.py --image-type cuda --python 3.11 --cuda
@@ -207,6 +212,24 @@ def check_imports(module_names: list[str]) -> None:
     for module_name in module_names:
         importlib.import_module(module_name)
         print(f"OK  import {module_name}")
+
+
+def check_torch_variant(variant: str) -> None:
+    """Asserts the installed torch is the ``cpu`` or ``cu128`` build.
+
+    Args:
+        variant (str): ``cpu`` or ``cu128``, the local version suffix of the torch wheel.
+
+    Raises:
+        AssertionError: When the torch version suffix or its CUDA version differs.
+    """
+    import torch
+
+    # "2.8.0+cu128" -> "cu128"
+    assert_equal("torch variant", variant, torch.__version__.rpartition("+")[2])
+    assert_equal(
+        "torch.version.cuda", "12.8" if variant == "cu128" else None, torch.version.cuda
+    )
 
 
 def check_cuda() -> None:
@@ -413,6 +436,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--image-type, adds to the preset's imports.",
     )
     parser.add_argument(
+        "--torch-variant",
+        choices=["cpu", "cu128"],
+        default=None,
+        help="Torch build the environment must have: the wheel's local version suffix "
+        "and, for cu128, CUDA 12.8. Needs --imports to include torch.",
+    )
+    parser.add_argument(
         "--venv-prefix",
         default=None,
         help="Directory the interpreter must live under, e.g. /gigl_deps/.venv. Omit "
@@ -470,6 +500,8 @@ def main() -> None:
     if args.require_nvidia_driver_path:
         check_nvidia_driver_path()
     check_imports(module_names=args.imports)
+    if args.torch_variant is not None:
+        check_torch_variant(variant=args.torch_variant)
     if args.cuda:
         check_cuda()
     if args.beam is not None:
