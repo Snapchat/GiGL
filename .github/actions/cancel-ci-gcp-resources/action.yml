@@ -26,10 +26,11 @@ runs:
         PROJECT: ${{ inputs.project }}
         RUN_ID: ${{ inputs.github_run_id }}
       run: |
-        set -euo pipefail
+        # No `set -e`: a failure here must not stop the pipeline run cancel in the next step.
+        set -uo pipefail
         TAG="gigl-ci-run-${RUN_ID}"
         BUILD_IDS="$(gcloud builds list --project="${PROJECT}" \
-          --filter="tags=\"${TAG}\" AND (status=WORKING OR status=QUEUED)" --format="value(id)")"
+          --filter="tags=\"${TAG}\" AND (status=WORKING OR status=QUEUED)" --format="value(id)" || true)"
         if [[ -z "${BUILD_IDS}" ]]; then
           echo "No active Cloud Builds tagged ${TAG}."
           exit 0
@@ -40,6 +41,8 @@ runs:
         done
 
     - name: Cancel Vertex AI pipeline runs labelled with this run
+      # Runs even if the Cloud Build step failed; the pipeline runs are the resources that matter most.
+      if: always()
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}

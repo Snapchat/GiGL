@@ -26,6 +26,7 @@ class _FakeRuns:
         self.scripts: dict[str, Callable[[], None]] = {}
         self.events: dict[str, threading.Event] = {}
         self.cancelled: list[str] = []
+        self.cancel_errors: dict[str, Exception] = {}
 
     def fails(self, name: str, delay_s: float = 0.0) -> None:
         def script() -> None:
@@ -51,8 +52,13 @@ class _FakeRuns:
     def wait_for_run_completion(self, resource_name: str, **_: object) -> None:
         self.scripts[resource_name]()
 
+    def cancel_raises(self, name: str) -> None:
+        self.cancel_errors[name] = RuntimeError(f"cancel of {name} denied")
+
     def cancel_pipeline_run(self, resource_name: str) -> bool:
         self.cancelled.append(resource_name)
+        if resource_name in self.cancel_errors:
+            raise self.cancel_errors[resource_name]
         event: Optional[threading.Event] = self.events.get(resource_name)
         if event is not None:
             event.set()
@@ -79,6 +85,22 @@ class WaitForCompletionTest(TestCase):
             self.orchestrator.wait_for_completion(["A", "B"], fail_fast=True)
 
         self.assertEqual(self.runs.cancelled, ["B"])
+
+    def test_fail_fast_keeps_cancelling_when_one_cancel_raises(self) -> None:
+        self.runs.fails("A")
+        # B's cancel is denied; B then ends on its own, as a real run would.
+        self.runs.fails("B", delay_s=0.1)
+        self.runs.cancel_raises("B")
+        self.runs.blocked_until_cancelled("C")
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.orchestrator.wait_for_completion(["A", "B", "C"], fail_fast=True)
+
+        self.assertCountEqual(self.runs.cancelled, ["B", "C"])
+        message = str(raised.exception)
+        self.assertIn("run A failed", message)
+        self.assertIn("cancel of B denied", message)
+        self.assertNotIn("CANCELLED", message)
 
     def test_fail_fast_with_the_last_run_failing_cancels_nothing(self) -> None:
         self.runs.succeeds("A")

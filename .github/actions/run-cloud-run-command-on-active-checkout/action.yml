@@ -34,9 +34,17 @@ runs:
         TIMEOUT: ${{ inputs.timeout }}
         GITHUB_RUN_ID_INPUT: ${{ inputs.github_run_id }}
       run: |
+        CONFIG=.github/cloud_builder/run_command_on_active_checkout.yaml
+        SUBSTITUTIONS="_CMD=${CMD}"
+        # The config comes from the checked-out branch, which may predate the _GITHUB_RUN_ID
+        # substitution. Cloud Build rejects a substitution the config does not declare, so only
+        # pass it when the config has it.
+        if grep -q "_GITHUB_RUN_ID" "${CONFIG}"; then
+          SUBSTITUTIONS="${SUBSTITUTIONS},_GITHUB_RUN_ID=${GITHUB_RUN_ID_INPUT}"
+        fi
         gcloud builds submit . \
-          --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${CMD}",_GITHUB_RUN_ID="${GITHUB_RUN_ID_INPUT}" \
+          --config="${CONFIG}" \
+          --substitutions="${SUBSTITUTIONS}" \
           --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
           --project="${PROJECT}" \
           --machine-type="${MACHINE_TYPE}" \
