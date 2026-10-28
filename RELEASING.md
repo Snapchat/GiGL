@@ -42,11 +42,13 @@ This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it
 
 The workflow runs:
 
-- Six `gigl-core` build jobs, one per torch variant (`cpu`, `cu128`) and Python minor (3.11, 3.12, 3.13). The `cpu` jobs
-  run on a CPU runner and the `cu128` jobs on a GPU runner; each imports its wheel in a clean venv of its minor.
+- One `gigl-core` build job per torch variant (`cpu`, `cu128`) and supported Python minor; the minors come from
+  `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env`. The `cpu` jobs run on a CPU runner and the `cu128` jobs on a GPU
+  runner; each checks its wheel (`.github/scripts/check_gigl_core_wheel.py`) and imports it in a clean venv of its
+  minor.
 - One `gigl` build job. The pure-Python wheel serves every minor and both registries.
 - Two publish jobs, one per variant registry, behind the `release` environment. They start only once every build job has
-  passed, and each publishes three `gigl-core` wheels and the `gigl` wheel.
+  passed, and each publishes one `gigl-core` wheel per supported minor and the `gigl` wheel.
 
 If a publish job fails partway, use **Re-run failed jobs** on the same run. The re-run uploads this run's wheels and
 skips the files the registry already has. A fresh dispatch rebuilds every wheel instead. The builds set

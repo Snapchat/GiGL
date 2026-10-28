@@ -42,8 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
-- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
-  by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+- Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
+  `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
   - 3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
     Python per job, so consumers on 3.12 or 3.13 build the CPU, CUDA and Dataflow images from `containers/` at their own
     minor until published per-minor images are available.
