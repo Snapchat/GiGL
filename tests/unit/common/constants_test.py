@@ -1,4 +1,6 @@
+import re
 import sys
+from pathlib import Path
 
 from absl.testing import absltest
 
@@ -16,7 +18,6 @@ _PER_MINOR_CONSTANTS = [
     "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU",
     "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH",
 ]
-_SUPPORTED_KEY_SUFFIXES = ["PY311", "PY312", "PY313"]
 
 
 class PerMinorConstantsTest(TestCase):
@@ -25,20 +26,45 @@ class PerMinorConstantsTest(TestCase):
         self._dep_vars = parse_makefile_vars(PATH_BASE_IMAGES_VARIABLE_FILE)
 
     def test_constants_use_running_python(self) -> None:
-        key_suffix = f"PY{sys.version_info.major}{sys.version_info.minor}"
+        key_suffix = f"py{sys.version_info.major}{sys.version_info.minor}"
         for name in _PER_MINOR_CONSTANTS:
             with self.subTest(name):
                 self.assertEqual(
                     getattr(constants, name), self._dep_vars[f"{name}_{key_suffix}"]
                 )
 
+    def _supported_key_suffixes(self) -> list[str]:
+        return [
+            "py" + "".join(version.split(".")[:2])
+            for version in self._dep_vars["SUPPORTED_PYTHON_VERSIONS"].split(",")
+        ]
+
     def test_every_supported_minor_is_listed(self) -> None:
         for name in _PER_MINOR_CONSTANTS + [
             "DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG"
         ]:
-            for key_suffix in _SUPPORTED_KEY_SUFFIXES:
+            for key_suffix in self._supported_key_suffixes():
                 with self.subTest(f"{name}_{key_suffix}"):
                     self.assertIn(f"{name}_{key_suffix}", self._dep_vars)
+
+    def test_constants_module_covers_exactly_the_supported_minors(self) -> None:
+        source = Path(constants.__file__).read_text()
+        supported_minors = [
+            ".".join(version.split(".")[:2])
+            for version in self._dep_vars["SUPPORTED_PYTHON_VERSIONS"].split(",")
+        ]
+        for name in _PER_MINOR_CONSTANTS:
+            with self.subTest(name):
+                block = re.search(
+                    rf"^{name}: Final\[str\] = \{{\n(.*?)\n\}}\[_MINOR\]",
+                    source,
+                    re.DOTALL | re.MULTILINE,
+                )
+                assert block is not None
+                self.assertEqual(
+                    re.findall(r'^\s+"(3\.\d+)":', block.group(1), re.MULTILINE),
+                    supported_minors,
+                )
 
 
 if __name__ == "__main__":

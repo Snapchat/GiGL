@@ -173,14 +173,13 @@ make install_dev_deps
 
 GiGL publishes every runtime Docker image and the KFP pipeline once per supported Python minor, with a `-py311`,
 `-py312` or `-py313` suffix: for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`. There is no
-unsuffixed ref. `gigl/dep_vars.env` lists each image and the pipeline once per minor, under keys ending in `_PY311`,
-`_PY312` and `_PY313`, and `gigl.common.constants` picks the running interpreter's, so the default images and pipeline
+unsuffixed ref. `gigl/dep_vars.env` lists each image and the pipeline once per minor, under keys ending in `_py311`,
+`_py312` and `_py313`, and `gigl.common.constants` picks the running interpreter's, so the default images and pipeline
 always match the launching interpreter. That matters because Ray requires every node in a cluster to run the same Python
 version, and Dataflow requires the worker container's Python minor to match the launching environment's.
 
-Each image runs the exact Python version listed for its minor in the matrix of
-`.github/workflows/build-base-docker-images.yml` (currently 3.11.14, 3.12.14 and 3.13.15); the 3.11 entry equals
-`.python-version`.
+Each image runs the exact Python version listed for its minor in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env`
+(currently 3.11.14, 3.12.14 and 3.13.15); the 3.11 entry equals `.python-version`.
 
 To build your own base images, pass the full Python version as `PYTHON_VERSION`; it is required. The images are built
 for `linux/amd64` only, because tensorflow-data-validation publishes no aarch64 Linux wheel.

@@ -8,8 +8,8 @@ def str_to_bool(value: str) -> bool:
     """
     Converts a string representation of truth to a bool.
 
-    Accepts and rejects the same spellings as `distutils.util.strtobool`, which is no
-    longer part of the standard library, though the `ValueError` message keeps the
+    Accepts and rejects the same spellings as `distutils.util.strtobool`, which Python
+    3.12 removes from the standard library, though the `ValueError` message keeps the
     caller's casing instead of lowercasing it:
 
       - True: "y", "yes", "t", "true", "on", "1"

@@ -14,13 +14,30 @@ env:
   GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   GIGL_BUILDER_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-builder:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   # The GIGL_*_IMAGE values above are the tag that every image of one run shares. Each matrix leg
-  # pushes <value>-<tag>, built on the Python version in its `python` entry; the `python` of the
-  # py311 leg equals .python-version.
+  # pushes <value>-<tag>, built on the Python version in its `python` entry. The legs come from
+  # SUPPORTED_PYTHON_VERSIONS in gigl/dep_vars.env (see the python-versions job).
   WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
 jobs:
+  python-versions:
+    name: Read the supported Python versions
+    runs-on: ubuntu-24.04
+    outputs:
+      builds: ${{ steps.versions.outputs.builds }}
+      versions: ${{ steps.versions.outputs.versions }}
+    steps:
+    - name: Checkout PR Branch
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ inputs.pr_number }}
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+
   comment-workflow-started:
 
+    needs: python-versions
     runs-on: ubuntu-24.04
     steps:
     - name: Comment on PR
@@ -28,23 +45,18 @@ jobs:
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
-          Starting to [build](${{env.WORKFLOW_URL}}) the CUDA, CPU, Dataflow and builder images for Python 3.11, 3.12 and 3.13.
+          Starting to [build](${{env.WORKFLOW_URL}}) the CUDA, CPU, Dataflow and builder images for every Python version in `SUPPORTED_PYTHON_VERSIONS`: ${{ needs.python-versions.outputs.versions }}.
           This may take a while, please be patient.
           The images will be pushed to the GCP Artifact Registry.
-          Each image is pushed as `<ref>-py311`, `<ref>-py312` and `<ref>-py313`.
+          Each image is pushed once per version, as `<ref>-py<major><minor>`.
           Once done, the workflow will update `gigl/dep_vars.env` and the Cloud Build default builder with the new refs.
 
   build-cuda-base-image:
     runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
+    needs: python-versions
     strategy:
       matrix:
-        include:
-          - python: "3.11.14"
-            tag: py311
-          - python: "3.12.14"
-            tag: py312
-          - python: "3.13.15"
-            tag: py313
+        include: ${{ fromJSON(needs.python-versions.outputs.builds) }}
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -71,20 +83,17 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cuda.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cuda --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed CUDA base image to ${IMAGE}"
 
   build-cpu-base-image:
     runs-on: ubuntu-24.04
+    needs: python-versions
     strategy:
       matrix:
-        include:
-          - python: "3.11.14"
-            tag: py311
-          - python: "3.12.14"
-            tag: py312
-          - python: "3.13.15"
-            tag: py313
+        include: ${{ fromJSON(needs.python-versions.outputs.builds) }}
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -111,20 +120,17 @@ jobs:
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cpu.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cpu --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed CPU base image to ${IMAGE}"
 
   build-dataflow-base-image:
     runs-on: ubuntu-24.04
+    needs: python-versions
     strategy:
       matrix:
-        include:
-          - python: "3.11.14"
-            tag: py311
-          - python: "3.12.14"
-            tag: py312
-          - python: "3.13.15"
-            tag: py313
+        include: ${{ fromJSON(needs.python-versions.outputs.builds) }}
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -150,20 +156,17 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.dataflow.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed Dataflow base image to ${IMAGE}"
 
   build-builder-image:
     runs-on: ubuntu-24.04
+    needs: python-versions
     strategy:
       matrix:
-        include:
-          - python: "3.11.14"
-            tag: py311
-          - python: "3.12.14"
-            tag: py312
-          - python: "3.13.15"
-            tag: py313
+        include: ${{ fromJSON(needs.python-versions.outputs.builds) }}
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -193,11 +196,14 @@ jobs:
         # See: Dockerfile.builder
         bash ./requirements/install_scala_deps.sh --download-only
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.builder -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type builder --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed Builder image to ${IMAGE}"
 
   build-and-commit-base-images:
     needs:
+      - python-versions
       - build-cuda-base-image
       - build-cpu-base-image
       - build-dataflow-base-image
@@ -220,7 +226,7 @@ jobs:
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
-          Built and pushed new images, each as `<ref>-py311`, `<ref>-py312` and `<ref>-py313`:
+          Built and pushed new images for the Python versions ${{ needs.python-versions.outputs.versions }}, each as `<ref>-py<major><minor>`:
           * CUDA base image: `${{ env.GIGL_BASE_CUDA_IMAGE }}`
           * CPU base image: `${{ env.GIGL_BASE_CPU_IMAGE }}`
           * Dataflow base image: `${{ env.GIGL_BASE_DATAFLOW_IMAGE }}`

@@ -3,20 +3,15 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
-# Python for every uv command and for the -pyXY image suffix, e.g. `make unit_test PYTHON_VERSION=3.13`.
-# Defaults to UV_PYTHON when the environment sets it (GiGL's images set it to the version their venv is
-# built on), otherwise to .python-version. Must be a version (X.Y or X.Y.Z), not an interpreter path.
-PYTHON_VERSION ?= $(or $(UV_PYTHON),$(shell cat .python-version))
-export UV_PYTHON := $(PYTHON_VERSION)
-# major.minor of PYTHON_VERSION; ty accepts only X.Y.
-PYTHON_MINOR_VERSION := $(word 1,$(subst ., ,$(PYTHON_VERSION))).$(word 2,$(subst ., ,$(PYTHON_VERSION)))
-# Every GiGL image is published once per Python minor under this tag suffix, e.g. -py313.
-PYTHON_IMAGE_SUFFIX := -py$(subst .,,$(PYTHON_MINOR_VERSION))
-# dep_vars.env key suffix for this minor, e.g. PY313; see gigl/dep_vars.env.
-PY_KEY := PY$(subst .,,$(PYTHON_MINOR_VERSION))
-# Every supported minor has its keys in dep_vars.env; anything else (an unsupported minor, an empty
-# PYTHON_VERSION, an interpreter path) stops here instead of producing images with a malformed suffix.
-$(if $(DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_$(PY_KEY)),,$(error PYTHON_VERSION "$(PYTHON_VERSION)" is not a supported Python version; gigl/dep_vars.env lists the supported minors))
+# Python minor for every uv command and for `ty`, e.g. `make unit_test PYTHON_MINOR=3.13`. Defaults to the
+# minor of UV_PYTHON when the environment sets it (e.g. UV_PYTHON=3.13.15 gives 3.13), otherwise to the
+# minor of .python-version.
+PYTHON_MINOR ?= $(shell echo "$${UV_PYTHON:-$$(cat .python-version)}" | cut -d. -f1,2)
+# An environment that already sets UV_PYTHON keeps its interpreter: PYTHON_MINOR= on the command line
+# steers uv only when UV_PYTHON is unset.
+export UV_PYTHON ?= $(PYTHON_MINOR)
+# Suffix of this minor's image tags and dep_vars.env keys, e.g. py313.
+PY_TAG := py$(subst .,,$(PYTHON_MINOR))
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -32,10 +27,10 @@ DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
 # The Python suffix keeps images that different minors build in the same minute apart.
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}${PYTHON_IMAGE_SUFFIX}
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}-${PY_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}-${PY_TAG}
 
 # Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
@@ -44,7 +39,7 @@ DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${D
 # the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export. The Python
 # suffix goes after the tag so that minors sharing one CI run ID push different images.
 INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
-INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}${PYTHON_IMAGE_SUFFIX}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}-${PY_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
@@ -196,7 +191,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
-	uv run ty check --python-version ${PYTHON_MINOR_VERSION} ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
@@ -334,11 +329,11 @@ run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_
 run_glt_e2e_tests: run_all_e2e_tests
 
 # Compiles and uploads the released KFP pipeline for this Python minor on the release src images
-# dep_vars.env lists for it (create_release.yml runs this once per minor).
-release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_KEY))
-release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_KEY))
-release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_KEY))
-release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_KEY))
+# dep_vars.env lists under the keys ending in PY_TAG (create_release.yml runs this once per minor).
+release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))
+release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_TAG))
 release_kfp_pipeline: compile_gigl_kubeflow_pipeline
 
 # Compile an instance of a kfp pipeline

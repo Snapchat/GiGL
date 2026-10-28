@@ -55,7 +55,7 @@ def update_dep_vars_env(
     """
     Rewrite the release refs in gigl/dep_vars.env.
 
-    Every per-minor release key (``..._PY<major><minor>=``) already in the file gets the
+    Every per-minor release key (``..._py<major><minor>=``) already in the file gets the
     ref for its minor, so the file's keys are the only list of supported minors.
 
     Args:
@@ -93,7 +93,7 @@ def update_dep_vars_env(
     content = re.sub(
         r"(?m)^(DEFAULT_GIGL_RELEASE_"
         r"(SRC_IMAGE_CUDA|SRC_IMAGE_CPU|SRC_IMAGE_DATAFLOW_CPU|KFP_PIPELINE_PATH)"
-        r"_PY(\d+))=.*$",
+        r"_py(\d+))=.*$",
         per_minor_release_line,
         content,
     )

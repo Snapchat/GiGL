@@ -528,11 +528,9 @@ class GbmlConfigPbWrapper:
             bool: Whether to use GLT as a backend for current run
         """
 
-        return bool(
-            str_to_bool(
-                dict(self.gbml_config_pb.feature_flags).get(
-                    "should_run_glt_backend", "False"
-                )
+        return str_to_bool(
+            dict(self.gbml_config_pb.feature_flags).get(
+                "should_run_glt_backend", "False"
             )
         )
 
@@ -549,11 +547,9 @@ class GbmlConfigPbWrapper:
         Returns:
             bool: Whether to populate predictions path in the InferenceOutput for each entity type
         """
-        return bool(
-            str_to_bool(
-                dict(self.gbml_config_pb.feature_flags).get(
-                    "should_populate_predictions_path", "False"
-                )
+        return str_to_bool(
+            dict(self.gbml_config_pb.feature_flags).get(
+                "should_populate_predictions_path", "False"
             )
         )
 
@@ -569,10 +565,8 @@ class GbmlConfigPbWrapper:
         Returns:
             bool: Whether to populate embeddings path in the InferenceOutput for each entity type
         """
-        return bool(
-            str_to_bool(
-                dict(self.gbml_config_pb.feature_flags).get(
-                    "should_populate_embeddings_path", "True"
-                )
+        return str_to_bool(
+            dict(self.gbml_config_pb.feature_flags).get(
+                "should_populate_embeddings_path", "True"
             )
         )
