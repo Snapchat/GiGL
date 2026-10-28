@@ -4,10 +4,11 @@ SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # Python minor for every uv command and for `ty`, e.g. `make unit_test PYTHON_MINOR=3.13`. Defaults to the
-# minor of UV_PYTHON when the environment sets it (GiGL's images set UV_PYTHON to the version their venv is
-# built on), otherwise to the minor of .python-version.
+# minor of UV_PYTHON when the environment sets it (e.g. UV_PYTHON=3.13.15 gives 3.13), otherwise to the
+# minor of .python-version.
 PYTHON_MINOR ?= $(shell echo "$${UV_PYTHON:-$$(cat .python-version)}" | cut -d. -f1,2)
-# Steers uv onto PYTHON_MINOR only when the environment has not already chosen an interpreter.
+# An environment that already sets UV_PYTHON keeps its interpreter: PYTHON_MINOR= on the command line
+# steers uv only when UV_PYTHON is unset.
 export UV_PYTHON ?= $(PYTHON_MINOR)
 
 # GIT HASH, or empty string if not in a git repo.
