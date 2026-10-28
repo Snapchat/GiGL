@@ -9,14 +9,20 @@ set -e
 
 DEFAULT_BUILDER_IMAGE="${GIGL_BUILDER_IMAGE}-py$(cut -d. -f1,2 .python-version | tr -d .)"
 
+# Fails when the key is missing: sed would silently leave a minor without keys unchanged.
+set_key() {
+    grep -q "^$1=" gigl/dep_vars.env || { echo "gigl/dep_vars.env has no $1" >&2; exit 1; }
+    sed -i "s|^$1=.*|$1=$2|" gigl/dep_vars.env
+}
+
 VERSIONS="$(grep '^SUPPORTED_PYTHON_VERSIONS=' gigl/dep_vars.env | cut -d= -f2)"
 for VERSION in ${VERSIONS//,/ }; do
     TAG="py$(cut -d. -f1,2 <<< "${VERSION}" | tr -d .)"
     echo "Writing the ${TAG} image refs to gigl/dep_vars.env"
-    sed -i "s|^DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG_${TAG}=.*|DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG_${TAG}=${GIGL_BASE_CUDA_IMAGE}-${TAG}|" gigl/dep_vars.env
-    sed -i "s|^DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG_${TAG}=.*|DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG_${TAG}=${GIGL_BASE_CPU_IMAGE}-${TAG}|" gigl/dep_vars.env
-    sed -i "s|^DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG_${TAG}=.*|DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG_${TAG}=${GIGL_BASE_DATAFLOW_IMAGE}-${TAG}|" gigl/dep_vars.env
-    sed -i "s|^DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_${TAG}=.*|DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_${TAG}=${GIGL_BUILDER_IMAGE}-${TAG}|" gigl/dep_vars.env
+    set_key "DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG_${TAG}" "${GIGL_BASE_CUDA_IMAGE}-${TAG}"
+    set_key "DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG_${TAG}" "${GIGL_BASE_CPU_IMAGE}-${TAG}"
+    set_key "DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG_${TAG}" "${GIGL_BASE_DATAFLOW_IMAGE}-${TAG}"
+    set_key "DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_${TAG}" "${GIGL_BUILDER_IMAGE}-${TAG}"
 done
 
 echo "Writing the default builder to the Cloud Build config: ${DEFAULT_BUILDER_IMAGE}"

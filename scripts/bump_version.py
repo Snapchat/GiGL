@@ -56,7 +56,7 @@ def update_dep_vars_env(
     Rewrite the release refs in gigl/dep_vars.env.
 
     Every per-minor release key (``..._py<major><minor>=``) already in the file gets the
-    ref for its minor, so the file's keys are the only list of supported minors.
+    ref for its minor, so this function needs no list of minors of its own.
 
     Args:
         cuda_image_name (str): CUDA src image ref without the Python tag suffix.
