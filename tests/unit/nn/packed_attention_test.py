@@ -144,6 +144,66 @@ class PackedAttentionTest(TestCase):
         reference = self._dense_reference(lengths, query, key, value, per_key, per_pair)
         torch.testing.assert_close(packed, reference[first_token], rtol=1e-5, atol=1e-6)
 
+    def test_first_token_query_with_full_per_pair_grid_uses_row_zero(self) -> None:
+        lengths, layout, query, key, value, _, per_pair = self._bias_inputs()
+        first_token = layout.cu_seqlens[:-1].long()
+        for bias_rows in (1, 3):
+            with self.subTest(per_pair_rows=bias_rows):
+                actual = packed_attention(
+                    query[first_token],
+                    key,
+                    value,
+                    layout,
+                    True,
+                    PackedAttentionBias(per_pair=per_pair[:, :, :bias_rows, :]),
+                )
+                reference = self._dense_reference(
+                    lengths, query, key, value, None, per_pair
+                )
+                torch.testing.assert_close(
+                    actual, reference[first_token], rtol=1e-5, atol=1e-6
+                )
+
+    def test_zero_dropout_matches_no_dropout(self) -> None:
+        _, layout, query, key, value, _, _ = self._bias_inputs()
+        without = packed_attention(query, key, value, layout, False)
+        zero = packed_attention(query, key, value, layout, False, dropout_p=0.0)
+        torch.testing.assert_close(zero, without, rtol=0, atol=0)
+
+    def test_dropout_changes_output_and_backpropagates(self) -> None:
+        _, layout, query, key, value, _, _ = self._bias_inputs()
+        without = packed_attention(query, key, value, layout, False)
+        for query_is_first_token in (False, True):
+            with self.subTest(first_token=query_is_first_token):
+                leaves = [
+                    tensor.clone().requires_grad_() for tensor in (query, key, value)
+                ]
+                if query_is_first_token:
+                    leaves[0] = (
+                        query[layout.cu_seqlens[:-1].long()].clone().requires_grad_()
+                    )
+                torch.manual_seed(0)
+                output = packed_attention(
+                    leaves[0],
+                    leaves[1],
+                    leaves[2],
+                    layout,
+                    query_is_first_token,
+                    dropout_p=0.5,
+                )
+                self.assertEqual(output.shape, leaves[0].shape)
+                if not query_is_first_token:
+                    self.assertFalse(torch.allclose(output, without))
+                output.sum().backward()
+                for leaf in leaves:
+                    assert leaf.grad is not None
+                    self.assertGreater(float(leaf.grad.abs().sum()), 0.0)
+
+    def test_full_dropout_gives_zeros(self) -> None:
+        _, layout, query, key, value, _, _ = self._bias_inputs()
+        output = packed_attention(query, key, value, layout, False, dropout_p=1.0)
+        torch.testing.assert_close(output, torch.zeros_like(output), rtol=0, atol=0)
+
     def test_empty_bias_matches_no_bias(self) -> None:
         _, layout, query, key, value, _, _ = self._bias_inputs()
         without = packed_attention(query, key, value, layout, False, bias=None)
@@ -276,8 +336,13 @@ class PackedAttentionCudaTest(TestCase):
         atol: float = 1e-4,
         check_gradients: bool = True,
         with_per_key: bool = True,
+        per_pair_query_len: int = 0,
     ) -> None:
-        """Compares ``packed_attention`` on CUDA to the CPU padded reference, with or without a per-key bias."""
+        """Compares ``packed_attention`` on CUDA to the CPU padded reference.
+
+        Optionally adds a per-key bias and a per-pair bias with
+        ``per_pair_query_len`` query rows (0 for none).
+        """
         device = torch.device("cuda")
         num_heads = 2
         lengths = torch.tensor([5, 1, 24, 3, 12])
@@ -295,18 +360,35 @@ class PackedAttentionCudaTest(TestCase):
         ]
         if with_per_key:
             cpu_inputs.append(torch.randn(num_tokens, num_heads, generator=generator))
+        if per_pair_query_len > 0:
+            cpu_inputs.append(
+                torch.randn(
+                    lengths.numel(),
+                    num_heads,
+                    per_pair_query_len,
+                    _MAX_SEQ_LEN,
+                    generator=generator,
+                )
+            )
         grad_output = torch.randn(num_queries, num_heads, head_dim, generator=generator)
         cpu_leaves = [tensor.clone().requires_grad_() for tensor in cpu_inputs]
         cuda_leaves = [
             tensor.to(device, dtype).requires_grad_() for tensor in cpu_inputs[:3]
         ]
+        # The biases stay fp32 so the casts to the query dtype are exercised.
+        cuda_leaves.extend(
+            tensor.to(device).requires_grad_() for tensor in cpu_inputs[3:]
+        )
+        bias_names = []
+        if with_per_key:
+            bias_names.append("per_key")
+        if per_pair_query_len > 0:
+            bias_names.append("per_pair")
         cpu_bias = None
         cuda_bias = None
-        if with_per_key:
-            # The bias stays fp32 so the fold's cast to the key dtype is exercised.
-            cuda_leaves.append(cpu_inputs[3].to(device).requires_grad_())
-            cpu_bias = PackedAttentionBias(per_key=cpu_leaves[3])
-            cuda_bias = PackedAttentionBias(per_key=cuda_leaves[3])
+        if bias_names:
+            cpu_bias = PackedAttentionBias(**dict(zip(bias_names, cpu_leaves[3:])))
+            cuda_bias = PackedAttentionBias(**dict(zip(bias_names, cuda_leaves[3:])))
         expected = _padded_packed_attention(
             cpu_leaves[0],
             cpu_leaves[1],
@@ -332,7 +414,7 @@ class PackedAttentionCudaTest(TestCase):
         expected.backward(grad_output)
         actual.backward(grad_output.to(device, dtype))
         for name, cuda_leaf, cpu_leaf in zip(
-            ("query", "key", "value", "per_key")[: len(cuda_leaves)],
+            ("query", "key", "value", *bias_names),
             cuda_leaves,
             cpu_leaves,
         ):
@@ -363,6 +445,42 @@ class PackedAttentionCudaTest(TestCase):
                 self._assert_matches_cpu_reference(
                     head_dim=12, query_is_first_token=query_is_first_token
                 )
+
+    def test_per_pair_bias_matches_cpu_reference(self) -> None:
+        for query_is_first_token, per_pair_query_len in itertools.product(
+            (False, True), (1, _MAX_SEQ_LEN)
+        ):
+            if not query_is_first_token and per_pair_query_len == 1:
+                continue
+            for dtype, atol in ((torch.float32, 1e-4), (torch.bfloat16, 1e-1)):
+                with self.subTest(
+                    first_token=query_is_first_token,
+                    query_len=per_pair_query_len,
+                    dtype=dtype,
+                ):
+                    self._assert_matches_cpu_reference(
+                        head_dim=64,
+                        query_is_first_token=query_is_first_token,
+                        dtype=dtype,
+                        atol=atol,
+                        per_pair_query_len=per_pair_query_len,
+                    )
+
+    def test_dropout_runs_and_backpropagates_on_cuda(self) -> None:
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        num_tokens = int(lengths.sum())
+        query, key, value = (
+            torch.randn(num_tokens, 2, 64, device=device, requires_grad=True)
+            for _ in range(3)
+        )
+        output = packed_attention(query, key, value, layout, False, dropout_p=0.3)
+        self.assertEqual(output.shape, query.shape)
+        output.sum().backward()
+        for leaf in (query, key, value):
+            assert leaf.grad is not None
+            self.assertTrue(torch.isfinite(leaf.grad).all())
 
     def test_varlen_per_key_bias_under_bf16_autocast_matches_fp32_reference(
         self,

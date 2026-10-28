@@ -570,7 +570,8 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         The tokens of each sequence sit back to back in ``x``. Each token attends
         only to tokens of its own sequence. Requires ``relation_attention_mode``
-        to be ``"none"``, and attention dropout to be off in training.
+        to be ``"none"``. In training, attention dropout runs on the padded-grid
+        attention backend.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
@@ -587,8 +588,7 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         Raises:
             ValueError: If ``relation_attention_mode`` is not ``"none"``, if
-                ``layout.relation_edges`` is missing with a relation message mode,
-                or in training with attention dropout.
+                ``layout.relation_edges`` is missing with a relation message mode.
         """
         if self._relation_attention_mode != "none":
             raise ValueError(
@@ -597,11 +597,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         relation_edges = layout.relation_edges
         if self._relation_message_mode != "none" and relation_edges is None:
             raise ValueError("layout.relation_edges is required for relation messages.")
-        if self.training and self._attention_dropout_rate > 0:
-            raise ValueError(
-                "Packed attention does not support attention dropout in training; "
-                "set attention_dropout_rate=0 or use forward."
-            )
+        if self.training:
+            attention_dropout_p = self._attention_dropout_rate
+        else:
+            attention_dropout_p = 0.0
         x_norm = self._attention_norm(x)
         key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
         value = self._value_projection(x_norm).view(-1, self._num_heads, self._head_dim)
@@ -622,6 +621,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             layout,
             query_is_first_token=first_token_output,
             bias=bias,
+            dropout_p=attention_dropout_p,
         ).reshape(-1, self._num_heads * self._head_dim)
         x = residual + self._dropout(self._output_projection(attention_output))
         if relation_edges is not None:
@@ -1347,7 +1347,9 @@ class GraphTransformerEncoder(nn.Module):
           - no pairwise attention biases
           - no ``ppr_weight`` or ``ppr_relation_features``
           - ``hop_distance <= 4``
-          - ``attention_dropout_rate == 0``
+
+        With ``attention_dropout_rate > 0``, training attention runs on the
+        padded-grid SDPA backend and eval attention on the varlen kernel.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
@@ -1735,11 +1737,6 @@ class GraphTransformerEncoder(nn.Module):
         # every batch would exceed it.
         if self._hop_distance > 4:
             blockers.append("hop_distance is above 4")
-        # The varlen kernel's dropout has not been tested against the padded
-        # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
-        # training and eval on the same path.
-        if self._attention_dropout_rate > 0:
-            blockers.append("attention_dropout_rate is above 0")
         return blockers
 
     def _use_packed_backend(self, device: torch.device) -> bool:

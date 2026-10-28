@@ -613,7 +613,7 @@ class PackedPathTest(TestCase):
             param("head_dim_4", num_heads=4, supported=True),
             param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
-            param("attention_dropout", attention_dropout_rate=0.1),
+            param("attention_dropout", attention_dropout_rate=0.1, supported=True),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
             param(
                 "other_token_input",
@@ -681,14 +681,33 @@ class PackedPathTest(TestCase):
                 encoder(data, anchor_node_type=_USER, device="cpu").shape, (12, 8)
             )
 
-    def test_layer_rejects_attention_dropout_in_training(self) -> None:
-        layer = GraphTransformerEncoderLayer(
-            model_dim=16, num_heads=2, feedforward_dim=32, attention_dropout_rate=0.1
+    def test_attention_dropout_runs_packed_with_eval_parity_and_training_noise(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(attention_dropout_rate=0.3, dropout_rate=0.0)
         )
-        packed = pack_sequences(torch.tensor([2]), 2)
-        layer.eval().forward_packed(torch.randn(2, 16), packed)
-        with self.assertRaises(ValueError):
-            layer.train().forward_packed(torch.randn(2, 16), packed)
+        self.assertTrue(encoder._supports_packed_backend)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+        encoder.train()
+        outputs = []
+        for seed in (0, 1):
+            torch.manual_seed(seed)
+            encoder.zero_grad()
+            output = _run_packed(encoder, data)
+            output.sum().backward()
+            outputs.append(output.detach())
+            for name, parameter in encoder.named_parameters():
+                if parameter.grad is not None:
+                    self.assertTrue(torch.isfinite(parameter.grad).all(), name)
+        self.assertFalse(torch.allclose(outputs[0], outputs[1]))
 
     @parameterized.expand(
         [

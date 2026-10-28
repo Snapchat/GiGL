@@ -38,6 +38,7 @@ Data flow of a packed forward::
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, packed, ...)
         |        CUDA: aten memory-efficient attention with cu_seqlens
+        |              (SDPA on a padded grid for per-pair biases or dropout)
         |        CPU:  SDPA on a padded grid (reference)
         |    output linear + residual -> FFN + residual
         v
@@ -45,14 +46,21 @@ Data flow of a packed forward::
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
+    On CUDA the kernel runs when there is no ``per_pair`` bias and no dropout.
+    With a ``per_pair`` bias or ``dropout_p > 0``, CUDA runs the padded SDPA
+    path on the GPU instead, which costs ``num_sequences * max_seq_len`` rows of
+    attention work rather than only the real tokens.
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
-  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it. On
-    CUDA a ``per_key`` bias runs on the kernel by folding it into q and k as an
-    extra head-dim column; a ``per_pair`` bias raises ``NotImplementedError``.
-  - Attention dropout is not supported; the kernel's varlen dropout has not been
-    tested against the padded path.
+  - A ``PackedAttentionBias`` is part of the call. The padded SDPA path applies
+    it. On CUDA a ``per_key`` bias runs on the kernel by folding it into q and k
+    as an extra head-dim column; a ``per_pair`` bias goes to the padded SDPA
+    path on the GPU.
+  - Attention dropout (``dropout_p``) is applied by SDPA on the padded path. The
+    varlen kernel is never called with dropout, so on CUDA ``dropout_p > 0``
+    also selects the padded path. The padded path draws one mask per head and
+    sequence.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
 
 Example:
@@ -255,7 +263,11 @@ class PackedAttentionBias(NamedTuple):
         per_key: One bias per key token and head. Every query in a sequence sees
             the same value for a given key.
         per_pair: One bias per sequence, head, query position and key position,
-            on the padded ``[max_seq_len, max_seq_len]`` grid.
+            on the padded grid, shaped
+            ``[num_sequences, num_heads, query_len, max_seq_len]``. ``query_len``
+            is ``max_seq_len``, or 1 when the queries are the first tokens
+            (``query_is_first_token``); a ``max_seq_len``-row grid is also
+            accepted then, and only its first row is used.
     """
 
     per_key: Optional[Float[Tensor, "num_tokens num_heads"]] = None
@@ -269,15 +281,17 @@ def _dense_attention_bias(
     bias: Optional[PackedAttentionBias],
     valid: Bool[Tensor, "num_sequences max_seq_len"],
     dtype: torch.dtype,
+    query_len: int,
 ) -> Tensor:
     """Builds the additive score bias on the padded grid.
 
     Starts from the padding mask, ``finfo.min / 2`` on invalid keys, shaped
     ``[num_sequences, 1, 1, max_seq_len]``. Adds ``bias.per_key`` scattered onto
     the grid as ``[num_sequences, num_heads, 1, max_seq_len]`` and
-    ``bias.per_pair`` as ``[num_sequences, num_heads, max_seq_len, max_seq_len]``,
-    each only when present. The result broadcasts against the scores; a dense
-    grid is only built when ``per_pair`` is present.
+    ``bias.per_pair`` as ``[num_sequences, num_heads, query_len, max_seq_len]``,
+    each only when present. ``bias.per_pair`` is sliced to its first
+    ``query_len`` rows when it has more. The result broadcasts against the
+    scores; a dense grid is only built when ``per_pair`` is present.
     """
     attn_bias = torch.zeros(valid.shape, dtype=dtype, device=valid.device)
     attn_bias = attn_bias.masked_fill(~valid, torch.finfo(dtype).min / 2.0)
@@ -297,7 +311,7 @@ def _dense_attention_bias(
             num_sequences, max_seq_len, num_heads
         ).permute(0, 2, 1).unsqueeze(2)
     if bias.per_pair is not None:
-        attn_bias = attn_bias + bias.per_pair.to(dtype)
+        attn_bias = attn_bias + bias.per_pair[:, :, :query_len, :].to(dtype)
     return attn_bias
 
 
@@ -308,13 +322,15 @@ def _padded_packed_attention(
     layout: PackedLayout,
     query_is_first_token: bool,
     bias: Optional[PackedAttentionBias] = None,
+    dropout_p: float = 0.0,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
 
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
     with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
     adds ``bias`` when given, and unpacks the outputs. ``_varlen_attention`` is
-    checked against this.
+    checked against this. With ``query_is_first_token``, the query grid holds one
+    row per sequence, so only the first token's scores are computed.
 
     Args:
         query: Packed queries, or one query per sequence when
@@ -323,6 +339,7 @@ def _padded_packed_attention(
         query_is_first_token: ``query`` holds one query per sequence, the
             sequence's first token.
         bias: Optional additive score bias.
+        dropout_p: Dropout probability on the attention weights, passed to SDPA.
 
     Returns:
         Attention output shaped like ``query``.
@@ -336,9 +353,24 @@ def _padded_packed_attention(
         output_size=key.size(0),
     )
     if query_is_first_token:
-        # Run full attention with each sequence's query in its first row, then
-        # keep those rows.
-        query = torch.zeros_like(key).index_copy(0, first_token, query)
+        # One query row per sequence; only key and value go to the grid.
+        kv_grid, mask = to_dense_batch(
+            torch.cat([key, value], dim=1),
+            token_sequence,
+            batch_size=num_sequences,
+            max_num_nodes=layout.max_seq_len,
+        )
+        key_grid, value_grid = (
+            grid.transpose(1, 2) for grid in kv_grid.chunk(2, dim=2)
+        )
+        output = F.scaled_dot_product_attention(
+            query.unsqueeze(2),
+            key_grid,
+            value_grid,
+            attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype, 1),
+            dropout_p=dropout_p,
+        )
+        return output.squeeze(2)
     qkv_grid, mask = to_dense_batch(
         torch.cat([query, key, value], dim=1),
         token_sequence,
@@ -352,12 +384,12 @@ def _padded_packed_attention(
         query_grid,
         key_grid,
         value_grid,
-        attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype),
+        attn_mask=_dense_attention_bias(
+            layout, bias, mask, query.dtype, layout.max_seq_len
+        ),
+        dropout_p=dropout_p,
     )
-    output = output.transpose(1, 2)[mask]
-    if query_is_first_token:
-        return output[first_token]
-    return output
+    return output.transpose(1, 2)[mask]
 
 
 def packed_attention(
@@ -367,6 +399,7 @@ def packed_attention(
     layout: PackedLayout,
     query_is_first_token: bool,
     bias: Optional[PackedAttentionBias] = None,
+    dropout_p: float = 0.0,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
 
@@ -375,17 +408,17 @@ def packed_attention(
     is all the anchor readout of the last layer needs. An empty
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
-    On CUDA, ``per_key`` runs on the varlen kernel through ``_fold_per_key_bias``;
-    ``per_pair`` raises ``NotImplementedError`` (no FlexAttention backend).
+    On CUDA, a ``per_key`` bias runs on the varlen kernel through
+    ``_fold_per_key_bias``. A ``per_pair`` bias or ``dropout_p > 0`` runs the
+    padded SDPA path on the GPU. Off CUDA, the padded SDPA path always runs.
 
     Args and returns are as in ``_padded_packed_attention``.
     """
-    if not query.is_cuda:
+    has_per_pair = bias is not None and bias.per_pair is not None
+    if not query.is_cuda or has_per_pair or dropout_p > 0:
         return _padded_packed_attention(
-            query, key, value, layout, query_is_first_token, bias
+            query, key, value, layout, query_is_first_token, bias, dropout_p
         )
-    if bias is not None and bias.per_pair is not None:
-        raise NotImplementedError("the FlexAttention backend is not in yet")
     head_dim = query.size(-1)
     if bias is not None and bias.per_key is not None:
         query, key = _fold_per_key_bias(query, key, bias.per_key)
