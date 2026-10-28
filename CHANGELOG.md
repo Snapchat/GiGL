@@ -20,12 +20,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
+  `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
+  used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
+  by @kmontemayor2-sc
 
 ### Changed
 
+- A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
+  only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
+  @kmontemayor2-sc
+- `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
+  of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
+  unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
+- Sampling-worker shutdown (`DistSamplingProducer` and the Graph Store `SharedDistSamplingBackend`) waits at most one
+  `MP_STATUS_CHECK_INTERVAL` in total for workers to stop, instead of one interval per worker, before terminating the
+  stragglers by @kmontemayor2-sc
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
+- The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
+  directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
+  https://github.com/Snapchat/GiGL/pull/788
 - Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
   by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
   - 3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
@@ -43,12 +59,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
+  tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
+  they leaked the label at train time and made embeddings depend on batch composition
+- PPR relation attention and messages no longer leak a co-seeded ABLP positive's sampled edges into an anchor's
+  sequence. With `sequence_construction_method="ppr"` and `include_sampled_edges`, a relation edge whose source is a
+  residual top-up node the anchor never expanded (e.g. the batch's positive label) appeared as a relation in the
+  anchor's sequence -- a train-time label leak and train/serve skew (the PPR analog of #795). `gigl_core` now emits a
+  per-node `is_expanded` flag, threaded to a `ppr_is_expanded` PPR edge attribute, and the graph-transformer relation
+  channel drops edges whose source token the anchor did not push. Always on by @mkolodner-sc in
+  https://github.com/Snapchat/GiGL/pull/799
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
   a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/761
 
 ### Removed
 
+- Remove all-to-all feature collection from the samplers; GiGL never enabled it, and the sampler no longer receives
+  `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
   dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING

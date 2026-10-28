@@ -15,14 +15,14 @@ permissions:
 jobs:
   help:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version-file: ".python-version"
 
@@ -41,7 +41,7 @@ jobs:
 
   unit-test-python:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
     steps:
@@ -66,7 +66,7 @@ jobs:
 
   unit-test-cpp:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_cpp') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
     - name: Run C++ Unit Tests
@@ -85,7 +85,7 @@ jobs:
 
   unit-test-scala:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
     - name: Run Scala Unit Tests
@@ -105,7 +105,7 @@ jobs:
 
   integration-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
     steps:
@@ -127,7 +127,7 @@ jobs:
 
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
     - name: Run E2E Tests
@@ -147,7 +147,7 @@ jobs:
 
   notebooks-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
     steps:
     - name: Run Example Notebooks Tests
@@ -168,7 +168,7 @@ jobs:
 
   lint-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/lint_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20 # If our linting takes longer than 20 minutes something has gone very wrong...
     steps:
     - name: Run Linting Tests
