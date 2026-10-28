@@ -35,6 +35,7 @@ from gigl.transforms.graph_transformer import (
     _get_sparse_feature_matrices,
     _lookup_csr_values,
     _lookup_pairwise_relation_indices,
+    _lookup_pairwise_relative_features,
     _validate_reserved_anchor_feature_usage,
     concat_tensors,
     get_node_type_offsets,
@@ -580,7 +581,7 @@ class GraphTransformerEncoderLayer(nn.Module):
                 output rows, so with ``first_token_output`` it is the sequence
                 index and the edges into later tokens are left out.
             first_token_output: Compute only each sequence's first token.
-            bias: Optional additive attention bias.
+            bias: Optional additive attention bias. ``bias.per_pair`` may be set.
 
         Returns:
             ``(tokens, model_dim)``, or ``(num_sequences, model_dim)`` with
@@ -1344,12 +1345,13 @@ class GraphTransformerEncoder(nn.Module):
         to padding) when the config meets all of these:
           - ``sequence_construction_method="khop"``
           - ``relation_attention_mode="none"`` (any ``relation_message_mode``)
-          - no pairwise attention biases
           - no ``ppr_weight`` or ``ppr_relation_features``
           - ``hop_distance <= 4``
 
         With ``attention_dropout_rate > 0``, training attention runs on the
-        padded-grid SDPA backend and eval attention on the varlen kernel.
+        padded-grid SDPA backend and eval attention on the varlen kernel. With
+        pairwise attention biases, attention always runs on the padded-grid SDPA
+        backend, since the bias is one value per (query, key) pair.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
@@ -1724,8 +1726,6 @@ class GraphTransformerEncoder(nn.Module):
             blockers.append("sequence_construction_method is not 'khop'")
         if self._relation_attention_mode != "none":
             blockers.append("relation_attention_mode is not 'none'")
-        if self._pairwise_attention_bias_attr_names:
-            blockers.append("pairwise attention biases are set")
         ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         if ppr_attr_names & (
             set(self._anchor_based_attention_bias_attr_names)
@@ -2254,21 +2254,48 @@ class GraphTransformerEncoder(nn.Module):
             data: The batch holding the sparse attributes.
 
         Returns:
-            A per-key bias from the anchor-relative attention-bias attributes, or
-            None when there are none.
+            A per-key bias from the anchor-relative attention-bias attributes and
+            a per-pair bias from the pairwise attention-bias attributes, each None
+            when there are no such attributes, or None when there is neither.
+
+        Raises:
+            ValueError: If a pairwise attention-bias attribute is not on ``data``.
         """
+        per_key = None
         projection = self._anchor_pe_attention_bias_projection
-        if projection is None:
+        if projection is not None:
+            features = self._packed_anchor_relative_features(
+                self._anchor_based_attention_bias_attr_names,
+                layout,
+                anchor_node_index,
+                data,
+            )
+            per_key = projection(features.to(projection.weight.dtype))
+        per_pair = None
+        pairwise_projection = self._pairwise_pe_attention_bias_projection
+        if pairwise_projection is not None:
+            names = self._pairwise_attention_bias_attr_names
+            matrices = _get_sparse_feature_matrices(
+                graph_attr_dict={
+                    name: getattr(data, name) for name in names if name in data
+                },
+                attr_names=names,
+                missing_attr_error_prefix="Pairwise attention bias attribute",
+            )
+            node_grid, valid_mask = self._layout_grids(layout)
+            features, nonmissing_indices = _lookup_pairwise_relative_features(
+                node_index_sequences=node_grid,
+                valid_mask=valid_mask,
+                csr_matrices=matrices,
+                attr_names=names,
+                device=layout.node_index.device,
+            )
+            per_pair = self._pairwise_pair_bias(
+                features, nonmissing_indices, pairwise_projection.weight.dtype
+            )
+        if per_key is None and per_pair is None:
             return None
-        features = self._packed_anchor_relative_features(
-            self._anchor_based_attention_bias_attr_names,
-            layout,
-            anchor_node_index,
-            data,
-        )
-        return PackedAttentionBias(
-            per_key=projection(features.to(projection.weight.dtype))
-        )
+        return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
 
     def _run_packed_layers(
         self,
@@ -2389,6 +2416,28 @@ class GraphTransformerEncoder(nn.Module):
             bias=bias,
         )
 
+    def _layout_grids(
+        self, layout: PackedLayout
+    ) -> tuple[Int64[Tensor, "num_sequences max_seq_len"], Tensor]:
+        """The layout's tokens on the padded grid.
+
+        Returns:
+            ``[num_sequences, max_seq_len]`` homogeneous node ids, -1 in padding,
+            and the boolean mask of the non-padding positions.
+        """
+        device = layout.node_index.device
+        num_sequences = layout.cu_seqlens.numel() - 1
+        node_index = torch.full(
+            (num_sequences * layout.max_seq_len,), -1, dtype=torch.long, device=device
+        )
+        node_index[layout.flat_index] = layout.node_index
+        node_index = node_index.view(num_sequences, layout.max_seq_len)
+        lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
+        valid_mask = torch.arange(
+            layout.max_seq_len, device=device
+        ) < lengths.unsqueeze(1)
+        return node_index, valid_mask
+
     def _build_packed_relation_edges(
         self,
         edge_index_dict: dict[tuple[str, str, str], Tensor],
@@ -2415,17 +2464,12 @@ class GraphTransformerEncoder(nn.Module):
         """
         device = layout.node_index.device
         num_sequences = layout.cu_seqlens.numel() - 1
-        grid_size = num_sequences * layout.max_seq_len
-        node_index = torch.full((grid_size,), -1, dtype=torch.long, device=device)
-        node_index[layout.flat_index] = layout.node_index
-        node_index = node_index.view(num_sequences, layout.max_seq_len)
-        hop_index = torch.zeros(grid_size, dtype=torch.long, device=device)
+        node_index, valid_mask = self._layout_grids(layout)
+        hop_index = torch.zeros(
+            num_sequences * layout.max_seq_len, dtype=torch.long, device=device
+        )
         hop_index[layout.flat_index] = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
         hop_index = hop_index.view(num_sequences, layout.max_seq_len)
-        lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
-        valid_mask = torch.arange(
-            layout.max_seq_len, device=device
-        ) < lengths.unsqueeze(1)
         # Sorted batch * num_nodes + node keys of the tokens fewer than hop_distance
         # hops out; the rest sort last as a key no edge has.
         batch_node_keys = (
@@ -2651,57 +2695,62 @@ class GraphTransformerEncoder(nn.Module):
             attn_bias = attn_bias + anchor_bias
 
         # Step 3: Add pairwise bias (optional)
-        # Projects (batch, seq, seq, num_attrs) → (batch, seq, seq, num_heads)
-        # Then reshapes to (batch, num_heads, seq, seq)
+        # Projects (batch, seq, seq, num_attrs) → (batch, num_heads, seq, seq) and
+        # adds the nonmissing bias at the nonmissing pairs.
         pairwise_bias_features = attention_bias_data.get("pairwise_bias")
         if pairwise_bias_features is not None:
-            if self._pairwise_pe_attention_bias_projection is None:
-                raise ValueError(
-                    "Pairwise attention-bias projection is not initialized."
-                )
-            pairwise_bias = self._pairwise_pe_attention_bias_projection(
-                pairwise_bias_features.to(dtype)
-            )  # (batch, seq, seq, num_heads)
-            pairwise_bias = pairwise_bias.permute(
-                0, 3, 1, 2
-            )  # (batch, num_heads, seq, seq)
-            attn_bias = attn_bias + pairwise_bias
-
-        pairwise_nonmissing_indices = attention_bias_data.get(
-            "pairwise_nonmissing_indices"
-        )
-        if pairwise_nonmissing_indices is not None:
-            if self._pairwise_nonmissing_attention_bias is None:
-                raise ValueError(
-                    "Pairwise nonmissing attention bias is not initialized."
-                )
-            if pairwise_nonmissing_indices.numel() > 0:
-                if attn_bias.shape[1:] != (self._num_heads, seq_len, seq_len):
-                    attn_bias = attn_bias.expand(
-                        batch_size,
-                        self._num_heads,
-                        seq_len,
-                        seq_len,
-                    ).clone()
-                pairwise_nonmissing_indices = pairwise_nonmissing_indices.to(
-                    device=device,
-                    dtype=torch.long,
-                )
-                attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
-                nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
-                    dtype=attn_bias.dtype
-                ).view(1, -1)
-                attn_bias_by_position.index_put_(
-                    (
-                        pairwise_nonmissing_indices[:, 0],
-                        pairwise_nonmissing_indices[:, 1],
-                        pairwise_nonmissing_indices[:, 2],
-                    ),
-                    nonmissing_bias.expand(pairwise_nonmissing_indices.size(0), -1),
-                    accumulate=True,
-                )
+            attn_bias = attn_bias + self._pairwise_pair_bias(
+                pairwise_bias_features,
+                attention_bias_data.get("pairwise_nonmissing_indices"),
+                dtype,
+            )
 
         return attn_bias
+
+    def _pairwise_pair_bias(
+        self,
+        features: Float[Tensor, "batch seq seq num_attrs"],
+        nonmissing_indices: Optional[Int64[Tensor, "pairs 3"]],
+        dtype: torch.dtype,
+    ) -> Float[Tensor, "batch num_heads seq seq"]:
+        """Projects the pairwise features to a per-head bias on the padded grid.
+
+        Args:
+            features: Pairwise attribute values for every (query, key) pair.
+            nonmissing_indices: ``(batch, row, col)`` of the pairs whose bias also
+                gets the learned nonmissing bias, in every head, or None for none.
+            dtype: Dtype of the returned bias.
+
+        Returns:
+            The bias for every sequence, head, query position and key position.
+        """
+        if self._pairwise_pe_attention_bias_projection is None:
+            raise ValueError("Pairwise attention-bias projection is not initialized.")
+        pairwise_bias = self._pairwise_pe_attention_bias_projection(
+            features.to(dtype)
+        )  # (batch, seq, seq, num_heads)
+        pairwise_bias = pairwise_bias.permute(0, 3, 1, 2)  # (batch, heads, seq, seq)
+        if nonmissing_indices is None:
+            return pairwise_bias
+        if self._pairwise_nonmissing_attention_bias is None:
+            raise ValueError("Pairwise nonmissing attention bias is not initialized.")
+        if nonmissing_indices.numel() > 0:
+            nonmissing_indices = nonmissing_indices.to(
+                device=pairwise_bias.device, dtype=torch.long
+            )
+            nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
+                dtype=pairwise_bias.dtype
+            ).view(1, -1)
+            pairwise_bias.permute(0, 2, 3, 1).index_put_(
+                (
+                    nonmissing_indices[:, 0],
+                    nonmissing_indices[:, 1],
+                    nonmissing_indices[:, 2],
+                ),
+                nonmissing_bias.expand(nonmissing_indices.size(0), -1),
+                accumulate=True,
+            )
+        return pairwise_bias
 
     def _encode_and_readout(
         self,

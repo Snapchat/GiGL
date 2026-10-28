@@ -55,7 +55,9 @@ def _random_batch(
     """A random batch with duplicate edges, self loops and shared neighbours.
 
     Carries the ``hop_distance`` attribute the padded backend reads and
-    ``hop_times_two``, a second sparse attribute with every hop value doubled.
+    ``hop_times_two``, a second sparse attribute with every hop value doubled,
+    and ``pair_score``, a square sparse attribute over all nodes (by homogeneous
+    id) with a random value on a random fifth of the pairs.
     """
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
@@ -84,6 +86,10 @@ def _random_batch(
     data["hop_times_two"] = torch.sparse_csr_tensor(
         hop.crow_indices(), hop.col_indices(), hop.values() * 2, size=hop.shape
     )
+    num_nodes = hop.shape[0]
+    scores = torch.randn(num_nodes, num_nodes, generator=generator)
+    scores[torch.rand(num_nodes, num_nodes, generator=generator) > 0.2] = 0.0
+    data["pair_score"] = scores.to_sparse_csr()
     return data
 
 
@@ -198,6 +204,20 @@ def _run_packed(
     """Runs ``encoder`` on the packed path regardless of device."""
     with mock.patch.object(encoder, "_use_packed_backend", return_value=True):
         return encoder(data, anchor_node_type=_USER, **forward_kwargs)
+
+
+def _randomize_pairwise_biases(encoder: GraphTransformerEncoder) -> None:
+    """Gives the pairwise projection and nonmissing bias, which start at (near) zero,
+    random values."""
+    generator = torch.Generator().manual_seed(1)
+    projection = encoder._pairwise_pe_attention_bias_projection
+    nonmissing = encoder._pairwise_nonmissing_attention_bias
+    assert projection is not None and nonmissing is not None
+    with torch.no_grad():
+        projection.weight.copy_(
+            torch.randn(projection.weight.shape, generator=generator)
+        )
+        nonmissing.copy_(torch.randn(nonmissing.shape, generator=generator))
 
 
 def _gradients(
@@ -345,6 +365,22 @@ class PackedPathTest(TestCase):
                 readout_mode=_NEIGHBOR_READOUT,
             ),
             param("head_dim_10", hid_dim=20, num_heads=2),
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_and_anchor_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+            param(
+                "pairwise_bias_hetero",
+                hetero=True,
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+            param(
+                "pairwise_bias_neighbor_readout",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
         ]
     )
     def test_matches_padded_path(
@@ -368,6 +404,8 @@ class PackedPathTest(TestCase):
             if hetero:
                 data[_ITEM].random_walk_pe = torch.randn(20, 3)
             encoder = _materialized_encoder(data, kwargs)
+            if kwargs.get("pairwise_attention_bias_attr_names"):
+                _randomize_pairwise_biases(encoder)
             self.assertTrue(encoder._supports_packed_backend)
             with self.subTest(seed=seed, hop=hop_distance), torch.no_grad():
                 torch.testing.assert_close(
@@ -392,6 +430,62 @@ class PackedPathTest(TestCase):
                 rtol=0,
                 atol=1e-6,
             )
+
+    @parameterized.expand(_READOUT_MODES)
+    def test_matches_padded_path_with_pairwise_bias_and_explicit_anchors(
+        self, readout_mode: str
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                readout_mode=readout_mode,
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+        )
+        _randomize_pairwise_biases(encoder)
+        anchor_node_ids = torch.tensor([7, 3, 3, 40, 0])
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder(data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_pairwise_projection_and_nonmissing_bias_each_change_the_output(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"]),
+        )
+        _randomize_pairwise_biases(encoder)
+        projection = encoder._pairwise_pe_attention_bias_projection
+        nonmissing = encoder._pairwise_nonmissing_attention_bias
+        assert projection is not None and nonmissing is not None
+        with torch.no_grad():
+            both = _run_packed(encoder, data)
+            saved_projection = projection.weight.clone()
+            saved_nonmissing = nonmissing.clone()
+            projection.weight.zero_()
+            self.assertFalse(torch.allclose(_run_packed(encoder, data), both))
+            projection.weight.copy_(saved_projection)
+            nonmissing.zero_()
+            self.assertFalse(torch.allclose(_run_packed(encoder, data), both))
+            nonmissing.copy_(saved_nonmissing)
+            torch.testing.assert_close(_run_packed(encoder, data), both)
+
+    def test_packed_path_requires_the_pairwise_attribute(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"]),
+        )
+        del data["pair_score"]
+        with self.assertRaisesRegex(ValueError, "pair_score"), torch.no_grad():
+            _run_packed(encoder, data)
 
     def test_empty_anchor_batch(self) -> None:
         data = _random_batch(0)
@@ -471,6 +565,13 @@ class PackedPathTest(TestCase):
                 anchor_based_input_attr_names=[_HOP, "hop_times_two"],
                 anchor_based_input_embedding_dict=None,
             ),
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_bias_explicit_anchors",
+                anchors=[7, 3, 3, 40, 0],
+                pairwise_attention_bias_attr_names=["pair_score"],
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
         ]
     )
     def test_training_gradients_match_padded_path(
@@ -483,6 +584,8 @@ class PackedPathTest(TestCase):
         encoder = _materialized_encoder(
             data, _encoder_kwargs(dropout_rate=0.0, **overrides)
         ).train()
+        if overrides.get("pairwise_attention_bias_attr_names"):
+            _randomize_pairwise_biases(encoder)
         _assert_training_gradients_match(
             self,
             _gradients(
@@ -569,7 +672,7 @@ class PackedPathTest(TestCase):
         # A config that always runs padded reads the batch's own hop values.
         encoder = GraphTransformerEncoder(
             **_encoder_kwargs(
-                pairwise_attention_bias_attr_names=["x"],
+                relation_attention_mode="edge_type_bilinear",
                 anchor_based_input_embedding_dict=nn.ModuleDict(too_small),
             )
         )
@@ -614,7 +717,11 @@ class PackedPathTest(TestCase):
             param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
             param("attention_dropout", attention_dropout_rate=0.1, supported=True),
-            param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
+            param(
+                "pairwise_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                supported=True,
+            ),
             param(
                 "other_token_input",
                 anchor_based_input_attr_names=["other"],
@@ -1011,6 +1118,15 @@ class PackedPathCudaTest(TestCase):
                 "anchor_bias",
                 anchor_based_attention_bias_attr_names=[_HOP],
             ),
+            param(
+                "pairwise_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+            param(
+                "pairwise_bias_neighbor_readout",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
@@ -1034,6 +1150,8 @@ class PackedPathCudaTest(TestCase):
             }
         )
         cpu_encoder = _materialized_encoder(data, kwargs).train()
+        if overrides.get("pairwise_attention_bias_attr_names"):
+            _randomize_pairwise_biases(cpu_encoder)
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
         self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
         cuda_anchor_node_ids = None
