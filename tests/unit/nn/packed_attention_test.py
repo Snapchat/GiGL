@@ -8,6 +8,7 @@ from absl.testing import absltest
 
 from gigl.nn.packed_attention import (
     PackedAttentionBias,
+    _fold_per_key_bias,
     _pad_head_dim,
     _pad_query_key,
     _padded_packed_attention,
@@ -52,6 +53,39 @@ class PackedAttentionTest(TestCase):
             rtol=0,
             atol=1e-5,
         )
+
+    def test_fold_per_key_bias_reproduces_the_scores(self) -> None:
+        query, key = torch.randn(6, 2, 8), torch.randn(6, 2, 8)
+        per_key = torch.randn(6, 2)
+        folded_query, folded_key = _fold_per_key_bias(query, key, per_key)
+        self.assertEqual(folded_query.shape[-1], 16)
+        self.assertEqual(folded_key.shape[-1], 16)
+        # The kernel scales by 1 / sqrt(d_pad), the folded head dim.
+        torch.testing.assert_close(
+            torch.einsum("qhd,khd->hqk", folded_query, folded_key) / 16**0.5,
+            torch.einsum("qhd,khd->hqk", query, key) / 8**0.5 + per_key.t()[:, None, :],
+            rtol=0,
+            atol=1e-5,
+        )
+
+    def test_fold_per_key_bias_with_an_odd_head_dim_reproduces_the_scores(self) -> None:
+        query, key = torch.randn(6, 2, 12), torch.randn(6, 2, 12)
+        per_key = torch.randn(6, 2)
+        folded_query, folded_key = _fold_per_key_bias(query, key, per_key)
+        self.assertEqual(folded_query.shape[-1], 16)
+        torch.testing.assert_close(
+            torch.einsum("qhd,khd->hqk", folded_query, folded_key) / 16**0.5,
+            torch.einsum("qhd,khd->hqk", query, key) / 12**0.5
+            + per_key.t()[:, None, :],
+            rtol=0,
+            atol=1e-5,
+        )
+
+    def test_fold_per_key_bias_casts_the_bias_to_the_key_dtype(self) -> None:
+        query = torch.randn(6, 2, 8, dtype=torch.bfloat16)
+        key = torch.randn(6, 2, 8, dtype=torch.bfloat16)
+        _, folded_key = _fold_per_key_bias(query, key, torch.randn(6, 2))
+        self.assertEqual(folded_key.dtype, torch.bfloat16)
 
     def _bias_inputs(self):
         lengths = [3, 1, 2]
@@ -282,6 +316,93 @@ class PackedAttentionCudaTest(TestCase):
                         torch.testing.assert_close(
                             cuda_leaf.grad.cpu(), cpu_leaf.grad, rtol=0, atol=1e-4
                         )
+
+    def _assert_matches_cpu_reference(
+        self,
+        head_dim: int,
+        query_is_first_token: bool,
+        dtype: torch.dtype = torch.float32,
+        atol: float = 1e-4,
+        check_gradients: bool = True,
+    ) -> None:
+        """Compares ``packed_attention`` with a per-key bias on CUDA to the CPU padded reference."""
+        device = torch.device("cuda")
+        num_heads = 2
+        lengths = torch.tensor([5, 1, 24, 3, 12])
+        num_tokens = int(lengths.sum())
+        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        cuda_packed = pack_sequences(lengths.to(device), _MAX_SEQ_LEN)
+        generator = torch.Generator().manual_seed(0)
+        num_queries = lengths.numel() if query_is_first_token else num_tokens
+        cpu_inputs = [
+            torch.randn(rows, num_heads, head_dim, generator=generator)
+            for rows in (num_queries, num_tokens, num_tokens)
+        ]
+        cpu_inputs.append(torch.randn(num_tokens, num_heads, generator=generator))
+        grad_output = torch.randn(num_queries, num_heads, head_dim, generator=generator)
+        cpu_leaves = [tensor.clone().requires_grad_() for tensor in cpu_inputs]
+        cuda_leaves = [
+            tensor.to(device, dtype).requires_grad_() for tensor in cpu_inputs[:3]
+        ]
+        # The bias stays fp32 so the fold's cast to the key dtype is exercised.
+        cuda_leaves.append(cpu_inputs[3].to(device).requires_grad_())
+        expected = _padded_packed_attention(
+            cpu_leaves[0],
+            cpu_leaves[1],
+            cpu_leaves[2],
+            packed,
+            query_is_first_token,
+            PackedAttentionBias(per_key=cpu_leaves[3]),
+        )
+        actual = packed_attention(
+            cuda_leaves[0],
+            cuda_leaves[1],
+            cuda_leaves[2],
+            cuda_packed,
+            query_is_first_token,
+            PackedAttentionBias(per_key=cuda_leaves[3]),
+        )
+        self.assertEqual(actual.shape, expected.shape)
+        torch.testing.assert_close(
+            actual.float().cpu(), expected.detach(), rtol=0, atol=atol
+        )
+        if not check_gradients:
+            return
+        expected.backward(grad_output)
+        actual.backward(grad_output.to(device, dtype))
+        for name, cuda_leaf, cpu_leaf in zip(
+            ("query", "key", "value", "per_key"), cuda_leaves, cpu_leaves
+        ):
+            assert cuda_leaf.grad is not None and cpu_leaf.grad is not None
+            with self.subTest(grad=name):
+                torch.testing.assert_close(
+                    cuda_leaf.grad.float().cpu(), cpu_leaf.grad, rtol=0, atol=atol
+                )
+
+    def test_varlen_per_key_bias_matches_cpu_reference(self) -> None:
+        self._assert_matches_cpu_reference(head_dim=64, query_is_first_token=False)
+
+    def test_varlen_per_key_bias_first_token_query_matches_cpu_reference(self) -> None:
+        self._assert_matches_cpu_reference(head_dim=64, query_is_first_token=True)
+
+    def test_varlen_per_key_bias_with_head_dim_12_matches_cpu_reference(self) -> None:
+        for query_is_first_token in (False, True):
+            with self.subTest(first_token=query_is_first_token):
+                self._assert_matches_cpu_reference(
+                    head_dim=12, query_is_first_token=query_is_first_token
+                )
+
+    def test_varlen_per_key_bias_under_bf16_autocast_matches_fp32_reference(
+        self,
+    ) -> None:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            self._assert_matches_cpu_reference(
+                head_dim=64,
+                query_is_first_token=False,
+                dtype=torch.bfloat16,
+                atol=5e-2,
+                check_gradients=False,
+            )
 
 
 if __name__ == "__main__":

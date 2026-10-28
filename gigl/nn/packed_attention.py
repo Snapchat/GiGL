@@ -48,9 +48,9 @@ Constraints:
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
-  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it; the
-    varlen kernel takes none of it yet, so on CUDA a bias raises
-    ``NotImplementedError``.
+  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it. On
+    CUDA a ``per_key`` bias runs on the kernel by folding it into q and k as an
+    extra head-dim column; a ``per_pair`` bias raises ``NotImplementedError``.
   - Attention dropout is not supported; the kernel's varlen dropout has not been
     tested against the padded path.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
@@ -129,6 +129,31 @@ def _pad_query_key(query: Tensor, key: Tensor) -> tuple[Tensor, Tensor]:
     # The kernel scales by the padded dim. An explicit ``scale`` is not passed
     # because torch 2.8's meta backward rejects it, and compiled training needs it.
     query = query * math.sqrt(query.size(-1) / head_dim)
+    return query, key
+
+
+def _fold_per_key_bias(
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    per_key: Float[Tensor, "num_tokens num_heads"],
+) -> tuple[Tensor, Tensor]:
+    """Folds a per-key score bias into q and k as one extra head-dim column.
+
+    With ``d`` the head dim and ``d_pad`` ``d + 1`` rounded up to a multiple of 8,
+    ``query' = [query * sqrt(d_pad / d), 1, 0...]`` and
+    ``key' = [key, per_key * sqrt(d_pad), 0...]``. The kernel's default scale
+    ``1 / sqrt(d_pad)`` then gives
+    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d) + per_key``. The bias is cast to
+    the key dtype.
+    """
+    head_dim = query.size(-1)
+    padded_dim = _pad_head_dim(query.new_empty(head_dim + 1)).size(-1)
+    # The kernel scales by the padded dim; see ``_pad_query_key``.
+    query = query * math.sqrt(padded_dim / head_dim)
+    ones = torch.ones_like(query[..., :1])
+    key_bias = (per_key.to(key.dtype) * math.sqrt(padded_dim)).unsqueeze(-1)
+    query = _pad_head_dim(torch.cat([query, ones], dim=-1))
+    key = _pad_head_dim(torch.cat([key, key_bias], dim=-1))
     return query, key
 
 
@@ -344,8 +369,8 @@ def packed_attention(
     is all the anchor readout of the last layer needs. An empty
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
-    The varlen kernel takes no bias yet: on CUDA, ``per_key`` raises
-    ``NotImplementedError``, as does ``per_pair`` (no FlexAttention backend).
+    On CUDA, ``per_key`` runs on the varlen kernel through ``_fold_per_key_bias``;
+    ``per_pair`` raises ``NotImplementedError`` (no FlexAttention backend).
 
     Args and returns are as in ``_padded_packed_attention``.
     """
@@ -355,11 +380,12 @@ def packed_attention(
         )
     if bias is not None and bias.per_pair is not None:
         raise NotImplementedError("the FlexAttention backend is not in yet")
-    if bias is not None and bias.per_key is not None:
-        raise NotImplementedError("the varlen kernel takes no per-key bias yet")
     head_dim = query.size(-1)
-    if head_dim % 8 != 0:
+    if bias is not None and bias.per_key is not None:
+        query, key = _fold_per_key_bias(query, key, bias.per_key)
+    elif head_dim % 8 != 0:
         query, key = _pad_query_key(query, key)
+    if head_dim % 8 != 0:
         value = _pad_head_dim(value)
     if query_is_first_token:
         cu_seqlens_q = torch.arange(

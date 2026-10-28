@@ -972,6 +972,10 @@ class PackedPathCudaTest(TestCase):
                 anchor_based_input_embedding_dict=None,
             ),
             param("head_dim_10", hid_dim=20),
+            param(
+                "anchor_bias",
+                anchor_based_attention_bias_attr_names=["hop_distance"],
+            ),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
