@@ -17,6 +17,9 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
+  github_run_id:
+    description: "GitHub Actions run id. Tags the build as gigl-ci-run-<id> so cancel-ci-gcp-resources can find it"
+    default: "local"
 
 
 runs:
@@ -29,10 +32,11 @@ runs:
         SERVICE_ACCOUNT: ${{ inputs.service_account }}
         MACHINE_TYPE: ${{ inputs.machine_type }}
         TIMEOUT: ${{ inputs.timeout }}
+        GITHUB_RUN_ID_INPUT: ${{ inputs.github_run_id }}
       run: |
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${CMD}" \
+          --substitutions=_CMD="${CMD}",_GITHUB_RUN_ID="${GITHUB_RUN_ID_INPUT}" \
           --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
           --project="${PROJECT}" \
           --machine-type="${MACHINE_TYPE}" \

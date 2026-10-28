@@ -1,0 +1,63 @@
+name: "Cancel CI GCP resources"
+description: |
+  Cancels the Cloud Builds and Vertex AI pipeline runs that a GitHub Actions run started.
+  Builds are found by the tag gigl-ci-run-<run id> (set by run-cloud-run-command-on-active-checkout) and pipeline
+  runs by the label github_run_id=<run id> (set by tests/e2e_tests/e2e_test.py when GITHUB_RUN_ID is set).
+  Each cancelled pipeline's exit task then cancels that pipeline's own child jobs.
+  Meant for a step with `if: cancelled()`. Needs gcloud to be authenticated already; the runner has gcloud, curl, and
+  jq but not the GiGL Python environment, so this is plain bash against the Vertex AI REST API.
+inputs:
+  project:
+    description: "Google Cloud project"
+    required: true
+  region:
+    description: "Vertex AI region the pipeline runs were submitted to"
+    required: true
+  github_run_id:
+    description: "GitHub Actions run id whose resources to cancel"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cancel Cloud Builds tagged with this run
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        RUN_ID: ${{ inputs.github_run_id }}
+      run: |
+        set -euo pipefail
+        TAG="gigl-ci-run-${RUN_ID}"
+        BUILD_IDS="$(gcloud builds list --project="${PROJECT}" \
+          --filter="tags=\"${TAG}\" AND (status=WORKING OR status=QUEUED)" --format="value(id)")"
+        if [[ -z "${BUILD_IDS}" ]]; then
+          echo "No active Cloud Builds tagged ${TAG}."
+          exit 0
+        fi
+        for BUILD_ID in ${BUILD_IDS}; do
+          echo "Cancelling Cloud Build ${BUILD_ID}"
+          gcloud builds cancel "${BUILD_ID}" --project="${PROJECT}" || echo "Cancel of ${BUILD_ID} failed; continuing."
+        done
+
+    - name: Cancel Vertex AI pipeline runs labelled with this run
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        REGION: ${{ inputs.region }}
+        RUN_ID: ${{ inputs.github_run_id }}
+      run: |
+        set -euo pipefail
+        TOKEN="$(gcloud auth print-access-token)"
+        API="https://${REGION}-aiplatform.googleapis.com/v1"
+        LIST_URL="${API}/projects/${PROJECT}/locations/${REGION}/pipelineJobs?filter=labels.github_run_id%3D%22${RUN_ID}%22"
+        RUN_NAMES="$(curl -sS --fail -H "Authorization: Bearer ${TOKEN}" "${LIST_URL}" \
+          | jq -r '.pipelineJobs[]? | select(.state == "PIPELINE_STATE_RUNNING" or .state == "PIPELINE_STATE_PENDING" or .state == "PIPELINE_STATE_QUEUED") | .name')"
+        if [[ -z "${RUN_NAMES}" ]]; then
+          echo "No active pipeline runs labelled github_run_id=${RUN_ID}."
+          exit 0
+        fi
+        for RUN_NAME in ${RUN_NAMES}; do
+          echo "Cancelling pipeline run ${RUN_NAME}"
+          curl -sS --fail -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Length: 0" "${API}/${RUN_NAME}:cancel" \
+            || echo "Cancel of ${RUN_NAME} failed; continuing."
+        done
