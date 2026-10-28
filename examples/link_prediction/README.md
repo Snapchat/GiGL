@@ -23,6 +23,9 @@ are example inference and training loops for the DBLP dataset. The DBLP dataset 
 You can follow along with [dblp.ipynb](./dblp.ipynb) to run an e2e GiGL pipeline on the DBLP dataset. It will guide you
 through running each component: `config_populator` -> `data_preprocessor` -> `trainer` -> `inferencer`
 
+For guidance on adapting an existing colocated in-memory loop to graph-store mode, see the
+[graph-store conversion guide](../../docs/user_guide/overview/graph_store_conversion.md).
+
 ```{toctree}
 :maxdepth: 2
 :hidden:
