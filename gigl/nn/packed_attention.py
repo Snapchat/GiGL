@@ -113,7 +113,6 @@ import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float, Int32
 from torch import Tensor
-from torch_geometric.utils import to_dense_batch
 
 from gigl.transforms.static_khop import PackedLayout
 
@@ -326,11 +325,14 @@ def _padded_packed_attention(
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
 
-    Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
-    with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    adds ``bias`` when given, and unpacks the outputs. ``_varlen_attention`` is
-    checked against this. With ``query_is_first_token``, the query grid holds one
-    row per sequence, so only the first token's scores are computed.
+    Scatters the tokens to the ``[num_sequences, max_seq_len]`` grid through
+    ``layout.flat_index``, masks padded keys with the same additive
+    ``finfo.min / 2`` bias as ``GraphTransformerEncoder``, adds ``bias`` when
+    given, and gathers the outputs back. Every shape is known from the layout,
+    so the call does not sync with the host and compiles without graph breaks.
+    ``_varlen_attention`` is checked against this. With ``query_is_first_token``,
+    the query grid holds one row per sequence, so only the first token's scores
+    are computed.
 
     Args:
         query: Packed queries, or one query per sequence when
@@ -346,49 +348,31 @@ def _padded_packed_attention(
     """
     lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
     num_sequences = lengths.numel()
-    token_sequence = torch.repeat_interleave(
-        torch.arange(num_sequences, device=lengths.device),
-        lengths,
-        output_size=key.size(0),
-    )
+    max_seq_len = layout.max_seq_len
+    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
+
+    def to_grid(tokens: Tensor) -> Tensor:
+        """``[tokens, heads, dim]`` to ``[num_sequences, heads, max_seq_len, dim]``, zeros in padding."""
+        grid = tokens.new_zeros(num_sequences * max_seq_len, *tokens.shape[1:])
+        grid = grid.index_copy(0, layout.flat_index, tokens)
+        return grid.view(num_sequences, max_seq_len, *tokens.shape[1:]).transpose(1, 2)
+
     if query_is_first_token:
-        # One query row per sequence; only key and value go to the grid.
-        kv_grid, mask = to_dense_batch(
-            torch.cat([key, value], dim=1),
-            token_sequence,
-            batch_size=num_sequences,
-            max_num_nodes=layout.max_seq_len,
-        )
-        key_grid, value_grid = (
-            grid.transpose(1, 2) for grid in kv_grid.chunk(2, dim=2)
-        )
-        output = F.scaled_dot_product_attention(
-            query.unsqueeze(2),
-            key_grid,
-            value_grid,
-            attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype, 1),
-            dropout_p=dropout_p,
-        )
-        return output.squeeze(2)
-    qkv_grid, mask = to_dense_batch(
-        torch.cat([query, key, value], dim=1),
-        token_sequence,
-        batch_size=num_sequences,
-        max_num_nodes=layout.max_seq_len,
-    )
-    query_grid, key_grid, value_grid = (
-        grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
-    )
+        query_grid = query.unsqueeze(2)
+        query_len = 1
+    else:
+        query_grid = to_grid(query)
+        query_len = max_seq_len
     output = F.scaled_dot_product_attention(
         query_grid,
-        key_grid,
-        value_grid,
-        attn_mask=_dense_attention_bias(
-            layout, bias, mask, query.dtype, layout.max_seq_len
-        ),
+        to_grid(key),
+        to_grid(value),
+        attn_mask=_dense_attention_bias(layout, bias, valid, query.dtype, query_len),
         dropout_p=dropout_p,
     )
-    return output.transpose(1, 2)[mask]
+    if query_is_first_token:
+        return output.squeeze(2)
+    return output.transpose(1, 2).flatten(0, 1)[layout.flat_index]
 
 
 def packed_attention(
