@@ -47,6 +47,7 @@ from gigl.utils.data_splitters import DistNodeSplitter
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
 )
+from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
 
@@ -507,18 +508,16 @@ class DistributedDatasetTestCase(TestCase):
             },
         )
 
-        distributed_context = DistributedContext(
-            main_worker_ip_address="localhost",
-            global_rank=0,
-            global_world_size=1,
-        )
-
-        dataset = build_dataset(
-            serialized_graph_metadata=augmented_serialized_graph_metadata,
-            distributed_context=distributed_context,
-            sample_edge_direction="in",
-            should_load_tensors_in_parallel=True,
-        )
+        create_test_process_group()
+        try:
+            dataset = build_dataset(
+                serialized_graph_metadata=augmented_serialized_graph_metadata,
+                sample_edge_direction="in",
+                should_load_tensors_in_parallel=True,
+            )
+        finally:
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
 
         assert isinstance(dataset.positive_edge_label, Mapping), (
             f"Positive edge indices must be a dictionary, got {type(dataset.positive_edge_label)}"

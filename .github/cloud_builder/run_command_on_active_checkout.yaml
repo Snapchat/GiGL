@@ -3,7 +3,7 @@ substitutions:
   # The builder image that runs _CMD. The default is the builder for the Python minor in .python-version;
   # the run-cloud-run-command-on-active-checkout action passes another minor's builder from gigl/dep_vars.env.
   # update_docker_image_refs.sh rewrites the default.
-  _BUILDER_IMAGE: "us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:7d3182eeb6446ce3e35910babba990c8e003879d.109.1"
+  _BUILDER_IMAGE: "us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:86b4bc2e01ded1e5181c56fb7f85015833676308.115.1"
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
@@ -35,7 +35,9 @@ steps:
         source ~/.profile
         docker version
         docker buildx create --driver=docker-container --use
-        docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+        # Pinned by digest: this image runs --privileged, so a repointed :latest tag would be arbitrary
+        # root code in every CI job. Refresh the digest deliberately (see RELEASING.md).
+        docker run --rm --privileged multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
         uv pip install -e .

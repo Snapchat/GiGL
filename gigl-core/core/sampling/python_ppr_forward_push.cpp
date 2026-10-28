@@ -159,7 +159,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<gigl::PPRExtractTensors>(m, "PPRExtractTensors")
         .def_readonly("ids", &gigl::PPRExtractTensors::ids)
         .def_readonly("weights", &gigl::PPRExtractTensors::weights)
-        .def_readonly("valid_counts", &gigl::PPRExtractTensors::validCounts);
+        .def_readonly("valid_counts", &gigl::PPRExtractTensors::validCounts)
+        .def_readonly("is_expanded", &gigl::PPRExtractTensors::isExpanded);
 
     // Output databag: one edge type's original-edge extraction output.
     py::class_<gigl::OriginalEdgeExtractTensors>(m, "OriginalEdgeExtractTensors")
