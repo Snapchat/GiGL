@@ -22,6 +22,10 @@ Every check raises on mismatch, so a zero exit status is the only signal of succ
 ``--image-type`` bundles the checks for one image kind; ``--imports`` and the other flags
 add to or override the preset, so a caller can still state a different package set.
 
+The cuda preset checks without a GPU that torch and ``graphlearn_torch`` are CUDA builds
+and that the driver mount points are on ``LD_LIBRARY_PATH``; ``--cuda`` adds the checks
+that need a device.
+
 Example:
     Inside a CUDA base image, on a build host with no GPU::
 
@@ -72,6 +76,7 @@ class ImagePreset:
 
     imports: list[str]
     require_nvidia_driver_path: bool = False
+    require_cuda_build: bool = False
     boot_env: bool = False
 
 
@@ -83,7 +88,9 @@ IMAGE_MIN_GLIBC = "2.39"
 IMAGE_TYPE_PRESETS: dict[str, ImagePreset] = {
     "cpu": ImagePreset(imports=["torch", "graphlearn_torch"]),
     "cuda": ImagePreset(
-        imports=["torch", "graphlearn_torch"], require_nvidia_driver_path=True
+        imports=["torch", "graphlearn_torch"],
+        require_nvidia_driver_path=True,
+        require_cuda_build=True,
     ),
     # The Dataflow base skips the GLT post-install, so graphlearn_torch is not imported.
     "dataflow": ImagePreset(imports=["torch", "apache_beam"], boot_env=True),
@@ -94,7 +101,7 @@ IMAGE_TYPE_PRESETS: dict[str, ImagePreset] = {
 CUDA_HOST_IMPORTS: list[str] = ["torchrec"]
 
 # Exported by the graphlearn_torch pybind11 extension only when it is compiled with
-# WITH_CUDA=ON, so its absence identifies a CPU-only GLT wheel in a CUDA image.
+# WITH_CUDA=ON, so its absence identifies a CPU-only GLT build in a CUDA image.
 GLT_CUDA_ONLY_SYMBOL = "cuda_stitch_sample_results"
 
 # Where the container runtime mounts the host GPU driver, and therefore the only place
@@ -209,19 +216,24 @@ def check_imports(module_names: list[str]) -> None:
         print(f"OK  import {module_name}")
 
 
-def check_cuda() -> None:
-    """Asserts CUDA is usable by torch and that GLT is built against it.
+def check_cuda_build() -> None:
+    """Asserts torch and GLT are CUDA builds, which needs no GPU.
 
-    Beyond the presence of the CUDA-only GLT symbol, this builds a ``CUDA``-mode graph
-    and initializes it, which copies the topology onto the device and therefore fails if
-    the runtime CUDA stack is broken rather than merely compiled in.
+    Catches a CUDA image that resolved CPU torch (``torch.version.cuda`` is ``None``) or
+    compiled GLT with ``WITH_CUDA=OFF`` (no CUDA-only symbol), both of which import fine.
 
     Raises:
-        AssertionError: When CUDA is unavailable or GLT lacks its CUDA symbol.
+        AssertionError: When torch is not a CUDA 12 build or GLT lacks its CUDA symbol.
     """
     import torch
+    import torch.version
 
-    assert_equal("torch.cuda.is_available()", True, torch.cuda.is_available())
+    cuda_version = torch.version.cuda
+    if not isinstance(cuda_version, str) or not cuda_version.startswith("12."):
+        raise AssertionError(
+            f"torch.version.cuda: expected a value starting with '12.', got {cuda_version!r}"
+        )
+    print(f"OK  torch.version.cuda == {cuda_version!r}")
 
     import graphlearn_torch as glt
 
@@ -231,6 +243,23 @@ def check_cuda() -> None:
             "symbol to exist, got a CPU-only graphlearn_torch build"
         )
     print(f"OK  graphlearn_torch exports {GLT_CUDA_ONLY_SYMBOL}")
+
+
+def check_cuda() -> None:
+    """Asserts CUDA is usable by torch and GLT can use it.
+
+    Builds a ``CUDA``-mode graph and initializes it, which copies the topology onto the
+    device and therefore fails if the runtime CUDA stack is broken rather than merely
+    compiled in.
+
+    Raises:
+        AssertionError: When CUDA is unavailable or the graph is wrong.
+    """
+    import torch
+
+    assert_equal("torch.cuda.is_available()", True, torch.cuda.is_available())
+
+    import graphlearn_torch as glt
 
     edge_index = torch.tensor([[0, 1, 2], [1, 2, 0]])
     graph = glt.data.Graph(glt.data.Topology(edge_index=edge_index), mode="CUDA")
@@ -371,6 +400,7 @@ def apply_image_type(args: argparse.Namespace) -> None:
         name for name in args.imports or [] if name not in imports
     ]
     args.require_nvidia_driver_path |= preset.require_nvidia_driver_path
+    args.require_cuda_build |= preset.require_cuda_build
     args.boot_env |= preset.boot_env
     if args.venv_prefix is None:
         args.venv_prefix = IMAGE_VENV_PREFIX
@@ -431,6 +461,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "no GPU, so it is usable as a build-time gate.",
     )
     parser.add_argument(
+        "--require-cuda-build",
+        action="store_true",
+        help="Also require torch and graphlearn_torch to be CUDA builds. Needs no GPU, "
+        "so it is usable as a build-time gate; --cuda implies it.",
+    )
+    parser.add_argument(
         "--beam",
         default=None,
         help="Exact apache_beam version the environment must have installed.",
@@ -470,6 +506,8 @@ def main() -> None:
     if args.require_nvidia_driver_path:
         check_nvidia_driver_path()
     check_imports(module_names=args.imports)
+    if args.require_cuda_build or args.cuda:
+        check_cuda_build()
     if args.cuda:
         check_cuda()
     if args.beam is not None:
