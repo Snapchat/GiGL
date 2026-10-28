@@ -107,6 +107,7 @@ jobs:
 
     - name: Validate the wheel in a clean venv of this minor
       env:
+        TORCH_VARIANT: ${{ matrix.torch-variant }}
         TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu128' }}
       run: |
         # gigl-core declares no dependencies, but its extension links torch and gigl_core/__init__.py imports it
@@ -115,7 +116,7 @@ jobs:
         uv venv --clear --python "${UV_PYTHON}" "${RUNNER_TEMP}/wheel-check"
         uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8.0 gigl-core/dist/*.whl
         "${RUNNER_TEMP}/wheel-check/bin/python" scripts/smoke_test_image.py \
-          --python "${UV_PYTHON}" --imports torch,gigl_core
+          --python "${UV_PYTHON}" --imports torch,gigl_core --torch-variant "${TORCH_VARIANT}"
 
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
