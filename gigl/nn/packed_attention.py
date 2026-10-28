@@ -344,7 +344,6 @@ def _padded_packed_attention(
     Returns:
         Attention output shaped like ``query``.
     """
-    first_token = layout.cu_seqlens[:-1].long()
     lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
     num_sequences = lengths.numel()
     token_sequence = torch.repeat_interleave(
