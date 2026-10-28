@@ -1343,10 +1343,9 @@ class GraphTransformerEncoder(nn.Module):
         ``[tokens, hid_dim]`` buffer and a varlen attention kernel, so no FLOPs go
         to padding) when the config meets all of these:
           - ``sequence_construction_method="khop"``
-          - ``relation_attention_mode`` and ``relation_message_mode`` are ``"none"``
-          - no attention biases
-          - ``"hop_distance"`` is the only anchor-based input, if any
-          - ``hid_dim // num_heads`` is divisible by 8
+          - ``relation_attention_mode="none"`` (any ``relation_message_mode``)
+          - no pairwise attention biases
+          - no ``ppr_weight`` or ``ppr_relation_features``
           - ``hop_distance <= 4``
           - ``attention_dropout_rate == 0``
 
@@ -1363,8 +1362,13 @@ class GraphTransformerEncoder(nn.Module):
         The packed path computes ``hop_distance`` from the layout (the first-reach
         directed hop in ``sampling_direction``) and ignores the batch attribute.
         That equals ``AddHeteroHopDistanceEncoding(is_undirected=False,
-        sampling_direction=<same>, h_max >= hop_distance)``. The packed path costs
-        two host reads per batch.
+        sampling_direction=<same>, h_max >= hop_distance)``.
+
+        Host reads: the hop-only path keeps a fixed number of host reads per
+        batch. Relation messages add reads. Each anchor attribute other than
+        ``hop_distance`` is looked up in its sparse CSR matrix, which adds a host
+        read and data-dependent shapes, so such configs do not whole-encoder
+        compile.
 
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
@@ -1860,10 +1864,12 @@ class GraphTransformerEncoder(nn.Module):
             )
             if packed_embeddings is not None:
                 return packed_embeddings
-            if (
+            hop_distance_is_used = (
                 HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
-                and not hasattr(data, HOP_DISTANCE_FEATURE_NAME)
-            ):
+                or HOP_DISTANCE_FEATURE_NAME
+                in self._anchor_based_attention_bias_attr_names
+            )
+            if hop_distance_is_used and not hasattr(data, HOP_DISTANCE_FEATURE_NAME):
                 raise ValueError(
                     "This batch's k-hop layout is too large for the packed path, "
                     "so it runs on padded sequences, which read the "

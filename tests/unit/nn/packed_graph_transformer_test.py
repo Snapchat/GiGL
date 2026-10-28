@@ -531,6 +531,22 @@ class PackedPathTest(TestCase):
         )
         self.assertEqual(_run_packed(encoder, data).shape, (1, 8))
 
+    def test_fallback_batch_without_the_hop_distance_bias_attribute_raises(
+        self,
+    ) -> None:
+        data = _oversized_layout_batch()
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                anchor_based_input_attr_names=None,
+                anchor_based_input_embedding_dict=None,
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+        )
+        del data[_HOP]
+        with self.assertRaisesRegex(ValueError, "AddHeteroHopDistanceEncoding"):
+            _run_packed(encoder, data)
+
     def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
         # A transform with a smaller h_max stores different hops than the layout
         # derives; the packed path follows the layout.

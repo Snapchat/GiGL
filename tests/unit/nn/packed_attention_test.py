@@ -285,7 +285,10 @@ class PackedAttentionCudaTest(TestCase):
         packed = pack_sequences(lengths, _MAX_SEQ_LEN)
         cuda_packed = pack_sequences(lengths.to(device), _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
-        num_queries = lengths.numel() if query_is_first_token else num_tokens
+        if query_is_first_token:
+            num_queries = lengths.numel()
+        else:
+            num_queries = num_tokens
         cpu_inputs = [
             torch.randn(rows, num_heads, head_dim, generator=generator)
             for rows in (num_queries, num_tokens, num_tokens)
