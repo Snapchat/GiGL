@@ -234,9 +234,15 @@ def _flex_packed_attention(
     num_tokens = key.size(0)
     # Counting the offsets at or below a token gives its sequence plus one.
     # Slicing ``cu_seqlens`` here would leave Inductor a view it cannot lower.
+    # ``sequence`` runs one block past the last token. The torch 2.8 backward
+    # kernels call ``mask_mod`` with unbounded indices up to the end of the last
+    # 128-token block, and these extra entries hold ``num_sequences``, which no
+    # real token or first-token query matches.
     sequence = _fixed_layout(
         torch.searchsorted(
-            cu_seqlens, torch.arange(num_tokens, device=key.device), right=True
+            cu_seqlens,
+            torch.arange(num_tokens + _BLOCK_SIZE, device=key.device),
+            right=True,
         )
         - 1
     )
