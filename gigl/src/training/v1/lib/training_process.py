@@ -299,10 +299,8 @@ class GnnTrainingProcess:
         # This can also occur when training on a heterogeneous graph when there is an expected node type missing from the batched input graph.
         # If all parameters are always expected to receive backprop in training, it is not recommended to enable this flag, as it can adversely affect
         # performance as a result of the extra traversal of the autograd graph every iteration.
-        should_enable_find_unused_parameters = bool(
-            str_to_bool(
-                trainer_args.get("should_enable_find_unused_parameters", "False")
-            )
+        should_enable_find_unused_parameters = str_to_bool(
+            trainer_args.get("should_enable_find_unused_parameters", "False")
         )
 
         trainer_instance.model = setup_model_device(
