@@ -14,14 +14,15 @@ runs:
       id: assert-is-collaborator
       # For API Docs, See: https://octokit.github.io/rest.js/v21/
       # github --> maps to an octokit instance in the script
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        USERNAME: ${{ inputs.username }}
       with:
         # https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2022-11-28#check-if-a-user-is-a-repository-collaborator
         script: |
           try {
-            const username = "${{ inputs.username }}";
+            const username = process.env.USERNAME;
             const result = await github.rest.repos.checkCollaborator({
               owner: context.repo.owner,
               repo: context.repo.repo,

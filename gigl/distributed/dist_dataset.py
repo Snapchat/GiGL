@@ -45,12 +45,10 @@ def _has_per_edge_metadata(
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]],
     edge_features_registered: bool,
 ) -> bool:
-    """Whether edges carry ids, weights, or features, which ``CompactTopology`` cannot hold.
+    """Whether edges carry explicit ids, weights, or features.
 
-    Ids and weights would have to be permuted alongside the columns, the expensive part of
-    ``coo_to_csr``. Features are read by edge id, which ``CompactTopology`` leaves unset:
-    ``Graph.lazy_init`` then hands ``torch.empty(0)`` to ``init_cpu_from_csr``, and GLT's compiled
-    sampler would crash (not raise) on the first lookup.
+    ``CompactTopology`` may retain implicit COO-position IDs for sampling. Explicit IDs, weights,
+    and features require GLT's build to preserve their original indexing.
 
     Absent ids arrive as ``None``, or as a ``torch.empty(0)`` placeholder for an edge type with no
     edges on this rank, which the hash partitioner produces.
@@ -686,6 +684,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         edge_features_registered: bool,
+        retain_edge_ids: bool = True,
     ) -> None:
         """Initializes the graph structure from partition output.
 
@@ -699,8 +698,9 @@ class DistDataset(glt.distributed.DistDataset):
             node_partition_book: Node partition book(s), used to size each topology when the
                 memory-lean build applies.
             edge_features_registered: Whether any edge features or quantized edge features were
-                partitioned. They are read by edge id, which the memory-lean build does not
-                materialize, so their presence forces GLT's build.
+                partitioned. They need explicit edge IDs rather than the compact build's
+                partition-local COO positions, so their presence forces GLT's build.
+            retain_edge_ids: Whether to retain implicit edge IDs for sampling.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -765,7 +765,9 @@ class DistDataset(glt.distributed.DistDataset):
                 # here; build() releases the wrapper once this returns. With one edge type there
                 # is no next conversion to free it for anyway.
                 graph = self._build_graph_per_edge_type(
-                    {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index}, node_partition_book
+                    {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index},
+                    node_partition_book,
+                    retain_edge_ids,
                 )
                 # GLT expects a bare Graph for a homogeneous dataset, not a one-entry dict.
                 self.graph = graph[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
@@ -776,7 +778,9 @@ class DistDataset(glt.distributed.DistDataset):
                 # nothing and converting one edge type at a time buys nothing.
                 if isinstance(partitioned_edge_index, MutableMapping):
                     partitioned_edge_index.clear()
-                graph = self._build_graph_per_edge_type(edge_index, node_partition_book)
+                graph = self._build_graph_per_edge_type(
+                    edge_index, node_partition_book, retain_edge_ids
+                )
                 self.graph = graph
                 logger.info(
                     f"Initialized heterogeneous graph to dataset with edge types: "
@@ -805,30 +809,32 @@ class DistDataset(glt.distributed.DistDataset):
         self,
         edge_index: dict[EdgeType, torch.Tensor],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
+        retain_edge_ids: bool = True,
     ) -> dict[EdgeType, Graph]:
         """Build one GLT ``Graph`` per edge type, releasing each COO before starting the next.
 
-        Replaces ``glt.data.Dataset.init_graph`` for a graph with no edge ids and no edge weights.
+        Replaces ``glt.data.Dataset.init_graph`` when there are no explicit edge IDs or weights.
         Three things there are unaffordable at billion-edge scale:
 
         1. ``init_graph`` runs ``convert_to_tensor(edge_index, dtype=torch.int64)`` over the whole
            dict before its per-edge-type loop, so an int32 input exists as int32 and int64
            simultaneously for every edge type at once.
-        2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge ids are absent
-           and hands it to ``coo_to_csr``, which permutes it -- two full int64 arrays for values
-           that index nothing.
+        2. ``Topology.__init__`` fabricates ``torch.arange(num_edges)`` when edge IDs are absent
+           and hands it to ``coo_to_csr``, which permutes it. The compact builder writes those
+           implicit IDs directly into final CSR order when retained.
         3. ``coo_to_csr`` peaks at 7.25x one int64 array (measured), because
            ``torch_sparse.SparseStorage`` holds row, col, a composite key, a permutation,
            ``index_sort``'s discarded sorted values, and both gathered outputs at once.
 
-        :class:`gigl.utils.csr.CompactTopology` holds the same ``(indptr, indices)`` as GLT's
-        ``Topology`` without allocating any of those copies. Edge types are processed
-        largest-first so the biggest COO is released first.
+        :class:`gigl.utils.csr.CompactTopology` holds ``(indptr, indices)`` and optional
+        implicit edge IDs without allocating those global conversion copies. Edge types are
+        processed largest-first so the biggest COO is released first.
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
                 destructively: entries are removed as they are converted.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
+            retain_edge_ids: Whether to retain implicit edge IDs for sampling.
 
         Returns:
             dict[EdgeType, Graph]: One initialized CPU ``Graph`` per edge type.
@@ -870,7 +876,12 @@ class DistDataset(glt.distributed.DistDataset):
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
                 f"{num_rows:,} rows, input dtype {coo.dtype}"
             )
-            topology = CompactTopology(coo, layout=target_layout, num_rows=num_rows)
+            topology = CompactTopology(
+                coo,
+                layout=target_layout,
+                num_rows=num_rows,
+                retain_edge_ids=retain_edge_ids,
+            )
             del coo
             gc.collect()
             graph_for_type = Graph(topology, "CPU", None)
@@ -1113,6 +1124,7 @@ class DistDataset(glt.distributed.DistDataset):
         self,
         partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
+        retain_edge_ids: bool = True,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -1127,6 +1139,9 @@ class DistDataset(glt.distributed.DistDataset):
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
                                                Optional as not all datasets need to be split on, e.g. if we're doing inference.
+            retain_edge_ids (bool): Retain implicit edge IDs for sampling. Use ``False`` only
+                when sampling with ``with_edge=False``. Explicit IDs and edge features use
+                GLT's build regardless of this setting.
         """
         logger.info(
             f"Rank {self._rank} starting building dataset class from partitioned graph ..."
@@ -1197,6 +1212,7 @@ class DistDataset(glt.distributed.DistDataset):
                 partition_output.partitioned_edge_features is not None
                 or partition_output.partitioned_edge_quantized_features is not None
             ),
+            retain_edge_ids=retain_edge_ids,
         )
         partition_output.partitioned_edge_index = None
         gc.collect()
