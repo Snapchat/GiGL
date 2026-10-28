@@ -15,6 +15,7 @@ from gigl.common.utils.decorator import tf_on_cpu
 from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.utils.file_loader import FileLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
+from gigl.utils.share_memory import allocate_disk_backed
 
 logger = Logger()
 
@@ -204,6 +205,43 @@ def _tf_tensor_to_torch_tensor(tf_tensor: tf.Tensor) -> torch.Tensor:
         torch.Tensor: The converted PyTorch tensor.
     """
     return torch.utils.dlpack.from_dlpack(tf.experimental.dlpack.to_dlpack(tf_tensor))  # ty: ignore[possibly-missing-submodule] TODO(ty-torch-api-surface): fix ty false positives around the torch API surface.
+
+
+def _assemble_entity_tensor(
+    tf_batches: list[tf.Tensor],
+    total_along_concat_axis: int,
+    concat_axis: int,
+    torch_dtype: torch.dtype,
+) -> torch.Tensor:
+    """Join per-batch tensors into one tensor along ``concat_axis``.
+
+    When tensor spilling is enabled the full-size result is allocated on disk up front (see
+    :func:`gigl.utils.share_memory.allocate_disk_backed`) and each batch is copied into its slice
+    and then released, so the result never co-exists with the whole list of batches in anonymous
+    memory the way a terminal ``tf.concat`` does -- roughly halving the peak memory of the assembly
+    step for a large entity. Falls back to ``tf.concat`` when a disk-backed buffer is not available
+    (e.g. spilling is disabled or the result is below the spill size threshold), leaving behaviour
+    unchanged.
+
+    ``tf_batches`` is emptied in place as it is consumed so each batch can be freed as assembly
+    proceeds; callers must not reuse it afterwards.
+    """
+    shape = [int(dim) for dim in tf_batches[0].shape]
+    shape[concat_axis] = total_along_concat_axis
+    destination = allocate_disk_backed(tuple(shape), torch_dtype)
+    if destination is None:
+        return _tf_tensor_to_torch_tensor(tf.concat(tf_batches, axis=concat_axis))
+    # Consume batches from the end so each is freed as soon as it is copied in, keeping only the
+    # destination plus a single batch resident rather than the destination plus every batch.
+    tf_batches.reverse()
+    offset = 0
+    while tf_batches:
+        batch = _tf_tensor_to_torch_tensor(tf_batches.pop())
+        length = batch.shape[concat_axis]
+        destination.narrow(concat_axis, offset, length).copy_(batch)
+        offset += length
+        del batch
+    return destination
 
 
 def _build_example_parser(
@@ -518,23 +556,26 @@ class TFRecordDataLoader:
             f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
         )
         start = time.perf_counter()
-        id_tensor = _tf_tensor_to_torch_tensor(
-            tf.concat(id_tensors, axis=id_concat_axis)
+        # Assemble each entity tensor into its final buffer. With tensor spilling enabled this
+        # streams batches into a disk-backed buffer instead of building a full-size copy via
+        # tf.concat; otherwise it is equivalent to the previous tf.concat path.
+        id_tensor = _assemble_entity_tensor(
+            id_tensors, num_entities_processed, id_concat_axis, torch.int64
         )
         output_feature_tensor: Optional[torch.Tensor] = None
         output_quantized_feature_tensor: Optional[torch.Tensor] = None
         output_label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
-            output_feature_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(feature_tensors, axis=0)
+            output_feature_tensor = _assemble_entity_tensor(
+                feature_tensors, num_entities_processed, 0, torch.float32
             )
         if quantized_feature_tensors:
-            output_quantized_feature_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(quantized_feature_tensors, axis=0)
+            output_quantized_feature_tensor = _assemble_entity_tensor(
+                quantized_feature_tensors, num_entities_processed, 0, torch.uint8
             )
         if label_tensors:
-            output_label_tensor = _tf_tensor_to_torch_tensor(
-                tf.concat(label_tensors, axis=0)
+            output_label_tensor = _assemble_entity_tensor(
+                label_tensors, num_entities_processed, 0, torch.float32
             )
 
         if output_feature_tensor is not None and output_label_tensor is not None:
