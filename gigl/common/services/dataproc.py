@@ -131,6 +131,26 @@ class DataprocService:
         result = operation.result()
         logger.info(result)
 
+    def delete_cluster_if_exists(self, cluster_name: str) -> bool:
+        """Delete the cluster if it exists.
+
+        Example:
+            >>> service.delete_cluster_if_exists("sgs-my-job")  # doctest: +SKIP
+            True
+
+        Args:
+            cluster_name (str): The name of the cluster to delete.
+
+        Returns:
+            bool: True if a delete was issued, False if no such cluster exists.
+        """
+        if not self.does_cluster_exist(cluster_name):
+            logger.info(f"Dataproc cluster {cluster_name} does not exist.")
+            return False
+        logger.info(f"Deleting Dataproc cluster {cluster_name}.")
+        self.delete_cluster(cluster_name)
+        return True
+
     def submit_and_wait_scala_spark_job(
         self,
         cluster_name: str,
