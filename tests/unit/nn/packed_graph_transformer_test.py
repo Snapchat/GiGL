@@ -193,9 +193,32 @@ def _relation_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEncoder
     generator = torch.Generator().manual_seed(0)
     with torch.no_grad():
         for name, parameter in encoder.named_parameters():
-            if "_relation_message" in name:
+            if any(
+                part in name
+                for part in (
+                    "_relation_message",
+                    "_relation_attention_matrices",
+                    "_relation_hgt_attention",
+                )
+            ):
                 parameter.add_(0.3 * torch.randn(parameter.shape, generator=generator))
     return encoder
+
+
+def _without_relation_attention(
+    encoder: GraphTransformerEncoder,
+) -> GraphTransformerEncoder:
+    """A copy of ``encoder`` whose relation attention parameters are back at their
+    no-op initial values."""
+    reset = copy.deepcopy(encoder)
+    with torch.no_grad():
+        for layer in reset.modules():
+            if not isinstance(layer, GraphTransformerEncoderLayer):
+                continue
+            if layer._relation_attention_matrices is not None:
+                layer._relation_attention_matrices.zero_()
+            layer._reset_hgt_relation_attention_parameters()
+    return reset
 
 
 def _run_packed(
@@ -672,7 +695,7 @@ class PackedPathTest(TestCase):
         # A config that always runs padded reads the batch's own hop values.
         encoder = GraphTransformerEncoder(
             **_encoder_kwargs(
-                relation_attention_mode="edge_type_bilinear",
+                hop_distance=5,
                 anchor_based_input_embedding_dict=nn.ModuleDict(too_small),
             )
         )
@@ -701,8 +724,18 @@ class PackedPathTest(TestCase):
                 "relation_attention_with_message",
                 relation_attention_mode="edge_type_bilinear",
                 relation_message_mode="edge_type_attention",
+                supported=True,
             ),
-            param("relation_attention", relation_attention_mode="edge_type_bilinear"),
+            param(
+                "relation_attention_bilinear",
+                relation_attention_mode="edge_type_bilinear",
+                supported=True,
+            ),
+            param(
+                "relation_attention_hgt",
+                relation_attention_mode="edge_type_hgt",
+                supported=True,
+            ),
             param(
                 "anchor_bias",
                 anchor_based_attention_bias_attr_names=[_HOP],
@@ -920,6 +953,60 @@ class PackedRelationMessageTest(TestCase):
                     1e-3,
                 )
 
+    @parameterized.expand(
+        [
+            param("bilinear", attention="edge_type_bilinear"),
+            param("hgt", attention="edge_type_hgt"),
+            param(
+                "bilinear_with_attention_messages",
+                attention="edge_type_bilinear",
+                mode="edge_type_attention",
+            ),
+            param(
+                "hgt_with_linear_messages",
+                attention="edge_type_hgt",
+                mode="edge_type_linear",
+            ),
+            param("hgt_one_layer", attention="edge_type_hgt", num_layers=1),
+            param(
+                "bilinear_out_direction",
+                attention="edge_type_bilinear",
+                sampling_direction="out",
+            ),
+            param(
+                "bilinear_neighbor_readout",
+                attention="edge_type_bilinear",
+                readout_mode="anchor_neighbor_attention",
+            ),
+        ]
+    )
+    def test_relation_attention_matches_padded_path(
+        self, _: str, attention: str, mode: str = "none", **overrides: Any
+    ) -> None:
+        for seed in range(3):
+            data = _three_relation_batch(seed)
+            if overrides.get("sampling_direction") == "out":
+                data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="out")(
+                    data
+                )
+            encoder = _relation_encoder(
+                data,
+                _relation_encoder_kwargs(
+                    mode, relation_attention_mode=attention, **overrides
+                ),
+            )
+            plain = _without_relation_attention(encoder)
+            with self.subTest(seed=seed), torch.no_grad():
+                expected = encoder(data, anchor_node_type=_USER)
+                torch.testing.assert_close(
+                    _run_packed(encoder, data), expected, rtol=0, atol=1e-6
+                )
+                # The relation attention is what the comparison above exercises.
+                self.assertGreater(
+                    (expected - plain(data, anchor_node_type=_USER)).abs().max(),
+                    1e-3,
+                )
+
     def test_matches_padded_path_with_explicit_anchors(self) -> None:
         data = _three_relation_batch(0)
         encoder = _relation_encoder(data, _relation_encoder_kwargs())
@@ -986,6 +1073,44 @@ class PackedRelationMessageTest(TestCase):
 
     @parameterized.expand(
         [
+            param("bilinear", attention="edge_type_bilinear"),
+            param("hgt", attention="edge_type_hgt"),
+            param(
+                "bilinear_with_messages",
+                attention="edge_type_bilinear",
+                mode="edge_type_attention",
+            ),
+            param(
+                "hgt_with_messages",
+                attention="edge_type_hgt",
+                mode="edge_type_linear",
+            ),
+        ]
+    )
+    def test_relation_attention_training_gradients_match_padded_path(
+        self, _: str, attention: str, mode: str = "none"
+    ) -> None:
+        data = _three_relation_batch(0)
+        encoder = _relation_encoder(
+            data, _relation_encoder_kwargs(mode, relation_attention_mode=attention)
+        ).train()
+        expected = _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder)
+        actual = _gradients(lambda: _run_packed(encoder, data), encoder)
+        name = {
+            "edge_type_bilinear": "_relation_attention_matrices",
+            "edge_type_hgt": "_relation_hgt_attention_matrices",
+        }[attention]
+        # The relation attention parameters of every layer are trained.
+        self.assertTrue(
+            all(
+                actual[1][f"_encoder_layers.{layer}.{name}"].abs().max() > 0
+                for layer in range(3)
+            )
+        )
+        _assert_training_gradients_match(self, expected, actual, atol=1e-5)
+
+    @parameterized.expand(
+        [
             param("no_edges", num_edges=0),
             # Every edge into an anchor is dropped: with "out" sampling and one hop
             # the expanded endpoint of such an edge is a last-hop token.
@@ -995,10 +1120,37 @@ class PackedRelationMessageTest(TestCase):
     def test_training_gradients_match_padded_path_when_edges_are_filtered(
         self, _: str, num_edges: int = 80, **overrides: Any
     ) -> None:
+        self._assert_filtered_edge_gradients_match(num_edges, **overrides)
+
+    @parameterized.expand(
+        [
+            param("bilinear", attention="edge_type_bilinear"),
+            param("hgt", attention="edge_type_hgt"),
+        ]
+    )
+    def test_relation_attention_training_gradients_match_when_edges_are_filtered(
+        self, _: str, attention: str
+    ) -> None:
+        self._assert_filtered_edge_gradients_match(
+            0, mode="none", relation_attention_mode=attention
+        )
+        self._assert_filtered_edge_gradients_match(
+            80,
+            mode="none",
+            relation_attention_mode=attention,
+            sampling_direction="out",
+            hop_distance=1,
+        )
+
+    def _assert_filtered_edge_gradients_match(
+        self, num_edges: int, mode: str = "edge_type_attention", **overrides: Any
+    ) -> None:
         data = _three_relation_batch(0, num_edges)
         if overrides:
             data = AddHeteroHopDistanceEncoding(h_max=1, sampling_direction="out")(data)
-        encoder = _relation_encoder(data, _relation_encoder_kwargs(**overrides)).train()
+        encoder = _relation_encoder(
+            data, _relation_encoder_kwargs(mode, **overrides)
+        ).train()
         _assert_training_gradients_match(
             self,
             _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder),
@@ -1084,13 +1236,21 @@ class PackedRelationMessageTest(TestCase):
         with self.assertRaises(ValueError):
             layer.eval().forward_packed(torch.randn(2, 16), packed)
 
-    def test_layer_rejects_relation_attention_bias(self) -> None:
+    @parameterized.expand(
+        [
+            param("bilinear", relation_attention_mode="edge_type_bilinear"),
+            param("hgt", relation_attention_mode="edge_type_hgt"),
+        ]
+    )
+    def test_layer_requires_relation_edges_for_relation_attention(
+        self, _: str, **mode: Any
+    ) -> None:
         layer = GraphTransformerEncoderLayer(
             model_dim=16,
             num_heads=2,
             feedforward_dim=32,
-            relation_attention_mode="edge_type_bilinear",
             num_relations=2,
+            **mode,
         )
         packed = pack_sequences(torch.tensor([2]), 2)
         with self.assertRaises(ValueError):
@@ -1280,8 +1440,31 @@ class PackedPathCudaTest(TestCase):
             sync_counts,
         )
 
-    def test_cuda_relation_training_gradients_match_cpu(self) -> None:
+    @parameterized.expand(
+        [
+            param("messages"),
+            param("bilinear", mode="none", attention="edge_type_bilinear"),
+            param("hgt", mode="none", attention="edge_type_hgt"),
+            param(
+                "bilinear_with_messages",
+                attention="edge_type_bilinear",
+            ),
+            param(
+                "hgt_with_messages",
+                mode="edge_type_linear",
+                attention="edge_type_hgt",
+            ),
+        ]
+    )
+    def test_cuda_relation_training_gradients_match_cpu(
+        self,
+        _: str,
+        mode: str = "edge_type_attention",
+        attention: str = "none",
+    ) -> None:
         kwargs = _relation_encoder_kwargs(
+            mode,
+            relation_attention_mode=attention,
             hid_dim=128,
             anchor_based_input_embedding_dict=nn.ModuleDict(
                 {_HOP: nn.Embedding(3, 128)}
