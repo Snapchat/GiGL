@@ -322,7 +322,7 @@ run_all_e2e_tests:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
 
 # Compiles and uploads the released KFP pipeline for this Python minor on the release src images
-# dep_vars.env lists under the keys ending in PY_TAG (create_release.yml runs this once per minor).
+# dep_vars.env lists under the keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
 release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))
