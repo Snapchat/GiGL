@@ -13,7 +13,7 @@ from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
 from gigl.env.pipelines_config import get_resource_config
-from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
+from gigl.orchestration.kubeflow.kfp_pipeline import ExitTask, generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.file_loader import FileLoader
@@ -57,6 +57,7 @@ class KfpOrchestrator:
         dst_compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         additional_job_args: Optional[dict[GiGLComponents, dict[str, str]]] = None,
         tag: Optional[str] = None,
+        exit_task: ExitTask = ExitTask.EMAIL,
     ) -> Uri:
         """
         Compiles the GiGL Kubeflow pipeline.
@@ -69,6 +70,7 @@ class KfpOrchestrator:
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
+            exit_task (ExitTask): What the pipeline runs when it exits. See :class:`ExitTask`.
         Returns:
             Uri: The URI of the compiled pipeline.
         """
@@ -91,6 +93,7 @@ class KfpOrchestrator:
             generate_pipeline(
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 tag=tag,
+                exit_task=exit_task,
             ),
             local_pipeline_bundle_path.uri,
         )

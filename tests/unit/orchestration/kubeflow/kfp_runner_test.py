@@ -14,6 +14,16 @@ logger = Logger()
 
 
 class KFPRunnerTest(TestCase):
+    def test_exit_task_flag_defaults_to_email(self) -> None:
+        args = _get_parser().parse_args(["--action=compile"])
+
+        self.assertEqual(args.exit_task, "email")
+
+    def test_exit_task_flag_accepts_cleanup(self) -> None:
+        args = _get_parser().parse_args(["--action=compile", "--exit_task=cleanup"])
+
+        self.assertEqual(args.exit_task, "cleanup")
+
     def test_parse_additional_job_args(
         self,
     ):
