@@ -21,6 +21,15 @@ def _reference_csr(
     return indptr, indices
 
 
+def _expected_indptr_dtype(num_edges: int) -> torch.dtype:
+    """Mirrors ``build_csr_from_coo``'s own threshold, so tests assert the real contract instead
+    of a stale constant. ``coo_to_csr`` (the reference) always returns int64, so every
+    ``_reference_csr`` comparison below has to cast onto this before comparing values -- a graph
+    large enough to exercise the int64 branch (>= 2**31 edges) cannot be allocated in a unit test.
+    """
+    return torch.int32 if num_edges < 2**31 else torch.int64
+
+
 class BuildCsrFromCooTest(TestCase):
     """``build_csr_from_coo`` replaces ``graphlearn_torch.utils.coo_to_csr``.
 
@@ -52,11 +61,13 @@ class BuildCsrFromCooTest(TestCase):
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
         result = build_csr_from_coo(row, col, num_rows=num_rows, chunk_size=chunk_size)
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(
             result.indices.long(), expected_indices, rtol=0, atol=0
         )
-        self.assertEqual(result.indptr.dtype, torch.int64)
+        self.assertEqual(result.indptr.dtype, _expected_indptr_dtype(row.numel()))
         self.assertEqual(result.indices.dtype, dtype)
         edge_ids = result.edge_ids
         assert edge_ids is not None
@@ -70,7 +81,9 @@ class BuildCsrFromCooTest(TestCase):
         result = build_csr_from_coo(row, col, num_rows=2)
 
         self.assertIsNotNone(result.edge_ids)
-        torch.testing.assert_close(result.indptr, torch.tensor([0, 2, 4]))
+        torch.testing.assert_close(
+            result.indptr, torch.tensor([0, 2, 4], dtype=result.indptr.dtype)
+        )
         torch.testing.assert_close(result.indices, torch.tensor([2, 5, 1, 3]))
         torch.testing.assert_close(result.edge_ids, torch.tensor([3, 1, 2, 0]))
 
@@ -88,7 +101,9 @@ class BuildCsrFromCooTest(TestCase):
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
         result = build_csr_from_coo(row, col, num_rows=num_rows)
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_row_larger_than_sort_block(self) -> None:
@@ -109,7 +124,9 @@ class BuildCsrFromCooTest(TestCase):
             row, col, num_rows=num_rows, chunk_size=512, sort_block_edges=64
         )
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_when_sort_blocks_are_capped_by_rows(self) -> None:
@@ -122,7 +139,9 @@ class BuildCsrFromCooTest(TestCase):
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
         result = build_csr_from_coo(row, col, num_rows=num_rows, sort_block_edges=7)
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_matches_upstream_with_duplicate_edges(self) -> None:
@@ -133,7 +152,9 @@ class BuildCsrFromCooTest(TestCase):
         expected_indptr, expected_indices = _reference_csr(row, col, 4)
         result = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_trailing_rows_beyond_max_row_id_are_empty(self) -> None:
@@ -199,7 +220,9 @@ class BuildCsrFromCooTest(TestCase):
         expected_indptr, expected_indices = _reference_csr(col, row, num_rows)
         result = build_csr_from_coo(col, row, num_rows=num_rows)
 
-        torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            result.indptr, expected_indptr.to(result.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
 
     def test_empty_input(self) -> None:
