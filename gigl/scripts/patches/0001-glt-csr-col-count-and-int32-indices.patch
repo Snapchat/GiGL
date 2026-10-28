@@ -12,8 +12,13 @@ negative, subgraph) sample byte-identically to int64 and still emit int64 ids; u
 (weighted sampler, CUDA init) reject int32 loudly via TORCH_CHECK instead of reading a null
 pointer. int64-only deployments are untouched.
 
-One patch because the two parts rewrite the same region of graph.cc; carrying them separately
-duplicates that text and lets an edit to one silently break the other's context.
+Part 3 -- missing edge ids: an ID-less graph with sampled edges would pass a null pointer into
+the CPU row-wise sampler and crash the process. SampleWithEdge rejects that request at the native
+entry point. Empty samples need no edge IDs and return normally; ordinary neighbor sampling is
+unchanged.
+
+One patch because the parts rewrite the same regions of graph.cc and random_sampler.cc; carrying
+them separately duplicates that text and lets an edit to one silently break the other's context.
 
 diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
 index cd8b4ba..59694fd 100644
@@ -144,7 +149,7 @@ index f9d3e12..4f2a34e 100644
    int64_t row_num = graph_->GetRowCount();
    int64_t col_num = graph_->GetColCount();
 diff --git a/graphlearn_torch/csrc/cpu/random_sampler.cc b/graphlearn_torch/csrc/cpu/random_sampler.cc
-index 4953680..94bd5f9 100644
+index 4953680..1547197 100644
 --- a/graphlearn_torch/csrc/cpu/random_sampler.cc
 +++ b/graphlearn_torch/csrc/cpu/random_sampler.cc
 @@ -21,6 +21,104 @@ limitations under the License.
@@ -268,8 +273,18 @@ index 4953680..94bd5f9 100644
    return std::make_tuple(nbrs, nbrs_num);
  }
 
-@@ -66,9 +169,15 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
+@@ -64,11 +167,25 @@ CPURandomSampler::SampleWithEdge(const torch::Tensor& nodes, int32_t req_num) {
+     nbrs_offset[i] = nbrs_offset[i - 1] + nbrs_num_ptr[i - 1];
+   }
 
++  if (edge_ids == nullptr && nbrs_offset[bs] == 0) {
++    return std::make_tuple(torch::empty(0, nodes.options()), nbrs_num,
++                           torch::empty(0, nodes.options()));
++  }
++  TORCH_CHECK(edge_ids != nullptr,
++              "CPURandomSampler::SampleWithEdge requires edge ids; initialize the graph "
++              "with edge ids or call sample() when edge ids are not needed");
++
    torch::Tensor nbrs = torch::empty(nbrs_offset[bs], nodes.options());
    torch::Tensor out_eid = torch::empty(nbrs_offset[bs], nodes.options());
 -  CSRRowWiseSample(nodes_ptr, nbrs_offset, bs, req_num, row_count,
@@ -287,7 +302,7 @@ index 4953680..94bd5f9 100644
    return std::make_tuple(nbrs, nbrs_num, out_eid);
  }
 
-@@ -91,89 +200,4 @@ void CPURandomSampler::FillNbrsNum(const int64_t* nodes,
+@@ -91,89 +208,4 @@ void CPURandomSampler::FillNbrsNum(const int64_t* nodes,
    });
  }
 

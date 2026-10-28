@@ -29,9 +29,14 @@ The main abstractions used by the in-memory path are:
 
 - {py:class}`gigl.distributed.dist_dataset.DistDataset` for colocated sampling, where each machine stores its graph
   partition locally.
+- {py:class}`gigl.distributed.graph_store.remote_dist_dataset.RemoteDistDataset` for graph-store sampling, where storage
+  nodes own graph partitions and compute processes sample from them over RPC.
 - {py:class}`gigl.distributed.distributed_neighborloader.DistNeighborLoader` for standard neighborhood sampling.
 - {py:class}`gigl.distributed.dist_ablp_neighborloader.DistABLPLoader` for anchor-based link prediction batches with
   positives and negatives.
+
+If you already have a colocated in-memory loop and want to move graph storage onto separate machines, see
+[Converting Colocated Loops To Graph Store](graph_store_conversion.md).
 
 ## Example Implementations
 
