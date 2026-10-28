@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             torch-variant: cpu
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
@@ -30,7 +30,7 @@ jobs:
       name: release
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Python deps and gcloud
       uses: ./.github/actions/setup-python-tools
