@@ -22,12 +22,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
-  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
-  readout, `relation_attention_mode` `none`, any `relation_message_mode`, no pairwise attention biases, no `ppr_weight`
-  or `ppr_relation_features`, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of
-  `prioritize_hop_order`. Anchor-relative attributes work as token inputs and as a per-key attention bias. An attribute
-  other than `hop_distance` is looked up in its sparse CSR matrix, which reads a value back from the device and has
-  data-dependent shapes, so such a config does not whole-encoder compile and loses the fixed host-sync count.
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, either
+  readout mode, any `relation_attention_mode` and `relation_message_mode`, pairwise and non-missing attention biases,
+  any `attention_dropout_rate`, no `ppr_weight` or `ppr_relation_features`, `hop_distance <= 4`, and either value of
+  `prioritize_hop_order`. Pairwise attention biases, relation attention and attention dropout in training run attention
+  on a padded grid on the GPU instead of the varlen kernel, which spends `num_sequences * max_seq_len` rows of attention
+  work and holds a `num_sequences x num_heads x max_seq_len x max_seq_len` bias. Anchor-relative attributes work as
+  token inputs and as a per-key attention bias. An attribute other than `hop_distance`, and every pairwise attention
+  bias, is looked up in its sparse CSR matrix, which reads a value back from the device and has data-dependent shapes,
+  so such a config does not whole-encoder compile and loses the fixed host-sync count.
   Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
   counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
   float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
