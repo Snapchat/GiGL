@@ -329,7 +329,7 @@ run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_
 run_glt_e2e_tests: run_all_e2e_tests
 
 # Compiles and uploads the released KFP pipeline for this Python minor on the release src images
-# dep_vars.env lists under the keys ending in PY_TAG (create_release.yml runs this once per minor).
+# dep_vars.env lists under the keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
 release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))

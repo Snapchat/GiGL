@@ -61,10 +61,15 @@ class PerMinorConstantsTest(TestCase):
                     re.DOTALL | re.MULTILINE,
                 )
                 assert block is not None
-                self.assertEqual(
-                    re.findall(r'^\s+"(3\.\d+)":', block.group(1), re.MULTILINE),
-                    supported_minors,
+                # Each entry reads the key of its own minor, e.g. "3.12" -> <name>_py312.
+                entries = re.findall(
+                    rf'^\s+"(3\.\d+)": _make_file_vars\["{name}_py(\d+)"\],$',
+                    block.group(1),
+                    re.MULTILINE,
                 )
+                self.assertEqual([minor for minor, _ in entries], supported_minors)
+                for minor, key_suffix in entries:
+                    self.assertEqual(key_suffix, minor.replace(".", ""))
 
 
 if __name__ == "__main__":

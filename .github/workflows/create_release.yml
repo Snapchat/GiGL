@@ -151,6 +151,8 @@ jobs:
     needs: [bump_version, python-versions]
     runs-on: ubuntu-24.04
     strategy:
+      # A failing minor must not cancel another minor's leg in the middle of its pushes.
+      fail-fast: false
       matrix:
         python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
     permissions:

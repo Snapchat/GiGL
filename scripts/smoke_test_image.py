@@ -226,8 +226,9 @@ def check_torch_variant(variant: str) -> None:
     import torch
     import torch.version
 
-    # "2.8.0+cu128" -> "cu128"
-    assert_equal("torch variant", variant, torch.__version__.rpartition("+")[2])
+    # "2.8.0+cu128" -> "cu128"; a wheel without a local suffix, e.g. "2.8.0", has none.
+    _, plus, suffix = torch.__version__.rpartition("+")
+    assert_equal("torch variant", variant, suffix if plus else "")
     assert_equal(
         "torch.version.cuda", "12.8" if variant == "cu128" else None, torch.version.cuda
     )
