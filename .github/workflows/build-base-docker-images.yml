@@ -18,7 +18,7 @@ env:
 jobs:
   comment-workflow-started:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Comment on PR
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -59,7 +59,7 @@ jobs:
         echo "Pushed CUDA base image to ${GIGL_BASE_CUDA_IMAGE}"
 
   build-cpu-base-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -87,7 +87,7 @@ jobs:
         echo "Pushed CPU base image to ${GIGL_BASE_CPU_IMAGE}"
 
   build-dataflow-base-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -114,7 +114,7 @@ jobs:
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
 
   build-builder-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
@@ -150,7 +150,7 @@ jobs:
       - build-cpu-base-image
       - build-dataflow-base-image
       - build-builder-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Commit and Push Base Images
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main

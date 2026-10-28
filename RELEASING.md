@@ -46,6 +46,20 @@ variant registries.
 
 Once both workflows succeed, merge the PR opened by **Create Release** to bring the version bump back into `main`.
 
+## Refreshing pinned CI dependencies
+
+Third-party GitHub Actions under `.github/` are pinned to full commit SHAs (with the release tag in a trailing comment).
+Dependabot (`.github/dependabot.yml`) checks daily and opens one grouped PR when any pinned action has a newer release;
+review and merge it like any other PR.
+
+Dependabot does not cover the Cloud Build helper image `multiarch/qemu-user-static`, which is pinned by digest in
+`.github/cloud_builder/run_command_on_active_checkout.yaml`. To refresh it, look up the current digest and update it
+there:
+
+```sh
+docker buildx imagetools inspect multiarch/qemu-user-static:latest
+```
+
 ## Nightly releases
 
 Nightly builds are triggered automatically by `nightly_release_&_test.yml`, which calls `create_release.yml` with
