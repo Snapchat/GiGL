@@ -253,8 +253,8 @@ if __name__ == "__main__":
         num_server_sessions=args.num_server_sessions,
         splitter=splitter,
         ssl_positive_label_percentage=ssl_positive_label_percentage,
-        should_load_tf_records_in_parallel=bool(
-            str_to_bool(args.should_load_tf_records_in_parallel)
+        should_load_tf_records_in_parallel=str_to_bool(
+            args.should_load_tf_records_in_parallel
         ),
         num_rpc_threads=args.num_rpc_threads,
         rpc_timeout=args.rpc_timeout,
