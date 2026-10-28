@@ -39,6 +39,18 @@ class SmokeTestImageArgsTest(TestCase):
         )
         self.assertEqual(gpu.imports, ["torch", "graphlearn_torch", "torchrec"])
 
+    def test_only_cuda_preset_requires_cuda_build(self) -> None:
+        for image_type, expected in [
+            ("cuda", True),
+            ("cpu", False),
+            ("builder", False),
+            ("dataflow", False),
+        ]:
+            args = smoke_test_image.parse_args(
+                ["--python", "3.11", "--image-type", image_type]
+            )
+            self.assertEqual(args.require_cuda_build, expected, image_type)
+
     def test_dataflow_preset(self) -> None:
         args = smoke_test_image.parse_args(
             ["--python", "3.11", "--image-type", "dataflow"]
