@@ -24,7 +24,7 @@ jobs:
     needs: [ci-unit-test-python-matrix]
     # always() runs this even when a leg failed, so it reports a failure instead of skipping.
     if: ${{ always() && github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Check that every leg passed
       env:
@@ -151,7 +151,7 @@ jobs:
     needs: [ci-integration-e2e-test-nondefault-python-matrix]
     # always() runs this even when a leg failed, so it reports a failure instead of skipping.
     if: ${{ always() && github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Check that every leg passed
       env:
@@ -162,13 +162,13 @@ jobs:
 
   ci-integration-e2e-test-nondefault-python-matrix:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -189,7 +189,7 @@ jobs:
   #   if: github.event_name == 'merge_group'
   #   runs-on: ubuntu-latest
   #   steps:
-  #   - uses: actions/checkout@v4
+  #   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   #   - name: Setup development environment
   #     uses: ./.github/actions/setup-python-tools
   #     with:
