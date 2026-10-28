@@ -360,13 +360,13 @@ def _materialize_quantized_features(
         feature_attribute: PyG attribute that stores the feature tensor.
 
     Raises:
-        ValueError: If expected raw feature columns are absent or have an
-            unexpected dimension.
+        ValueError: If the raw feature columns have an unexpected dimension.
+            Sidecar-only types arrive with a zero-column raw matrix.
     """
     dequantized = dequantize_torch_tensor(
         packed_features, metadata=quantization_metadata
     )
-    raw_features = getattr(store, feature_attribute, None)
+    raw_features = getattr(store, feature_attribute)
     materialized_features = dequantized.new_empty(
         (dequantized.size(0), quantization_metadata.feature_dim)
     )
@@ -375,16 +375,11 @@ def _materialize_quantized_features(
     )
     materialized_features[:, scatter_idx.quantized] = dequantized
 
-    if raw_features is None and quantization_metadata.raw_feature_dim:
+    if raw_features.size(1) != quantization_metadata.raw_feature_dim:
         raise ValueError(
-            f"Missing {quantization_metadata.raw_feature_dim} unquantized features"
+            f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
         )
-    if raw_features is not None:
-        if raw_features.size(1) != quantization_metadata.raw_feature_dim:
-            raise ValueError(
-                f"Expected {quantization_metadata.raw_feature_dim} raw features before dequantization, got {raw_features.size(1)}"
-            )
-        materialized_features[:, scatter_idx.raw] = raw_features
+    materialized_features[:, scatter_idx.raw] = raw_features
     setattr(store, feature_attribute, materialized_features)
 
 
@@ -603,6 +598,7 @@ def attach_ppr_outputs(
     data: Union[Data, HeteroData],
     ppr_edge_indices: dict[EdgeType, torch.Tensor],
     ppr_weights: dict[EdgeType, torch.Tensor],
+    ppr_is_expanded: Optional[dict[EdgeType, torch.Tensor]] = None,
 ) -> None:
     """Attach PPR edge indices and weights onto a Data/HeteroData object.
 
@@ -623,6 +619,10 @@ def attach_ppr_outputs(
         f"PPR edge index and weight edge types must match, "
         f"got {set(ppr_edge_indices.keys())} vs {set(ppr_weights.keys())}"
     )
+    if ppr_is_expanded is not None:
+        assert ppr_is_expanded.keys() == ppr_edge_indices.keys(), (
+            "PPR is_expanded edge types must match PPR edge index edge types"
+        )
     if isinstance(data, Data):
         if len(ppr_edge_indices) != 1:
             raise ValueError(
@@ -632,12 +632,16 @@ def attach_ppr_outputs(
         edge_type = next(iter(ppr_edge_indices))
         data.edge_index = ppr_edge_indices[edge_type]
         data.edge_attr = ppr_weights[edge_type]
+        if ppr_is_expanded is not None:
+            data.ppr_is_expanded = ppr_is_expanded[edge_type]
         # Homogeneous Data has no per-edge-type stores; the PPR edges are attached.
         return
 
     for edge_type, edge_index in ppr_edge_indices.items():
         data[edge_type].edge_index = edge_index
         data[edge_type].edge_attr = ppr_weights[edge_type]
+        if ppr_is_expanded is not None:
+            data[edge_type].ppr_is_expanded = ppr_is_expanded[edge_type]
 
 
 def extract_edge_type_metadata(

@@ -39,13 +39,13 @@ jobs:
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -71,9 +71,9 @@ jobs:
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -94,10 +94,10 @@ jobs:
 
   ci-unit-test-cpp:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install C++ dependencies
       run: bash gigl-core/requirements/install_cpp_deps.sh
     - name: Set up Python tools
@@ -109,9 +109,9 @@ jobs:
 
   ci-integration-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -129,9 +129,9 @@ jobs:
 
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -206,9 +206,9 @@ jobs:
 
   ci-lint-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:

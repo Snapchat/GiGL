@@ -21,7 +21,7 @@ env:
 jobs:
   comment-workflow-started:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Comment on PR
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -75,7 +75,7 @@ jobs:
         echo "Pushed CUDA base image to ${IMAGE}"
 
   build-cpu-base-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -115,7 +115,7 @@ jobs:
         echo "Pushed CPU base image to ${IMAGE}"
 
   build-dataflow-base-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -154,7 +154,7 @@ jobs:
         echo "Pushed Dataflow base image to ${IMAGE}"
 
   build-builder-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -202,7 +202,7 @@ jobs:
       - build-cpu-base-image
       - build-dataflow-base-image
       - build-builder-image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Commit and Push Base Images
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
