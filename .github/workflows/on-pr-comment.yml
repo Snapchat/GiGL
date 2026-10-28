@@ -40,7 +40,8 @@ jobs:
         message: ${{ steps.parse_commands.outputs.help_message }}
 
   # The list of supported Python versions lives in gigl/dep_vars.env. It runs on every PR comment (cheap)
-  # so the unit-test and e2e `if`s are not repeated here.
+  # so the unit-test and e2e `if`s are not repeated here. The script runs from the default branch;
+  # the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as data.
   python-versions:
     name: Read the supported Python versions
     if: ${{ github.event.issue.pull_request }}
@@ -52,15 +53,21 @@ jobs:
     outputs:
       minors: ${{ steps.versions.outputs.minors }}
     steps:
-    - name: Checkout PR Branch
-      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
+    - name: Checkout default branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Fetch the PR's version files
+      env:
+        PR_NUMBER: ${{ github.event.issue.number }}
+      run: |
+        git fetch --depth=1 origin "pull/${PR_NUMBER}/head"
+        mkdir -p "${RUNNER_TEMP}/pr/gigl"
+        git show FETCH_HEAD:gigl/dep_vars.env > "${RUNNER_TEMP}/pr/gigl/dep_vars.env"
+        git show FETCH_HEAD:.python-version > "${RUNNER_TEMP}/pr/.python-version"
 
     - name: Read SUPPORTED_PYTHON_VERSIONS
       id: versions
-      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+      run: python3 .github/scripts/supported_python_versions.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
 
   unit-test-python:
     needs: python-versions
@@ -156,7 +163,8 @@ jobs:
 
   # Reads the comment and SUPPORTED_PYTHON_VERSIONS to pick the e2e legs. GitHub rejects `matrix`
   # in a job-level `if`, so `integration-e2e-test` reads its matrix from this job's output. It runs
-  # on every PR comment (cheap) so its `if` does not repeat the command list.
+  # on every PR comment (cheap) so its `if` does not repeat the command list. The script runs from
+  # the default branch; the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as data.
   e2e-plan:
     name: Plan the E2E test matrix
     if: ${{ github.event.issue.pull_request }}
@@ -168,17 +176,23 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-    - name: Checkout PR Branch
-      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        pr_number: ${{ github.event.issue.number }}
+    - name: Checkout default branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Fetch the PR's version files
+      env:
+        PR_NUMBER: ${{ github.event.issue.number }}
+      run: |
+        git fetch --depth=1 origin "pull/${PR_NUMBER}/head"
+        mkdir -p "${RUNNER_TEMP}/pr/gigl"
+        git show FETCH_HEAD:gigl/dep_vars.env > "${RUNNER_TEMP}/pr/gigl/dep_vars.env"
+        git show FETCH_HEAD:.python-version > "${RUNNER_TEMP}/pr/.python-version"
 
     - name: Plan E2E matrix
       id: plan
       env:
         COMMENT_BODY: ${{ github.event.comment.body }}
-      run: python3 .github/scripts/e2e_matrix.py >> "${GITHUB_OUTPUT}"
+      run: python3 .github/scripts/e2e_matrix.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
 
   # `/e2e_test all` (exactly one space) runs every supported Python minor; `/e2e_test` and
   # `/all_test` run only the default one. The non-default minors run the in-memory (GLT)

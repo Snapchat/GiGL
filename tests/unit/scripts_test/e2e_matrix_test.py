@@ -20,6 +20,23 @@ _ALL_MINORS = _DEFAULT_ONLY + [
 ]
 
 
+def _run(comment_body: str, default: str = "3.11.14") -> list[dict[str, str]]:
+    with tempfile.TemporaryDirectory() as root:
+        (Path(root) / "gigl").mkdir()
+        (Path(root) / "gigl" / "dep_vars.env").write_text(
+            "SUPPORTED_PYTHON_VERSIONS=3.11.14,3.12.14,3.13.15\n"
+        )
+        (Path(root) / ".python-version").write_text(default + "\n")
+        result = subprocess.run(
+            [sys.executable, str(_SCRIPT), "--repo-root", root],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "COMMENT_BODY": comment_body},
+        )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.removeprefix("matrix="))
+
+
 class E2EMatrixTest(TestCase):
     @parameterized.expand(
         [
@@ -29,23 +46,24 @@ class E2EMatrixTest(TestCase):
             ("/all_test", _DEFAULT_ONLY),
             ("/e2e_test  all", _DEFAULT_ONLY),
             ("/e2e_testall", _DEFAULT_ONLY),
+            ("/e2e_test allow", _DEFAULT_ONLY),
         ]
     )
     def test_matrix(self, comment_body: str, expected: list[dict[str, str]]) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            (Path(root) / "gigl").mkdir()
-            (Path(root) / "gigl" / "dep_vars.env").write_text(
-                "SUPPORTED_PYTHON_VERSIONS=3.11.14,3.12.14,3.13.15\n"
-            )
-            (Path(root) / ".python-version").write_text("3.11.14\n")
-            result = subprocess.run(
-                [sys.executable, str(_SCRIPT), "--repo-root", root],
-                capture_output=True,
-                text=True,
-                env={**os.environ, "COMMENT_BODY": comment_body},
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout.removeprefix("matrix=")), expected)
+        legs = _run(comment_body)
+        self.assertEqual(legs, expected)
+        for leg in legs:
+            self.assertIn(leg["target"], {"run_all_e2e_tests", "run_glt_e2e_tests"})
+
+    def test_default_minor_not_first(self) -> None:
+        self.assertEqual(
+            _run("/e2e_test all", default="3.12.14"),
+            [
+                {"python": "3.12", "target": "run_all_e2e_tests"},
+                {"python": "3.11", "target": "run_glt_e2e_tests"},
+                {"python": "3.13", "target": "run_glt_e2e_tests"},
+            ],
+        )
 
 
 if __name__ == "__main__":

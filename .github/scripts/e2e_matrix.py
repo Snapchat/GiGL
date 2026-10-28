@@ -2,7 +2,8 @@
 
 The comment body comes from the ``COMMENT_BODY`` environment variable, never from a command line,
 so comment text is never interpolated into a shell. The default minor (``.python-version``) always
-runs every pipeline (``run_all_e2e_tests``). ``/e2e_test all`` (exactly one space, any case) adds
+runs every pipeline (``run_all_e2e_tests``). ``/e2e_test all`` (exactly one space, any case,
+not followed by more word characters, so `/e2e_test allow` does not match) adds
 every other supported minor with the in-memory pipelines only (``run_glt_e2e_tests``).
 
 Examples, with versions 3.11.14,3.12.14,3.13.15 and default 3.11:
@@ -18,6 +19,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -38,7 +40,7 @@ def matrix(repo_root: Path, comment_body: str) -> list[dict[str, str]]:
     versions = _versions.read_supported_versions(repo_root)
     default_minor = _versions.read_default_minor(repo_root, versions)
     legs = [{"python": default_minor, "target": "run_all_e2e_tests"}]
-    if "/e2e_test all" in comment_body.lower():
+    if re.search(r"/e2e_test all\b", comment_body, re.IGNORECASE):
         legs += [
             {"python": _versions.minor_of(version), "target": "run_glt_e2e_tests"}
             for version in versions
