@@ -37,9 +37,9 @@ runs:
       run: |
         SUBSTITUTIONS="_CMD=${CMD}"
         if [[ -n "${PYTHON_VERSION}" ]]; then
-          # e.g. DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_PY313 in gigl/dep_vars.env. For an unlisted minor grep
+          # e.g. DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_py313 in gigl/dep_vars.env. For an unlisted minor grep
           # matches nothing and fails the step (Actions runs bash with -e -o pipefail).
-          BUILDER_IMAGE="$(grep "^DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_PY${PYTHON_VERSION//./}=" gigl/dep_vars.env | cut -d= -f2-)"
+          BUILDER_IMAGE="$(grep "^DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_py${PYTHON_VERSION//./}=" gigl/dep_vars.env | cut -d= -f2-)"
           SUBSTITUTIONS+=",_BUILDER_IMAGE=${BUILDER_IMAGE}"
         fi
         gcloud builds submit . \
