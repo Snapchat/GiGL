@@ -49,12 +49,13 @@ def read_supported_versions(repo_root: Path) -> list[str]:
 
 
 def read_default_minor(repo_root: Path, versions: list[str]) -> str:
-    """Returns the minor of ``.python-version``, which must be one of ``versions``' minors."""
+    """Returns the minor of ``.python-version``, which must be an exact entry of ``versions``."""
     default = (repo_root / ".python-version").read_text().strip()
-    default_minor = minor_of(default)
-    if default_minor not in [minor_of(version) for version in versions]:
-        raise ValueError(f".python-version {default} is not in {_KEY}: {versions}")
-    return default_minor
+    if default not in versions:
+        raise ValueError(
+            f".python-version {default} is not an entry of {_KEY} ({','.join(versions)})"
+        )
+    return minor_of(default)
 
 
 def outputs(repo_root: Path) -> dict[str, str]:

@@ -27,20 +27,25 @@ def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
     values = _read_dep_vars(repo_root)
     versions = values["SUPPORTED_PYTHON_VERSIONS"].split(",")
     minors = sorted({_minor(version) for version in versions})
-    minor_strings = [f"{major}.{minor}" for major, minor in minors]
+    minor_strings = [
+        f"{major}.{minor}" for major, minor in minors
+    ]  # numerically sorted
     # 3.11.14,3.12.14,3.13.15 -> ">=3.11,<3.14"
     expected_requires = f">={minor_strings[0]},<{minors[-1][0]}.{minors[-1][1] + 1}"
 
     for pyproject_path in ("pyproject.toml", "gigl-core/pyproject.toml"):
         project = tomllib.loads((repo_root / pyproject_path).read_text())["project"]
         classifier_minors = sorted(
-            match.group(1)
-            for classifier in project["classifiers"]
-            if (
-                match := re.fullmatch(
-                    r"Programming Language :: Python :: (3\.\d+)", classifier
+            (
+                match.group(1)
+                for classifier in project["classifiers"]
+                if (
+                    match := re.fullmatch(
+                        r"Programming Language :: Python :: (3\.\d+)", classifier
+                    )
                 )
-            )
+            ),
+            key=_minor,
         )
         assert classifier_minors == minor_strings, (
             f"{pyproject_path} classifiers {classifier_minors} != SUPPORTED_PYTHON_VERSIONS minors {minor_strings}"
