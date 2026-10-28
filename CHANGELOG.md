@@ -42,6 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
+- The compact CSR build counts degrees, scatters edges and sorts rows with multi-threaded numba kernels when its output
+  is in memory; column ids are unchanged, and a 200M-edge build on 32 threads drops from 34 s to 4 s. Adds `numba` as a
+  dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
   `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING
@@ -55,8 +58,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - protobuf 6, pyarrow 25 and numpy 2 (tested)
     - TensorBoard, now a declared dependency
   - All runtime images require glibc >= 2.39 (Ubuntu 24.04), and Dataflow images are published for `linux/amd64` only.
-  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel` and puts the NVIDIA driver paths
-    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH` explicitly.
+  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel`, which exports the NVIDIA driver mount paths
+    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH`; the image build asserts them with
+    `scripts/smoke_test_image.py`.
 
 ### Fixed
 
