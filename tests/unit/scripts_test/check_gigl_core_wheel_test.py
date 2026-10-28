@@ -48,6 +48,12 @@ class CheckGiglCoreWheelTest(TestCase):
             with self.assertRaises(AssertionError):
                 check_gigl_core_wheel.check_requires_python(wheel, ">=3.11,<3.15")
 
+    def test_wheel_without_extension_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = _write_wheel(directory, ">=3.11")
+            with self.assertRaises(AssertionError):
+                check_gigl_core_wheel.check_torch_variant(wheel, "cpu")
+
     def test_find_wheel_requires_exactly_one(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(AssertionError):
