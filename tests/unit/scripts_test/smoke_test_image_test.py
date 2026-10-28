@@ -1,4 +1,7 @@
-"""Unit tests for the argument handling of scripts.smoke_test_image."""
+"""Unit tests for the argument handling and host checks of scripts.smoke_test_image."""
+
+import os
+from unittest import mock
 
 from absl.testing import absltest
 
@@ -61,6 +64,35 @@ class SmokeTestImageArgsTest(TestCase):
         self.assertEqual(args.imports, ["torch", "graphlearn_torch", "gigl_core"])
         self.assertEqual(args.venv_prefix, "/other/.venv")
         self.assertEqual(args.min_glibc, "2.35")
+
+
+class SmokeTestImageChecksTest(TestCase):
+    def test_parse_version_compares_numerically(self) -> None:
+        self.assertLess(
+            smoke_test_image.parse_version("2.9"),
+            smoke_test_image.parse_version("2.39"),
+        )
+
+    def test_nvidia_driver_path_accepts_both_mount_dirs_in_any_order(self) -> None:
+        for value in [
+            "/usr/local/nvidia/lib:/usr/local/nvidia/lib64",
+            "/usr/local/cuda/lib64:/usr/local/nvidia/lib64:/usr/local/nvidia/lib",
+        ]:
+            with (
+                self.subTest(value),
+                mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": value}),
+            ):
+                smoke_test_image.check_nvidia_driver_path()
+
+    def test_nvidia_driver_path_rejects_cuda_only_and_empty_paths(self) -> None:
+        for value in ["/usr/local/cuda/lib64", "", "/opt/x/usr/local/nvidia/lib64x"]:
+            with (
+                self.subTest(value),
+                mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": value}),
+            ):
+                self.assertRaises(
+                    AssertionError, smoke_test_image.check_nvidia_driver_path
+                )
 
 
 if __name__ == "__main__":

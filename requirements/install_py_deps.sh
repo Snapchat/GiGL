@@ -59,11 +59,18 @@ is_running_on_m1_mac() {
 
 ### Installation Functions ###
 install_uv() {
-    # We use the uv package manager. The pinned version is always installed, even when another
-    # uv is on PATH, so the venv is built by the uv this repo is tested with.
+    # We use the uv package manager. The pinned version is installed at UV_INSTALL_DIR and called from
+    # there, so a uv that a base image or the host puts on PATH never builds the venv. The download is
+    # skipped only when that path already holds the pinned version (e.g. a second run on a dev host).
+    UV_VERSION="0.12.9" # Matches the version in .github/actions/setup-python-tools/action.yml
+    if [[ -x "${UV}" ]] && [[ "$("${UV}" --version)" == "uv ${UV_VERSION}"* ]]; then
+        echo "uv ${UV_VERSION} is already installed at ${UV}"
+        export PATH="$UV_INSTALL_DIR:$PATH"
+        return 0
+    fi
     # The installer places uv and uvx directly in UV_INSTALL_DIR.
     EXPECTED_SHA256="222e006c0fe4a0d793031833e469b21df72311f4e3526ffecca0e19e6dfabc32"
-    curl -LsSf -o uv_installer.sh https://astral.sh/uv/0.12.9/install.sh # Matches the version in .github/actions/setup-python-tools/action.yml
+    curl -LsSf -o uv_installer.sh "https://astral.sh/uv/${UV_VERSION}/install.sh"
 
     # Verify SHA256 checksum - script will exit if this fails due to set -e
     if ! echo "$EXPECTED_SHA256  uv_installer.sh" | sha256sum -c -; then
