@@ -129,13 +129,30 @@ jobs:
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
 
+  # Read from the release branch: that is the dep_vars.env the release legs run with.
+  python-versions:
+    name: Read the supported Python versions
+    needs: bump_version
+    runs-on: ubuntu-24.04
+    outputs:
+      minors: ${{ steps.versions.outputs.minors }}
+    steps:
+    - name: Checkout release branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ needs.bump_version.outputs.release_branch_name }}
+
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+
   # One leg per Python minor, each run in that minor's builder image.
   release_gigl_kfp_pipeline:
-    needs: bump_version
+    needs: [bump_version, python-versions]
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
     permissions:
       contents: write
       pull-requests: write
@@ -160,15 +177,8 @@ jobs:
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
         python_version: ${{ matrix.python }}
-        # The first line fails the leg unless the builder's venv runs this leg's minor. An action
-        # that ignores python_version runs every leg in the default builder, and those legs would
-        # push default-minor content under this minor's refs. The cmd reaches Cloud Build as one
-        # --substitutions value, which gcloud splits on `,`, and is pasted into the step's
-        # bash script inside double quotes, so it avoids `,` and `"`; a `$` in it is expanded by
-        # that bash step.
-        cmd: |
-            uv run --no-sync python --version | grep -F 'Python ${{ matrix.python }}.'
-            make release_kfp_pipeline
+        # The builder image's UV_PYTHON selects the minor; `python_version` picks that builder.
+        cmd: make release_kfp_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
