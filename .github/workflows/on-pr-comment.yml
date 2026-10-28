@@ -42,6 +42,9 @@ jobs:
   # The list of supported Python versions lives in gigl/dep_vars.env. It runs on every PR comment (cheap)
   # so the unit-test and e2e `if`s are not repeated here. The script runs from the default branch;
   # the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as data.
+  # Step-level `if`s keep a plain comment ("LGTM") green on a PR without SUPPORTED_PYTHON_VERSIONS while a
+  # command still fails loudly; the consumer jobs skip themselves, and a job-level `if` here would list the
+  # job in `/help`.
   python-versions:
     name: Read the supported Python versions
     if: ${{ github.event.issue.pull_request }}
@@ -57,6 +60,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Fetch the PR's version files
+      if: ${{ contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test') || contains(github.event.comment.body, '/e2e_test') }}
       env:
         PR_NUMBER: ${{ github.event.issue.number }}
       run: |
@@ -67,6 +71,7 @@ jobs:
 
     - name: Read SUPPORTED_PYTHON_VERSIONS
       id: versions
+      if: ${{ contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test') || contains(github.event.comment.body, '/e2e_test') }}
       run: python3 .github/scripts/supported_python_versions.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
 
   unit-test-python:
@@ -180,6 +185,7 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Fetch the PR's version files
+      if: ${{ contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test') }}
       env:
         PR_NUMBER: ${{ github.event.issue.number }}
       run: |
@@ -190,6 +196,7 @@ jobs:
 
     - name: Plan E2E matrix
       id: plan
+      if: ${{ contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test') }}
       env:
         COMMENT_BODY: ${{ github.event.comment.body }}
       run: python3 .github/scripts/e2e_matrix.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
