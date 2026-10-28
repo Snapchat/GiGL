@@ -63,7 +63,7 @@ install_uv() {
     # there, so a uv that a base image or the host puts on PATH never builds the venv. The download is
     # skipped only when that path already holds the pinned version (e.g. a second run on a dev host).
     UV_VERSION="0.12.9" # Matches the version in .github/actions/setup-python-tools/action.yml
-    if [[ -x "${UV}" ]] && [[ "$("${UV}" --version)" == "uv ${UV_VERSION}"* ]]; then
+    if [[ -x "${UV}" ]] && [[ "$("${UV}" --version)" == "uv ${UV_VERSION} "* ]]; then
         echo "uv ${UV_VERSION} is already installed at ${UV}"
         export PATH="$UV_INSTALL_DIR:$PATH"
         return 0
