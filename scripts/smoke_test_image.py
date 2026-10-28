@@ -19,18 +19,18 @@ The caller declares the import set because the images do not ship the same packa
 
 Every check raises on mismatch, so a zero exit status is the only signal of success.
 
+``--image-type`` bundles the checks for one image kind; ``--imports`` and the other flags
+add to or override the preset, so a caller can still state a different package set.
+
 Example:
-    Inside a CUDA base image::
+    Inside a CUDA base image, on a build host with no GPU::
 
-        $ python scripts/smoke_test_image.py --python 3.11 \
-            --imports torch,graphlearn_torch \
-            --venv-prefix /gigl_deps/.venv --min-glibc 2.39
+        $ python scripts/smoke_test_image.py --image-type cuda --python 3.11
 
-    Inside a Dataflow base image::
+    Inside a Dataflow base image, with the Beam version the workers must match::
 
-        $ python scripts/smoke_test_image.py --python 3.11 \
-            --imports torch,apache_beam \
-            --venv-prefix /gigl_deps/.venv --beam 2.76.0 --boot-env --min-glibc 2.39
+        $ python scripts/smoke_test_image.py --image-type dataflow --python 3.11 \
+            --beam 2.76.0
 
     Inside a src image, or on a developer checkout where the venv path varies by
     checkout and so cannot be asserted::
@@ -38,11 +38,9 @@ Example:
         $ python scripts/smoke_test_image.py --python 3.11 \
             --imports torch,graphlearn_torch,gigl_core
 
-    On a GPU host, where the driver is mounted and the CUDA imports can be required::
+    On a GPU host, where the driver is mounted and ``torchrec`` joins the cuda preset::
 
-        $ python scripts/smoke_test_image.py --python 3.11 \
-            --imports torch,graphlearn_torch,torchrec \
-            --cuda --require-nvidia-driver-path
+        $ python scripts/smoke_test_image.py --image-type cuda --python 3.11 --cuda
 """
 
 import argparse
@@ -51,6 +49,7 @@ import os
 import platform
 import sys
 import sysconfig
+from dataclasses import dataclass
 from pathlib import Path
 
 SUPPORTED_PYTHON_VERSIONS: list[str] = ["3.11", "3.12", "3.13"]
@@ -65,6 +64,34 @@ CHECKABLE_IMPORTS: list[str] = [
     "apache_beam",
     "torchrec",
 ]
+
+
+@dataclass(frozen=True)
+class ImagePreset:
+    """The checks one image kind adds on top of the Python, venv and glibc checks."""
+
+    imports: list[str]
+    require_nvidia_driver_path: bool = False
+    boot_env: bool = False
+
+
+# What each GiGL image kind must provide, for the base and builder images, which all keep
+# their venv at /gigl_deps/.venv and sit on Ubuntu 24.04 (glibc 2.39). ``gigl_core`` is
+# absent from every preset because those images carry it as metadata only.
+IMAGE_VENV_PREFIX = "/gigl_deps/.venv"
+IMAGE_MIN_GLIBC = "2.39"
+IMAGE_TYPE_PRESETS: dict[str, ImagePreset] = {
+    "cpu": ImagePreset(imports=["torch", "graphlearn_torch"]),
+    "cuda": ImagePreset(
+        imports=["torch", "graphlearn_torch"], require_nvidia_driver_path=True
+    ),
+    # The Dataflow base skips the GLT post-install, so graphlearn_torch is not imported.
+    "dataflow": ImagePreset(imports=["torch", "apache_beam"], boot_env=True),
+    # The builder runs install_py_deps.sh --dev, which installs GLT.
+    "builder": ImagePreset(imports=["torch", "graphlearn_torch"]),
+}
+# Imports the cuda preset adds on a GPU host: torchrec needs libcuda.so.1 from the driver.
+CUDA_HOST_IMPORTS: list[str] = ["torchrec"]
 
 # Exported by the graphlearn_torch pybind11 extension only when it is compiled with
 # WITH_CUDA=ON, so its absence identifies a CPU-only GLT wheel in a CUDA image.
@@ -325,11 +352,40 @@ def parse_imports(raw: str) -> list[str]:
     return module_names
 
 
-def main() -> None:
-    """Parses arguments and runs the requested checks.
+def apply_image_type(args: argparse.Namespace) -> None:
+    """Folds the ``--image-type`` preset into ``args`` in place.
 
-    Raises:
-        AssertionError: When any check fails.
+    Preset imports come first and ``--imports`` adds to them; the other presets turn
+    flags on, and an explicit ``--venv-prefix`` or ``--min-glibc`` replaces the preset's.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments; ``image_type`` may be ``None``.
+    """
+    if args.image_type is None:
+        return
+    preset = IMAGE_TYPE_PRESETS[args.image_type]
+    imports = list(preset.imports)
+    if args.image_type == "cuda" and args.cuda:
+        imports += CUDA_HOST_IMPORTS
+    args.imports = imports + [
+        name for name in args.imports or [] if name not in imports
+    ]
+    args.require_nvidia_driver_path |= preset.require_nvidia_driver_path
+    args.boot_env |= preset.boot_env
+    if args.venv_prefix is None:
+        args.venv_prefix = IMAGE_VENV_PREFIX
+    if args.min_glibc is None:
+        args.min_glibc = IMAGE_MIN_GLIBC
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parses the command line and resolves ``--image-type`` into concrete checks.
+
+    Args:
+        argv (list[str] | None): Arguments to parse; ``sys.argv[1:]`` when ``None``.
+
+    Returns:
+        argparse.Namespace: Arguments with ``imports`` populated.
     """
     parser = argparse.ArgumentParser(
         description="Assert that the current environment matches a GiGL image contract."
@@ -341,12 +397,20 @@ def main() -> None:
         help="Python minor version the environment must be running.",
     )
     parser.add_argument(
+        "--image-type",
+        choices=list(IMAGE_TYPE_PRESETS),
+        default=None,
+        help="Image kind whose imports and checks to apply. The other flags add to or "
+        "override this preset.",
+    )
+    parser.add_argument(
         "--imports",
-        required=True,
         type=parse_imports,
+        default=None,
         help="Comma-separated packages the environment must be able to import, chosen "
-        f"from {','.join(CHECKABLE_IMPORTS)}. Required: image package sets differ, so "
-        "the caller states which one it expects rather than the script guessing.",
+        f"from {','.join(CHECKABLE_IMPORTS)}. Required without --image-type: image "
+        "package sets differ, so the caller states which one it expects. With "
+        "--image-type, adds to the preset's imports.",
     )
     parser.add_argument(
         "--venv-prefix",
@@ -357,7 +421,8 @@ def main() -> None:
     parser.add_argument(
         "--cuda",
         action="store_true",
-        help="Also require a working CUDA runtime and a CUDA-enabled graphlearn_torch.",
+        help="Also require a working CUDA runtime and a CUDA-enabled graphlearn_torch. "
+        "With --image-type cuda, also imports torchrec.",
     )
     parser.add_argument(
         "--require-nvidia-driver-path",
@@ -380,7 +445,20 @@ def main() -> None:
         default=None,
         help="Lowest glibc version the image may ship, e.g. 2.39.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.image_type is None and args.imports is None:
+        parser.error("--imports is required unless --image-type is given")
+    apply_image_type(args)
+    return args
+
+
+def main() -> None:
+    """Parses arguments and runs the requested checks.
+
+    Raises:
+        AssertionError: When any check fails.
+    """
+    args = parse_args()
 
     check_python(python_version=args.python)
     if args.venv_prefix is not None:
