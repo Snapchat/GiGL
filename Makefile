@@ -306,10 +306,12 @@ run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PAT
 # CI pipelines clean up their child jobs on exit instead of sending the notification email.
 run_all_e2e_tests: exit_task:=cleanup
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
+# Set E2E_FAIL_FAST=1 to cancel the other pipelines as soon as one fails (the merge queue does).
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(if $(E2E_FAIL_FAST),--fail_fast)
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path
