@@ -39,7 +39,31 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         message: ${{ steps.parse_commands.outputs.help_message }}
 
+  # The list of supported Python versions lives in gigl/dep_vars.env. It runs on every PR comment (cheap)
+  # so the unit-test and e2e `if`s are not repeated here.
+  python-versions:
+    name: Read the supported Python versions
+    if: ${{ github.event.issue.pull_request }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      minors: ${{ steps.versions.outputs.minors }}
+    steps:
+    - name: Checkout PR Branch
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        pr_number: ${{ github.event.issue.number }}
+
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+
   unit-test-python:
+    needs: python-versions
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-24.04
     # TODO(kmonte): Reduce this :(
@@ -47,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
     steps:
     - name: Run Python Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main

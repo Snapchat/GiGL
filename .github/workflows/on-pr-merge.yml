@@ -16,6 +16,20 @@ permissions:
   issues: 'write'
 
 jobs:
+  # The list of supported Python versions lives in gigl/dep_vars.env.
+  python-versions:
+    name: Read the supported Python versions
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    outputs:
+      minors: ${{ steps.versions.outputs.minors }}
+      nondefault_minors: ${{ steps.versions.outputs.nondefault_minors }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+
   # A matrix job reports one check per leg in the merge queue but a single check under its
   # job id when skipped on pull_request, so no matrix job can be a required check. Each
   # matrix job has a gate job whose id is the required check instead: skipped on
@@ -34,6 +48,7 @@ jobs:
         [[ "${MATRIX_RESULT}" == "success" ]]
 
   ci-unit-test-python-matrix:
+    needs: python-versions
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
@@ -43,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -161,12 +176,13 @@ jobs:
         [[ "${MATRIX_RESULT}" == "success" ]]
 
   ci-integration-e2e-test-nondefault-python-matrix:
+    needs: python-versions
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13"]
+        python: ${{ fromJSON(needs.python-versions.outputs.nondefault_minors) }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment

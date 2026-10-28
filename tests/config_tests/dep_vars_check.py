@@ -114,27 +114,26 @@ def _needs(job: dict) -> list[str]:
 
 
 def check_ci_python_matrices() -> None:
-    """CI matrices must list every classifier minor, every one but the .python-version minor, or only it."""
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
-    supported = [
-        c.split(" :: ")[-1]
-        for c in pyproject["project"]["classifiers"]
-        if c.startswith("Programming Language :: Python :: 3.")
-    ]
-    default = ".".join((REPO_ROOT / ".python-version").read_text().split(".")[:2])
-    non_default = [v for v in supported if v != default]
+    """CI matrices must read the supported minors from the `python-versions` / `e2e-plan` jobs."""
     jobs = {}
     for workflow in ["on-pr-comment.yml", "on-pr-merge.yml"]:
         path = REPO_ROOT / ".github" / "workflows" / workflow
         jobs.update(yaml.safe_load(path.read_text())["jobs"])
-    for job_name, expected in [
-        ("unit-test-python", supported),
-        ("ci-unit-test-python-matrix", supported),
-        ("ci-integration-e2e-test-nondefault-python-matrix", non_default),
+    for job_name, output in [
+        ("unit-test-python", "minors"),
+        ("ci-unit-test-python-matrix", "minors"),
+        ("ci-integration-e2e-test-nondefault-python-matrix", "nondefault_minors"),
     ]:
-        matrix = jobs[job_name]["strategy"]["matrix"]
-        actual = matrix.get("python") or [leg["python"] for leg in matrix["include"]]
-        assert actual == expected, f"{job_name} matrix is {actual}, expected {expected}"
+        python = jobs[job_name]["strategy"]["matrix"]["python"]
+        expected = "${{ fromJSON(needs.python-versions.outputs." + output + ") }}"
+        assert python == expected, f"{job_name} matrix is {python}, expected {expected}"
+        assert "python-versions" in _needs(jobs[job_name]), jobs[job_name].get("needs")
+    versions_run = "\n".join(
+        step.get("run", "") for step in jobs["python-versions"]["steps"]
+    )
+    assert "python3 .github/scripts/supported_python_versions.py" in versions_run, (
+        versions_run
+    )
     # integration-e2e-test reads its legs from the e2e-plan job.
     e2e = jobs["integration-e2e-test"]
     assert e2e["strategy"]["matrix"]["include"] == (
