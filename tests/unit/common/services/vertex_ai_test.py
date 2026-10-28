@@ -1,6 +1,7 @@
-from typing import cast
+from typing import Optional, cast
 from unittest.mock import patch
 
+from google.api_core.exceptions import FailedPrecondition
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import job_state
 
@@ -79,13 +80,21 @@ class WaitForJobToLeaveQueueTest(TestCase):
 class _FakePipelineJob:
     """Stands in for ``aiplatform.PipelineJob`` with a fixed state."""
 
-    def __init__(self, resource_name: str, state: PipelineState) -> None:
+    def __init__(
+        self,
+        resource_name: str,
+        state: PipelineState,
+        cancel_error: Optional[Exception] = None,
+    ) -> None:
         self.resource_name = resource_name
         self.state = state
         self.cancel_calls = 0
+        self.cancel_error = cancel_error
 
     def cancel(self) -> None:
         self.cancel_calls += 1
+        if self.cancel_error is not None:
+            raise self.cancel_error
 
 
 class CancelPipelineRunTest(TestCase):
@@ -113,6 +122,22 @@ class CancelPipelineRunTest(TestCase):
 
         self.assertFalse(cancelled)
         self.assertEqual(run.cancel_calls, 0)
+
+    def test_returns_false_when_the_run_ends_before_the_cancel_lands(self) -> None:
+        # The run was RUNNING at the state check but reached FAILED before the cancel
+        # request arrived; Vertex AI then rejects the cancel with FailedPrecondition.
+        run = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/r",
+            PipelineState.PIPELINE_STATE_RUNNING,
+            cancel_error=FailedPrecondition(
+                'The PipelineJob "r" is in state JOB_STATE_FAILED and cannot be canceled.'
+            ),
+        )
+        with patch.object(aiplatform.PipelineJob, "get", return_value=run):
+            cancelled = VertexAIService.cancel_pipeline_run(run.resource_name)
+
+        self.assertFalse(cancelled)
+        self.assertEqual(run.cancel_calls, 1)
 
 
 class CancelCustomJobsNamedTest(TestCase):

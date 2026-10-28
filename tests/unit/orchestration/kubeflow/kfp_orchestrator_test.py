@@ -27,6 +27,7 @@ class _FakeRuns:
         self.events: dict[str, threading.Event] = {}
         self.cancelled: list[str] = []
         self.cancel_errors: dict[str, Exception] = {}
+        self.cancel_declined: set[str] = set()
 
     def fails(self, name: str, delay_s: float = 0.0) -> None:
         def script() -> None:
@@ -55,10 +56,16 @@ class _FakeRuns:
     def cancel_raises(self, name: str) -> None:
         self.cancel_errors[name] = RuntimeError(f"cancel of {name} denied")
 
+    def cancel_declined_as_already_finished(self, name: str) -> None:
+        """The run ended on its own before the cancel landed, so nothing was cancelled."""
+        self.cancel_declined.add(name)
+
     def cancel_pipeline_run(self, resource_name: str) -> bool:
         self.cancelled.append(resource_name)
         if resource_name in self.cancel_errors:
             raise self.cancel_errors[resource_name]
+        if resource_name in self.cancel_declined:
+            return False
         event: Optional[threading.Event] = self.events.get(resource_name)
         if event is not None:
             event.set()
@@ -101,6 +108,22 @@ class WaitForCompletionTest(TestCase):
         self.assertIn("run A failed", message)
         self.assertIn("cancel of B denied", message)
         self.assertNotIn("CANCELLED", message)
+
+    def test_fail_fast_counts_a_run_that_ended_before_its_cancel_as_failed(
+        self,
+    ) -> None:
+        self.runs.fails("A")
+        # B fails on its own right after A; its cancel finds nothing to cancel.
+        self.runs.fails("B", delay_s=0.1)
+        self.runs.cancel_declined_as_already_finished("B")
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.orchestrator.wait_for_completion(["A", "B"], fail_fast=True)
+
+        message = str(raised.exception)
+        self.assertIn("run A failed", message)
+        self.assertIn("run B failed", message)
+        self.assertNotIn("cancel of B", message)
 
     def test_fail_fast_with_the_last_run_failing_cancels_nothing(self) -> None:
         self.runs.succeeds("A")

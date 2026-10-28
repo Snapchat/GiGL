@@ -64,6 +64,7 @@ import time
 from dataclasses import dataclass
 from typing import Final, Optional, Sequence, Union, cast
 
+from google.api_core.exceptions import FailedPrecondition
 from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import (
     ContainerSpec,
@@ -493,7 +494,12 @@ class VertexAIService:
             )
             return False
         logger.info(f"Cancelling pipeline run {resource_name} (state {state_name}).")
-        run.cancel()
+        try:
+            run.cancel()
+        except FailedPrecondition as e:
+            # The run reached a terminal state between the state check and the cancel.
+            logger.info(f"Pipeline run {resource_name} ended before the cancel: {e}")
+            return False
         return True
 
     def cancel_custom_jobs_named(self, display_names: Sequence[str]) -> list[str]:
