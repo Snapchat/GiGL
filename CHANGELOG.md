@@ -42,8 +42,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
-- Support Python 3.11, 3.12 and 3.13 (`requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for all three
-  by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+- Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
+  `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
   - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
     `.python-version` value), 3.12.14 or 3.13.15.
   - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or

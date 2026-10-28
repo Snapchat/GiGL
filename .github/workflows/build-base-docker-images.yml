@@ -71,6 +71,8 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cuda.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cuda --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed CUDA base image to ${IMAGE}"
 
@@ -111,6 +113,8 @@ jobs:
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cpu.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cpu --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed CPU base image to ${IMAGE}"
 
@@ -150,6 +154,8 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.dataflow.base -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed Dataflow base image to ${IMAGE}"
 
@@ -193,6 +199,8 @@ jobs:
         # See: Dockerfile.builder
         bash ./requirements/install_scala_deps.sh --download-only
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.builder -t "${IMAGE}" .
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type builder --python "${PYTHON_VERSION%.*}"
         docker push "${IMAGE}"
         echo "Pushed Builder image to ${IMAGE}"
 

@@ -196,7 +196,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
-	uv run ty check --python-version ${PYTHON_MINOR_VERSION} ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
