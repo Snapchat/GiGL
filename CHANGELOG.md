@@ -22,22 +22,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
-  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences without
-  `prioritize_hop_order`, `anchor_only` readout, `relation_attention_mode` `none`, any `relation_message_mode`, no
-  attention biases, at most `hop_distance` as an anchor-based input, a head dim divisible by 8, `hop_distance <= 2`, and
-  `attention_dropout_rate == 0`; everything else, CPU, and batches whose k-hop candidate set is too large keep the
-  padded path. Both paths give the same embeddings and gradients up to float error, except that train-mode
-  `dropout_rate` draws differ (same distribution). The packed path derives `hop_distance` from the layout and ignores
-  the batch attribute; that equals the directed `AddHeteroHopDistanceEncoding` with the same sampling direction. The
-  relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation messages over the layout's
-  edges with a fixed number of host syncs per forward, independent of the number of relations and layers by
-  @kmontemayor2-sc
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
+  readout, `relation_attention_mode` `none`, any `relation_message_mode`, no attention biases, `hop_distance` as the only anchor-based input, a head dim
+  divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of `prioritize_hop_order`.
+  Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
+  counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
+  float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
+  `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
+  with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
+  without it. The relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation
+  messages over the layout's edges with a fixed number of host syncs per forward, independent of the number of
+  relations and layers. A config that can run packed now raises a `ValueError` at construction if its `hop_distance` embedding has
+  `hop_distance` or fewer entries by @kmontemayor2-sc
 
 ### Changed
 
 - `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
   of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
   unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
+- Sampling-worker shutdown (`DistSamplingProducer` and the Graph Store `SharedDistSamplingBackend`) waits at most one
+  `MP_STATUS_CHECK_INTERVAL` in total for workers to stop, instead of one interval per worker, before terminating the
+  stragglers by @kmontemayor2-sc
 - The partitioners store each edge type's edge index as int32 when every node id of both endpoint types fits, halving
   its memory; `partition()` then returns an int32 `GraphPartitionData.edge_index` by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/786
