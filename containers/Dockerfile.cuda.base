@@ -1,34 +1,17 @@
 # syntax=docker/dockerfile:1
 
 
-# The `-devel` variant ships nvcc at /usr/local/cuda/bin/nvcc, which both gigl-core's
-# CMake build and GraphLearn-for-PyTorch's CUDA build need while installing dependencies;
-# a runtime-only CUDA image cannot compile them. Its CUDA 12.8 toolkit has to stay matched
-# to the cu128 torch wheels pinned in uv.lock, because those two builds compile against
-# the toolkit here and link the wheels' runtime.
-# The image's own torch and Python 3.12 go unused: GiGL is `requires-python = "==3.11.*"`,
-# so requirements/install_py_deps.sh builds its own venv at /gigl_deps/.venv on the
-# interpreter named in .python-version, and the ENV PATH below puts that venv's bin ahead
-# of the image's Python.
-# Pinned by digest because the version tag is floating: upstream rebuilds it in place.
-# The tag has a single-platform (linux/amd64) manifest, so this digest is that manifest's,
-# not an index's.
-FROM pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
+# `-devel` ships nvcc, which gigl-core and GraphLearn-for-PyTorch CUDA builds need; its
+# CUDA 12.8 toolkit has to match the cu128 torch wheels in uv.lock. The base's own torch
+# and Python are unused: requirements/install_py_deps.sh builds the venv at /gigl_deps/.venv.
+# The base must export /usr/local/nvidia/lib and /usr/local/nvidia/lib64 on LD_LIBRARY_PATH,
+# where the container runtime mounts the host GPU driver (pytorch/pytorch images do,
+# nvidia/cuda images do not); `scripts/smoke_test_image.py --image-type cuda` asserts it.
+ARG BASE_IMAGE=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-
-# The NVIDIA driver — libcuda.so.1 and libnvidia-ml.so.1 — ships in no image: Vertex AI
-# and GKE bind-mount it into /usr/local/nvidia/lib{,64} at container start, so both
-# directories are empty while this image builds and nothing here can verify them.
-# Losing them fails two ways: fbgemm_gpu names libcuda.so.1 in DT_NEEDED across 19 of its
-# extensions, so `import torchrec` raises outright, while plain torch imports fine and
-# reports no CUDA device, which reads as a CPU machine rather than a broken image.
-# Prepended so the base's own entries survive, and set here rather than inherited because
-# upstream shuffles both variables between releases —
-# pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel already puts /usr/local/cuda/lib64 first.
-ENV LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}"
-ENV PATH="/usr/local/nvidia/bin:${PATH}"
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
@@ -43,11 +26,6 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-# The base ships its own uv at /usr/local/bin. install_py_deps.sh installs the pinned uv only
-# when none is on PATH, so leaving this one would build the venv with the base's uv, which may
-# not know the interpreter .python-version names.
-RUN rm -f /usr/local/bin/uv /usr/local/bin/uvx
 
 WORKDIR /gigl_deps
 
