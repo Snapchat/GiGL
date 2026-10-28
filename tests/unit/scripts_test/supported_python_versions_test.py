@@ -44,7 +44,12 @@ class SupportedPythonVersionsTest(TestCase):
     def test_rejects_default_not_listed(self) -> None:
         result = self._run("3.11.14,3.12.14", "3.13.15")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not in SUPPORTED_PYTHON_VERSIONS", result.stderr)
+        self.assertIn("not an entry of SUPPORTED_PYTHON_VERSIONS", result.stderr)
+
+    def test_rejects_default_with_unlisted_patch(self) -> None:
+        result = self._run("3.11.14,3.12.14", "3.11.9")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not an entry of SUPPORTED_PYTHON_VERSIONS", result.stderr)
 
     def test_rejects_duplicate_minor(self) -> None:
         result = self._run("3.11.14,3.11.13", "3.11.14")
