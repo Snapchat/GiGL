@@ -486,12 +486,13 @@ class VertexAIService:
         """
         run = aiplatform.PipelineJob.get(resource_name)
         state = run.state
+        state_name = state.name if state is not None else "UNKNOWN"
         if state in _NON_CANCELLABLE_PIPELINE_STATES:
             logger.info(
-                f"Pipeline run {resource_name} is {state.name}; nothing to cancel."
+                f"Pipeline run {resource_name} is {state_name}; nothing to cancel."
             )
             return False
-        logger.info(f"Cancelling pipeline run {resource_name} (state {state.name}).")
+        logger.info(f"Cancelling pipeline run {resource_name} (state {state_name}).")
         run.cancel()
         return True
 
@@ -513,10 +514,14 @@ class VertexAIService:
         """
         cancelled: list[str] = []
         for display_name in display_names:
-            jobs = aiplatform.CustomJob.list(
-                filter=f'display_name="{display_name}"',
-                project=self._project,
-                location=self._location,
+            # ``list`` is typed on the base resource class; it returns CustomJobs here.
+            jobs = cast(
+                list[aiplatform.CustomJob],
+                aiplatform.CustomJob.list(
+                    filter=f'display_name="{display_name}"',
+                    project=self._project,
+                    location=self._location,
+                ),
             )
             for job in jobs:
                 state = job.state
