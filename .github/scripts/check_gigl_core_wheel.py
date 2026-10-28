@@ -90,7 +90,7 @@ def check_torch_variant(wheel: zipfile.ZipFile, torch_variant: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--wheel", required=True)
     parser.add_argument("--python", required=True, help="Python minor, e.g. 3.12")
     parser.add_argument("--torch-variant", required=True, choices=["cpu", "cu128"])

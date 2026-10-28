@@ -101,7 +101,9 @@ class SmokeTestImageTorchVariantTest(TestCase):
     @staticmethod
     def _fake_torch(version: str, cuda: str | None) -> mock._patch_dict:
         torch = SimpleNamespace(__version__=version, version=SimpleNamespace(cuda=cuda))
-        return mock.patch.dict(sys.modules, {"torch": torch})
+        return mock.patch.dict(
+            sys.modules, {"torch": torch, "torch.version": torch.version}
+        )
 
     def test_matching_variants_pass(self) -> None:
         with self._fake_torch("2.8.0+cu128", "12.8"):
