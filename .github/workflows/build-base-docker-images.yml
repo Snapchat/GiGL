@@ -156,8 +156,11 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.dataflow.base -t "${IMAGE}" .
+        # The tag of BEAM_SDK_IMAGE supplies `boot`; it must equal the apache-beam version in uv.lock.
+        BEAM_VERSION="$(sed -n 's|^ARG BEAM_SDK_IMAGE=[^:]*:\([^@]*\)@.*|\1|p' containers/Dockerfile.dataflow.base)"
+        test -n "${BEAM_VERSION}"
         docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
-          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_VERSION%.*}"
+          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_VERSION%.*}" --beam "${BEAM_VERSION}"
         docker push "${IMAGE}"
         echo "Pushed Dataflow base image to ${IMAGE}"
 
