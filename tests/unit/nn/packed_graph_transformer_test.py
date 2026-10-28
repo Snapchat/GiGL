@@ -142,7 +142,8 @@ def _materialized_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEnc
 def _three_relation_batch(
     seed: int, num_edges: int = 80, num_relations: int = 3
 ) -> HeteroData:
-    """A user graph with ``num_relations`` of three user-to-user edge types."""
+    """A user graph with ``num_relations`` of three user-to-user edge types and a
+    ``pair_score`` attribute like ``_random_batch``'s."""
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
     data[_USER].x = torch.randn(60, 8, generator=generator)
@@ -151,7 +152,12 @@ def _three_relation_batch(
         data[edge_type.tuple_repr()].edge_index = torch.randint(
             0, 60, (2, num_edges), generator=generator
         )
-    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+    data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+    num_nodes = data[_HOP].shape[0]
+    scores = torch.randn(num_nodes, num_nodes, generator=generator)
+    scores[torch.rand(num_nodes, num_nodes, generator=generator) > 0.2] = 0.0
+    data["pair_score"] = scores.to_sparse_csr()
+    return data
 
 
 def _sequence_lengths(data: HeteroData) -> torch.Tensor:
@@ -978,6 +984,17 @@ class PackedRelationMessageTest(TestCase):
                 attention="edge_type_bilinear",
                 readout_mode="anchor_neighbor_attention",
             ),
+            param(
+                "bilinear_with_pairwise_bias",
+                attention="edge_type_bilinear",
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+            param(
+                "hgt_with_pairwise_bias_neighbor_readout",
+                attention="edge_type_hgt",
+                readout_mode="anchor_neighbor_attention",
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
         ]
     )
     def test_relation_attention_matches_padded_path(
@@ -1006,6 +1023,38 @@ class PackedRelationMessageTest(TestCase):
                     (expected - plain(data, anchor_node_type=_USER)).abs().max(),
                     1e-3,
                 )
+
+    @parameterized.expand(
+        [
+            param("bilinear", attention="edge_type_bilinear"),
+            param("hgt", attention="edge_type_hgt"),
+        ]
+    )
+    def test_relation_attention_compile_does_not_recompile_across_batches(
+        self, _: str, attention: str
+    ) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        encoder = _relation_encoder(
+            _three_relation_batch(0),
+            _relation_encoder_kwargs("none", relation_attention_mode=attention),
+        )
+        # Batches differ in their per-relation edge counts; hitting the recompile
+        # limit raises.
+        with (
+            torch._dynamo.config.patch(fail_on_recompile_limit_hit=True),
+            mock.patch.object(encoder, "_use_packed_backend", return_value=True),
+        ):
+            compiled = torch.compile(encoder, backend="eager")
+            graph_counts = []
+            for seed in range(8):
+                with torch.no_grad():
+                    compiled(_three_relation_batch(seed), anchor_node_type=_USER)
+                graph_counts.append(
+                    torch._dynamo.utils.counters["stats"]["unique_graphs"]
+                )
+        settled = graph_counts[3:]
+        self.assertEqual(settled, [settled[0]] * len(settled), graph_counts)
 
     def test_matches_padded_path_with_explicit_anchors(self) -> None:
         data = _three_relation_batch(0)

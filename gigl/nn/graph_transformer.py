@@ -23,7 +23,11 @@ from torch import Tensor
 from torch_geometric.utils import softmax
 
 from gigl.common.logger import Logger
-from gigl.nn.packed_attention import PackedAttentionBias, packed_attention
+from gigl.nn.packed_attention import (
+    PackedAttentionBias,
+    dense_attention_bias,
+    packed_attention,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
     HOP_DISTANCE_FEATURE_NAME,
@@ -651,11 +655,7 @@ class GraphTransformerEncoderLayer(nn.Module):
                     num_target_rows=x.size(0),
                 )
                 x = x + self._dropout(messages)
-            elif (
-                self.training
-                and relation_edges.all_filtered
-                and not relation_edges.segments
-            ):
+            elif self.training and relation_edges.all_filtered:
                 # Keep the relation parameters in the graph, as the padded path does
                 # when anchor filtering drops every edge.
                 x = x + self._zero_relation_parameter_dependency(x)
@@ -670,10 +670,11 @@ class GraphTransformerEncoderLayer(nn.Module):
         bias: Optional[PackedAttentionBias],
         first_token_output: bool,
     ) -> PackedAttentionBias:
-        """Adds the relation attention scores of the edges to the pair bias.
+        """Adds the relation attention scores of the edges to the dense bias grid.
 
         Each edge adds its per-head score at (target query, source key) of its
-        sequence, on top of ``bias.per_pair`` when that is set.
+        sequence, on top of the padded-key mask and the incoming ``bias``. The
+        scores go into a copy, so the incoming bias is shared across layers.
 
         Args:
             query: ``(query rows, num_heads, head_dim)`` queries. Rows are indexed
@@ -682,54 +683,73 @@ class GraphTransformerEncoderLayer(nn.Module):
                 ``relation_edges.source``.
             layout: Layout of the sequences.
             relation_edges: Non-empty relation edges.
-            bias: Optional incoming bias, whose ``per_key`` is kept.
+            bias: Optional incoming bias.
             first_token_output: Whether only each sequence's first token is queried;
                 ``relation_edges.target`` is then the sequence index.
 
         Returns:
-            A bias whose ``per_pair`` is ``(num_sequences, num_heads, query_len,
+            A bias whose ``grid`` is ``(num_sequences, num_heads, query_len,
             max_seq_len)``, with ``query_len`` 1 with ``first_token_output`` and
             ``max_seq_len`` otherwise.
         """
         target = relation_edges.target
         source = relation_edges.source
-        scores = torch.cat(
-            [
-                self._compute_relation_attention_scores(
-                    query[target[start:end]], key[source[start:end]], relation
-                )
-                for relation, start, end in relation_edges.segments
-            ]
-        )  # [num_edges, num_heads]
-        per_key = None
-        if bias is not None:
-            per_key = bias.per_key
         if first_token_output:
             query_len = 1
         else:
             query_len = layout.max_seq_len
-        if bias is not None and bias.per_pair is not None:
-            grid = bias.per_pair[:, :, :query_len, :].clone().to(query.dtype)
-        else:
-            grid = query.new_zeros(
-                layout.cu_seqlens.numel() - 1,
-                self._num_heads,
-                query_len,
-                layout.max_seq_len,
-            )
+        grid = query.new_empty(
+            layout.cu_seqlens.numel() - 1,
+            self._num_heads,
+            query_len,
+            layout.max_seq_len,
+        )
+        grid.copy_(dense_attention_bias(layout, bias, query.dtype, query_len))
         if first_token_output:
             query_sequence = target
             query_position = torch.zeros_like(target)
         else:
             query_sequence = layout.sequence_id[target]
             query_position = layout.position[target]
-        key_position = layout.position[source]
-        grid.permute(0, 2, 3, 1).index_put_(
-            (query_sequence, query_position, key_position),
-            scores.to(grid.dtype),
-            accumulate=True,
+        self._accumulate_relation_attention_scores(
+            grid,
+            query[target],
+            key[source],
+            (query_sequence, query_position, layout.position[source]),
+            relation_edges.segments,
         )
-        return PackedAttentionBias(per_key=per_key, per_pair=grid)
+        return PackedAttentionBias(grid=grid)
+
+    def _accumulate_relation_attention_scores(
+        self,
+        grid: Tensor,
+        selected_query: Tensor,
+        selected_key: Tensor,
+        grid_index: tuple[Tensor, Tensor, Tensor],
+        segments: Sequence[tuple[int, int, int]],
+    ) -> None:
+        """Adds each edge's per-head relation score into ``grid`` in place.
+
+        Args:
+            grid: ``(batch, num_heads, query_len, key_len)`` bias, accumulated into.
+            selected_query: ``(num_edges, num_heads, head_dim)`` query of each
+                edge's target, grouped by relation.
+            selected_key: ``(num_edges, num_heads, head_dim)`` key of each edge's
+                source, in the same order.
+            grid_index: ``(batch, query position, key position)`` of each edge.
+            segments: ``(relation, start, end)`` edge range of every relation.
+        """
+        scores = torch.cat(
+            [
+                self._compute_relation_attention_scores(
+                    selected_query[start:end], selected_key[start:end], relation
+                )
+                for relation, start, end in segments
+            ]
+        )  # [num_edges, num_heads]
+        grid.permute(0, 2, 3, 1).index_put_(
+            grid_index, scores.to(grid.dtype), accumulate=True
+        )
 
     def _forward_query_prefix(
         self,
@@ -985,49 +1005,15 @@ class GraphTransformerEncoderLayer(nn.Module):
         else:
             attn_bias = attn_bias.clone()
 
-        attn_bias_by_position = attn_bias.permute(0, 2, 3, 1)
         query_by_position = query.transpose(1, 2)
         key_by_position = key.transpose(1, 2)
-
-        unique_relation_indices, relation_counts = torch.unique_consecutive(
-            relation_indices,
-            return_counts=True,
+        self._accumulate_relation_attention_scores(
+            attn_bias,
+            query_by_position[batch_indices, query_indices],
+            key_by_position[batch_indices, key_indices],
+            (batch_indices, query_indices, key_indices),
+            _get_relation_segments(relation_indices),
         )
-        relation_start = 0
-        for relation_idx_tensor, relation_count_tensor in zip(
-            unique_relation_indices,
-            relation_counts,
-        ):
-            relation_idx = int(relation_idx_tensor.item())
-            relation_end = relation_start + int(relation_count_tensor.item())
-            relation_batch_indices = batch_indices[relation_start:relation_end]
-            relation_query_indices = query_indices[relation_start:relation_end]
-            relation_key_indices = key_indices[relation_start:relation_end]
-
-            selected_query = query_by_position[
-                relation_batch_indices,
-                relation_query_indices,
-            ]
-            selected_key = key_by_position[
-                relation_batch_indices,
-                relation_key_indices,
-            ]
-            relation_scores = self._compute_relation_attention_scores(
-                selected_query=selected_query,
-                selected_key=selected_key,
-                relation_idx=relation_idx,
-            )
-            attn_bias_by_position.index_put_(
-                (
-                    relation_batch_indices,
-                    relation_query_indices,
-                    relation_key_indices,
-                ),
-                relation_scores.to(dtype=attn_bias.dtype),
-                accumulate=True,
-            )
-            relation_start = relation_end
-
         return attn_bias
 
     def _compute_relation_attention_scores(
@@ -1042,11 +1028,11 @@ class GraphTransformerEncoderLayer(nn.Module):
             relation_matrices = self._relation_attention_matrices.to(
                 dtype=selected_query.dtype
             )
-            relation_scores = torch.einsum(
-                "ehd,hdf,ehf->eh",
-                selected_query,
-                relation_matrices[relation_idx],
-                selected_key,
+            relation_scores = (
+                (selected_query.transpose(0, 1) @ relation_matrices[relation_idx])
+                .transpose(0, 1)
+                .mul(selected_key)
+                .sum(dim=-1)
             )
         elif self._relation_attention_mode == "edge_type_hgt":
             if self._relation_hgt_attention_matrices is None:
@@ -1059,11 +1045,10 @@ class GraphTransformerEncoderLayer(nn.Module):
             relation_priors = self._relation_hgt_attention_priors.to(
                 dtype=selected_query.dtype
             )
-            hgt_scores = torch.einsum(
-                "ehd,df,ehf->eh",
-                selected_query,
-                relation_matrices[relation_idx],
-                selected_key,
+            hgt_scores = (
+                (selected_query @ relation_matrices[relation_idx])
+                .mul(selected_key)
+                .sum(dim=-1)
             )
             base_scores = (selected_query * selected_key).sum(dim=-1)
             relation_scores = relation_priors[relation_idx] * hgt_scores - base_scores
@@ -2340,7 +2325,9 @@ class GraphTransformerEncoder(nn.Module):
         Returns:
             A per-key bias from the anchor-relative attention-bias attributes and
             a per-pair bias from the pairwise attention-bias attributes, each None
-            when there are no such attributes, or None when there is neither.
+            when there are no such attributes, or None when there is neither. With
+            a per-pair bias, the combined dense grid of padded-key mask, per-key
+            and per-pair biases is built once here for every layer to use.
 
         Raises:
             ValueError: If a pairwise attention-bias attribute is not on ``data``.
@@ -2379,7 +2366,11 @@ class GraphTransformerEncoder(nn.Module):
             )
         if per_key is None and per_pair is None:
             return None
-        return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
+        bias = PackedAttentionBias(per_key=per_key, per_pair=per_pair)
+        if per_pair is None:
+            return bias
+        grid = dense_attention_bias(layout, bias, per_pair.dtype, layout.max_seq_len)
+        return PackedAttentionBias(per_key=per_key, per_pair=per_pair, grid=grid)
 
     def _run_packed_layers(
         self,
