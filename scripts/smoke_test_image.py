@@ -224,6 +224,7 @@ def check_torch_variant(variant: str) -> None:
         AssertionError: When the torch version suffix or its CUDA version differs.
     """
     import torch
+    import torch.version
 
     # "2.8.0+cu128" -> "cu128"
     assert_equal("torch variant", variant, torch.__version__.rpartition("+")[2])

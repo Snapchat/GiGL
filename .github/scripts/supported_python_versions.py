@@ -81,7 +81,7 @@ def outputs(repo_root: Path) -> dict[str, str]:
 
 
 def main(argv: Optional[list[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--repo-root", type=Path, default=_REPO_ROOT)
     args = parser.parse_args(argv)
     for key, value in outputs(args.repo_root).items():
