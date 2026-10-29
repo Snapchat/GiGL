@@ -12,7 +12,6 @@ COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY deployment deployment
 COPY gigl gigl
 COPY snapchat snapchat
-COPY tests tests
 
 # Build and install gigl-core C++ extensions first. gigl-core/ must be present
 # before `uv pip install` because gigl declares it as a path dependency.
