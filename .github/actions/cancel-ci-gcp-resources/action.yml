@@ -1,0 +1,36 @@
+name: "Cancel CI GCP resources"
+description: |
+  Cancels the Cloud Builds and Vertex AI pipeline runs that a GitHub Actions run started.
+  Builds are found by the tag gigl-ci-run-<run id> (set by run-cloud-run-command-on-active-checkout) and pipeline
+  runs by the label github_run_id=<run id> (set by tests/e2e_tests/e2e_test.py when GITHUB_RUN_ID is set).
+  Each cancelled pipeline's exit task then cancels that pipeline's own child jobs.
+  Meant for a step with `if: cancelled()`. Needs gcloud to be authenticated and uv installed already (both come
+  from setup-python-tools); the GiGL environment is not needed. The script and VertexAIService come from the
+  current checkout, so a checkout that predates them has no labelled runs to cancel and this step fails harmlessly.
+inputs:
+  project:
+    description: "Google Cloud project"
+    required: true
+  region:
+    description: "Vertex AI region the pipeline runs were submitted to"
+    required: true
+  github_run_id:
+    description: "GitHub Actions run id whose resources to cancel"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cancel Cloud Builds and pipeline runs from this run
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        REGION: ${{ inputs.region }}
+        RUN_ID: ${{ inputs.github_run_id }}
+        PYTHONPATH: ${{ github.workspace }}
+      run: |
+        # The `gcp` dependency group (pyproject.toml) holds only the GCP client libraries, pinned by uv.lock,
+        # so this installs in seconds and skips the project itself.
+        uv run --frozen --only-group gcp \
+          python .github/scripts/cancel_ci_gcp_resources.py \
+          --project="${PROJECT}" --region="${REGION}" --github_run_id="${RUN_ID}"

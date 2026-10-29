@@ -22,6 +22,7 @@ from gigl.src.common.utils.metrics_service_provider import (
 from gigl.src.common.utils.spark_job_manager import (
     DataprocClusterInitData,
     SparkJobManager,
+    build_split_generator_cluster_name,
 )
 
 logger = Logger()
@@ -145,11 +146,12 @@ class SplitGenerator:
         else:
             resource_config_gcs_path = GcsUri(resource_config_uri.uri)
 
-        if not cluster_name:
-            cluster_name = f"split_{applied_task_identifier}"
-        cluster_name = cluster_name.replace("_", "-")[:50]
-        if cluster_name.endswith("-"):
-            cluster_name = cluster_name[:-1] + "z"
+        if cluster_name:
+            cluster_name = SparkJobManager.get_sanitized_dataproc_cluster_name(
+                cluster_name
+            )
+        else:
+            cluster_name = build_split_generator_cluster_name(applied_task_identifier)
 
         dataproc_helper = SparkJobManager(
             project=resource_config.project,
