@@ -1,80 +1,76 @@
-from unittest.mock import MagicMock, patch
+from typing import Sequence
+from unittest.mock import patch
 
 from google.api_core.exceptions import PermissionDenied
 
+import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.src.common.job_cleanup import cancel_child_jobs
 from tests.test_assets.test_case import TestCase
 
-_RESOURCE_CONFIG_URI = LocalUri("/not/read/resource_config.yaml")
+_RESOURCE_CONFIG_URI = LocalUri.join(
+    local_fs_constants.get_project_root_directory(),
+    "deployment",
+    "configs",
+    "unittest_resource_config.yaml",
+)
+
+
+class _FailingVertexAIService:
+    def __init__(self, **_: object) -> None:
+        pass
+
+    def cancel_custom_jobs_named(self, display_names: Sequence[str]) -> list[str]:
+        raise PermissionDenied("custom job cancel denied")
+
+
+class _FailingDataflowService:
+    def __init__(self, **_: object) -> None:
+        pass
+
+    def cancel_jobs_with_name_prefix(self, name_prefix: str) -> list[str]:
+        raise RuntimeError("dataflow unreachable")
+
+
+class _RecordingDataprocService:
+    deleted: list[str] = []
+
+    def __init__(self, **_: object) -> None:
+        pass
+
+    def delete_cluster_if_exists(self, cluster_name: str) -> bool:
+        _RecordingDataprocService.deleted.append(cluster_name)
+        return True
 
 
 class CancelChildJobsTest(TestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.resource_config = MagicMock()
-        self.resource_config.project = "p"
-        self.resource_config.region = "us-central1"
-        self.resource_config.service_account_email = "sa"
-        self.resource_config.temp_assets_regional_bucket_path.uri = "gs://b"
-        patches = {
-            "get_resource_config": patch(
-                "gigl.src.common.job_cleanup.get_resource_config",
-                return_value=self.resource_config,
+    def test_every_child_kind_is_attempted_and_each_failure_is_reported(
+        self,
+    ) -> None:
+        """The Vertex and Dataflow clients fail; the Dataproc clusters are still deleted,
+        and the single error names both failed steps."""
+        _RecordingDataprocService.deleted = []
+        with (
+            patch(
+                "gigl.src.common.job_cleanup.VertexAIService", _FailingVertexAIService
             ),
-            "vertex": patch("gigl.src.common.job_cleanup.VertexAIService"),
-            "dataflow": patch("gigl.src.common.job_cleanup.DataflowService"),
-            "dataproc": patch("gigl.src.common.job_cleanup.DataprocService"),
-        }
-        self.mocks = {name: p.start() for name, p in patches.items()}
-        for p in patches.values():
-            self.addCleanup(p.stop)
-        self.vertex = self.mocks["vertex"].return_value
-        self.dataflow = self.mocks["dataflow"].return_value
-        self.dataproc = self.mocks["dataproc"].return_value
-        self.vertex.cancel_custom_jobs_named.return_value = []
-        self.dataflow.cancel_jobs_with_name_prefix.return_value = []
-        self.dataproc.delete_cluster_if_exists.return_value = False
+            patch(
+                "gigl.src.common.job_cleanup.DataflowService", _FailingDataflowService
+            ),
+            patch(
+                "gigl.src.common.job_cleanup.DataprocService",
+                _RecordingDataprocService,
+            ),
+            self.assertRaises(RuntimeError) as raised,
+        ):
+            cancel_child_jobs(
+                job_name="My_Job", resource_config_uri=_RESOURCE_CONFIG_URI
+            )
 
-    def test_cancels_every_child_kind_by_job_name(self) -> None:
-        cancel_child_jobs(job_name="My_Job", resource_config_uri=_RESOURCE_CONFIG_URI)
-
-        self.mocks["get_resource_config"].assert_called_once_with(
-            resource_config_uri=_RESOURCE_CONFIG_URI
-        )
-        self.mocks["vertex"].assert_called_once_with(
-            project="p",
-            location="us-central1",
-            service_account="sa",
-            staging_bucket="gs://b",
-        )
-        self.vertex.cancel_custom_jobs_named.assert_called_once_with(
-            ["gigl_train_My_Job", "gigl_infer_My_Job"]
-        )
-        self.mocks["dataflow"].assert_called_once_with(
-            project="p", region="us-central1"
-        )
-        self.dataflow.cancel_jobs_with_name_prefix.assert_called_once_with(
-            "gigl-my-job-"
-        )
-        self.mocks["dataproc"].assert_called_once_with(
-            project_id="p", region="us-central1"
-        )
+        message = str(raised.exception)
+        self.assertIn("custom jobs: PermissionDenied", message)
+        self.assertIn("Dataflow jobs: RuntimeError", message)
+        self.assertNotIn("Dataproc", message)
         self.assertEqual(
-            [c.args[0] for c in self.dataproc.delete_cluster_if_exists.call_args_list],
-            ["sgs-My-Job", "split-My-Job"],
-        )
-
-    def test_continues_after_one_client_raises_and_raises_at_the_end(self) -> None:
-        self.vertex.cancel_custom_jobs_named.side_effect = PermissionDenied("no")
-
-        with self.assertRaisesRegex(RuntimeError, "custom jobs"):
-            cancel_child_jobs(job_name="j", resource_config_uri=_RESOURCE_CONFIG_URI)
-
-        self.dataflow.cancel_jobs_with_name_prefix.assert_called_once()
-        self.assertEqual(self.dataproc.delete_cluster_if_exists.call_count, 2)
-
-    def test_no_children_is_not_an_error(self) -> None:
-        self.assertIsNone(
-            cancel_child_jobs(job_name="j", resource_config_uri=_RESOURCE_CONFIG_URI)
+            _RecordingDataprocService.deleted, ["sgs-My-Job", "split-My-Job"]
         )

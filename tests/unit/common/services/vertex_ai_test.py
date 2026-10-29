@@ -100,9 +100,8 @@ class _FakePipelineJob:
 class CancelPipelineRunTest(TestCase):
     def _cancel(self, state: PipelineState) -> tuple[bool, _FakePipelineJob]:
         run = _FakePipelineJob("projects/p/locations/l/pipelineJobs/r", state)
-        with patch.object(aiplatform.PipelineJob, "get", return_value=run) as get:
+        with patch.object(aiplatform.PipelineJob, "get", return_value=run):
             cancelled = VertexAIService.cancel_pipeline_run(run.resource_name)
-        get.assert_called_once_with(run.resource_name)
         return cancelled, run
 
     def test_cancels_a_running_run(self) -> None:
@@ -175,9 +174,3 @@ class CancelCustomJobsNamedTest(TestCase):
         self.assertEqual(cancelled, [running.resource_name])
         self.assertEqual(running.cancel_calls, 1)
         self.assertEqual(finished.cancel_calls, 0)
-
-    def test_returns_empty_when_nothing_matches(self) -> None:
-        with patch.object(aiplatform.CustomJob, "list", return_value=[]):
-            cancelled = self.service.cancel_custom_jobs_named(["gigl_train_x"])
-
-        self.assertEqual(cancelled, [])

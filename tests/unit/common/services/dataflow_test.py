@@ -77,6 +77,11 @@ class CancelJobsWithNamePrefixTest(TestCase):
         cancelled = service.cancel_jobs_with_name_prefix("gigl-my-job-")
 
         self.assertEqual(cancelled, ["1", "2", "3"])
+        (list_request,) = jobs_service.list_requests
+        self.assertEqual(list_request.filter, _ACTIVE)
+        self.assertEqual(
+            (list_request.projectId, list_request.location), ("p", "us-central1")
+        )
         self.assertEqual(
             [r.jobId for r in jobs_service.update_requests], ["1", "2", "3"]
         )
@@ -96,13 +101,3 @@ class CancelJobsWithNamePrefixTest(TestCase):
         self.assertEqual(cancelled, ["1", "2"])
         self.assertEqual(len(jobs_service.list_requests), 2)
         self.assertEqual(jobs_service.list_requests[1].pageToken, "1")
-
-    def test_requests_active_jobs_only(self) -> None:
-        service, jobs_service = self._service([[]])
-
-        cancelled = service.cancel_jobs_with_name_prefix("gigl-a-")
-
-        self.assertEqual(cancelled, [])
-        (request,) = jobs_service.list_requests
-        self.assertEqual(request.filter, _ACTIVE)
-        self.assertEqual((request.projectId, request.location), ("p", "us-central1"))
