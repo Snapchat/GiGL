@@ -1,10 +1,21 @@
 """Cancel Dataflow jobs by name through the ``google-cloud-dataflow-client`` library."""
 
+import time
+from typing import Final
+
+from google.api_core.exceptions import FailedPrecondition
 from google.cloud import dataflow_v1beta3 as dataflow
 
 from gigl.common.logger import Logger
 
 logger = Logger()
+
+# Dataflow rejects a cancel with FailedPrecondition ("Job has no backend assigned")
+# for the first seconds after a job is submitted. The exit task that cleans up a
+# cancelled pipeline can meet a job that young, so a cancel is retried for about
+# two minutes before the error is raised.
+_CANCEL_ATTEMPTS: Final[int] = 8
+_CANCEL_RETRY_SECONDS: Final[float] = 15.0
 
 
 class DataflowService:
@@ -34,11 +45,17 @@ class DataflowService:
         :func:`gigl.src.common.utils.dataflow.get_sanitized_dataflow_job_name` and end
         it with ``-`` so the full GiGL job name must match.
 
+        A job too new to accept a cancel is retried for about two minutes.
+
         Args:
             name_prefix: Sanitized Dataflow job name prefix.
 
         Returns:
             Ids of the jobs a cancel was requested for.
+
+        Raises:
+            google.api_core.exceptions.FailedPrecondition: If a job still refuses
+                the cancel after the last retry.
         """
         active_jobs = self._jobs_client.list_jobs(
             request=dataflow.ListJobsRequest(
@@ -52,15 +69,27 @@ class DataflowService:
             if not job.name.startswith(name_prefix):
                 continue
             logger.info(f"Cancelling Dataflow job {job.id} ({job.name}).")
-            self._jobs_client.update_job(
-                request=dataflow.UpdateJobRequest(
-                    project_id=self._project,
-                    location=self._region,
-                    job_id=job.id,
-                    job=dataflow.Job(
-                        requested_state=dataflow.JobState.JOB_STATE_CANCELLED
-                    ),
-                )
-            )
+            self._request_cancel(job.id)
             cancelled.append(job.id)
         return cancelled
+
+    def _request_cancel(self, job_id: str) -> None:
+        request = dataflow.UpdateJobRequest(
+            project_id=self._project,
+            location=self._region,
+            job_id=job_id,
+            job=dataflow.Job(requested_state=dataflow.JobState.JOB_STATE_CANCELLED),
+        )
+        for attempt in range(1, _CANCEL_ATTEMPTS + 1):
+            try:
+                self._jobs_client.update_job(request=request)
+                return
+            except FailedPrecondition as e:
+                if attempt == _CANCEL_ATTEMPTS:
+                    raise
+                logger.info(
+                    f"Dataflow job {job_id} did not accept the cancel yet "
+                    f"(attempt {attempt}/{_CANCEL_ATTEMPTS}): {e.message}. "
+                    f"Retrying in {_CANCEL_RETRY_SECONDS:.0f}s."
+                )
+                time.sleep(_CANCEL_RETRY_SECONDS)
