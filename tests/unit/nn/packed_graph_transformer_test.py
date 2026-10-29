@@ -11,7 +11,6 @@ import torch
 import torch.nn as nn
 from absl.testing import absltest
 from parameterized import param, parameterized
-from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils.checkpoint import checkpoint
 from torch_geometric.data import HeteroData
 
@@ -23,12 +22,8 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    PackedSequences,
-    khop_layout,
-    pack_sequences,
-)
+from gigl.transforms.packed_layout import PackedLayout
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -573,7 +568,7 @@ class PackedPathTest(TestCase):
         layer = GraphTransformerEncoderLayer(
             model_dim=16, num_heads=2, feedforward_dim=32, attention_dropout_rate=0.1
         )
-        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
         layer.eval().forward_packed(torch.randn(2, 16), packed)
         with self.assertRaises(ValueError):
             layer.train().forward_packed(torch.randn(2, 16), packed)
@@ -811,7 +806,7 @@ class PackedRelationMessageTest(TestCase):
                 self,
                 layer: GraphTransformerEncoderLayer,
                 x: torch.Tensor,
-                packed: PackedSequences,
+                packed: PackedLayout,
                 first_token_output: bool,
                 relation_edges: PackedRelationEdges | None,
             ) -> torch.Tensor:
@@ -841,7 +836,7 @@ class PackedRelationMessageTest(TestCase):
             relation_message_mode="edge_type_attention",
             num_relations=2,
         )
-        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
         with self.assertRaises(ValueError):
             layer.eval().forward_packed(torch.randn(2, 16), packed)
 
@@ -853,7 +848,7 @@ class PackedRelationMessageTest(TestCase):
             relation_attention_mode="edge_type_bilinear",
             num_relations=2,
         )
-        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
         with self.assertRaises(ValueError):
             layer.eval().forward_packed(torch.randn(2, 16), packed)
 
