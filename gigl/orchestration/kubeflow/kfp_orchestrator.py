@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import (
     ALL_COMPLETED,
     FIRST_EXCEPTION,
+    Future,
     ThreadPoolExecutor,
     wait,
 )
@@ -230,12 +231,12 @@ class KfpOrchestrator:
         )
 
         with ThreadPoolExecutor(max_workers=len(resource_names)) as executor:
-            futures = {
-                executor.submit(
+            futures: dict[Future[None], str] = {}
+            for resource_name in resource_names:
+                future = executor.submit(
                     VertexAIService.wait_for_run_completion, resource_name=resource_name
-                ): resource_name
-                for resource_name in resource_names
-            }
+                )
+                futures[future] = resource_name
             done, not_done = wait(
                 futures,
                 return_when=FIRST_EXCEPTION if fail_fast else ALL_COMPLETED,
@@ -261,17 +262,14 @@ class KfpOrchestrator:
                 # cancelled waits return once Vertex AI reports the runs as
                 # cancelled; a run whose cancel failed is awaited as before.
                 done, _ = wait(futures, return_when=ALL_COMPLETED)
-            failures = {
-                futures[future]: future.exception()
-                for future in done
-                if future.exception() is not None
-                and futures[future] not in cancelled_runs
-            }
+            failures: dict[str, BaseException] = {}
             for future in done:
-                if future.exception() is None:
-                    logger.info(
-                        f"Pipeline run {futures[future]} completed successfully."
-                    )
+                resource_name = futures[future]
+                error = future.exception()
+                if error is None:
+                    logger.info(f"Pipeline run {resource_name} completed successfully.")
+                elif resource_name not in cancelled_runs:
+                    failures[resource_name] = error
 
         if failures or cancel_failures:
             lines = [f"  {name}: {error}" for name, error in failures.items()]

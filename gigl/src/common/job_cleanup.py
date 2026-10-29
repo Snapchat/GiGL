@@ -77,14 +77,14 @@ def cancel_child_jobs(job_name: str, resource_config_uri: Uri) -> None:
 
     try:
         dataproc_service = DataprocService(project_id=project, region=region)
-        deleted_clusters = [
-            cluster_name
-            for cluster_name in (
-                build_subgraph_sampler_cluster_name(job_name),
-                build_split_generator_cluster_name(job_name),
-            )
-            if dataproc_service.delete_cluster_if_exists(cluster_name)
+        cluster_names = [
+            build_subgraph_sampler_cluster_name(job_name),
+            build_split_generator_cluster_name(job_name),
         ]
+        deleted_clusters: list[str] = []
+        for cluster_name in cluster_names:
+            if dataproc_service.delete_cluster_if_exists(cluster_name):
+                deleted_clusters.append(cluster_name)
         logger.info(f"Deleted Dataproc clusters: {deleted_clusters or 'none'}")
     except Exception as e:
         failures.append(f"Dataproc clusters: {e!r}")

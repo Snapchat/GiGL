@@ -139,6 +139,50 @@ class CancelPipelineRunTest(TestCase):
         self.assertEqual(run.cancel_calls, 1)
 
 
+class CancelPipelineRunsWithLabelTest(TestCase):
+    def test_cancels_only_the_active_labelled_runs(self) -> None:
+        running = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/running",
+            PipelineState.PIPELINE_STATE_RUNNING,
+        )
+        pending = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/pending",
+            PipelineState.PIPELINE_STATE_PENDING,
+        )
+        failed = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/failed",
+            PipelineState.PIPELINE_STATE_FAILED,
+        )
+        runs_by_name = {run.resource_name: run for run in (running, pending, failed)}
+
+        def fake_list(
+            filter: str, project: str, location: str
+        ) -> list[_FakePipelineJob]:
+            self.assertEqual(filter, 'labels.github_run_id="123"')
+            self.assertEqual((project, location), ("p", "l"))
+            return [running, pending, failed]
+
+        def fake_get(resource_name: str) -> _FakePipelineJob:
+            return runs_by_name[resource_name]
+
+        with (
+            patch.object(aiplatform.PipelineJob, "list", side_effect=fake_list),
+            patch.object(aiplatform.PipelineJob, "get", side_effect=fake_get),
+        ):
+            cancelled = VertexAIService.cancel_pipeline_runs_with_label(
+                project="p",
+                location="l",
+                label_key="github_run_id",
+                label_value="123",
+            )
+
+        self.assertEqual(cancelled, [running.resource_name, pending.resource_name])
+        self.assertEqual(
+            (running.cancel_calls, pending.cancel_calls, failed.cancel_calls),
+            (1, 1, 0),
+        )
+
+
 class CancelCustomJobsNamedTest(TestCase):
     def setUp(self) -> None:
         super().setUp()

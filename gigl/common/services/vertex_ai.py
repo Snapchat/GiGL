@@ -502,6 +502,44 @@ class VertexAIService:
             return False
         return True
 
+    @staticmethod
+    def cancel_pipeline_runs_with_label(
+        project: str, location: str, label_key: str, label_value: str
+    ) -> list[str]:
+        """Cancel every pipeline run in a project and location that carries a label.
+
+        Runs that already stopped or are stopping are skipped, as in
+        :meth:`cancel_pipeline_run`.
+
+        Example:
+            >>> VertexAIService.cancel_pipeline_runs_with_label(  # doctest: +SKIP
+            ...     project="my-project",
+            ...     location="us-central1",
+            ...     label_key="github_run_id",
+            ...     label_value="123456",
+            ... )
+            ['projects/my-project/locations/us-central1/pipelineJobs/run-1']
+
+        Args:
+            project: Google Cloud project of the runs.
+            location: Vertex AI region of the runs.
+            label_key: Label key to match.
+            label_value: Label value to match.
+
+        Returns:
+            Resource names of the runs a cancel was requested for.
+        """
+        runs = aiplatform.PipelineJob.list(
+            filter=f'labels.{label_key}="{label_value}"',
+            project=project,
+            location=location,
+        )
+        cancelled: list[str] = []
+        for run in runs:
+            if VertexAIService.cancel_pipeline_run(run.resource_name):
+                cancelled.append(run.resource_name)
+        return cancelled
+
     def cancel_custom_jobs_named(self, display_names: Sequence[str]) -> list[str]:
         """Cancel the active CustomJobs with the given display names.
 
