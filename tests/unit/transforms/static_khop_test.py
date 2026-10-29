@@ -12,7 +12,7 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.packed_layout import pack_sequences, select_sequences
+from gigl.transforms.sequence_layout import pack_sequences, select_sequences
 from gigl.transforms.static_khop import KhopLayoutTooLargeError
 from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase

@@ -1,10 +1,10 @@
-"""Packed token layout: where each sequence lives in a buffer without padding.
+"""Shared pieces for building per-anchor token sequences.
 
-``pack_sequences`` turns a padded ``[num_sequences, max_seq_len]`` grid of
-sequences into the offsets (``PackedLayout``) that ``gigl.nn.packed_attention``
-needs to run on real tokens only. It does not depend on how the sequences were
-built. ``select_sequences`` is the shared step that builds the padded grid from
-per-anchor candidates.
+``select_sequences`` picks each anchor's tokens from its candidates into a padded
+``[num_sequences, max_seq_len]`` grid, whatever generated the candidates (k-hop
+expansion, PPR edges). ``PackedLayout`` holds the offsets
+``gigl.nn.packed_attention`` needs to run on real tokens only, and
+``pack_sequences`` computes it from the grid's sequence lengths.
 """
 
 from typing import NamedTuple, Optional
