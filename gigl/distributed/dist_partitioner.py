@@ -22,8 +22,43 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.share_memory import allocate_disk_backed
 
 logger = Logger()
+
+
+def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
+    """An uninitialised tensor shaped like ``sample`` with ``num_rows`` rows.
+
+    It lives on disk when tensor spilling is enabled and the tensor is large enough, otherwise in RAM.
+    """
+    shape = (num_rows, *sample.shape[1:])
+    destination = allocate_disk_backed(shape, sample.dtype)
+    return (
+        torch.empty(shape, dtype=sample.dtype) if destination is None else destination
+    )
+
+
+def _concat_chunks(
+    chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
+) -> list[torch.Tensor]:
+    """``torch.cat([chunk[field] for chunk in chunks])`` for each field, consuming ``chunks``.
+
+    Each result is allocated once by :func:`_empty_rows` and each chunk is released as soon as it is
+    copied, so the results never coexist in RAM with every chunk the way ``torch.cat``'s do.
+    """
+    num_rows = sum(chunk[fields[0]].shape[0] for chunk in chunks)
+    destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+    chunks.reverse()
+    offset = 0
+    while chunks:
+        chunk = chunks.pop()
+        chunk_rows = chunk[fields[0]].shape[0]
+        for destination, field in zip(destinations, fields):
+            destination[offset : offset + chunk_rows] = chunk[field]
+        offset += chunk_rows
+        del chunk
+    return destinations
 
 
 class _DistLinkPredicitonPartitionManager(DistPartitionManager):
@@ -819,6 +854,12 @@ class DistPartitioner:
                 input_label_edge_index, dtype=torch.int64
             )
 
+    def _assemble_node_chunks(
+        self, chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
+    ) -> list[torch.Tensor]:
+        """Join ``fields`` of the received chunks in chunk order; see :func:`_concat_chunks`."""
+        return _concat_chunks(chunks, fields)
+
     def _remove_key_from_member_dict(
         self, field_name: str, entity_key: Union[NodeType, EdgeType]
     ) -> None:
@@ -1171,7 +1212,21 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
-            partitioned_ids = torch.cat([r[-1] for r in partitioned_results])
+            node_id_ind = len(partitioned_results[0]) - 1
+            fields = [
+                ind
+                for ind in (
+                    node_feature_ind,
+                    node_quantized_feature_ind,
+                    node_label_ind,
+                    node_id_ind,
+                )
+                if ind is not None
+            ]
+            assembled = dict(
+                zip(fields, self._assemble_node_chunks(partitioned_results, fields))
+            )
+            partitioned_ids = assembled[node_id_ind]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
@@ -1179,11 +1234,10 @@ class DistPartitioner:
 
             gc.collect()
 
-            # Partitioned node features are stored at the 0th index ineach tuple of the partitioned results.
             if has_node_features:
                 assert node_feature_ind is not None
                 node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_feature_ind] for r in partitioned_results]),
+                    feats=assembled[node_feature_ind],
                     ids=partitioned_ids,
                 )
 
@@ -1193,9 +1247,7 @@ class DistPartitioner:
             if has_node_quantized_features:
                 assert node_quantized_feature_ind is not None
                 node_quantized_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat(
-                        [r[node_quantized_feature_ind] for r in partitioned_results]
-                    ),
+                    feats=assembled[node_quantized_feature_ind],
                     ids=partitioned_ids,
                 )
 
@@ -1205,12 +1257,13 @@ class DistPartitioner:
             if has_node_labels:
                 assert node_label_ind is not None
                 node_label_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_label_ind] for r in partitioned_results]),
+                    feats=assembled[node_label_ind],
                     ids=partitioned_ids,
                 )
 
             else:
                 node_label_partition_data = None
+            del assembled
         else:  # if len(partitioned_results) == 0
             if node_feat_dim is not None:
                 node_feature_partition_data = FeaturePartitionData(

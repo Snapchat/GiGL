@@ -1,6 +1,6 @@
 import gc
 import time
-from typing import Optional, Union
+from typing import Final, Optional, Union
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
@@ -8,12 +8,20 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_partitioner import (
+    DistPartitioner,
+    _concat_chunks,
+    _empty_rows,
+)
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
+from gigl.utils.share_memory import is_disk_backed
 
 logger = Logger()
+
+# Size of the RAM staging block used to write node features in id order.
+_ORDERED_BLOCK_BYTES: Final = 256 * 1024 * 1024
 
 
 class DistRangePartitioner(DistPartitioner):
@@ -130,6 +138,59 @@ class DistRangePartitioner(DistPartitioner):
         return node_partition_book
 
     # TODO: Create a dataclass for this positional three-value partition result.
+    def _assemble_node_chunks(
+        self, chunks: list[tuple[torch.Tensor, ...]], fields: list[int]
+    ) -> list[torch.Tensor]:
+        """Join ``fields`` of the received chunks in node id order, consuming ``chunks``.
+
+        The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
+        In RAM, the chunks are joined and then gathered by id. On disk, each destination is filled
+        one block of rows at a time: the block is gathered from the chunks in RAM, then written in
+        one sequential copy, so the features never need a second full copy in RAM.
+        """
+        node_id_field = len(chunks[0]) - 1
+        num_rows = sum(chunk[node_id_field].shape[0] for chunk in chunks)
+        destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+        if not is_disk_backed(destinations[0]):
+            # Joining frees each chunk as it is copied, so this peaks lower than the block fill.
+            del destinations
+            joined = _concat_chunks(chunks, fields)
+            order = torch.argsort(joined[fields.index(node_id_field)])
+            return [tensor[order] for tensor in joined]
+        chunk_starts = torch.tensor(
+            [0] + [chunk[node_id_field].shape[0] for chunk in chunks]
+        ).cumsum(0)
+        order = torch.argsort(torch.cat([chunk[node_id_field] for chunk in chunks]))
+        row_bytes = max(
+            destination[:1].numel() * destination.element_size()
+            for destination in destinations
+        )
+        block_rows = max(1, _ORDERED_BLOCK_BYTES // max(row_bytes, 1))
+        for block_start in range(0, order.numel(), block_rows):
+            positions = order[block_start : block_start + block_rows]
+            chunk_of_position = (
+                torch.searchsorted(chunk_starts, positions, right=True) - 1
+            )
+            by_chunk = torch.argsort(chunk_of_position, stable=True)
+            counts = torch.bincount(chunk_of_position, minlength=len(chunks)).tolist()
+            block_rows_by_chunk = by_chunk.split(counts)
+            source_rows_by_chunk = positions[by_chunk].split(counts)
+            for destination, field in zip(destinations, fields):
+                staging = torch.empty(
+                    (positions.numel(), *destination.shape[1:]),
+                    dtype=destination.dtype,
+                )
+                for chunk_index, (block_rows_of_chunk, source_rows) in enumerate(
+                    zip(block_rows_by_chunk, source_rows_by_chunk)
+                ):
+                    if source_rows.numel() > 0:
+                        staging[block_rows_of_chunk] = chunks[chunk_index][field][
+                            source_rows - chunk_starts[chunk_index]
+                        ]
+                destination[block_start : block_start + positions.numel()] = staging
+        chunks.clear()
+        return destinations
+
     def _partition_node_features_and_labels(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
@@ -140,9 +201,9 @@ class DistRangePartitioner(DistPartitioner):
         Optional[FeaturePartitionData],
     ]:
         """
-        Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here,
-        and add logic to sort the node features by node indices which is specific to range-based partitioning. This is done so that the range-based
-        id2idx corresponds correctly to the node features.
+        Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here;
+        :meth:`_assemble_node_chunks` sorts the node features by node indices, which is specific to range-based partitioning. This is done so that
+        the range-based id2idx corresponds correctly to the node features.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
@@ -161,54 +222,22 @@ class DistRangePartitioner(DistPartitioner):
 
         # The parent class always returns ids in the feature_partition_data, but we don't need to store the partitioned node feature ids for
         # range-based partitioning, since this is available from the node partition book.
-
-        if feature_partition_data is not None:
-            ids = feature_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_features = feature_partition_data.feats[
-                sorted_node_ids_indices
-            ]
-            partitioned_node_feature_data = FeaturePartitionData(
-                feats=partitioned_node_features, ids=None
-            )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_feature_data = None
-
-        if quantized_feature_partition_data is not None:
-            ids = quantized_feature_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_quantized_features = (
-                quantized_feature_partition_data.feats[sorted_node_ids_indices]
-            )
-            partitioned_node_quantized_feature_data = FeaturePartitionData(
-                feats=partitioned_node_quantized_features, ids=None
-            )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_quantized_feature_data = None
-
-        if labels_partition_data is not None:
-            ids = labels_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_labels = labels_partition_data.feats[
-                sorted_node_ids_indices
-            ]
-            partitioned_node_label_data = FeaturePartitionData(
-                feats=partitioned_node_labels, ids=None
-            )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_label_data = None
+        # _assemble_node_chunks has already put the rows in node id order.
+        partitioned_node_feature_data = (
+            FeaturePartitionData(feats=feature_partition_data.feats, ids=None)
+            if feature_partition_data is not None
+            else None
+        )
+        partitioned_node_quantized_feature_data = (
+            FeaturePartitionData(feats=quantized_feature_partition_data.feats, ids=None)
+            if quantized_feature_partition_data is not None
+            else None
+        )
+        partitioned_node_label_data = (
+            FeaturePartitionData(feats=labels_partition_data.feats, ids=None)
+            if labels_partition_data is not None
+            else None
+        )
 
         return (
             partitioned_node_feature_data,
