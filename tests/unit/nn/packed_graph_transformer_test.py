@@ -21,7 +21,7 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.packed_layout import (
+from gigl.transforms.sequence_layout import (
     PackedLayout,
     PackedRelationEdges,
     pack_sequences,

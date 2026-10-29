@@ -1,10 +1,11 @@
-"""Packed token layout: where each sequence lives in a buffer without padding.
+"""Shared pieces for building per-anchor token sequences.
 
-``pack_sequences`` turns a padded ``[num_sequences, max_seq_len]`` grid of
-sequences into a ``PackedLayout``: the offsets and per-token indices that
-``gigl.nn.packed_attention`` needs to run on real tokens only. It does not depend
-on how the sequences were built. ``select_sequences`` is the shared step that
-builds the padded grid from per-anchor candidates.
+``select_sequences`` picks each anchor's tokens from its candidates into a padded
+``[num_sequences, max_seq_len]`` grid, whatever generated the candidates (k-hop
+expansion, PPR edges). ``pack_sequences`` turns that grid into a ``PackedLayout``:
+the offsets and per-token indices that ``gigl.nn.packed_attention`` needs to run
+on real tokens only. ``PackedRelationEdges`` holds the relation edges between
+packed tokens.
 """
 
 from typing import NamedTuple, Optional
@@ -134,6 +135,8 @@ def select_sequences(
     candidates: Int64[Tensor, "num_anchors num_candidates"],
     max_seq_len: int,
     priority: Optional[Tensor] = None,
+    ties_by_column: bool = False,
+    include_anchor: bool = True,
 ) -> tuple[
     Int64[Tensor, "num_anchors max_seq_len"],
     Int64[Tensor, "num_anchors max_seq_len"],
@@ -142,11 +145,12 @@ def select_sequences(
     """Picks each anchor's tokens from its candidates, with fixed shapes.
 
     Every anchor's sequence is the anchor, then its distinct candidate nodes other
-    than the anchor, ordered by ``priority`` (ties by ascending node id) and cut
-    at ``max_seq_len``. A node that appears in several columns keeps the lowest
-    column, so put the preferred copy of a node first. This is the selection step
-    shared by the k-hop and PPR sequence builders: they differ in how they
-    generate the candidates and in what ``priority`` ranks.
+    than the anchor, ordered by ``priority`` (ties by ascending node id, or by
+    column with ``ties_by_column``) and cut at ``max_seq_len``. A node that
+    appears in several columns keeps the lowest column, so put the preferred copy
+    of a node first. This is the selection step shared by the k-hop and PPR
+    sequence builders: they differ in how they generate the candidates and in
+    what ``priority`` ranks.
 
     Args:
         anchor_indices: ``[num_anchors]`` node ids of the anchors.
@@ -158,16 +162,23 @@ def select_sequences(
             candidate; smaller comes first. If None, candidates are ordered by
             ascending node id, which costs one sort instead of two. Pass the
             column index to keep the candidates' own order.
+        ties_by_column: Whether candidates with equal ``priority`` stay in column
+            order instead of ascending node id. It has no effect without
+            ``priority``.
+        include_anchor: Whether column 0 holds the anchor, which is then dropped
+            from the candidates. If False, the sequence is only candidates, and
+            the anchor stays in it if it is one of them.
 
     Returns:
         - ``nodes``: ``[num_anchors, max_seq_len]`` long node ids, the anchor in
-          column 0, -1 from the sequence length on.
+          column 0 if ``include_anchor``, -1 from the sequence length on.
         - ``source``: ``[num_anchors, max_seq_len]`` long column of ``candidates``
           each token came from, so a per-candidate payload follows with
           ``payload.gather(1, source.clamp(min=0))``. It is -1 at the anchor and
           at padding.
         - ``lengths``: ``[num_anchors]`` long count of valid tokens, anchor
-          included, so at least 1 and at most ``max_seq_len``.
+          included. It is at most ``max_seq_len``, except that it counts the
+          anchor even when ``max_seq_len`` is 0.
     """
     anchor_indices = anchor_indices.long()
     num_candidates = candidates.size(1)
@@ -181,12 +192,18 @@ def select_sequences(
     )
     keys = torch.sort(keys, dim=1).values
     nodes = keys >> _COLUMN_BITS
-    keep = (
-        (keys != padding_key)
-        & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
-        & (nodes != anchor_indices.unsqueeze(1))
-    )
+    keep = (keys != padding_key) & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
+    if include_anchor:
+        keep = keep & (nodes != anchor_indices.unsqueeze(1))
     if priority is not None:
+        if ties_by_column:
+            # Put the kept candidates back in column order, so the stable sort
+            # below leaves priority ties there.
+            by_column = torch.sort(
+                torch.where(keep, keys & _COLUMN_MASK, num_candidates), dim=1
+            ).indices
+            keys = keys.gather(1, by_column)
+            keep = keep.gather(1, by_column)
         # Dropped candidates rank last, so the kept ones come first, in
         # ``priority`` order and then ascending node id. Padding decodes to an
         # out-of-range column; its priority is never used.
@@ -202,16 +219,23 @@ def select_sequences(
         ).indices
         keys = keys.gather(1, order)
         keep = keep.gather(1, order)
-    # The anchor goes to column 0 below; the other kept candidates are numbered
-    # from 1 and cut at ``max_seq_len``.
-    positions = torch.cumsum(keep, dim=1)
+    # With the anchor, it takes column 0 and the kept candidates are numbered from
+    # 1. The kept candidates are cut at ``max_seq_len``.
+    first_position = int(include_anchor)
+    positions = torch.cumsum(keep, dim=1) - 1 + first_position
     keep = keep & (positions < max_seq_len)
-    # Dropped candidates scatter into column 0, which the anchor overwrites.
+    # Dropped candidates scatter into an extra last column, which is sliced off.
     packed = torch.full(
-        (anchor_indices.numel(), max_seq_len), -1, dtype=torch.long, device=keys.device
+        (anchor_indices.numel(), max_seq_len + 1),
+        -1,
+        dtype=torch.long,
+        device=keys.device,
     )
-    packed.scatter_(1, torch.where(keep, positions, 0), keys)
-    packed[:, 0] = anchor_indices << _COLUMN_BITS
+    packed.scatter_(1, torch.where(keep, positions, max_seq_len), keys)
+    packed = packed[:, :max_seq_len]
+    if include_anchor and max_seq_len > 0:
+        packed[:, 0] = anchor_indices << _COLUMN_BITS
     source = torch.where(packed >= 0, packed & _COLUMN_MASK, -1)
-    source[:, 0] = -1
-    return packed >> _COLUMN_BITS, source, 1 + keep.sum(dim=1)
+    if include_anchor and max_seq_len > 0:
+        source[:, 0] = -1
+    return packed >> _COLUMN_BITS, source, first_position + keep.sum(dim=1)
