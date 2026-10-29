@@ -20,10 +20,8 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    PackedSequences,
-)
+from gigl.transforms.packed_layout import PackedLayout
+from gigl.transforms.static_khop import KhopLayoutTooLargeError
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -427,7 +425,7 @@ class PackedPathTest(TestCase):
         layer = GraphTransformerEncoderLayer(
             model_dim=16, num_heads=2, feedforward_dim=32, attention_dropout_rate=0.1
         )
-        packed = PackedSequences(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
         layer.eval().forward_packed(torch.randn(2, 16), packed)
         with self.assertRaises(ValueError):
             layer.train().forward_packed(torch.randn(2, 16), packed)
