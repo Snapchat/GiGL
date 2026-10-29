@@ -2075,7 +2075,7 @@ class GraphTransformerEncoder(nn.Module):
         self,
         x: Float[Tensor, "tokens hid_dim"],
         flat_index: Int64[Tensor, "tokens"],
-        packed: PackedSequences,
+        packed: PackedLayout,
     ) -> Float[Tensor, "sequences hid_dim"]:
         """Packed version of the ``anchor_neighbor_attention`` readout.
 
