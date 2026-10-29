@@ -20,7 +20,7 @@ from gigl.nn.graph_transformer import (
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.packed_layout import PackedLayout
+from gigl.transforms.sequence_layout import PackedLayout
 from gigl.transforms.static_khop import KhopLayoutTooLargeError
 from tests.test_assets.test_case import TestCase
 
