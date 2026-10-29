@@ -18,16 +18,15 @@ import gigl.nn.graph_transformer
 from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
-    PackedRelationEdges,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
+from gigl.transforms.packed_layout import (
     PackedLayout,
-    khop_layout,
+    PackedRelationEdges,
     pack_sequences,
 )
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")

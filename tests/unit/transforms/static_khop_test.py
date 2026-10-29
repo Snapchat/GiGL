@@ -12,11 +12,8 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    pack_khop_layout,
-    pack_sequences,
-)
+from gigl.transforms.packed_layout import pack_sequences
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase
 
@@ -207,6 +204,11 @@ class StaticKhopLayoutTest(TestCase):
                 for expected_tensor, actual_tensor in zip(expected, actual):
                     self.assertEqual(actual_tensor.dtype, torch.long)
                     self.assertTrue(torch.equal(actual_tensor, expected_tensor))
+
+    def test_rejects_an_unknown_sampling_direction(self) -> None:
+        edge_index = torch.tensor([[0, 1], [1, 2]])
+        with self.assertRaises(ValueError):
+            khop_layout(edge_index, 3, torch.arange(1), 2, 4, sampling_direction="both")
 
     def test_rejects_a_layout_over_the_candidate_budget(self) -> None:
         # Width 3 at two hops is 1 + 3 + 9 = 13 candidates per anchor, plus a
