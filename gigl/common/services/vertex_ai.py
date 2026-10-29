@@ -546,7 +546,7 @@ class VertexAIService:
         Jobs that are not queued, pending, or running are logged and skipped.
 
         Example:
-            >>> service.cancel_custom_jobs_named(["gigl_train_my_job"])  # doctest: +SKIP
+            >>> service.cancel_custom_jobs_named(["gigl_train_my_job"])
             ['projects/p/locations/us-central1/customJobs/123']
 
         Args:

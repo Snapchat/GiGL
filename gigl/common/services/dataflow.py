@@ -21,8 +21,8 @@ class DataflowService:
     """Lists and cancels Dataflow jobs in one project and region.
 
     Example:
-        >>> service = DataflowService(project="p", region="us-central1")  # doctest: +SKIP
-        >>> service.cancel_jobs_with_name_prefix("gigl-my-job-")  # doctest: +SKIP
+        >>> service = DataflowService(project="p", region="us-central1")
+        >>> service.cancel_jobs_with_name_prefix("gigl-my-job-")
         ['2026-10-28_09_00_00-123']
     """
 
