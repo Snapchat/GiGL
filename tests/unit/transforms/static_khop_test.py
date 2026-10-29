@@ -279,6 +279,32 @@ class StaticKhopLayoutTest(TestCase):
         self.assertEqual(nodes[0].tolist(), [4, 2, 6, 9, -1])
         self.assertEqual(source[0].tolist(), [-1, 1, 5, 0, -1])
 
+    def test_select_sequences_can_tie_by_column_and_leave_out_the_anchor(self) -> None:
+        anchors = torch.tensor([4, 1])
+        candidates = torch.tensor([[9, 2, 9, 4, -1, 6], [-1] * 6])
+        priority = torch.tensor([[0.5, 0.9, 0.1, 0.0, 0.0, 0.5], [0.0] * 6])
+        # Nodes 9 and 6 tie on priority; 9 comes first because its column does.
+        nodes, source, lengths = select_sequences(
+            anchors, candidates, 5, priority, ties_by_column=True
+        )
+        self.assertEqual(nodes.tolist(), [[4, 9, 6, 2, -1], [1, -1, -1, -1, -1]])
+        self.assertEqual(source[0].tolist(), [-1, 0, 5, 1, -1])
+        self.assertEqual(lengths.tolist(), [4, 1])
+
+        # Without the anchor slot, anchor 4 is an ordinary candidate (column 3).
+        nodes, source, lengths = select_sequences(
+            anchors, candidates, 5, priority, include_anchor=False
+        )
+        self.assertEqual(nodes.tolist(), [[4, 6, 9, 2, -1], [-1] * 5])
+        self.assertEqual(source.tolist(), [[3, 5, 0, 1, -1], [-1] * 5])
+        self.assertEqual(lengths.tolist(), [4, 0])
+
+        nodes, _, lengths = select_sequences(
+            anchors, candidates, 3, priority, include_anchor=False
+        )
+        self.assertEqual(nodes.tolist(), [[4, 6, 9], [-1] * 3])
+        self.assertEqual(lengths.tolist(), [3, 0])
+
     def test_select_sequences_does_not_recompile_across_batch_shapes(self) -> None:
         torch._dynamo.reset()
         self.addCleanup(torch._dynamo.reset)
