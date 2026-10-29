@@ -12,7 +12,7 @@ from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_sparse_neighbors,
     _get_k_hop_neighbors_sparse,
 )
-from gigl.transforms.packed_layout import pack_sequences
+from gigl.transforms.packed_layout import pack_sequences, select_sequences
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 from gigl.transforms.static_khop import khop_layout as _khop_layout
 from tests.test_assets.test_case import TestCase
@@ -66,12 +66,12 @@ def _sparse_layout(
     max_seq_len: int,
     direction: Literal["in", "out"],
     hop_distance: int = 2,
-    prioritize_hop_order: bool = False,
+    ordering: Literal["node_id", "hop"] = "node_id",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Node ids, validity and first-reach hops from the sparse path."""
     adjacency = edge_index.flip(0) if direction == "in" else edge_index
     anchors = torch.arange(num_anchors)
-    if prioritize_hop_order:
+    if ordering == "hop":
         node_index, valid = _build_hop_ordered_sequence_layout_from_sparse_edges(
             anchor_indices=anchors,
             edge_index=adjacency,
@@ -104,7 +104,7 @@ class StaticKhopLayoutTest(TestCase):
         max_seq_len: int,
         direction: Literal["in", "out"],
         hop_distance: int = 2,
-        prioritize_hop_order: bool = False,
+        ordering: Literal["node_id", "hop"] = "node_id",
     ) -> None:
         expected_nodes, expected_valid, expected_hops = _sparse_layout(
             edge_index,
@@ -113,7 +113,7 @@ class StaticKhopLayoutTest(TestCase):
             max_seq_len,
             direction,
             hop_distance,
-            prioritize_hop_order,
+            ordering,
         )
         nodes, hops, lengths = khop_layout(
             edge_index,
@@ -122,7 +122,7 @@ class StaticKhopLayoutTest(TestCase):
             hop_distance=hop_distance,
             max_seq_len=max_seq_len,
             sampling_direction=direction,
-            prioritize_hop_order=prioritize_hop_order,
+            ordering=ordering,
         )
         valid = torch.arange(max_seq_len).unsqueeze(0) < lengths.unsqueeze(1)
         self.assertTrue(torch.equal(valid, expected_valid))
@@ -132,16 +132,16 @@ class StaticKhopLayoutTest(TestCase):
     def test_matches_sparse_layout(self) -> None:
         for (
             hop_distance,
-            prioritize_hop_order,
+            ordering,
             direction,
             max_seq_len,
             seed,
         ) in itertools.product(
-            (1, 2, 3, 4), (False, True), ("in", "out"), (3, 4, 16, 64), range(2)
+            (1, 2, 3, 4), ("node_id", "hop"), ("in", "out"), (3, 4, 16, 64), range(2)
         ):
             with self.subTest(
                 hop=hop_distance,
-                hop_order=prioritize_hop_order,
+                ordering=ordering,
                 direction=direction,
                 L=max_seq_len,
                 seed=seed,
@@ -153,13 +153,13 @@ class StaticKhopLayoutTest(TestCase):
                     max_seq_len=max_seq_len,
                     direction=direction,
                     hop_distance=hop_distance,
-                    prioritize_hop_order=prioritize_hop_order,
+                    ordering=ordering,
                 )
 
     def test_hop_order_truncation_drops_the_farthest_hops_first(self) -> None:
         # Anchor 0 has hop-1 neighbours 5 and 6 and hop-2 neighbours 1 and 2.
         edge_index = torch.tensor([[0, 0, 5, 6], [5, 6, 1, 2]])
-        for prioritize_hop_order, expected in ((False, [0, 1, 2]), (True, [0, 5, 6])):
+        for ordering, expected in (("node_id", [0, 1, 2]), ("hop", [0, 5, 6])):
             nodes, hops, _ = khop_layout(
                 edge_index,
                 7,
@@ -167,7 +167,7 @@ class StaticKhopLayoutTest(TestCase):
                 hop_distance=2,
                 max_seq_len=3,
                 sampling_direction="out",
-                prioritize_hop_order=prioritize_hop_order,
+                ordering=ordering,
             )
             self.assertEqual(nodes[0].tolist(), expected)
 
@@ -229,6 +229,73 @@ class StaticKhopLayoutTest(TestCase):
         with mock.patch.object(torch, "full", side_effect=AssertionError("allocated")):
             with self.assertRaises(KhopLayoutTooLargeError):
                 khop_layout(edge_index, num_nodes, torch.tensor([5]), 2, 8)
+
+    def test_orderings_pick_different_tokens_when_truncated(self) -> None:
+        # Anchor 0 reaches 5 then 3 in slot order. 5 leads to 8 and 1; 3 leads to
+        # 7 and 1. Node 1 is first reached through 5, at hop 2.
+        edge_index = torch.tensor([[0, 0, 5, 5, 3, 3], [5, 3, 8, 1, 7, 1]])
+        expected = {
+            "node_id": ([0, 1, 3, 5, 7, 8], [0, 2, 1, 1, 2, 2]),
+            "hop": ([0, 3, 5, 1, 7, 8], [0, 1, 1, 2, 2, 2]),
+            "input": ([0, 5, 3, 8, 1, 7], [0, 1, 1, 2, 2, 2]),
+        }
+        for ordering, (expected_nodes, expected_hops) in expected.items():
+            for max_seq_len in (6, 4):
+                with self.subTest(ordering=ordering, L=max_seq_len):
+                    nodes, hops, lengths = khop_layout(
+                        edge_index,
+                        10,
+                        torch.tensor([0]),
+                        hop_distance=2,
+                        max_seq_len=max_seq_len,
+                        ordering=ordering,
+                    )
+                    self.assertEqual(nodes[0].tolist(), expected_nodes[:max_seq_len])
+                    self.assertEqual(hops[0].tolist(), expected_hops[:max_seq_len])
+                    self.assertEqual(lengths.tolist(), [max_seq_len])
+
+    def test_rejects_an_unknown_ordering(self) -> None:
+        edge_index = torch.tensor([[0, 1], [1, 2]])
+        with self.assertRaises(ValueError):
+            khop_layout(edge_index, 3, torch.arange(1), 2, 4, ordering="degree")
+
+    def test_select_sequences_orders_by_priority_and_keeps_the_first_copy(self) -> None:
+        # Anchor 4 is among its candidates and is dropped from them. Node 9 is in
+        # columns 0 and 2; the first copy (priority 0.5) is the one kept. Nodes 6
+        # and 9 tie on priority and fall back to ascending node id.
+        anchors = torch.tensor([4, 1])
+        candidates = torch.tensor([[9, 2, 9, 4, -1, 6], [-1] * 6])
+        priority = torch.tensor([[0.5, 0.9, 0.1, 0.0, 0.0, 0.5], [0.0] * 6])
+        nodes, source, lengths = select_sequences(anchors, candidates, 5, priority)
+        self.assertEqual(nodes.tolist(), [[4, 6, 9, 2, -1], [1, -1, -1, -1, -1]])
+        self.assertEqual(source.tolist(), [[-1, 5, 0, 1, -1], [-1] * 5])
+        self.assertEqual(lengths.tolist(), [4, 1])
+
+        nodes, source, lengths = select_sequences(anchors, candidates, 3, priority)
+        self.assertEqual(nodes.tolist(), [[4, 6, 9], [1, -1, -1]])
+        self.assertEqual(lengths.tolist(), [3, 1])
+
+        nodes, source, lengths = select_sequences(anchors, candidates, 5)
+        self.assertEqual(nodes[0].tolist(), [4, 2, 6, 9, -1])
+        self.assertEqual(source[0].tolist(), [-1, 1, 5, 0, -1])
+
+    def test_select_sequences_does_not_recompile_across_batch_shapes(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        compiled = torch.compile(select_sequences, backend="eager", dynamic=True)
+        generator = torch.Generator().manual_seed(0)
+        for num_anchors, num_candidates in ((6, 9), (11, 30), (4, 17)):
+            candidates = torch.randint(
+                -1, 50, (num_anchors, num_candidates), generator=generator
+            )
+            priority = torch.rand(num_anchors, num_candidates, generator=generator)
+            anchors = torch.arange(num_anchors)
+            for args in ((anchors, candidates, 8, priority), (anchors, candidates, 8)):
+                expected = select_sequences(*args)
+                for expected_tensor, actual_tensor in zip(expected, compiled(*args)):
+                    self.assertTrue(torch.equal(expected_tensor, actual_tensor))
+        # One graph for each of the two call signatures.
+        self.assertEqual(torch._dynamo.utils.counters["stats"]["unique_graphs"], 2)
 
     def test_pack_sequences_layout(self) -> None:
         layout = pack_sequences(torch.tensor([2, 1, 3]), 3)

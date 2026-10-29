@@ -39,11 +39,11 @@ How a layout is built::
         |  hop h: gather the rows of the hop h - 1 frontier -> [num_anchors, width ** h]
         v
     candidates [num_anchors, 1 + width + ... + width ** hop_distance]
-        |  sort each row by (node id, hop); the first copy of a node is its
-        |  first-reach hop, so drop repeats, padding and the anchor itself
+        |  select_sequences: the first copy of a node is its first-reach hop, so
+        |  drop repeats, padding and the anchor itself
         v
     anchor first, then neighbours in ascending node id (or by hop, then node id,
-    with ``prioritize_hop_order``), cut at max_seq_len
+    or in expansion order, per ``ordering``), cut at max_seq_len
         |
         v
     layout [num_anchors, max_seq_len] of (node << hop_bits) | hop (-1 at padding), lengths
@@ -87,11 +87,14 @@ Example:
 from typing import Literal
 
 import torch
-import torch.nn.functional as F
 from jaxtyping import Int, Int64
 from torch import Tensor
 
-from gigl.transforms.packed_layout import PackedLayout, pack_sequences
+from gigl.transforms.packed_layout import (
+    PackedLayout,
+    pack_sequences,
+    select_sequences,
+)
 
 # Maximum number of int64 cells ``khop_layout`` builds: the candidates,
 # ``num_anchors * (1 + width + ... + width ** hop_distance)``, plus the neighbour
@@ -100,6 +103,8 @@ from gigl.transforms.packed_layout import PackedLayout, pack_sequences
 # the largest degree in the whole batch, so one hub node can push every anchor
 # over the limit and send the batch to the padded path.
 MAX_LAYOUT_CANDIDATES = 2**25
+
+KhopOrdering = Literal["node_id", "hop", "input"]
 
 
 class KhopLayoutTooLargeError(ValueError):
@@ -179,19 +184,24 @@ def _khop_sequence_layout(
     anchor_indices: Int[Tensor, "num_anchors"],
     hop_distance: int,
     max_seq_len: int,
-    prioritize_hop_order: bool = False,
+    ordering: KhopOrdering = "node_id",
 ) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
     """Picks the tokens of every anchor's k-hop neighbourhood, with fixed shapes.
 
     Gathering through the neighbour table, rather than sparse matrix ops, keeps
-    every tensor's shape independent of the data. Each sequence is the anchor, then every other node within ``hop_distance``
-    hops in ascending node id, truncated to ``max_seq_len``. The sparse path gets
-    the same order from ``coalesce``, so this layout equals
-    ``_get_k_hop_neighbors_sparse`` followed by
+    every tensor's shape independent of the data. The gathers produce the
+    candidates, hop by hop, and ``select_sequences`` turns them into sequences.
+    With the default ``ordering``, each sequence is the anchor, then every other
+    node within ``hop_distance`` hops in ascending node id, truncated to
+    ``max_seq_len``. The sparse path gets the same order from ``coalesce``, so
+    this layout equals ``_get_k_hop_neighbors_sparse`` followed by
     ``_build_sequence_layout_from_sparse_neighbors`` with the anchor moved first.
-    With ``prioritize_hop_order`` the neighbours are ordered by first-reach hop,
-    then node id, so truncation drops the farthest hops first, as in
-    ``_build_hop_ordered_sequence_layout_from_sparse_edges``.
+    With ``ordering="hop"`` the neighbours are ordered by first-reach hop, then
+    node id, so truncation drops the farthest hops first, as in
+    ``_build_hop_ordered_sequence_layout_from_sparse_edges``. With
+    ``ordering="input"`` they are ordered by first reach in the expansion: by hop,
+    then by the position of the node's parent in the previous hop, then by its
+    slot in the parent's table row.
 
     A token's hop is the hop at which it is first reached; the anchor's is 0.
 
@@ -200,45 +210,32 @@ def _khop_sequence_layout(
     """
     anchor_indices = anchor_indices.long()
     hop_bits = hop_distance.bit_length()
-    padding_key = torch.iinfo(torch.long).max
+    device = anchor_indices.device
 
-    # A candidate's sort key is ``(node << hop_bits) | hop``. It groups each node's
-    # copies with the smallest hop first, so the first copy carries the
-    # first-reach hop. Padding gets the largest key and sorts last.
+    # The candidates are laid out hop by hop, so a node's lowest column is its
+    # first-reach hop, which is the copy ``select_sequences`` keeps.
     frontier = anchor_indices.unsqueeze(1)
-    key_parts = [frontier << hop_bits]
+    candidate_parts = [frontier]
+    hop_parts = [torch.zeros(1, dtype=torch.long, device=device)]
     for hop in range(1, hop_distance + 1):
         # A -1 id selects the all -1 last row of the table.
         frontier = neighbor_table[frontier].flatten(1)
-        key_parts.append(
-            torch.where(frontier >= 0, (frontier << hop_bits) | hop, padding_key)
-        )
-    keys = torch.sort(torch.cat(key_parts, dim=1), dim=1).values
-    nodes = keys >> hop_bits
-    hops = keys & ((1 << hop_bits) - 1)
-    keep = (keys != padding_key) & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
-    if prioritize_hop_order:
-        # Re-sort the kept candidates by (hop, node id) so truncation below drops
-        # the farthest hops first.
-        node_radix = neighbor_table.size(0)
-        order_keys = torch.sort(
-            torch.where(keep, hops * node_radix + nodes, padding_key), dim=1
-        ).values
-        keep = order_keys != padding_key
-        nodes = order_keys % node_radix
-        keys = (nodes << hop_bits) | (order_keys // node_radix)
-    # The anchor goes to column 0 below; the other kept candidates are numbered
-    # from 1 and cut at ``max_seq_len``.
-    keep = keep & (nodes != anchor_indices.unsqueeze(1))
-    positions = torch.cumsum(keep, dim=1)
-    keep = keep & (positions < max_seq_len)
-    # Dropped candidates scatter into column 0, which the anchor overwrites.
-    layout = torch.full(
-        (anchor_indices.numel(), max_seq_len), -1, dtype=torch.long, device=keys.device
+        candidate_parts.append(frontier)
+        hop_parts.append(torch.full((frontier.size(1),), hop, device=device))
+    candidates = torch.cat(candidate_parts, dim=1)
+    hop_of_column = torch.cat(hop_parts)
+    if ordering == "hop":
+        priority = hop_of_column.expand_as(candidates)
+    elif ordering == "input":
+        priority = torch.arange(candidates.size(1), device=device).expand_as(candidates)
+    else:
+        priority = None
+    nodes, source, lengths = select_sequences(
+        anchor_indices, candidates, max_seq_len, priority
     )
-    layout.scatter_(1, torch.where(keep, positions, 0), keys)
-    layout[:, 0] = anchor_indices << hop_bits
-    return layout, 1 + keep.sum(dim=1), hop_bits
+    hops = hop_of_column[source.clamp(min=0)]
+    layout = torch.where(nodes >= 0, (nodes << hop_bits) | hops, -1)
+    return layout, lengths, hop_bits
 
 
 def khop_layout(
@@ -249,7 +246,7 @@ def khop_layout(
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
-    prioritize_hop_order: bool = False,
+    ordering: KhopOrdering = "node_id",
 ) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
     """Builds the k-hop token layout of every anchor; the entry point of this module.
 
@@ -269,15 +266,19 @@ def khop_layout(
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
         max_candidates: Maximum number of candidates plus neighbour-table cells; see
             ``MAX_LAYOUT_CANDIDATES``.
-        prioritize_hop_order: Order neighbours by hop before node id.
+        ordering: How neighbours are ordered, and so which are cut at
+            ``max_seq_len``: ``"node_id"`` by ascending node id, ``"hop"`` by
+            first-reach hop and then node id, ``"input"`` by first reach in the
+            expansion (hop, then the parent's position, then the slot in the
+            parent's neighbour-table row, which follows the edge order).
 
     Returns:
         - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell packs
           a token's local node id and first-reach hop as
           ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
           ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
-          followed by its neighbours within ``hop_distance`` hops, in ascending
-          node id (or by hop, then node id, with ``prioritize_hop_order``). The
+          followed by its neighbours within ``hop_distance`` hops in the
+          ``ordering`` order. The
           hop is the fewest hops from the anchor to the node. Cells at and after
           the sequence length are -1, so only decode the valid ones.
         - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
@@ -285,13 +286,18 @@ def khop_layout(
         - ``hop_bits``: Python int, ``hop_distance.bit_length()``.
 
     Raises:
-        ValueError: If ``sampling_direction`` is not ``"in"`` or ``"out"``.
+        ValueError: If ``sampling_direction`` is not ``"in"`` or ``"out"``, or
+            ``ordering`` is not ``"node_id"``, ``"hop"`` or ``"input"``.
         KhopLayoutTooLargeError: If the table cells plus candidates exceed ``max_candidates``.
     """
     if sampling_direction not in {"in", "out"}:
         raise ValueError(
             "sampling_direction must be one of {'in', 'out'}, "
             f"got '{sampling_direction}'."
+        )
+    if ordering not in {"node_id", "hop", "input"}:
+        raise ValueError(
+            f"ordering must be one of {{'node_id', 'hop', 'input'}}, got '{ordering}'."
         )
     neighbor_table = _build_neighbor_table(
         edge_index,
@@ -306,7 +312,7 @@ def khop_layout(
         anchor_indices,
         hop_distance,
         max_seq_len,
-        prioritize_hop_order,
+        ordering,
     )
 
 
@@ -318,7 +324,7 @@ def pack_khop_layout(
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
-    prioritize_hop_order: bool = False,
+    ordering: KhopOrdering = "node_id",
 ) -> PackedLayout:
     """Builds the k-hop token layout of every anchor and packs it.
 
@@ -337,7 +343,7 @@ def pack_khop_layout(
         max_seq_len,
         sampling_direction=sampling_direction,
         max_candidates=max_candidates,
-        prioritize_hop_order=prioritize_hop_order,
+        ordering=ordering,
     )
     return pack_sequences(
         lengths,

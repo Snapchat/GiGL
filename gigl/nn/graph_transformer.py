@@ -2188,6 +2188,10 @@ class GraphTransformerEncoder(nn.Module):
             message mode is on, or None if the batch's k-hop candidate set is too large to lay
             out.
         """
+        if self._prioritize_hop_order:
+            ordering = "hop"
+        else:
+            ordering = "node_id"
         try:
             layout = pack_khop_layout(
                 edge_index,
@@ -2196,7 +2200,7 @@ class GraphTransformerEncoder(nn.Module):
                 hop_distance=self._hop_distance,
                 max_seq_len=self._max_seq_len,
                 sampling_direction=self._sampling_direction,
-                prioritize_hop_order=self._prioritize_hop_order,
+                ordering=ordering,
             )
         except KhopLayoutTooLargeError as error:
             self._record_packed_fallback(error)
