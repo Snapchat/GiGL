@@ -117,16 +117,13 @@ gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 # ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
 # is on PATH when the build runs, so the PyPI binary is found.
 glt-build-backend = ["ninja"]
-# The GCP client libraries gigl imports directly, without Beam, TensorFlow, or torch. For scripts that
-# run on a bare CI runner: `uv run --frozen --only-group gcp python <script>` with PYTHONPATH set to the
-# checkout gives them gigl.common.services without installing the project.
-gcp = [
+# What the GitHub Actions scripts under .github/scripts import, without the project, Beam, TensorFlow, or
+# torch: `uv run --frozen --only-group gh-actions python <script>` with PYTHONPATH set to the checkout
+# gives them gigl.common.services.vertex_ai and gigl.common.logger on a bare runner. Add a package here
+# only when a script needs it; these must also stay in [project].dependencies.
+gh-actions = [
   "google-cloud-aiplatform",
-  "google-cloud-bigquery",
-  "google-cloud-dataflow-client",
-  "google-cloud-dataproc",
   "google-cloud-logging",
-  "google-cloud-storage",
 ]
 dev = [
   { include-group = "gigl-core-build-backend" },
