@@ -14,6 +14,11 @@ Arguments:
         --test_names: [Optional] Test name to run from the test spec file. The value can be repeated for running multiple tests.
             If not provided, all tests in the spec files will be run.
             Example: --test_names=cora_glt_udl_test_on --test_names=cora_nalp_test_on
+        --fail_fast: [Optional] Cancel the other pipeline runs as soon as one fails. Off by default, so a
+            run reports every failing pipeline. CI's merge queue turns it on to free capacity.
+
+    If the GITHUB_RUN_ID environment variable is set, every pipeline run gets a `github_run_id` label
+    with that value so CI can find and cancel the runs of a cancelled workflow.
 
 The test_spec_uri is a yaml file of the following format:
     ```yaml
@@ -45,6 +50,7 @@ Examples:
 """
 
 import argparse
+import os
 import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
@@ -109,11 +115,15 @@ class E2ETestsSpec:
 def run_all_e2e_tests(
     tests: dict[str, E2ETest],
     compiled_pipeline_path: Uri,
+    fail_fast: bool = False,
 ) -> None:
     orchestrator = KfpOrchestrator()
     runs_to_wait_on: list[PipelineJob] = []
+    github_run_id = os.environ.get("GITHUB_RUN_ID")
     for job_name, job in tests.items():
         full_job_name = f"{job_name}{job.name_suffix}"
+        if github_run_id:
+            job.run_labels["github_run_id"] = github_run_id
         logger.info(f"Compiling and running job: {full_job_name}")
         logger.info(
             textwrap.dedent(
@@ -149,7 +159,7 @@ def run_all_e2e_tests(
             runs_to_wait_on.append(pipeline_job)
 
     if runs_to_wait_on:
-        orchestrator.wait_for_completion(runs_to_wait_on)
+        orchestrator.wait_for_completion(runs_to_wait_on, fail_fast=fail_fast)
 
 
 if __name__ == "__main__":
@@ -174,6 +184,11 @@ if __name__ == "__main__":
         help="""Optional names of specific tests to run. If not provided, all tests in the spec files will be run.
         Example: --test_names=cora_glt_udl_test --test_names=cora_nalp_test""",
     )
+    parser.add_argument(
+        "--fail_fast",
+        action="store_true",
+        help="Cancel the other pipeline runs as soon as one fails.",
+    )
 
     args = parser.parse_args()
     logger.info(f"Starting e2e tests with args: {args}")
@@ -196,4 +211,5 @@ if __name__ == "__main__":
     run_all_e2e_tests(
         tests=filtered_tests,
         compiled_pipeline_path=compiled_pipeline_path,
+        fail_fast=args.fail_fast,
     )
