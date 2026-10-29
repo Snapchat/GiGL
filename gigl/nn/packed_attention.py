@@ -51,7 +51,7 @@ Constraints:
     path on the GPU instead, which costs ``num_sequences * max_seq_len`` rows of
     attention work rather than only the real tokens, and holds a dense
     ``num_sequences x num_heads x query_len x max_seq_len`` bias plus the same-sized
-    scores.
+    scores, rebuilt in every layer.
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
@@ -113,7 +113,7 @@ from typing import Callable, NamedTuple, Optional, cast
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int32
+from jaxtyping import Bool, Float, Int32
 from torch import Tensor
 
 from gigl.transforms.static_khop import PackedLayout
@@ -269,31 +269,24 @@ class PackedAttentionBias(NamedTuple):
             is ``max_seq_len``, or 1 when the queries are the first tokens
             (``query_is_first_token``); a ``max_seq_len``-row grid is also
             accepted then, and only its first row is used.
-        grid: The full additive bias on the padded grid, as ``dense_attention_bias``
-            builds it: padded-key mask, ``per_key`` and ``per_pair`` already
-            combined, shaped ``[num_sequences, num_heads or 1, query_len or 1,
-            max_seq_len]`` with the same first-row rule as ``per_pair``. When set,
-            the padded SDPA path uses it as is and ignores ``per_key`` and
-            ``per_pair``, so a caller that runs several layers builds it once.
     """
 
     per_key: Optional[Float[Tensor, "num_tokens num_heads"]] = None
     per_pair: Optional[
         Float[Tensor, "num_sequences num_heads max_seq_len max_seq_len"]
     ] = None
-    grid: Optional[Tensor] = None
 
 
-def dense_attention_bias(
+def _dense_attention_bias(
     layout: PackedLayout,
     bias: Optional[PackedAttentionBias],
+    valid: Bool[Tensor, "num_sequences max_seq_len"],
     dtype: torch.dtype,
     query_len: int,
 ) -> Tensor:
     """Builds the additive score bias on the padded grid.
 
-    Returns ``bias.grid`` sliced to its first ``query_len`` rows when that is set.
-    Otherwise starts from the padding mask, ``finfo.min / 2`` on invalid keys, shaped
+    Starts from the padding mask, ``finfo.min / 2`` on invalid keys, shaped
     ``[num_sequences, 1, 1, max_seq_len]``. Adds ``bias.per_key`` scattered onto
     the grid as ``[num_sequences, num_heads, 1, max_seq_len]`` and
     ``bias.per_pair`` as ``[num_sequences, num_heads, query_len, max_seq_len]``,
@@ -301,12 +294,6 @@ def dense_attention_bias(
     ``query_len`` rows when it has more. The result broadcasts against the
     scores; a dense grid is only built when ``per_pair`` is present.
     """
-    if bias is not None and bias.grid is not None:
-        return bias.grid[:, :, :query_len, :].to(dtype)
-    lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
-    valid = torch.arange(layout.max_seq_len, device=lengths.device) < lengths.unsqueeze(
-        1
-    )
     attn_bias = torch.zeros(valid.shape, dtype=dtype, device=valid.device)
     attn_bias = attn_bias.masked_fill(~valid, torch.finfo(dtype).min / 2.0)
     attn_bias = attn_bias.view(valid.size(0), 1, 1, valid.size(1))
@@ -364,6 +351,7 @@ def _padded_packed_attention(
     lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
     num_sequences = lengths.numel()
     max_seq_len = layout.max_seq_len
+    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
 
     def to_grid(tokens: Tensor) -> Tensor:
         """``[tokens, heads, dim]`` to ``[num_sequences, heads, max_seq_len, dim]``, zeros in padding."""
@@ -381,7 +369,7 @@ def _padded_packed_attention(
         query_grid,
         to_grid(key),
         to_grid(value),
-        attn_mask=dense_attention_bias(layout, bias, query.dtype, query_len),
+        attn_mask=_dense_attention_bias(layout, bias, valid, query.dtype, query_len),
         dropout_p=dropout_p,
     )
     if query_is_first_token:
@@ -411,8 +399,8 @@ def packed_attention(
 
     Args and returns are as in ``_padded_packed_attention``.
     """
-    has_grid = bias is not None and (bias.per_pair is not None or bias.grid is not None)
-    if not query.is_cuda or has_grid or dropout_p > 0:
+    has_per_pair = bias is not None and bias.per_pair is not None
+    if not query.is_cuda or has_per_pair or dropout_p > 0:
         return _padded_packed_attention(
             query, key, value, layout, query_is_first_token, bias, dropout_p
         )

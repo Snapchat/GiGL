@@ -23,11 +23,7 @@ from torch import Tensor
 from torch_geometric.utils import softmax
 
 from gigl.common.logger import Logger
-from gigl.nn.packed_attention import (
-    PackedAttentionBias,
-    dense_attention_bias,
-    packed_attention,
-)
+from gigl.nn.packed_attention import PackedAttentionBias, packed_attention
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
     HOP_DISTANCE_FEATURE_NAME,
@@ -670,11 +666,11 @@ class GraphTransformerEncoderLayer(nn.Module):
         bias: Optional[PackedAttentionBias],
         first_token_output: bool,
     ) -> PackedAttentionBias:
-        """Adds the relation attention scores of the edges to the dense bias grid.
+        """Adds the relation attention scores of the edges to the pair bias.
 
         Each edge adds its per-head score at (target query, source key) of its
-        sequence, on top of the padded-key mask and the incoming ``bias``. The
-        scores go into a copy, so the incoming bias is shared across layers.
+        sequence, on top of ``bias.per_pair`` when that is set. The scores go into
+        a copy, so the incoming bias is shared across layers.
 
         Args:
             query: ``(query rows, num_heads, head_dim)`` queries. Rows are indexed
@@ -683,12 +679,12 @@ class GraphTransformerEncoderLayer(nn.Module):
                 ``relation_edges.source``.
             layout: Layout of the sequences.
             relation_edges: Non-empty relation edges.
-            bias: Optional incoming bias.
+            bias: Optional incoming bias, whose ``per_key`` is kept.
             first_token_output: Whether only each sequence's first token is queried;
                 ``relation_edges.target`` is then the sequence index.
 
         Returns:
-            A bias whose ``grid`` is ``(num_sequences, num_heads, query_len,
+            A bias whose ``per_pair`` is ``(num_sequences, num_heads, query_len,
             max_seq_len)``, with ``query_len`` 1 with ``first_token_output`` and
             ``max_seq_len`` otherwise.
         """
@@ -698,13 +694,18 @@ class GraphTransformerEncoderLayer(nn.Module):
             query_len = 1
         else:
             query_len = layout.max_seq_len
-        grid = query.new_empty(
-            layout.cu_seqlens.numel() - 1,
-            self._num_heads,
-            query_len,
-            layout.max_seq_len,
-        )
-        grid.copy_(dense_attention_bias(layout, bias, query.dtype, query_len))
+        per_key = None
+        if bias is not None:
+            per_key = bias.per_key
+        if bias is not None and bias.per_pair is not None:
+            grid = bias.per_pair[:, :, :query_len, :].to(query.dtype, copy=True)
+        else:
+            grid = query.new_zeros(
+                layout.cu_seqlens.numel() - 1,
+                self._num_heads,
+                query_len,
+                layout.max_seq_len,
+            )
         if first_token_output:
             query_sequence = target
             query_position = torch.zeros_like(target)
@@ -718,7 +719,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             (query_sequence, query_position, layout.position[source]),
             relation_edges.segments,
         )
-        return PackedAttentionBias(grid=grid)
+        return PackedAttentionBias(per_key=per_key, per_pair=grid)
 
     def _accumulate_relation_attention_scores(
         self,
@@ -2325,9 +2326,7 @@ class GraphTransformerEncoder(nn.Module):
         Returns:
             A per-key bias from the anchor-relative attention-bias attributes and
             a per-pair bias from the pairwise attention-bias attributes, each None
-            when there are no such attributes, or None when there is neither. With
-            a per-pair bias, the combined dense grid of padded-key mask, per-key
-            and per-pair biases is built once here for every layer to use.
+            when there are no such attributes, or None when there is neither.
 
         Raises:
             ValueError: If a pairwise attention-bias attribute is not on ``data``.
@@ -2366,11 +2365,7 @@ class GraphTransformerEncoder(nn.Module):
             )
         if per_key is None and per_pair is None:
             return None
-        bias = PackedAttentionBias(per_key=per_key, per_pair=per_pair)
-        if per_pair is None:
-            return bias
-        grid = dense_attention_bias(layout, bias, per_pair.dtype, layout.max_seq_len)
-        return PackedAttentionBias(per_key=per_key, per_pair=per_pair, grid=grid)
+        return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
 
     def _run_packed_layers(
         self,
