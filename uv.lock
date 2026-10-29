@@ -835,13 +835,9 @@ docs = [
     { name = "sphinx-tabs" },
     { name = "sphinxcontrib-mermaid" },
 ]
-gcp = [
+gh-actions = [
     { name = "google-cloud-aiplatform" },
-    { name = "google-cloud-bigquery" },
-    { name = "google-cloud-dataflow-client" },
-    { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
-    { name = "google-cloud-storage" },
 ]
 gigl-core-build-backend = [
     { name = "pybind11" },
@@ -978,13 +974,9 @@ docs = [
     { name = "sphinx-tabs", specifier = "==3.4.5" },
     { name = "sphinxcontrib-mermaid", specifier = "==2.0.2" },
 ]
-gcp = [
+gh-actions = [
     { name = "google-cloud-aiplatform" },
-    { name = "google-cloud-bigquery" },
-    { name = "google-cloud-dataflow-client" },
-    { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
-    { name = "google-cloud-storage" },
 ]
 gigl-core-build-backend = [
     { name = "pybind11", specifier = ">=2.12" },
