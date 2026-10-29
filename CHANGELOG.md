@@ -59,7 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The partitioners write each machine's node features and labels into a tensor allocated once, on disk when
   `GIGL_TENSOR_SPILL_DIR` is set, instead of joining the received chunks with `torch.cat`. Range partitioning fills it
   in node id order rather than sorting a joined copy; with spilling on, its peak anonymous memory drops from ~2x the
-  features to ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/PENDING
+  features to ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/825
 
 ### Fixed
 
