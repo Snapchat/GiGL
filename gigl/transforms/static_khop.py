@@ -3,7 +3,7 @@
 This is the layout half of the packed backend of ``GraphTransformerEncoder``. For
 every anchor it picks which nodes become its tokens (the anchor, then its
 neighbours within ``hop_distance`` hops), and ``pack_sequences`` (in
-``gigl.transforms.packed_layout``) turns the padded result into the offsets that
+``gigl.transforms.sequence_layout``) turns the padded result into the offsets that
 ``gigl.nn.packed_attention`` needs to run the transformer on real tokens only.
 
 Why this exists:
@@ -59,7 +59,7 @@ Constraints:
   - ``cu_seqlens`` is int32, so the total token count must fit in int32.
 
 Example:
-    >>> from gigl.transforms.packed_layout import pack_sequences
+    >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
     >>> layout, lengths, hop_bits = khop_layout(
     ...     edge_index,
@@ -90,7 +90,7 @@ import torch
 from jaxtyping import Int, Int64
 from torch import Tensor
 
-from gigl.transforms.packed_layout import (
+from gigl.transforms.sequence_layout import (
     PackedLayout,
     pack_sequences,
     select_sequences,

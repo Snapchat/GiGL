@@ -15,7 +15,7 @@ from gigl.nn.packed_attention import (
     _varlen_attention,
     packed_attention,
 )
-from gigl.transforms.packed_layout import pack_sequences
+from gigl.transforms.sequence_layout import pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
