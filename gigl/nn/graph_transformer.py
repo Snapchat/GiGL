@@ -38,12 +38,8 @@ from gigl.transforms.graph_transformer import (
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
 )
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    PackedSequences,
-    khop_layout,
-    pack_sequences,
-)
+from gigl.transforms.packed_layout import PackedLayout, pack_sequences
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
 
 logger = Logger()
 
@@ -500,7 +496,7 @@ class GraphTransformerEncoderLayer(nn.Module):
     def forward_packed(
         self,
         x: Float[Tensor, "tokens model_dim"],
-        packed: PackedSequences,
+        packed: PackedLayout,
         first_token_output: bool = False,
     ) -> Float[Tensor, "outputs model_dim"]:
         """Runs the layer on packed tokens (see ``gigl.nn.packed_attention``).
@@ -1950,7 +1946,8 @@ class GraphTransformerEncoder(nn.Module):
         first-reach hop as ``(node << hop_bits) | hop``, and ``hop_bits`` is 2
         here::
 
-            >>> from gigl.transforms.static_khop import khop_layout, pack_sequences
+            >>> from gigl.transforms.packed_layout import pack_sequences
+            >>> from gigl.transforms.static_khop import khop_layout
             >>> edge_index = torch.tensor([[0, 0, 1, 2, 3, 4], [1, 2, 3, 3, 4, 5]])
             >>> layout, lengths, hop_bits = khop_layout(
             ...     edge_index,
