@@ -7,8 +7,9 @@ Vertex AI pipeline runs are found by the label ``github_run_id=<run id>`` that
 Each cancelled pipeline run then runs its exit task, which cancels that run's child jobs.
 
 Runs on a GitHub runner that has gcloud and uv but not the GiGL environment, so the
-action invokes it with ``uv run --no-project --with ...`` and ``PYTHONPATH`` set to the
-checkout. Both resource kinds are attempted even if the other one fails.
+action invokes it with ``uv run --frozen --only-group gcp`` (the GCP client libraries
+from pyproject.toml) and ``PYTHONPATH`` set to the checkout. Both resource kinds are
+attempted even if the other one fails.
 
 Usage:
     python .github/scripts/cancel_ci_gcp_resources.py \

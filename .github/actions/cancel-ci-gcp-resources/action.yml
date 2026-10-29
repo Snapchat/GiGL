@@ -6,7 +6,7 @@ description: |
   Each cancelled pipeline's exit task then cancels that pipeline's own child jobs.
   Meant for a step with `if: cancelled()`. Needs gcloud to be authenticated and uv installed already (both come
   from setup-python-tools); the GiGL environment is not needed. The script and VertexAIService come from the
-  current checkout, so a checkout that predates them has no labelled runs to cancel and this step fails harmlessly.
+  current checkout. A checkout that predates them has no labelled runs to cancel, and this step fails.
 inputs:
   project:
     description: "Google Cloud project"
