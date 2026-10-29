@@ -42,12 +42,8 @@ from gigl.transforms.graph_transformer import (
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
 )
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    PackedLayout,
-    PackedRelationEdges,
-    pack_khop_layout,
-)
+from gigl.transforms.packed_layout import PackedLayout, PackedRelationEdges
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 
 logger = Logger()
 
