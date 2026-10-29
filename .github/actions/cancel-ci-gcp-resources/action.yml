@@ -29,8 +29,8 @@ runs:
         RUN_ID: ${{ inputs.github_run_id }}
         PYTHONPATH: ${{ github.workspace }}
       run: |
-        # The `gcp` dependency group (pyproject.toml) holds only the GCP client libraries, pinned by uv.lock,
-        # so this installs in seconds and skips the project itself.
-        uv run --frozen --only-group gcp \
+        # The `gh-actions` dependency group (pyproject.toml) holds only what this script imports, pinned by
+        # uv.lock, so this installs in seconds and skips the project itself.
+        uv run --frozen --only-group gh-actions \
           python .github/scripts/cancel_ci_gcp_resources.py \
           --project="${PROJECT}" --region="${REGION}" --github_run_id="${RUN_ID}"
