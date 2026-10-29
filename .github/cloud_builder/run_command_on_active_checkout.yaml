@@ -1,5 +1,9 @@
 substitutions:
   _CMD: ""
+  # GitHub Actions run id, so a cancelled workflow can find and cancel its build by tag.
+  _GITHUB_RUN_ID: "local"
+tags:
+  - "gigl-ci-run-${_GITHUB_RUN_ID}"
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:

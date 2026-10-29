@@ -102,6 +102,7 @@ runs:
         cmd: ${{ inputs.command }}
         service_account: ${{ inputs.gcp_service_account_email }}
         project: ${{ inputs.gcp_project_id }}
+        github_run_id: ${{ github.run_id }}
 
     - name: Commment workflow succeeded
       if: ${{ inputs.should_leave_progress_comments == 'true' }}

@@ -17,6 +17,9 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
+  github_run_id:
+    description: "GitHub Actions run id. Tags the build as gigl-ci-run-<id> so cancel-ci-gcp-resources can find it"
+    default: "local"
 
 
 runs:
@@ -29,10 +32,22 @@ runs:
         SERVICE_ACCOUNT: ${{ inputs.service_account }}
         MACHINE_TYPE: ${{ inputs.machine_type }}
         TIMEOUT: ${{ inputs.timeout }}
+        GITHUB_RUN_ID_INPUT: ${{ inputs.github_run_id }}
       run: |
+        CONFIG=.github/cloud_builder/run_command_on_active_checkout.yaml
+        SUBSTITUTIONS="_CMD=${CMD}"
+        # This action's code comes from the ref in `uses:`, but the config comes from the checkout.
+        # In on-pr-comment.yml, run-command-on-pr@main checks out the PR branch and then calls this
+        # action @main, so a PR branch forked before _GITHUB_RUN_ID was added to
+        # .github/cloud_builder/run_command_on_active_checkout.yaml still reaches this step. Cloud
+        # Build rejects a substitution the config does not declare ("key "_GITHUB_RUN_ID" in the
+        # substitution data is not matched in the template"), so only pass it when the config has it.
+        if grep -q "_GITHUB_RUN_ID" "${CONFIG}"; then
+          SUBSTITUTIONS="${SUBSTITUTIONS},_GITHUB_RUN_ID=${GITHUB_RUN_ID_INPUT}"
+        fi
         gcloud builds submit . \
-          --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${CMD}" \
+          --config="${CONFIG}" \
+          --substitutions="${SUBSTITUTIONS}" \
           --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
           --project="${PROJECT}" \
           --machine-type="${MACHINE_TYPE}" \
