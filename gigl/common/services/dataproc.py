@@ -135,7 +135,7 @@ class DataprocService:
         """Delete the cluster if it exists.
 
         Example:
-            >>> service.delete_cluster_if_exists("sgs-my-job")  # doctest: +SKIP
+            >>> service.delete_cluster_if_exists("sgs-my-job")
             True
 
         Args:

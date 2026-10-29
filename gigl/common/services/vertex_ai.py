@@ -473,7 +473,7 @@ class VertexAIService:
         from more than one place without special handling.
 
         Example:
-            >>> VertexAIService.cancel_pipeline_run(  # doctest: +SKIP
+            >>> VertexAIService.cancel_pipeline_run(
             ...     "projects/p/locations/us-central1/pipelineJobs/run-1"
             ... )
             True
@@ -512,7 +512,7 @@ class VertexAIService:
         :meth:`cancel_pipeline_run`.
 
         Example:
-            >>> VertexAIService.cancel_pipeline_runs_with_label(  # doctest: +SKIP
+            >>> VertexAIService.cancel_pipeline_runs_with_label(
             ...     project="my-project",
             ...     location="us-central1",
             ...     label_key="github_run_id",

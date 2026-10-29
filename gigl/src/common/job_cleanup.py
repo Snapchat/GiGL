@@ -32,7 +32,7 @@ def cancel_child_jobs(job_name: str, resource_config_uri: Uri) -> None:
     Finding nothing to cancel is not an error.
 
     Example:
-        >>> cancel_child_jobs(  # doctest: +SKIP
+        >>> cancel_child_jobs(
         ...     job_name="my_job",
         ...     resource_config_uri=GcsUri("gs://bucket/resource_config.yaml"),
         ... )
