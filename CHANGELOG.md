@@ -56,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build counts degrees, scatters edges and sorts rows with multi-threaded numba kernels when its output
   is in memory; column ids are unchanged, and a 200M-edge build on 32 threads drops from 34 s to 4 s. Adds `numba` as a
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
+- Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
+  spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
 
 ### Fixed
 
