@@ -51,7 +51,7 @@ Constraints:
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
 
 Example:
-    >>> from gigl.transforms.packed_layout import pack_sequences
+    >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
     >>> flat_index, packed = pack_sequences(lengths, max_seq_len=3)
     >>> flat_index.tolist()
@@ -101,7 +101,7 @@ from jaxtyping import Float, Int32
 from torch import Tensor
 from torch_geometric.utils import to_dense_batch
 
-from gigl.transforms.packed_layout import PackedLayout
+from gigl.transforms.sequence_layout import PackedLayout
 
 
 def _varlen_attention(
