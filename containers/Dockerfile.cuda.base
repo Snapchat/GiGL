@@ -1,15 +1,17 @@
 # syntax=docker/dockerfile:1
 
 
-FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
+# `-devel` ships nvcc, which gigl-core and GraphLearn-for-PyTorch CUDA builds need; its
+# CUDA 12.8 toolkit has to match the cu128 torch wheels in uv.lock. The base's own torch
+# and Python are unused: requirements/install_py_deps.sh builds the venv at /gigl_deps/.venv.
+# The base must export /usr/local/nvidia/lib and /usr/local/nvidia/lib64 on LD_LIBRARY_PATH,
+# where the container runtime mounts the host GPU driver (pytorch/pytorch images do,
+# nvidia/cuda images do not); `scripts/smoke_test_image.py --image-type cuda` asserts it.
+ARG BASE_IMAGE=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
+FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Already has python 3.11 installed - no need to install it again.
-# We use system python since it has packages pre-installed for us.
-ENV UV_SYSTEM_PYTHON=true
-ENV UV_PROJECT_ENVIRONMENT=/opt/conda/
 
 # Install basic dependencies
 # TODO(mkolodner-sc): iputils-ping temporarily needed to setup inter-job VAI communication for GLT Inference.
@@ -40,12 +42,24 @@ COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
 
+# The Python version this image's venv is built on, e.g. 3.13.15. Required.
+ARG PYTHON_VERSION
+# Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
+# uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
+ENV UV_PYTHON=${PYTHON_VERSION}
 # The wheel cache only helps repeated installs on one machine; an image build is one-shot. post_install.py
 # also turns it off when running as root, but say so explicitly so no wheel is ever written into the layer.
-RUN GIGL_GLT_WHEEL_CACHE=0 bash ./requirements/install_py_deps.sh
+# only-managed keeps uv from settling for a system Python that matches the request.
+RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
+    && GIGL_GLT_WHEEL_CACHE=0 UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh
 
-# Note: Since we are using system python, we dont need to create a virtual environment here unlike the
-# cpu base image.
+# The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
+# Since the above command should have created the .venv, we activate by default for any future uv commands.
+# We also need to set VIRTUAL_ENV so pip envocations can find the virtual environment.
+ENV UV_PROJECT_ENVIRONMENT=/gigl_deps/.venv
+ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
+# We just created a virtual environment, lets add the bin to the path
+ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
 

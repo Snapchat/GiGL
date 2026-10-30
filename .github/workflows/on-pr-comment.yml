@@ -39,11 +39,63 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         message: ${{ steps.parse_commands.outputs.help_message }}
 
+  # Reads SUPPORTED_PYTHON_VERSIONS and the comment to pick the unit-test and e2e legs. GitHub rejects
+  # `matrix` in a job-level `if`, so the matrix jobs read their legs from this job's outputs. The scripts
+  # run from the default branch; the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as
+  # data. `contains( github.event.comment.body, ...)` has a space after `(` because `/help` lists the
+  # first `contains(github.event.comment.body, '<command>')` of every job `if`, and this job is not a command.
+  plan:
+    name: Plan the Python and E2E test matrices
+    if: ${{ github.event.issue.pull_request && (contains( github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains( github.event.comment.body, '/all_test') || contains( github.event.comment.body, '/e2e_test')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Only for the failure comment below.
+      pull-requests: write
+    outputs:
+      minors: ${{ steps.versions.outputs.minors }}
+      matrix: ${{ steps.e2e.outputs.matrix }}
+    steps:
+    - name: Checkout default branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Fetch the PR's version files
+      env:
+        PR_NUMBER: ${{ github.event.issue.number }}
+      run: |
+        git fetch --depth=1 origin "pull/${PR_NUMBER}/head"
+        mkdir -p "${RUNNER_TEMP}/pr/gigl"
+        git show FETCH_HEAD:gigl/dep_vars.env > "${RUNNER_TEMP}/pr/gigl/dep_vars.env"
+        git show FETCH_HEAD:.python-version > "${RUNNER_TEMP}/pr/.python-version"
+
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
+
+    - name: Plan E2E matrix
+      id: e2e
+      env:
+        COMMENT_BODY: ${{ github.event.comment.body }}
+      run: python3 .github/scripts/e2e_matrix.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
+
+    - name: Comment that the plan failed
+      if: ${{ failure() }}
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: "Could not read `SUPPORTED_PYTHON_VERSIONS` or `.python-version` from this PR, so no tests started. Merge `main` into this PR and comment again. Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
   unit-test-python:
+    needs: plan
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-24.04
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(needs.plan.outputs.minors) }}
     steps:
     - name: Run Python Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -51,7 +103,7 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python Unit Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} Unit Test"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
@@ -61,6 +113,7 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         command: |
           make unit_test_py
 
@@ -125,25 +178,34 @@ jobs:
             # Immutable per-run image tag so concurrent runs can't overwrite each other's tag.
             make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
+  # `/e2e_test all` (exactly one space) runs every supported Python minor; `/e2e_test` and
+  # `/all_test` run only the default one. The non-default minors run the in-memory (GLT)
+  # pipelines only.
   integration-e2e-test:
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-    - name: Run E2E Tests
+    - name: Run E2E Tests (`/e2e_test all` adds the GLT pipelines on every other Python minor)
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "E2E Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} E2E Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         command: |
-          make run_all_e2e_tests
+          make ${{ matrix.target }}
 
   notebooks-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
