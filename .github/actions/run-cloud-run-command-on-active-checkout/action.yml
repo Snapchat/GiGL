@@ -18,7 +18,7 @@ inputs:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
   github_run_id:
-    description: "GitHub Actions run id. Tags the build as gigl-ci-run-<id> so cancel-ci-gcp-resources can find it"
+    description: "GitHub Actions run id. Tags the build as gigl-ci-run-<id> so cancel-ci-gcp-resources can find it (see gigl/src/common/constants/ci.py)"
     default: "local"
 
 
