@@ -5,7 +5,7 @@ scope are the standard library. The packages to assert are named by the caller t
 ``--imports`` and imported dynamically; importing ``gigl`` here would make the script
 unusable for the images it exists to check.
 
-The caller declares the import set because the images do not ship the same packages:
+The import set differs per image, because the images do not ship the same packages:
 
   - Base images install ``gigl-core`` from a build manifest carrying no C++ sources, so
     ``gigl_core`` is a metadata-only distribution there and does not import. Only a
@@ -19,8 +19,8 @@ The caller declares the import set because the images do not ship the same packa
 
 Every check raises on mismatch, so a zero exit status is the only signal of success.
 
-``--image-type`` bundles the checks for one image kind; ``--imports`` and the other flags
-add to or override the preset, so a caller can still state a different package set.
+``--image-type`` selects the checks for one image kind. Without it, ``--imports`` names the
+packages to import and only the interpreter and the venv are checked.
 
 The cuda preset checks without a GPU that torch and ``graphlearn_torch`` are CUDA builds
 and that the driver mount points are on ``LD_LIBRARY_PATH``; ``--cuda`` adds the checks
@@ -31,10 +31,9 @@ Example:
 
         $ python scripts/smoke_test_image.py --image-type cuda --python 3.11
 
-    Inside a Dataflow base image, with the Beam version the workers must match::
+    Inside a Dataflow base image::
 
-        $ python scripts/smoke_test_image.py --image-type dataflow --python 3.11 \
-            --beam 2.56.0
+        $ python scripts/smoke_test_image.py --image-type dataflow --python 3.11
 
     Inside a src image, or on a developer checkout where the venv path varies by
     checkout and so cannot be asserted::
@@ -56,23 +55,13 @@ import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 
-SUPPORTED_PYTHON_VERSIONS: list[str] = ["3.11", "3.12", "3.13"]
-
-# The packages GiGL images install outside of GiGL's own source tree. Restricting
-# --imports to this set turns a typo into a usage error instead of a failing import that
-# reads like a broken image.
-CHECKABLE_IMPORTS: list[str] = [
-    "torch",
-    "graphlearn_torch",
-    "gigl_core",
-    "apache_beam",
-    "torchrec",
-]
-
 
 @dataclass(frozen=True)
 class ImagePreset:
-    """The checks one image kind adds on top of the Python, venv and glibc checks."""
+    """The checks one image kind adds on top of the Python, venv and glibc checks.
+
+    Every preset also checks the venv prefix and glibc floor below.
+    """
 
     imports: list[str]
     require_nvidia_driver_path: bool = False
@@ -299,20 +288,6 @@ def check_nvidia_driver_path() -> None:
     print(f"OK  LD_LIBRARY_PATH contains {NVIDIA_DRIVER_LIB_DIRS}")
 
 
-def check_beam(beam_version: str) -> None:
-    """Asserts the installed Apache Beam matches the version the worker harness expects.
-
-    Args:
-        beam_version (str): Exact expected value of ``apache_beam.__version__``.
-
-    Raises:
-        AssertionError: When the installed version differs.
-    """
-    import apache_beam
-
-    assert_equal("apache_beam.__version__", beam_version, apache_beam.__version__)
-
-
 def check_boot_env() -> None:
     """Asserts the Beam boot harness is told to use the image's own environment.
 
@@ -367,55 +342,22 @@ def parse_imports(raw: str) -> list[str]:
         list[str]: The requested import names, in the order given.
 
     Raises:
-        argparse.ArgumentTypeError: When the value is empty or names a package outside
-            ``CHECKABLE_IMPORTS``.
+        argparse.ArgumentTypeError: When the value names no package.
     """
     module_names = [part.strip() for part in raw.split(",") if part.strip()]
     if not module_names:
         raise argparse.ArgumentTypeError("expected at least one import name")
-    unknown = [name for name in module_names if name not in CHECKABLE_IMPORTS]
-    if unknown:
-        raise argparse.ArgumentTypeError(
-            f"unknown import name(s) {unknown}; choose from {CHECKABLE_IMPORTS}"
-        )
     return module_names
 
 
-def apply_image_type(args: argparse.Namespace) -> None:
-    """Folds the ``--image-type`` preset into ``args`` in place.
-
-    Preset imports come first and ``--imports`` adds to them; the other presets turn
-    flags on, and an explicit ``--venv-prefix`` or ``--min-glibc`` replaces the preset's.
-
-    Args:
-        args (argparse.Namespace): Parsed arguments; ``image_type`` may be ``None``.
-    """
-    if args.image_type is None:
-        return
-    preset = IMAGE_TYPE_PRESETS[args.image_type]
-    imports = list(preset.imports)
-    if args.image_type == "cuda" and args.cuda:
-        imports += CUDA_HOST_IMPORTS
-    args.imports = imports + [
-        name for name in args.imports or [] if name not in imports
-    ]
-    args.require_nvidia_driver_path |= preset.require_nvidia_driver_path
-    args.require_cuda_build |= preset.require_cuda_build
-    args.boot_env |= preset.boot_env
-    if args.venv_prefix is None:
-        args.venv_prefix = IMAGE_VENV_PREFIX
-    if args.min_glibc is None:
-        args.min_glibc = IMAGE_MIN_GLIBC
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parses the command line and resolves ``--image-type`` into concrete checks.
+    """Parses the command line.
 
     Args:
         argv (list[str] | None): Arguments to parse; ``sys.argv[1:]`` when ``None``.
 
     Returns:
-        argparse.Namespace: Arguments with ``imports`` populated.
+        argparse.Namespace: Arguments with exactly one of ``image_type`` and ``imports`` set.
     """
     parser = argparse.ArgumentParser(
         description="Assert that the current environment matches a GiGL image contract."
@@ -423,30 +365,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--python",
         required=True,
-        choices=SUPPORTED_PYTHON_VERSIONS,
-        help="Python minor version the environment must be running.",
+        help="Python minor version the environment must be running, e.g. 3.11.",
     )
     parser.add_argument(
         "--image-type",
         choices=list(IMAGE_TYPE_PRESETS),
         default=None,
-        help="Image kind whose imports and checks to apply. The other flags add to or "
-        "override this preset.",
+        help="Image kind whose imports and checks to apply.",
     )
     parser.add_argument(
         "--imports",
         type=parse_imports,
         default=None,
-        help="Comma-separated packages the environment must be able to import, chosen "
-        f"from {','.join(CHECKABLE_IMPORTS)}. Required without --image-type: image "
-        "package sets differ, so the caller states which one it expects. With "
-        "--image-type, adds to the preset's imports.",
-    )
-    parser.add_argument(
-        "--venv-prefix",
-        default=None,
-        help="Directory the interpreter must live under, e.g. /gigl_deps/.venv. Omit "
-        "outside images, where the venv path varies by checkout.",
+        help="Comma-separated packages the environment must be able to import, e.g. "
+        "torch,gigl_core. Required without --image-type, which brings its own imports.",
     )
     parser.add_argument(
         "--cuda",
@@ -454,37 +386,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Also require a working CUDA runtime and a CUDA-enabled graphlearn_torch. "
         "With --image-type cuda, also imports torchrec.",
     )
-    parser.add_argument(
-        "--require-nvidia-driver-path",
-        action="store_true",
-        help="Also require the GPU driver mount points to be on LD_LIBRARY_PATH. Needs "
-        "no GPU, so it is usable as a build-time gate.",
-    )
-    parser.add_argument(
-        "--require-cuda-build",
-        action="store_true",
-        help="Also require torch and graphlearn_torch to be CUDA builds. Needs no GPU, "
-        "so it is usable as a build-time gate; --cuda implies it.",
-    )
-    parser.add_argument(
-        "--beam",
-        default=None,
-        help="Exact apache_beam version the environment must have installed.",
-    )
-    parser.add_argument(
-        "--boot-env",
-        action="store_true",
-        help="Also require RUN_PYTHON_SDK_IN_DEFAULT_ENVIRONMENT=1.",
-    )
-    parser.add_argument(
-        "--min-glibc",
-        default=None,
-        help="Lowest glibc version the image may ship, e.g. 2.39.",
-    )
     args = parser.parse_args(argv)
-    if args.image_type is None and args.imports is None:
-        parser.error("--imports is required unless --image-type is given")
-    apply_image_type(args)
+    if (args.image_type is None) == (args.imports is None):
+        parser.error("exactly one of --image-type and --imports is required")
     return args
 
 
@@ -495,24 +399,25 @@ def main() -> None:
         AssertionError: When any check fails.
     """
     args = parse_args()
+    preset = IMAGE_TYPE_PRESETS[args.image_type] if args.image_type else None
+    imports = preset.imports if preset else args.imports
+    if args.image_type == "cuda" and args.cuda:
+        imports = imports + CUDA_HOST_IMPORTS
 
     check_python(python_version=args.python)
-    if args.venv_prefix is not None:
-        check_venv_prefix(venv_prefix=args.venv_prefix)
-    if args.min_glibc is not None:
-        check_min_glibc(min_glibc=args.min_glibc)
+    if preset:
+        check_venv_prefix(venv_prefix=IMAGE_VENV_PREFIX)
+        check_min_glibc(min_glibc=IMAGE_MIN_GLIBC)
     # Ahead of the imports: torchrec fails on a missing libcuda.so.1, and naming the
     # unset path first explains why.
-    if args.require_nvidia_driver_path:
+    if preset and preset.require_nvidia_driver_path:
         check_nvidia_driver_path()
-    check_imports(module_names=args.imports)
-    if args.require_cuda_build or args.cuda:
+    check_imports(module_names=imports)
+    if (preset and preset.require_cuda_build) or args.cuda:
         check_cuda_build()
     if args.cuda:
         check_cuda()
-    if args.beam is not None:
-        check_beam(beam_version=args.beam)
-    if args.boot_env:
+    if preset and preset.boot_env:
         check_boot_env()
 
     print("All checks passed.")
