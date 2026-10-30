@@ -272,6 +272,24 @@ depends on context:
 
 Do not blindly make tests pass. Read the test, read the diff that broke it, and choose the appropriate fix.
 
+## Worktrees
+
+When directed to work with worktrees, create them under `.worktrees/` (gitignored):
+
+```bash
+git worktree add .worktrees/<name> -b <user>/<name> main
+cd .worktrees/<name>
+make install_dev_deps SKIP_SCALA=1   # each worktree needs its own .venv — never run `uv sync` directly
+```
+
+`SKIP_SCALA=1` skips downloading the Spark/sbt toolchain, which only the legacy Scala components need; drop it if the
+work touches `scala/` or `scala_spark35/`. GraphLearn-for-PyTorch wheels are cached per machine under
+`~/.cache/gigl/glt-wheels/` (override with `GIGL_GLT_WHEEL_CACHE_DIR`), so after the first environment on a machine
+`install_dev_deps` installs the cached wheel instead of recompiling. Set `GIGL_GLT_WHEEL_CACHE=0` to disable the cache;
+it is off automatically when `CI` is set or when running as root. Every hit, miss and publish logs the wheel's sha256.
+
+Cleanup: `git worktree remove .worktrees/<name>`.
+
 ## Plan Documents
 
 Plan documents live in `docs/plans/` and must be date-prefixed using the format `YYYYMMDD-<short-description>.md` (e.g.,
