@@ -1,3 +1,4 @@
+import importlib.util
 import re
 import tomllib
 from pathlib import Path
@@ -7,9 +8,13 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 DEP_VARS_FILE_PATH = Path.joinpath(REPO_ROOT, "gigl", "dep_vars.env")
 
 
-def _minor(version: str) -> tuple[int, int]:
-    major, minor = version.split(".")[:2]
-    return int(major), int(minor)
+def _load_supported_python_versions_script():
+    script = REPO_ROOT / ".github" / "scripts" / "supported_python_versions.py"
+    spec = importlib.util.spec_from_file_location("supported_python_versions", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _read_dep_vars(repo_root: Path) -> dict[str, str]:
@@ -21,15 +26,17 @@ def _read_dep_vars(repo_root: Path) -> dict[str, str]:
 
 
 def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
-    """`SUPPORTED_PYTHON_VERSIONS` must agree with the classifiers, `requires-python` and `.python-version`."""
-    values = _read_dep_vars(repo_root)
-    versions = values["SUPPORTED_PYTHON_VERSIONS"].split(",")
-    minors = sorted({_minor(version) for version in versions})
-    minor_strings = [
-        f"{major}.{minor}" for major, minor in minors
-    ]  # numerically sorted
+    """`SUPPORTED_PYTHON_VERSIONS` must agree with the classifiers and `requires-python`.
+
+    Parsing the list and the `.python-version` rule come from `.github/scripts/supported_python_versions.py`.
+    """
+    script = _load_supported_python_versions_script()
+    versions = script.read_supported_versions(repo_root)
+    script.read_default_minor(repo_root, versions)
+    minor_strings = [script.minor_of(version) for version in versions]
     # 3.11.14,3.12.14,3.13.15 -> ">=3.11,<3.14"
-    expected_requires = f">={minor_strings[0]},<{minors[-1][0]}.{minors[-1][1] + 1}"
+    last_major, last_minor = minor_strings[-1].split(".")
+    expected_requires = f">={minor_strings[0]},<{last_major}.{int(last_minor) + 1}"
 
     for pyproject_path in ("pyproject.toml", "gigl-core/pyproject.toml"):
         project = tomllib.loads((repo_root / pyproject_path).read_text())["project"]
@@ -43,7 +50,7 @@ def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
                     )
                 )
             ),
-            key=_minor,
+            key=lambda minor: tuple(int(part) for part in minor.split(".")),
         )
         assert classifier_minors == minor_strings, (
             f"{pyproject_path} classifiers {classifier_minors} != SUPPORTED_PYTHON_VERSIONS minors {minor_strings}"
@@ -51,11 +58,6 @@ def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
         assert project["requires-python"] == expected_requires, (
             f"{pyproject_path} requires-python {project['requires-python']} != {expected_requires}"
         )
-
-    default = (repo_root / ".python-version").read_text().strip()
-    assert default in versions, (
-        f".python-version {default} is not in SUPPORTED_PYTHON_VERSIONS {versions}"
-    )
 
 
 # Key family -> the suffix its value must end with after the `-py<XY>` tag.

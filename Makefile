@@ -91,6 +91,7 @@ install_deps:
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
 	uv run python tests/config_tests/glt_patches_check.py
+	uv run python tests/config_tests/beam_sdk_image_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
@@ -319,12 +320,18 @@ run_hom_cora_snc_e2e_test:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
 
+# Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
+run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
+run_glt_e2e_tests: run_all_e2e_tests
 
 # Builds and pushes this minor's 3 release src images (cuda, cpu, cpu-dataflow) and compiles and uploads its KFP
 # pipeline, using the refs under the dep_vars.env keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
