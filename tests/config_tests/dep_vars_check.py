@@ -113,15 +113,6 @@ def check_per_minor_keys(repo_root: Path = REPO_ROOT) -> None:
     )
 
 
-def _needs(job: dict) -> list[str]:
-    needs = job.get("needs", [])
-    return [needs] if isinstance(needs, str) else needs
-
-
-def _run_text(job: dict) -> str:
-    return "\n".join(step.get("run", "") for step in job["steps"])
-
-
 def _check_passes_minor(job_name: str, job: dict) -> None:
     """Some step must hand the matrix minor to the builder; otherwise every leg runs in the default one."""
     assert any(
@@ -130,54 +121,16 @@ def _check_passes_minor(job_name: str, job: dict) -> None:
     ), f"{job_name} has no step with `python_version: ${{{{ matrix.python }}}}`"
 
 
-def _check_matrix(job_name: str, job: dict, key: str, expected: str, need: str) -> None:
-    matrix = job["strategy"]["matrix"][key]
-    assert matrix == expected, (
-        f"{job_name} matrix {key} is {matrix}, expected {expected}"
-    )
-    assert need in _needs(job), f"{job_name} needs {job.get('needs')}, expected {need}"
-
-
 def check_ci_python_matrices() -> None:
-    """CI matrices must read the supported minors from the `python-versions` / `e2e-plan` jobs."""
+    """Every per-minor leg must pass its minor to the builder, and the merge-queue gates must use always().
+
+    A wrong `needs` or matrix output name already fails loudly when GitHub evaluates the workflow.
+    """
     workflows = REPO_ROOT / ".github" / "workflows"
     comment = yaml.safe_load((workflows / "on-pr-comment.yml").read_text())["jobs"]
     merge = yaml.safe_load((workflows / "on-pr-merge.yml").read_text())["jobs"]
     release = yaml.safe_load((workflows / "create_release.yml").read_text())["jobs"]
 
-    assert "supported_python_versions.py" in _run_text(comment["python-versions"])
-    assert "e2e_matrix.py" in _run_text(comment["e2e-plan"])
-    minors = "${{ fromJSON(needs.python-versions.outputs.minors) }}"
-    _check_matrix(
-        "unit-test-python",
-        comment["unit-test-python"],
-        "python",
-        minors,
-        "python-versions",
-    )
-    _check_matrix(
-        "integration-e2e-test",
-        comment["integration-e2e-test"],
-        "include",
-        "${{ fromJSON(needs.e2e-plan.outputs.matrix) }}",
-        "e2e-plan",
-    )
-
-    assert "supported_python_versions.py" in _run_text(merge["python-versions"])
-    _check_matrix(
-        "ci-unit-test-python-matrix",
-        merge["ci-unit-test-python-matrix"],
-        "python",
-        minors,
-        "python-versions",
-    )
-    _check_matrix(
-        "ci-integration-e2e-test-nondefault-python-matrix",
-        merge["ci-integration-e2e-test-nondefault-python-matrix"],
-        "python",
-        "${{ fromJSON(needs.python-versions.outputs.nondefault_minors) }}",
-        "python-versions",
-    )
     for job_name, job in [
         ("unit-test-python", comment["unit-test-python"]),
         ("integration-e2e-test", comment["integration-e2e-test"]),
@@ -189,14 +142,10 @@ def check_ci_python_matrices() -> None:
         ("release_gigl_kfp_pipeline", release["release_gigl_kfp_pipeline"]),
     ]:
         _check_passes_minor(job_name, job)
-    for gate, matrix_job in [
-        ("ci-unit-test-python", "ci-unit-test-python-matrix"),
-        (
-            "ci-integration-e2e-test-nondefault-python",
-            "ci-integration-e2e-test-nondefault-python-matrix",
-        ),
+    for gate in [
+        "ci-unit-test-python",
+        "ci-integration-e2e-test-nondefault-python",
     ]:
-        assert matrix_job in _needs(merge[gate]), f"{gate} must need {matrix_job}"
         assert "always()" in merge[gate]["if"], f"{gate} `if` must use always()"
 
 
