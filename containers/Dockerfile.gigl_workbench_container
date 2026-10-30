@@ -5,8 +5,10 @@ SHELL ["/bin/bash", "-c"]
 
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ARG ENVIRONMENT_NAME="gigl"
-ARG PYTHON_VERSION="3.9"
-RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_VERSION} -y
+# RUN steps see this ARG as an environment variable, so `make install_deps` builds the venv on the
+# same minor that micromamba installs.
+ARG PYTHON_MINOR="3.11"
+RUN micromamba create -n ${ENVIRONMENT_NAME} -c conda-forge python=${PYTHON_MINOR} -y
 
 ENV PATH=/opt/micromamba/envs/${ENVIRONMENT_NAME}/bin:$PATH
 

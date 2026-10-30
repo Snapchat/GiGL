@@ -82,7 +82,6 @@ def build_and_push_image(
     image_name: str,
     dockerfile_path: str,
     context_path: str,
-    multi_arch: bool = False,
 ) -> None:
     """
     Builds and pushes a Docker image.
@@ -92,31 +91,20 @@ def build_and_push_image(
         image_name (str): The name of the Docker image to build and push.
         dockerfile_path (str): The path to the Dockerfile to use for the build.
         context_path (str): The path to the context to use for the build.
-        multi_arch (bool): Whether to build a multi-architecture Docker image. Defaults to False.
     """
 
-    if multi_arch:
-        build_command = [
-            "docker",
-            "buildx",
-            "build",
-            "--platform",
-            "linux/amd64,linux/arm64",
-            "-f",
-            str(dockerfile_path),
-            "-t",
-            image_name,
-            "--push",
-        ]
-    else:
-        build_command = [
-            "docker",
-            "build",
-            "-f",
-            str(dockerfile_path),
-            "-t",
-            image_name,
-        ]
+    # GiGL's runtime images and their locked Linux dependencies are amd64-only, so the
+    # build targets amd64 even on an arm64 host.
+    build_command = [
+        "docker",
+        "build",
+        "--platform",
+        "linux/amd64",
+        "-f",
+        str(dockerfile_path),
+        "-t",
+        image_name,
+    ]
 
     if base_image:
         build_command.extend(["--build-arg", f"BASE_IMAGE={base_image}"])
@@ -130,10 +118,8 @@ def build_and_push_image(
         logger.error(f"Command failed: {' '.join(build_command)}")
         raise RuntimeError(f"Docker build failed with exit code {returncode}")
 
-    # Push image if it's not a multi-arch build (multi-arch images are pushed in the build step)
-    if not multi_arch:
-        push_command = ["docker", "push", image_name]
-        returncode = run_command_and_stream_stdout(" ".join(push_command))
-        if returncode != 0:
-            logger.error(f"Command failed: {' '.join(push_command)}")
-            raise RuntimeError(f"Docker push failed with exit code {returncode}")
+    push_command = ["docker", "push", image_name]
+    returncode = run_command_and_stream_stdout(" ".join(push_command))
+    if returncode != 0:
+        logger.error(f"Command failed: {' '.join(push_command)}")
+        raise RuntimeError(f"Docker push failed with exit code {returncode}")
