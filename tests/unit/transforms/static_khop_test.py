@@ -1,5 +1,6 @@
 """The fixed-shape k-hop layout equals the sparse k-hop layout."""
 
+import doctest
 import itertools
 from typing import Any, Literal
 from unittest import mock
@@ -7,6 +8,7 @@ from unittest import mock
 import torch
 from absl.testing import absltest
 
+from gigl.transforms import sequence_layout, static_khop
 from gigl.transforms.graph_transformer import (
     _build_hop_ordered_sequence_layout_from_sparse_edges,
     _build_sequence_layout_from_sparse_neighbors,
@@ -307,6 +309,7 @@ class StaticKhopLayoutTest(TestCase):
 
     def test_select_sequences_does_not_recompile_across_batch_shapes(self) -> None:
         torch._dynamo.reset()
+        torch._dynamo.utils.counters.clear()
         self.addCleanup(torch._dynamo.reset)
         compiled = torch.compile(select_sequences, backend="eager", dynamic=True)
         generator = torch.Generator().manual_seed(0)
@@ -322,6 +325,13 @@ class StaticKhopLayoutTest(TestCase):
                     self.assertTrue(torch.equal(expected_tensor, actual_tensor))
         # One graph for each of the two call signatures.
         self.assertEqual(torch._dynamo.utils.counters["stats"]["unique_graphs"], 2)
+
+    def test_docstring_examples(self) -> None:
+        for module in (sequence_layout, static_khop):
+            with self.subTest(module=module.__name__):
+                result = doctest.testmod(module)
+                self.assertGreater(result.attempted, 0)
+                self.assertEqual(result.failed, 0)
 
     def test_pack_sequences_layout(self) -> None:
         layout = pack_sequences(torch.tensor([2, 1, 3]), 3)

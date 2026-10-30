@@ -84,7 +84,7 @@ Example:
     [0, 3, 6]
 """
 
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import torch
 from jaxtyping import Int, Int64
@@ -105,6 +105,28 @@ from gigl.transforms.sequence_layout import (
 MAX_LAYOUT_CANDIDATES = 2**25
 
 KhopOrdering = Literal["node_id", "hop", "input"]
+
+
+class KhopLayout(NamedTuple):
+    """The k-hop token layout of every anchor, as built by ``khop_layout``.
+
+    Attributes:
+        layout: ``[num_anchors, max_seq_len]`` long. Each valid cell packs a
+            token's local node id and first-reach hop as
+            ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
+            ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
+            followed by its neighbours within ``hop_distance`` hops in the
+            ``ordering`` order. The hop is the fewest hops from the anchor to the
+            node. Cells at and after the sequence length are -1, so only decode
+            the valid ones.
+        lengths: ``[num_anchors]`` long count of valid tokens per anchor, anchor
+            included, so at least 1 and at most ``max_seq_len``.
+        hop_bits: Python int, ``hop_distance.bit_length()``.
+    """
+
+    layout: Int64[Tensor, "num_anchors max_seq_len"]
+    lengths: Int64[Tensor, "num_anchors"]
+    hop_bits: int
 
 
 class KhopLayoutTooLargeError(ValueError):
@@ -185,7 +207,7 @@ def _khop_sequence_layout(
     hop_distance: int,
     max_seq_len: int,
     ordering: KhopOrdering = "node_id",
-) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
+) -> KhopLayout:
     """Picks the tokens of every anchor's k-hop neighbourhood, with fixed shapes.
 
     Gathering through the neighbour table, rather than sparse matrix ops, keeps
@@ -235,7 +257,7 @@ def _khop_sequence_layout(
     )
     hops = hop_of_column[source.clamp(min=0)]
     layout = torch.where(nodes >= 0, (nodes << hop_bits) | hops, -1)
-    return layout, lengths, hop_bits
+    return KhopLayout(layout, lengths, hop_bits)
 
 
 def khop_layout(
@@ -247,7 +269,7 @@ def khop_layout(
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
     ordering: KhopOrdering = "node_id",
-) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
+) -> KhopLayout:
     """Builds the k-hop token layout of every anchor; the entry point of this module.
 
     Builds the neighbour table, checks the candidate budget, then expands and
@@ -273,17 +295,7 @@ def khop_layout(
             parent's neighbour-table row, which follows the edge order).
 
     Returns:
-        - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell packs
-          a token's local node id and first-reach hop as
-          ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
-          ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
-          followed by its neighbours within ``hop_distance`` hops in the
-          ``ordering`` order. The
-          hop is the fewest hops from the anchor to the node. Cells at and after
-          the sequence length are -1, so only decode the valid ones.
-        - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
-          anchor included, so at least 1 and at most ``max_seq_len``.
-        - ``hop_bits``: Python int, ``hop_distance.bit_length()``.
+        The ``KhopLayout``: ``layout``, ``lengths`` and ``hop_bits``.
 
     Raises:
         ValueError: If ``sampling_direction`` is not ``"in"`` or ``"out"``, or
