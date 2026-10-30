@@ -723,6 +723,7 @@ dependencies = [
     { name = "chardet" },
     { name = "gigl-core" },
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-dataflow-client" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
     { name = "google-cloud-pipeline-components" },
@@ -834,6 +835,10 @@ docs = [
     { name = "sphinx-tabs" },
     { name = "sphinxcontrib-mermaid" },
 ]
+gh-actions = [
+    { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-logging" },
+]
 gigl-core-build-backend = [
     { name = "pybind11" },
     { name = "scikit-build-core" },
@@ -868,6 +873,7 @@ requires-dist = [
     { name = "fbgemm-gpu", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "gigl-core", directory = "gigl-core" },
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-dataflow-client" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
     { name = "google-cloud-pipeline-components" },
@@ -967,6 +973,10 @@ docs = [
     { name = "sphinx-rtd-theme", specifier = "==2.0.0" },
     { name = "sphinx-tabs", specifier = "==3.4.5" },
     { name = "sphinxcontrib-mermaid", specifier = "==2.0.2" },
+]
+gh-actions = [
+    { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-logging" },
 ]
 gigl-core-build-backend = [
     { name = "pybind11", specifier = ">=2.12" },
@@ -1190,6 +1200,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a6/03/ef0bc99d0e0faf4fdbe67ac445e18cdaa74824fd93cd069e7bb6548cb52d/google_cloud_core-2.5.0.tar.gz", hash = "sha256:7c1b7ef5c92311717bd05301aa1a91ffbc565673d3b0b4163a52d8413a186963", size = 36027, upload-time = "2025-10-29T23:17:39.513Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/89/20/bfa472e327c8edee00f04beecc80baeddd2ab33ee0e86fd7654da49d45e9/google_cloud_core-2.5.0-py3-none-any.whl", hash = "sha256:67d977b41ae6c7211ee830c7912e41003ea8194bff15ae7d72fd6f51e57acabc", size = 29469, upload-time = "2025-10-29T23:17:38.548Z" },
+]
+
+[[package]]
+name = "google-cloud-dataflow-client"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/9a/5a4d99cfe06faccb74095892e00a5f3ea2a0589c74b81e80e60b772d75bb/google_cloud_dataflow_client-0.14.0.tar.gz", hash = "sha256:96ea150a2bcf76d26ce61812b4c904850ea7540448a75cbf6bc80b4fa2c22da7", size = 280041, upload-time = "2026-06-03T15:27:57.686Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/22/fc48042c4c3127bcd5226ca9656e7e82662a9dbff89a0d9a43857e553460/google_cloud_dataflow_client-0.14.0-py3-none-any.whl", hash = "sha256:596f5060b2e6193f523ad3b923e519cf69bfcce1471e209de06305d807b75130", size = 291480, upload-time = "2026-06-03T15:27:05.812Z" },
 ]
 
 [[package]]
