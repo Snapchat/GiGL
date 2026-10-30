@@ -14,11 +14,14 @@ split_generator_config:
   machine_type: n2-standard-16
   num_local_ssds: 2
   num_replicas: 4
+# CPU training on E2 for the legacy (SGS) pipelines: chosen for availability in
+# us-central1 CI, and to leave T4 supply to the GLT e2e tests that need CUDA coverage.
+# In practice, train on a GPU shape (for example n1-highmem-8 + NVIDIA_TESLA_T4).
 trainer_config:
   vertex_ai_trainer_config:
-    machine_type: "n1-highmem-8" # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu training
-    gpu_type: NVIDIA_TESLA_T4
-    gpu_limit: 1  # set to 0 for cpu training
+    machine_type: "e2-highmem-8"
+    gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+    gpu_limit: 0
     num_replicas: 2
 inferencer_config:
   num_workers: 1
