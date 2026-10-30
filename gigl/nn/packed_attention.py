@@ -157,7 +157,7 @@ def _varlen_attention_op(
     if attn_bias is not None:
         attn_bias = attn_bias.as_strided(
             (1, attn_bias.size(1), query.size(0), key.size(0)),
-            (attn_bias.stride(0), attn_bias.stride(1), attn_bias.stride(2), 1),
+            attn_bias.stride(),
         )
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
@@ -624,7 +624,7 @@ def packed_attention(
     head_dim = query.size(-1)
     attn_bias = None
     if per_pair is not None:
-        attn_bias = _pad_head_dim(per_pair.to(query.dtype))
+        attn_bias = _pad_head_dim(per_pair.to(query.dtype)).contiguous()
     if per_key is not None:
         query, key = _fold_per_key_bias(query, key, per_key)
     elif head_dim % 8 != 0:

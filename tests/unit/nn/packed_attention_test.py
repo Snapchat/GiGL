@@ -493,6 +493,30 @@ class PackedAttentionCudaTest(TestCase):
                     max_seq_len=max_seq_len,
                 )
 
+    def test_per_pair_bias_that_is_a_permuted_view_matches_the_padded_path(
+        self,
+    ) -> None:
+        # The pairwise bias comes from a linear layer over ``[batch, seq, seq,
+        # heads]``, so it reaches the kernel with a last-dim stride above 1.
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        num_tokens = int(lengths.sum())
+        query, key, value = (
+            torch.randn(num_tokens, 2, 64, device=device) for _ in range(3)
+        )
+        per_pair = torch.randn(5, _MAX_SEQ_LEN, _MAX_SEQ_LEN, 2, device=device).permute(
+            0, 3, 1, 2
+        )
+        bias = PackedAttentionBias(per_pair=per_pair)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                packed_attention(query, key, value, layout, False, bias),
+                _padded_packed_attention(query, key, value, layout, False, bias),
+                rtol=0,
+                atol=1e-4,
+            )
+
     def _dispatched_kernel(
         self, query_is_first_token: bool, requires_grad: bool
     ) -> bool:
