@@ -123,13 +123,12 @@ no-build-isolation-package = ["gigl-core"]
 # These are gigl-core's [build-system].requires. With no-build-isolation-package set,
 # uv does not install them automatically, so they must be present in the ambient
 # environment before any gigl-core build (uv sync, uv build, Dockerfiles).
-# setuptools is for the GLT build (`python setup.py bdist_wheel` in
-# gigl/scripts/install_glt.sh); a fresh uv venv does not include it. 70.1 is the
-# first release with bdist_wheel built in, so the `wheel` package is not needed.
-gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12", "setuptools>=70.1"]
+gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 # ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
 # is on PATH when the build runs, so the PyPI binary is found.
-glt-build-backend = ["ninja"]
+# setuptools is for the GLT build (`python setup.py bdist_wheel` in gigl/scripts/install_glt.sh); a fresh uv venv
+# does not include it. 70.1 is the first release with bdist_wheel built in, so the `wheel` package is not needed.
+glt-build-backend = ["ninja", "setuptools>=70.1"]
 # What the GitHub Actions scripts under .github/scripts import, without the project, Beam, TensorFlow, or
 # torch: `uv run --frozen --only-group gh-actions python <script>` with PYTHONPATH set to the checkout
 # gives them gigl.common.services.vertex_ai and gigl.common.logger on a bare runner. Add a package here

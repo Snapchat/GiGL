@@ -1179,10 +1179,10 @@ gh-actions = [
 gigl-core-build-backend = [
     { name = "pybind11" },
     { name = "scikit-build-core" },
-    { name = "setuptools" },
 ]
 glt-build-backend = [
     { name = "ninja" },
+    { name = "setuptools" },
 ]
 lint = [
     { name = "dprint-py" },
@@ -1321,9 +1321,11 @@ gh-actions = [
 gigl-core-build-backend = [
     { name = "pybind11", specifier = ">=2.12" },
     { name = "scikit-build-core", specifier = ">=0.10" },
+]
+glt-build-backend = [
+    { name = "ninja" },
     { name = "setuptools", specifier = ">=70.1" },
 ]
-glt-build-backend = [{ name = "ninja" }]
 lint = [
     { name = "dprint-py", specifier = "==0.56.0.0" },
     { name = "mypy-protobuf", specifier = "==3.3.0" },
