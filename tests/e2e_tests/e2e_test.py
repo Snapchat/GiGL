@@ -17,8 +17,9 @@ Arguments:
         --fail_fast: [Optional] Cancel the other pipeline runs as soon as one fails. Off by default, so a
             run reports every failing pipeline. CI's merge queue turns it on to free capacity.
 
-    If the GITHUB_RUN_ID environment variable is set, every pipeline run gets a `github_run_id` label
-    with that value so CI can find and cancel the runs of a cancelled workflow.
+    If the GITHUB_RUN_ID environment variable is set, every pipeline run gets a label keyed by
+    `GITHUB_RUN_ID_LABEL_KEY` (gigl.src.common.constants.ci) with that value so CI can find and cancel the runs
+    of a cancelled workflow.
 
 The test_spec_uri is a yaml file of the following format:
     ```yaml
@@ -66,6 +67,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.logger import Logger
 from gigl.common.utils.yaml_loader import load_resolved_yaml
 from gigl.orchestration.kubeflow.kfp_orchestrator import KfpOrchestrator
+from gigl.src.common.constants.ci import GITHUB_RUN_ID_LABEL_KEY
 from gigl.src.common.types import AppliedTaskIdentifier
 
 logger = Logger()
@@ -123,7 +125,7 @@ def run_all_e2e_tests(
     for job_name, job in tests.items():
         full_job_name = f"{job_name}{job.name_suffix}"
         if github_run_id:
-            job.run_labels["github_run_id"] = github_run_id
+            job.run_labels[GITHUB_RUN_ID_LABEL_KEY] = github_run_id
         logger.info(f"Compiling and running job: {full_job_name}")
         logger.info(
             textwrap.dedent(
