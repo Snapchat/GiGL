@@ -64,7 +64,7 @@ transform = [
   "apache-beam[gcp]==2.76.0",
   "pyarrow>14",
   # Tensorflow transform packages.
-  # There is no official MAC support for these packages - thus we ignore them on darwin machines.
+  # These packages are excluded on darwin machines; they are not validated on macOS.
   # These packages are also required to be in sync.
   # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
   # tensorflow-data-validation 1.21.0 publishes manylinux_2_39 wheels only, so installing

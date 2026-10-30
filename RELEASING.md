@@ -65,6 +65,19 @@ docker buildx imagetools inspect multiarch/qemu-user-static:latest
 Nightly builds are triggered automatically by `nightly_release_&_test.yml`, which calls `create_release.yml` with
 `bump_type=nightly`. The **Release GiGL** wheel-publish step is not part of the nightly flow.
 
+## Release identity and permissions
+
+Jobs that publish release artifacts (`release_gigl_kfp_pipeline` in `create_release.yml`, and all of `release.yml`) run
+in the `release` GitHub environment under a dedicated release identity. Every other job, including the base image and
+integration test builds, runs under the PR/test identity, which cannot push to the release registries (`public-gigl`,
+`gigl`, `gigl-cu128`) or to the release paths in `gs://public-gigl`.
+
+Dispatch `create_release.yml` from `main`. The `release` environment admits only `main` and `release/v*` branches, so a
+dispatch from another branch fails at the environment check.
+
+When you add a new publish target (a registry, a bucket path), grant it to the release identity only, and run the
+publishing step in a job that declares `environment: release`. Do not widen the PR/test identity.
+
 ## What gets published
 
 Each release run publishes to two self-contained registries:
