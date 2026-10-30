@@ -62,7 +62,7 @@ class PygGraphBuilderTest(TestCase):
                 ),
             }
         )
-        self.assertEquals(graph_data_from_builder, expected_graph_data)
+        self.assertEqual(graph_data_from_builder, expected_graph_data)
 
     def test_can_create_with_with_no_edge_and_node_features(self):
         pyg_graph_builder = PygGraphBuilder()
@@ -116,7 +116,7 @@ class PygGraphBuilderTest(TestCase):
         # This is a restriction of PyG, that is it expectes node features of atleast size 1
         expected_graph_data["1"].x = torch.ones(2, 1)
         expected_graph_data["2"].x = torch.ones(1, 1)
-        self.assertEquals(graph_data_from_builder, expected_graph_data)
+        self.assertEqual(graph_data_from_builder, expected_graph_data)
 
     def test_can_create_with_preexisting_data_objects_filtering_existing_nodes_and_edges(
         self,
@@ -158,7 +158,7 @@ class PygGraphBuilderTest(TestCase):
             }
         )
 
-        self.assertEquals(graph_data_from_builder, graph_data_1)
+        self.assertEqual(graph_data_from_builder, graph_data_1)
 
         # Ensure works when there are no edge features either
         graph_data_1["1", "1", "1"].edge_attr = None
@@ -168,7 +168,7 @@ class PygGraphBuilderTest(TestCase):
         pyg_graph_builder.add_graph_data(graph_data_1)
         pyg_graph_builder.add_graph_data(graph_data_2)
         graph_data_without_edges_from_builder = pyg_graph_builder.build()
-        self.assertEquals(graph_data_without_edges_from_builder, graph_data_1)
+        self.assertEqual(graph_data_without_edges_from_builder, graph_data_1)
 
     def test_add_subgraph_mapped_graph_data(self):
         pyg_graph_builder = PygGraphBuilder()
@@ -260,7 +260,7 @@ class PygGraphBuilderTest(TestCase):
 
         # Our expected graph does not have this since it is constructed outside the builder
         graph_data_from_builder.global_node_to_subgraph_node_mapping = FrozenDict({})
-        self.assertEquals(graph_data_from_builder, expected_graph_data)
+        self.assertEqual(graph_data_from_builder, expected_graph_data)
 
     def test_feature_enforcement_policies(self):
         pyg_graph_builder = PygGraphBuilder()

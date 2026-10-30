@@ -17,6 +17,7 @@ dependencies = [
   # variant (cpu/cu128). Version must match gigl exactly.
   "gigl-core==0.3.1",
   "google-cloud-aiplatform",
+  "google-cloud-dataflow-client",
   "google-cloud-dataproc",
   "google-cloud-logging",
   "google-cloud-pipeline-components",
@@ -113,8 +114,20 @@ no-build-isolation-package = ["gigl-core"]
 # uv does not install them automatically, so they must be present in the ambient
 # environment before any gigl-core build (uv sync, uv build, Dockerfiles).
 gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
+# is on PATH when the build runs, so the PyPI binary is found.
+glt-build-backend = ["ninja"]
+# What the GitHub Actions scripts under .github/scripts import, without the project, Beam, TensorFlow, or
+# torch: `uv run --frozen --only-group gh-actions python <script>` with PYTHONPATH set to the checkout
+# gives them gigl.common.services.vertex_ai and gigl.common.logger on a bare runner. Add a package here
+# only when a script needs it; these must also stay in [project].dependencies.
+gh-actions = [
+  "google-cloud-aiplatform",
+  "google-cloud-logging",
+]
 dev = [
   { include-group = "gigl-core-build-backend" },
+  { include-group = "glt-build-backend" },
   { include-group = "docs" },
   { include-group = "lint" },
   { include-group = "test" },
@@ -265,7 +278,7 @@ include = ["gigl*", "snapchat*"]
 [tool.setuptools.package-data]
 # Include dep_vars.env from the root directory
 "gigl" = ["dep_vars.env", "**/*.yaml"]
-"gigl.scripts" = ["*.sh"]
+"gigl.scripts" = ["*.sh", "patches/*.patch"]
 
 [project.urls]
 Homepage = "https://github.com/snapchat/gigl"
@@ -289,7 +302,13 @@ exclude = ["*_pb2.py", "*_pb2.pyi"]
 #   Enforces a consistent import order (stdlib → third-party → first-party).
 #   Replaces: isort
 #   Docs: https://docs.astral.sh/ruff/rules/#isort-i
-select = ["F401", "I"]
+#
+# UP005 - Deprecated unittest aliases (pyupgrade)
+#   Flags 15 of the 16 aliases removed in Python 3.12, such as `assertEquals`; it does
+#   not cover `assertDictContainsSubset`. Autofixable.
+#   Replaces: nothing.
+#   Docs: https://docs.astral.sh/ruff/rules/deprecated-unittest-alias/
+select = ["F401", "I", "UP005"]
 
 [tool.ruff.lint.per-file-ignores]
 # __init__.py files re-export symbols for the public API, so unused-import
