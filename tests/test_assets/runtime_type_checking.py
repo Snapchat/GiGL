@@ -114,6 +114,8 @@ def _jaxtyped_shape_contracts_only(*args: Any, **kwargs: Any) -> Any:
     cannot pickle a weakref, and Beam pickles nested functions such as a TFT
     ``preprocessing_fn`` by value, so the wrapper would make them unpicklable
     only under test. Such functions keep their original, undecorated object.
+    Nested functions that do have Shape Contracts stay wrapped, so they cannot
+    be pickled by value under test.
 
     Calls that do not match the import hook's form, and calls where
     shape_contract_typechecker does not run, go to Jaxtyping unchanged.
