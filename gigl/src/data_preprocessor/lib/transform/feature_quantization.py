@@ -143,8 +143,15 @@ def _build_quantization_stats(
             _flatten_feature_values,
             quantized_feature_keys=quantization_spec.feature_keys,
         )
+        # ApproximateQuantiles.Globally declares its input as
+        # Union[T, Sequence[T], Tuple[T, float]], so a list[float] input leaves T
+        # ambiguous and the inferred output type is not list[float] (for example
+        # List[Any]). With input_batched=True each batch is unpacked and the output
+        # is a flat list[float], so the output type is set explicitly.
         | "Compute multi-bit quantization quantiles"
-        >> ApproximateQuantiles.Globally(num_quantiles=1000, input_batched=True)
+        >> ApproximateQuantiles.Globally(
+            num_quantiles=1000, input_batched=True
+        ).with_output_types(list[float])
         | "Build multi-bit quantization stats"
         >> beam.Map(_multi_bit_stats_from_quantiles)
     )
