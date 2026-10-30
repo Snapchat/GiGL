@@ -1,5 +1,10 @@
 substitutions:
   _CMD: ""
+  # GitHub Actions run id, so a cancelled workflow can find and cancel its build by tag.
+  _GITHUB_RUN_ID: "local"
+# The tag must match cloud_build_tag_for_github_run in gigl/src/common/constants/ci.py.
+tags:
+  - "gigl-ci-run-${_GITHUB_RUN_ID}"
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
