@@ -17,6 +17,7 @@ dependencies = [
   # variant (cpu/cu128). Version must match gigl exactly.
   "gigl-core==0.3.1",
   "google-cloud-aiplatform",
+  "google-cloud-build",
   "google-cloud-dataflow-client",
   "google-cloud-dataproc",
   "google-cloud-logging",
@@ -123,6 +124,7 @@ glt-build-backend = ["ninja"]
 # only when a script needs it; these must also stay in [project].dependencies.
 gh-actions = [
   "google-cloud-aiplatform",
+  "google-cloud-build",
   "google-cloud-logging",
 ]
 dev = [
