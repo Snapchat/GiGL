@@ -1,7 +1,7 @@
 name: Release GiGL
 
 on:
-  # Dispatch with the release tag (e.g. v0.4.0) selected as the ref; the build job's guard fails any other ref.
+  # Dispatch with the release tag (e.g. v0.4.0) selected as the ref; the python-versions job's guard fails any other ref.
   workflow_dispatch:
 
 # The build jobs run ahead of the `release` environment's approval gate, so they hold no GCP credentials. Only
@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The list of supported Python versions lives in gigl/dep_vars.env.
+  # Every other job needs this one, so a wrong ref fails here, before any build runner starts. The list of supported
+  # Python versions lives in gigl/dep_vars.env.
   python-versions:
     name: Read the supported Python versions
     runs-on: ubuntu-24.04
@@ -25,6 +26,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Guard - dispatched on a tag that equals the checked-out version
+      run: python3 .github/scripts/check_release_ref.py
 
     - name: Read SUPPORTED_PYTHON_VERSIONS
       id: versions
@@ -53,8 +57,8 @@ jobs:
             runner: gigl-gpu-instances
     runs-on: ${{ matrix.runner }}
     env:
-      # Every uv call in this job, including the `uv sync` inside install_py_deps.sh, targets this minor instead of
-      # .python-version.
+      # Every uv call in this job, including the `uv sync` that installs the build dependencies, targets this minor
+      # instead of .python-version.
       UV_PYTHON: ${{ matrix.python }}
       # Hosted runners ship a system Python 3.12 that uv would otherwise pick for UV_PYTHON=3.12.
       UV_PYTHON_PREFERENCE: only-managed
@@ -71,21 +75,21 @@ jobs:
     - name: Setup uv
       uses: ./.github/actions/setup-python-tools
 
-    # The script needs tomllib (3.11+). Self-hosted runners' system python is unknown, so use the job's uv python.
-    - name: Guard - dispatched on a tag that equals the checked-out version
-      run: uv run --no-project python .github/scripts/check_release_ref.py
-
     # cmake and a C++ compiler for the extension build.
     - name: Install C++ toolchain
       run: bash ./gigl-core/requirements/install_cpp_deps.sh
 
-    # Installs this variant's torch and gigl-core's build backend into the project environment. GLT is not needed to
-    # build or import gigl-core.
+    # Installs this matrix variant's torch and gigl-core's build backend into the project environment, and nothing else:
+    # no `dev` group, no GLT, and no `transform` extra (whose TFDV wheel needs glibc 2.39). The `Build gigl-core wheel`
+    # step builds gigl-core itself.
     - name: Install build dependencies
-      run: bash ./requirements/install_py_deps.sh --skip-glt-post-install
+      env:
+        TORCH_VARIANT: ${{ matrix.torch-variant }}
+      run: >
+        uv sync --locked --no-default-groups --group gigl-core-build-backend
+        --extra "pyg27-torch28-${TORCH_VARIANT}" --no-install-package gigl-core
 
-    # --no-sync: a plain `uv run` would also install the default `dev` group, which the build does not use.
-    # install_py_deps.sh picks the torch variant from whether the runner has CUDA, not from the matrix.
+    # --no-sync: a plain `uv run` would sync the default `dev` group back into the environment.
     - name: Assert the project environment is this job's minor and torch variant
       env:
         TORCH_VARIANT: ${{ matrix.torch-variant }}
@@ -111,10 +115,12 @@ jobs:
         TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu128' }}
       run: |
         # gigl-core declares no dependencies, but its extension links torch and gigl_core/__init__.py imports it
-        # eagerly, so this variant's torch must be installed alongside it.
+        # eagerly, so this variant's torch must be installed alongside it. A fresh venv cannot read the project lock,
+        # so the torch pin repeats `torch==2.8` from the pyg27-torch28 extras in pyproject.toml; a torch bump there
+        # must move this line.
         # --clear: on self-hosted runners the venv survives from earlier jobs, and uv refuses to reuse it.
         uv venv --clear --python "${UV_PYTHON}" "${RUNNER_TEMP}/wheel-check"
-        uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8.0 gigl-core/dist/*.whl
+        uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8 gigl-core/dist/*.whl
         "${RUNNER_TEMP}/wheel-check/bin/python" scripts/smoke_test_image.py \
           --python "${UV_PYTHON}" --imports torch,gigl_core --torch-variant "${TORCH_VARIANT}"
 
@@ -128,6 +134,7 @@ jobs:
   # means both publish jobs, and any re-run of either, upload the same file.
   build-gigl:
     name: Build gigl
+    needs: python-versions
     runs-on: ubuntu-24.04
     steps:
     - name: Checkout
@@ -177,7 +184,9 @@ jobs:
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
-      # This CI environment contains relevant pip.conf and pyprci information to
+      # Runs in the release environment so GCP_SERVICE_ACCOUNT_EMAIL resolves to the release
+      # service account, the only identity allowed to publish to the gigl and gigl-cu128
+      # registries. See RELEASING.md, "Release identity and permissions".
       name: release
     steps:
     - name: Checkout

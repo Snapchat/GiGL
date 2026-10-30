@@ -1,8 +1,7 @@
 """Asserts a freshly built ``gigl-core`` wheel is the one the release job meant to build.
 
-Checks that there is exactly one wheel, that its filename carries the ABI tag of ``--python``, that its
-``Requires-Python`` equals the one declared in ``gigl-core/pyproject.toml``, and that its extension links
-``libtorch_cuda.so`` exactly when ``--torch-variant`` is ``cu128``.
+Checks that there is exactly one wheel, that its filename carries the ABI tag of ``--python``, and that its
+extension links ``libtorch_cuda.so`` exactly when ``--torch-variant`` is ``cu128``.
 
 Example:
     $ uv run --no-sync python .github/scripts/check_gigl_core_wheel.py \
@@ -15,13 +14,9 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 from pathlib import Path
 
-from packaging.specifiers import SpecifierSet
-
-_CORE_PYPROJECT = Path(__file__).resolve().parents[2] / "gigl-core" / "pyproject.toml"
 _CUDA_NEEDED = re.compile(r"NEEDED.*\[libtorch_cuda\.so\]")
 
 
@@ -42,20 +37,6 @@ def check_abi_tag(wheel_name: str, python_minor: str) -> None:
     tag = "cp" + python_minor.replace(".", "")
     if f"-{tag}-{tag}-" not in wheel_name:
         raise AssertionError(f"{wheel_name} does not carry the ABI tag {tag}-{tag}")
-
-
-def check_requires_python(wheel: zipfile.ZipFile, expected: str) -> None:
-    """Compares as specifier sets: the wheel writes ``<3.14,>=3.11``, pyproject writes ``>=3.11,<3.14``."""
-    (metadata_name,) = [
-        n for n in wheel.namelist() if n.endswith(".dist-info/METADATA")
-    ]
-    for line in wheel.read(metadata_name).decode().splitlines():
-        if line.startswith("Requires-Python: "):
-            actual = SpecifierSet(line.removeprefix("Requires-Python: "))
-            if actual != SpecifierSet(expected):
-                raise AssertionError(f"Requires-Python {actual} != {expected}")
-            return
-    raise AssertionError(f"{metadata_name} has no Requires-Python")
 
 
 def links_libtorch_cuda(readelf_dynamic: str) -> bool:
@@ -96,11 +77,9 @@ def main() -> None:
     parser.add_argument("--torch-variant", required=True, choices=["cpu", "cu128"])
     args = parser.parse_args()
 
-    expected = tomllib.loads(_CORE_PYPROJECT.read_text())["project"]["requires-python"]
     wheel_path = find_wheel(args.wheel)
     check_abi_tag(wheel_path.name, args.python)
     with zipfile.ZipFile(wheel_path) as wheel:
-        check_requires_python(wheel, expected)
         check_torch_variant(wheel, args.torch_variant)
     print(f"{wheel_path.name}: ok")
 

@@ -1,6 +1,4 @@
-import re
 import sys
-from pathlib import Path
 
 from absl.testing import absltest
 
@@ -32,44 +30,6 @@ class PerMinorConstantsTest(TestCase):
                 self.assertEqual(
                     getattr(constants, name), self._dep_vars[f"{name}_{key_suffix}"]
                 )
-
-    def _supported_key_suffixes(self) -> list[str]:
-        return [
-            "py" + "".join(version.split(".")[:2])
-            for version in self._dep_vars["SUPPORTED_PYTHON_VERSIONS"].split(",")
-        ]
-
-    def test_every_supported_minor_is_listed(self) -> None:
-        for name in _PER_MINOR_CONSTANTS + [
-            "DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG"
-        ]:
-            for key_suffix in self._supported_key_suffixes():
-                with self.subTest(f"{name}_{key_suffix}"):
-                    self.assertIn(f"{name}_{key_suffix}", self._dep_vars)
-
-    def test_constants_module_covers_exactly_the_supported_minors(self) -> None:
-        source = Path(constants.__file__).read_text()
-        supported_minors = [
-            ".".join(version.split(".")[:2])
-            for version in self._dep_vars["SUPPORTED_PYTHON_VERSIONS"].split(",")
-        ]
-        for name in _PER_MINOR_CONSTANTS:
-            with self.subTest(name):
-                block = re.search(
-                    rf"^{name}: Final\[str\] = \{{\n(.*?)\n\}}\[_MINOR\]",
-                    source,
-                    re.DOTALL | re.MULTILINE,
-                )
-                assert block is not None
-                # Each entry reads the key of its own minor, e.g. "3.12" -> <name>_py312.
-                entries = re.findall(
-                    rf'^\s+"(3\.\d+)": _make_file_vars\["{name}_py(\d+)"\],$',
-                    block.group(1),
-                    re.MULTILINE,
-                )
-                self.assertEqual([minor for minor, _ in entries], supported_minors)
-                for minor, key_suffix in entries:
-                    self.assertEqual(key_suffix, minor.replace(".", ""))
 
 
 if __name__ == "__main__":

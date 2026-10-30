@@ -290,6 +290,11 @@ class DataPreprocessor:
                 ),
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
+            logger.info(
+                __get_feature_preprocessing_job_msgs(
+                    is_start=True,
+                )
+            )
             feature_transform_pipeline_result = p.run()
             if not isinstance(
                 feature_transform_pipeline_result, DataflowPipelineResult
@@ -305,11 +310,6 @@ class DataPreprocessor:
                 feature_transform_pipeline_result.wait_until_finish()
             logger.debug(f"[{feature_type}:{entity_type}] releasing lock.")
 
-        logger.info(
-            __get_feature_preprocessing_job_msgs(
-                is_start=True,
-            )
-        )
         feature_transform_pipeline_result.wait_until_finish()
         logger.info(
             __get_feature_preprocessing_job_msgs(

@@ -30,7 +30,7 @@ DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}-${PY_TAG}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}-${PY_TAG}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}-${PY_TAG}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}-${PY_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 # Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
@@ -91,6 +91,7 @@ install_deps:
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
 	uv run python tests/config_tests/glt_patches_check.py
+	uv run python tests/config_tests/beam_sdk_image_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
@@ -328,13 +329,13 @@ run_all_e2e_tests:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
 
-# The in-memory (GLT) e2e tests, i.e. those whose task config sets should_run_glt_backend.
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
 # CI runs these on the non-default Python minors.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
 run_glt_e2e_tests: run_all_e2e_tests
 
-# Compiles and uploads the released KFP pipeline for this Python minor on the release src images
-# dep_vars.env lists under the keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
+# Builds and pushes this minor's 3 release src images (cuda, cpu, cpu-dataflow) and compiles and uploads its KFP
+# pipeline, using the refs under the dep_vars.env keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
 release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))

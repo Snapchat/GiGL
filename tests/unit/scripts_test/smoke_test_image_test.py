@@ -12,72 +12,37 @@ from tests.test_assets.test_case import TestCase
 
 
 class SmokeTestImageArgsTest(TestCase):
-    def test_imports_required_without_image_type(self) -> None:
-        with self.assertRaises(SystemExit):
-            smoke_test_image.parse_args(["--python", "3.11"])
+    def test_exactly_one_of_imports_and_image_type_required(self) -> None:
+        for extra in [[], ["--image-type", "cpu", "--imports", "torch"]]:
+            with self.subTest(extra), self.assertRaises(SystemExit):
+                smoke_test_image.parse_args(["--python", "3.11", *extra])
 
-    def test_explicit_imports_without_image_type_are_unchanged(self) -> None:
+    def test_imports_without_image_type(self) -> None:
         args = smoke_test_image.parse_args(["--python", "3.11", "--imports", "torch"])
         self.assertEqual(args.imports, ["torch"])
-        self.assertIsNone(args.venv_prefix)
-        self.assertIsNone(args.min_glibc)
-        self.assertFalse(args.require_nvidia_driver_path)
+        self.assertIsNone(args.image_type)
 
-    def test_cpu_preset(self) -> None:
-        args = smoke_test_image.parse_args(["--python", "3.11", "--image-type", "cpu"])
-        self.assertEqual(args.imports, ["torch", "graphlearn_torch"])
-        self.assertEqual(args.venv_prefix, "/gigl_deps/.venv")
-        self.assertEqual(args.min_glibc, "2.39")
-        self.assertFalse(args.require_nvidia_driver_path)
-
-    def test_cuda_preset_adds_torchrec_only_with_cuda_flag(self) -> None:
-        no_gpu = smoke_test_image.parse_args(
-            ["--python", "3.11", "--image-type", "cuda"]
-        )
-        self.assertEqual(no_gpu.imports, ["torch", "graphlearn_torch"])
-        self.assertTrue(no_gpu.require_nvidia_driver_path)
-        gpu = smoke_test_image.parse_args(
-            ["--python", "3.11", "--image-type", "cuda", "--cuda"]
-        )
-        self.assertEqual(gpu.imports, ["torch", "graphlearn_torch", "torchrec"])
-
-    def test_only_cuda_preset_requires_cuda_build(self) -> None:
+    def test_preset_imports(self) -> None:
         for image_type, expected in [
-            ("cuda", True),
-            ("cpu", False),
-            ("builder", False),
-            ("dataflow", False),
+            ("cpu", ["torch", "graphlearn_torch"]),
+            ("cuda", ["torch", "graphlearn_torch"]),
+            ("builder", ["torch", "graphlearn_torch"]),
+            ("dataflow", ["torch", "apache_beam"]),
         ]:
-            args = smoke_test_image.parse_args(
-                ["--python", "3.11", "--image-type", image_type]
+            self.assertEqual(
+                smoke_test_image.IMAGE_TYPE_PRESETS[image_type].imports,
+                expected,
+                image_type,
             )
-            self.assertEqual(args.require_cuda_build, expected, image_type)
 
-    def test_dataflow_preset(self) -> None:
-        args = smoke_test_image.parse_args(
-            ["--python", "3.11", "--image-type", "dataflow"]
-        )
-        self.assertEqual(args.imports, ["torch", "apache_beam"])
-        self.assertTrue(args.boot_env)
+    def test_only_cuda_preset_requires_driver_path_and_cuda_build(self) -> None:
+        for image_type, preset in smoke_test_image.IMAGE_TYPE_PRESETS.items():
+            self.assertEqual(preset.require_nvidia_driver_path, image_type == "cuda")
+            self.assertEqual(preset.require_cuda_build, image_type == "cuda")
 
-    def test_explicit_flags_add_to_and_override_preset(self) -> None:
-        args = smoke_test_image.parse_args(
-            [
-                "--python",
-                "3.11",
-                "--image-type",
-                "builder",
-                "--imports",
-                "torch,gigl_core",
-                "--venv-prefix",
-                "/other/.venv",
-                "--min-glibc",
-                "2.35",
-            ]
-        )
-        self.assertEqual(args.imports, ["torch", "graphlearn_torch", "gigl_core"])
-        self.assertEqual(args.venv_prefix, "/other/.venv")
-        self.assertEqual(args.min_glibc, "2.35")
+    def test_only_dataflow_preset_requires_boot_env(self) -> None:
+        for image_type, preset in smoke_test_image.IMAGE_TYPE_PRESETS.items():
+            self.assertEqual(preset.boot_env, image_type == "dataflow")
 
 
 class SmokeTestImageChecksTest(TestCase):
