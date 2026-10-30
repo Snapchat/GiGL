@@ -1337,7 +1337,7 @@ class SubgraphSamplerTest(TestCase):
                 supervision_node_type
             ]
         )
-        self.assertEquals(
+        self.assertEqual(
             total_rooted_node_neighborhood_samples,
             expected_nodes_of_supervision_node_type,
             f"Found {total_rooted_node_neighborhood_samples} rooted samples from SGS output, but found {expected_nodes_of_supervision_node_type} nodes from Data Preprocessor output",
