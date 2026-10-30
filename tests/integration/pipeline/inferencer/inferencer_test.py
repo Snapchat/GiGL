@@ -199,7 +199,7 @@ class InferencerTest(TestCase):
                 node_type_to_inferencer_output_info_map[node_type].embeddings_path
             )
             if should_assert_embeddings:
-                self.assertEquals(
+                self.assertEqual(
                     self.__bq_utils.count_number_of_rows_in_bq_table(
                         bq_table=node_type_to_inferencer_output_info_map[
                             node_type
@@ -210,7 +210,7 @@ class InferencerTest(TestCase):
                     f"Found unexpected number of rows for node type {node_type} in embedding table.",
                 )
             if should_assert_predictions:
-                self.assertEquals(
+                self.assertEqual(
                     self.__bq_utils.count_number_of_rows_in_bq_table(
                         bq_table=node_type_to_inferencer_output_info_map[
                             node_type
