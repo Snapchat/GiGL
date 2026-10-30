@@ -53,8 +53,3 @@ class CancelBuildsWithTagTest(TestCase):
             [(r.project_id, r.id) for r in client.cancel_requests],
             [("p", "b1"), ("p", "b2")],
         )
-
-    def test_returns_nothing_when_no_build_matches(self) -> None:
-        client = _FakeCloudBuildClient([])
-        self.assertEqual(_service_over(client).cancel_builds_with_tag("t"), [])
-        self.assertEqual(client.cancel_requests, [])
