@@ -25,20 +25,18 @@ def get_help_text():
             # Process jobs from parsed YAML
             if "jobs" in workflow_data:
                 for job_name, job_config in workflow_data["jobs"].items():
-                    # Check if this job has a PR comment trigger
-                    if (
-                        "if" in job_config
-                        and "contains(github.event.comment.body," in job_config["if"]
-                    ):
-                        # Extract the commands from the if condition
-                        # Searching for lines like: "contains(github.event.comment.body,'/unit_test_py')"
-                        # or "endsWith(github.event.comment.body, '/unit_test')" and extracting the command
+                    # Extract the commands from the job's if condition, if any.
+                    # Searching for lines like: "contains(github.event.comment.body,'/unit_test_py')"
+                    # or "endsWith(github.event.comment.body, '/unit_test')" and extracting the command
+                    if "if" in job_config:
                         matches = re.findall(
                             r"(?:contains|endsWith)\(github\.event\.comment\.body,\s*'([^']+)'\)",
                             job_config["if"],
                         )
                         if matches:
-                            command = "`, `".join(dict.fromkeys(matches))
+                            command = ", ".join(
+                                f"`{c}`" for c in dict.fromkeys(matches)
+                            )
 
                             # Get description from the first step's name, or fallback to job name
                             description = f"Run {job_name.replace('-', ' ')} workflow"
@@ -49,7 +47,7 @@ def get_help_text():
                             ):
                                 description = job_config["steps"][0]["name"]
 
-                            commands.append(f"- `{command}` - {description}")
+                            commands.append(f"- {command} - {description}")
         except Exception as e:
             return f"❌ Error: Could not read workflow file {workflow_file} to generate help information. {str(e)}"
 
@@ -64,7 +62,7 @@ def get_help_text():
     {command_str}
 
 
-    💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., `/unit_test`)
+    💡 **Usage:** Simply comment on this PR with any of the commands above (e.g., `/unit_test`). `/unit_test` only works as the last token of the comment.
 
     ⏱️ **Note:** Commands may take some time to complete. Progress updates will be posted as comments.
     """
