@@ -191,7 +191,7 @@ def _(
     compute_log_sumexp: bool,
     attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
-    output = torch.empty_like(query)
+    output = query.new_empty((*query.shape[:-1], value.size(-1)))
     logsumexp_size = 0
     if compute_log_sumexp:
         # The kernel pads the logsumexp rows to a multiple of 32.
