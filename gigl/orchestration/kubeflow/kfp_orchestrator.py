@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    ALL_COMPLETED,
+    FIRST_EXCEPTION,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from pathlib import Path
 from typing import Optional, Union
 
@@ -13,7 +19,7 @@ from gigl.common.logger import Logger
 from gigl.common.services.vertex_ai import VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
 from gigl.env.pipelines_config import get_resource_config
-from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
+from gigl.orchestration.kubeflow.kfp_pipeline import ExitTask, generate_pipeline
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.file_loader import FileLoader
@@ -57,6 +63,7 @@ class KfpOrchestrator:
         dst_compiled_pipeline_path: Uri = DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
         additional_job_args: Optional[dict[GiGLComponents, dict[str, str]]] = None,
         tag: Optional[str] = None,
+        exit_task: ExitTask = ExitTask.EMAIL,
     ) -> Uri:
         """
         Compiles the GiGL Kubeflow pipeline.
@@ -69,6 +76,7 @@ class KfpOrchestrator:
             :data:`~gigl.constants.DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH`.
             additional_job_args (Optional[dict[GiGLComponents, dict[str, str]]]): Additional arguments to be passed into components, organized by component.
             tag (Optional[str]): Optional tag to include in the pipeline description.
+            exit_task (ExitTask): What the pipeline runs when it exits. See :class:`ExitTask`.
         Returns:
             Uri: The URI of the compiled pipeline.
         """
@@ -91,6 +99,7 @@ class KfpOrchestrator:
             generate_pipeline(
                 common_pipeline_component_configs=common_pipeline_component_configs,
                 tag=tag,
+                exit_task=exit_task,
             ),
             local_pipeline_bundle_path.uri,
         )
@@ -189,15 +198,22 @@ class KfpOrchestrator:
             list[str],
             list[aiplatform.PipelineJob],
         ],
-    ):
+        fail_fast: bool = False,
+    ) -> None:
         """
-        Waits for the completion of a pipeline run.
+        Waits for the completion of one or more pipeline runs.
 
         Args:
             run (Union[aiplatform.PipelineJob, str]): The pipeline job or its resource name.
+            fail_fast (bool): If True, the first failed run cancels every run that is still
+                waiting, then this waits for Vertex AI to report those runs as cancelled,
+                which takes a few minutes. If False, every run is awaited.
+                Either way the error names each failed run.
 
-        Returns:
-            None
+        Raises:
+            RuntimeError: If any run failed, or a cancel could not be requested. The message
+                names every failed run and every failed cancel with its error. Runs this call
+                cancelled on purpose are not counted as failures.
         """
         resource_names: list[str] = []
         if isinstance(run, str):
@@ -214,17 +230,61 @@ class KfpOrchestrator:
             f"Waiting for {len(resource_names)} pipeline runs to complete: {resource_names}"
         )
 
-        def __wait(resource_name: str) -> str:
-            VertexAIService.wait_for_run_completion(resource_name=resource_name)
-            return resource_name  # Convenience to return the run name for logging
-
         with ThreadPoolExecutor(max_workers=len(resource_names)) as executor:
-            futures = [
-                executor.submit(__wait, resource_name=resource_name)
-                for resource_name in resource_names
-            ]
-            for future in as_completed(futures):
-                resource_name = future.result()
-                logger.info(f"Pipeline run {resource_name} completed successfully.")
+            futures: dict[Future[None], str] = {}
+            for resource_name in resource_names:
+                future = executor.submit(
+                    VertexAIService.wait_for_run_completion, resource_name=resource_name
+                )
+                futures[future] = resource_name
+            done, not_done = wait(
+                futures,
+                return_when=FIRST_EXCEPTION if fail_fast else ALL_COMPLETED,
+            )
+            cancelled_runs: set[str] = set()
+            cancel_failures: dict[str, BaseException] = {}
+            if not_done and any(future.exception() is not None for future in done):
+                logger.warning(
+                    f"A pipeline run failed; cancelling the {len(not_done)} still "
+                    f"running: {[futures[f] for f in not_done]}"
+                )
+                for future in not_done:
+                    resource_name = futures[future]
+                    try:
+                        # A run that ended on its own before the cancel landed keeps
+                        # its own outcome; only runs this call cancelled are excused.
+                        if VertexAIService.cancel_pipeline_run(resource_name):
+                            cancelled_runs.add(resource_name)
+                    except Exception as e:
+                        logger.warning(f"Could not cancel {resource_name}: {e!r}")
+                        cancel_failures[resource_name] = e
+                # Every wait must return before the executor can shut down. The
+                # cancelled waits return once Vertex AI reports the runs as
+                # cancelled; a run whose cancel failed is awaited as before.
+                done, _ = wait(futures, return_when=ALL_COMPLETED)
+            failures: dict[str, BaseException] = {}
+            for future in done:
+                resource_name = futures[future]
+                error = future.exception()
+                if error is None:
+                    logger.info(f"Pipeline run {resource_name} completed successfully.")
+                elif resource_name not in cancelled_runs:
+                    failures[resource_name] = error
 
+        if failures or cancel_failures:
+            lines = [f"  {name}: {error}" for name, error in failures.items()]
+            lines.extend(
+                f"  cancel of {name} failed: {error}"
+                for name, error in cancel_failures.items()
+            )
+            raise RuntimeError(
+                f"{len(failures)} of {len(resource_names)} pipeline runs failed"
+                + (
+                    f" and {len(cancel_failures)} cancel(s) failed"
+                    if cancel_failures
+                    else ""
+                )
+                + ":\n"
+                + "\n".join(lines)
+            )
         logger.info(f"All {len(resource_names)} pipeline runs completed successfully.")
