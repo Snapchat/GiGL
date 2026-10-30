@@ -33,7 +33,7 @@ on:
 jobs:
   # First job: Bump version and create release branch
   bump_version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -111,7 +111,7 @@ jobs:
 
   release_gigl_kfp_pipeline:
     needs: bump_version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -187,7 +187,7 @@ jobs:
       - bump_version
       - release_gigl_kfp_pipeline
       # - release_dev_workbench_image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
