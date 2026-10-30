@@ -210,6 +210,41 @@ def _relation_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEncoder
     return encoder
 
 
+_BIAS_CONFIGS = ["pairwise", "pairwise_and_key", "relation_bilinear", "relation_hgt"]
+
+
+def _bias_encoder(
+    config: str, readout_mode: str
+) -> tuple[GraphTransformerEncoder, Callable[[int], HeteroData]]:
+    """An eval-mode encoder with a per-pair attention bias, and its batch builder.
+
+    ``config`` is one of ``_BIAS_CONFIGS``. Both pairwise bias and relation
+    attention add a per-pair score to the attention.
+    """
+    if config.startswith("relation"):
+        kwargs = _relation_encoder_kwargs(
+            "none",
+            relation_attention_mode=f"edge_type_{config.split('_')[1]}",
+            hid_dim=128,
+            readout_mode=readout_mode,
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(3, 128)}
+            ),
+        )
+        return _relation_encoder(
+            _three_relation_batch(0), kwargs
+        ), _three_relation_batch
+    overrides: dict = {"pairwise_attention_bias_attr_names": ["pair_score"]}
+    if config == "pairwise_and_key":
+        overrides["anchor_based_attention_bias_attr_names"] = [_HOP]
+    kwargs = _encoder_kwargs(
+        hid_dim=128, readout_mode=readout_mode, dropout_rate=0.0, **overrides
+    )
+    encoder = _materialized_encoder(_random_batch(0), kwargs)
+    _randomize_pairwise_biases(encoder)
+    return encoder, _random_batch
+
+
 def _without_relation_attention(
     encoder: GraphTransformerEncoder,
 ) -> GraphTransformerEncoder:
@@ -1383,6 +1418,51 @@ class PackedPathCudaTest(TestCase):
             ),
             atol=1e-4,
         )
+
+    @parameterized.expand(
+        [
+            param(f"{config}_{readout_mode}", config, readout_mode)
+            for config in _BIAS_CONFIGS
+            for readout_mode in _READOUT_MODES
+        ]
+    )
+    def test_cuda_inference_with_a_per_pair_bias_matches_cpu(
+        self, _: str, config: str, readout_mode: str
+    ) -> None:
+        cpu_encoder, make_batch = _bias_encoder(config, readout_mode)
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        for dtype, atol in ((None, 1e-4), (torch.bfloat16, 1e-1)):
+            for seed in range(2):
+                with self.subTest(dtype=dtype, seed=seed), torch.no_grad():
+                    expected = cpu_encoder(make_batch(seed), anchor_node_type=_USER)
+                    with torch.autocast(
+                        "cuda", dtype=torch.bfloat16, enabled=dtype is not None
+                    ):
+                        actual = cuda_encoder(
+                            make_batch(seed).to("cuda"), anchor_node_type=_USER
+                        )
+                    torch.testing.assert_close(
+                        actual.float().cpu(), expected, rtol=0, atol=atol
+                    )
+
+    @parameterized.expand(_BIAS_CONFIGS)
+    def test_whole_encoder_compile_with_a_per_pair_bias_does_not_recompile(
+        self, config: str
+    ) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        encoder, make_batch = _bias_encoder(config, "anchor_only")
+        encoder = encoder.to("cuda")
+        compiled = torch.compile(encoder)
+        graph_counts = []
+        for seed in range(5):
+            data = make_batch(seed).to("cuda")
+            with torch.no_grad():
+                actual = compiled(data, anchor_node_type=_USER)
+                expected = encoder(data, anchor_node_type=_USER)
+            graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"])
+            torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
     @parameterized.expand(_READOUT_MODES)
     def test_whole_encoder_inductor_compile_matches_eager_without_recompiling(

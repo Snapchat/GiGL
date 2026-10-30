@@ -46,19 +46,21 @@ Data flow of a packed forward::
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
-    On CUDA the kernel runs when there is no ``per_pair`` bias and no dropout.
-    With a ``per_pair`` bias or ``dropout_p > 0``, CUDA runs the padded SDPA
+    On CUDA the kernel runs unless ``dropout_p > 0`` or a ``per_pair`` bias
+    needs a gradient with every token queried. Those calls run the padded SDPA
     path on the GPU instead, which costs ``num_sequences * max_seq_len`` rows of
     attention work rather than only the real tokens, and holds a dense
     ``num_sequences x num_heads x query_len x max_seq_len`` bias plus the same-sized
-    scores, rebuilt in every layer.
+    scores, rebuilt in every layer. The kernel still holds the dense bias for a
+    ``per_pair`` bias, but skips the scores and the padded tokens.
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
   - A ``PackedAttentionBias`` is part of the call. The padded SDPA path applies
     it. On CUDA a ``per_key`` bias runs on the kernel by folding it into q and k
-    as an extra head-dim column; a ``per_pair`` bias goes to the padded SDPA
-    path on the GPU.
+    as an extra head-dim column. A ``per_pair`` bias runs on the kernel as the
+    kernel's per-sequence bias without a gradient, or folded to a per-key bias
+    for first-token queries, and otherwise on the padded SDPA path on the GPU.
   - Attention dropout (``dropout_p``) is applied by SDPA on the padded path. The
     varlen kernel is never called with dropout, so on CUDA ``dropout_p > 0``
     also selects the padded path. The padded path draws one mask per head and
@@ -136,6 +138,7 @@ def _varlen_attention_op(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_log_sumexp: bool,
+    attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Runs the varlen kernel and returns ``(output, logsumexp)``.
 
@@ -143,7 +146,19 @@ def _varlen_attention_op(
     (output, logsumexp, philox_seed, philox_offset, max_q, max_k). The kernel takes
     ``[batch, tokens, heads, head_dim]``, and ``cu_seqlens`` splits the single
     batch row into sequences.
+
+    ``attn_bias`` is a per-sequence grid ``[num_sequences, num_heads, query_len,
+    key_len]`` whose last-dim stride is 1 and whose other strides are multiples of
+    8. The kernel indexes the bias of sequence ``i`` at ``i * stride(0)``, relative
+    to the sequence's own query and key positions, so the grid is passed as a
+    strided ``[1, num_heads, num_query_tokens, num_key_tokens]`` view. The kernel
+    has no backward for a bias with ``cu_seqlens``.
     """
+    if attn_bias is not None:
+        attn_bias = attn_bias.as_strided(
+            (1, attn_bias.size(1), query.size(0), key.size(0)),
+            (attn_bias.stride(0), attn_bias.stride(1), attn_bias.stride(2), 1),
+        )
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_forward,
@@ -152,7 +167,7 @@ def _varlen_attention_op(
         query.unsqueeze(0),
         key.unsqueeze(0),
         value.unsqueeze(0),
-        None,
+        attn_bias,
         cu_seqlens_q,
         cu_seqlens_k,
         max_seqlen_q,
@@ -174,6 +189,7 @@ def _(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_log_sumexp: bool,
+    attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
     output = torch.empty_like(query)
     logsumexp_size = 0
@@ -248,9 +264,21 @@ def _(
 
 
 def _setup_varlen_attention_context(ctx, inputs, output) -> None:
-    query, key, value, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, _ = (
-        inputs
-    )
+    (
+        query,
+        key,
+        value,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        _,
+        attn_bias,
+    ) = inputs
+    if attn_bias is not None and attn_bias.requires_grad:
+        raise ValueError(
+            "The varlen kernel has no backward with a bias; use the padded path."
+        )
     ctx.save_for_backward(
         query, key, value, output[0], output[1], cu_seqlens_q, cu_seqlens_k
     )
@@ -272,7 +300,7 @@ def _varlen_attention_backward(ctx, grad_output, grad_logsumexp):
         ctx.max_seqlen_q,
         ctx.max_seqlen_k,
     )
-    return grad_query, grad_key, grad_value, None, None, None, None, None
+    return grad_query, grad_key, grad_value, None, None, None, None, None, None
 
 
 torch.library.register_autograd(
@@ -335,6 +363,13 @@ def _fold_per_key_bias(
     return query, key
 
 
+def _requires_grad(*tensors: Optional[Tensor]) -> bool:
+    """Whether autograd would record an op that takes ``tensors``."""
+    return torch.is_grad_enabled() and any(
+        tensor is not None and tensor.requires_grad for tensor in tensors
+    )
+
+
 def _varlen_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
@@ -343,6 +378,9 @@ def _varlen_attention(
     cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
+    attn_bias: Optional[
+        Float[Tensor, "num_sequences num_heads query_len key_len"]
+    ] = None,
 ) -> Float[Tensor, "num_query_tokens num_heads value_dim"]:
     """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
 
@@ -360,6 +398,12 @@ def _varlen_attention(
     to 128). The backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
+
+    ``attn_bias`` is a per-sequence additive score bias: sequence ``i`` reads
+    ``attn_bias[i, :, query position, key position]``. It must have the query
+    dtype, a last-dim stride of 1, and other strides that are multiples of 8. The
+    kernel has no backward for a bias with ``cu_seqlens``, so a bias is
+    inference only: nothing may require grad, or the call raises.
 
     This calls the private ``aten._efficient_attention_forward`` op, wrapped in
     ``gigl::varlen_attention``, because torch
@@ -390,11 +434,10 @@ def _varlen_attention(
         cu_seqlens_k: Key sequence offsets.
         max_seqlen_q: Upper bound on any query sequence length.
         max_seqlen_k: Upper bound on any key sequence length.
+        attn_bias: Optional per-sequence score bias, see above.
     """
     # The backward needs the logsumexp; skip it when nothing will differentiate.
-    needs_grad = torch.is_grad_enabled() and any(
-        tensor.requires_grad for tensor in (query, key, value)
-    )
+    needs_grad = _requires_grad(query, key, value, attn_bias)
     return _varlen_attention_op(
         query,
         key,
@@ -404,6 +447,7 @@ def _varlen_attention(
         max_seqlen_q,
         max_seqlen_k,
         needs_grad,
+        attn_bias,
     )[0]
 
 
@@ -546,19 +590,43 @@ def packed_attention(
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
     On CUDA, a ``per_key`` bias runs on the varlen kernel through
-    ``_fold_per_key_bias``. A ``per_pair`` bias or ``dropout_p > 0`` runs the
-    padded SDPA path on the GPU. Off CUDA, the padded SDPA path always runs.
+    ``_fold_per_key_bias``. A ``per_pair`` bias runs as follows:
+
+    - With ``query_is_first_token`` its row 0 is a per-key bias, which is added
+      to ``per_key``, so it runs on the kernel with or without a gradient.
+    - Otherwise it is the kernel's per-sequence bias when no input requires a
+      gradient, because the kernel has no backward for a bias with
+      ``cu_seqlens``. With a gradient it runs the padded SDPA path on the GPU.
+
+    ``dropout_p > 0`` runs the padded SDPA path on the GPU. Off CUDA, the padded
+    SDPA path always runs.
 
     Args and returns are as in ``_padded_packed_attention``.
     """
-    has_per_pair = bias is not None and bias.per_pair is not None
-    if not query.is_cuda or has_per_pair or dropout_p > 0:
+    if not query.is_cuda or dropout_p > 0:
+        return _padded_packed_attention(
+            query, key, value, layout, query_is_first_token, bias, dropout_p
+        )
+    per_key = None
+    per_pair = None
+    if bias is not None:
+        per_key = bias.per_key
+        per_pair = bias.per_pair
+    if per_pair is not None and query_is_first_token:
+        first_row = per_pair[:, :, 0, :].permute(0, 2, 1).flatten(0, 1)
+        first_row = first_row[layout.flat_index]
+        per_key = first_row if per_key is None else per_key + first_row
+        per_pair = None
+    if per_pair is not None and _requires_grad(query, key, value, per_key, per_pair):
         return _padded_packed_attention(
             query, key, value, layout, query_is_first_token, bias, dropout_p
         )
     head_dim = query.size(-1)
-    if bias is not None and bias.per_key is not None:
-        query, key = _fold_per_key_bias(query, key, bias.per_key)
+    attn_bias = None
+    if per_pair is not None:
+        attn_bias = _pad_head_dim(per_pair.to(query.dtype))
+    if per_key is not None:
+        query, key = _fold_per_key_bias(query, key, per_key)
     elif head_dim % 8 != 0:
         query, key = _pad_query_key(query, key)
     if head_dim % 8 != 0:
@@ -579,5 +647,6 @@ def packed_attention(
         layout.cu_seqlens,
         max_seqlen_q,
         min(layout.max_seq_len, key.size(0)),
+        attn_bias,
     )
     return output[..., :head_dim]

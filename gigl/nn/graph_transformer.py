@@ -568,8 +568,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         The tokens of each sequence sit back to back in ``x``. Each token attends
         only to tokens of its own sequence. With a relation attention mode, the
         layer adds the per-edge relation scores to ``bias.per_pair`` as a
-        per-layer pair bias, so attention runs on the padded-grid backend. In
-        training, attention dropout also runs on that backend.
+        per-layer pair bias, so attention runs on the padded-grid backend, or on
+        the varlen kernel without a gradient. With ``first_token_output`` the scores
+        are per-key and attention runs on the varlen kernel. In training,
+        attention dropout runs on the padded-grid backend.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
@@ -662,11 +664,14 @@ class GraphTransformerEncoderLayer(nn.Module):
         bias: Optional[PackedAttentionBias],
         first_token_output: bool,
     ) -> PackedAttentionBias:
-        """Adds the relation attention scores of the edges to the pair bias.
+        """Adds the relation attention scores of the edges to the bias.
 
         Each edge adds its per-head score at (target query, source key) of its
-        sequence, on top of ``bias.per_pair`` when that is set. The scores go into
-        a copy, so the incoming bias is shared across layers.
+        sequence. With ``first_token_output`` every edge targets the anchor, so the
+        score depends on the key only: it is added to ``bias.per_key`` at the
+        edge's source token, and ``bias.per_pair`` is returned as it came. Otherwise
+        the scores go into a copy of ``bias.per_pair``, so the incoming bias is
+        shared across layers.
 
         Args:
             query: ``(query rows, num_heads, head_dim)`` queries. Rows are indexed
@@ -680,42 +685,72 @@ class GraphTransformerEncoderLayer(nn.Module):
                 ``relation_edges.target`` is then the sequence index.
 
         Returns:
-            A bias whose ``per_pair`` is ``(num_sequences, num_heads, query_len,
-            max_seq_len)``, with ``query_len`` 1 with ``first_token_output`` and
-            ``max_seq_len`` otherwise.
+            With ``first_token_output``, a bias whose ``per_key`` includes the
+            scores. Otherwise a bias whose ``per_pair`` is ``(num_sequences,
+            num_heads, max_seq_len, max_seq_len)``.
         """
         target = relation_edges.target
         source = relation_edges.source
-        if first_token_output:
-            query_len = 1
-        else:
-            query_len = layout.max_seq_len
         per_key = None
+        per_pair = None
         if bias is not None:
             per_key = bias.per_key
-        if bias is not None and bias.per_pair is not None:
-            grid = bias.per_pair[:, :, :query_len, :].to(query.dtype, copy=True)
+            per_pair = bias.per_pair
+        if first_token_output:
+            scores = self._relation_attention_scores(
+                query[target], key[source], relation_edges.segments
+            )
+            if per_key is None:
+                per_key = key.new_zeros(key.size(0), self._num_heads)
+            return PackedAttentionBias(
+                per_key=per_key.index_add(0, source, scores.to(per_key.dtype)),
+                per_pair=per_pair,
+            )
+        if per_pair is not None:
+            grid = per_pair.to(query.dtype, copy=True)
         else:
             grid = query.new_zeros(
                 layout.cu_seqlens.numel() - 1,
                 self._num_heads,
-                query_len,
+                layout.max_seq_len,
                 layout.max_seq_len,
             )
-        if first_token_output:
-            query_sequence = target
-            query_position = torch.zeros_like(target)
-        else:
-            query_sequence = layout.sequence_id[target]
-            query_position = layout.position[target]
         self._accumulate_relation_attention_scores(
             grid,
             query[target],
             key[source],
-            (query_sequence, query_position, layout.position[source]),
+            (
+                layout.sequence_id[target],
+                layout.position[target],
+                layout.position[source],
+            ),
             relation_edges.segments,
         )
         return PackedAttentionBias(per_key=per_key, per_pair=grid)
+
+    def _relation_attention_scores(
+        self,
+        selected_query: Tensor,
+        selected_key: Tensor,
+        segments: Sequence[tuple[int, int, int]],
+    ) -> Tensor:
+        """The per-head relation score of each edge, ``(num_edges, num_heads)``.
+
+        Args:
+            selected_query: ``(num_edges, num_heads, head_dim)`` query of each
+                edge's target, grouped by relation.
+            selected_key: ``(num_edges, num_heads, head_dim)`` key of each edge's
+                source, in the same order.
+            segments: ``(relation, start, end)`` edge range of every relation.
+        """
+        return torch.cat(
+            [
+                self._compute_relation_attention_scores(
+                    selected_query[start:end], selected_key[start:end], relation
+                )
+                for relation, start, end in segments
+            ]
+        )
 
     def _accumulate_relation_attention_scores(
         self,
@@ -736,14 +771,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             grid_index: ``(batch, query position, key position)`` of each edge.
             segments: ``(relation, start, end)`` edge range of every relation.
         """
-        scores = torch.cat(
-            [
-                self._compute_relation_attention_scores(
-                    selected_query[start:end], selected_key[start:end], relation
-                )
-                for relation, start, end in segments
-            ]
-        )  # [num_edges, num_heads]
+        scores = self._relation_attention_scores(selected_query, selected_key, segments)
         grid.permute(0, 2, 3, 1).index_put_(
             grid_index, scores.to(grid.dtype), accumulate=True
         )
