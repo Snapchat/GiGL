@@ -134,10 +134,12 @@ pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
 
 pip resolves and installs `gigl-core` automatically from the same GCP registry. No separate install step is needed.
 
-Currently, building/using wheels for GLT is error prone, thus we opt to install from source every time. Run post-install
-script to setup GLT dependency:
+GraphLearn-Torch (GLT) is not on PyPI; the post-install script builds a patched wheel from source and caches it per
+machine under `~/.cache/gigl/glt-wheels/`, so only the first environment on a machine compiles it. The build needs
+`ninja`, which pip does not install for you:
 
 ```bash
+pip install ninja
 gigl-post-install
 ```
 
