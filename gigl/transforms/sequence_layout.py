@@ -72,6 +72,26 @@ class PackedLayout(NamedTuple):
     relation_edges: Optional[PackedRelationEdges] = None
 
 
+class SelectedSequences(NamedTuple):
+    """The tokens ``select_sequences`` picked for each anchor.
+
+    Attributes:
+        nodes: ``[num_anchors, max_seq_len]`` long node ids, the anchor in
+            column 0 if ``include_anchor``, -1 from the sequence length on.
+        source: ``[num_anchors, max_seq_len]`` long column of ``candidates``
+            each token came from, so a per-candidate payload follows with
+            ``payload.gather(1, source.clamp(min=0))``. It is -1 at the anchor
+            and at padding.
+        lengths: ``[num_anchors]`` long count of valid tokens, anchor included.
+            It is at most ``max_seq_len``, except that it counts the anchor even
+            when ``max_seq_len`` is 0.
+    """
+
+    nodes: Int64[Tensor, "num_anchors max_seq_len"]
+    source: Int64[Tensor, "num_anchors max_seq_len"]
+    lengths: Int64[Tensor, "num_anchors"]
+
+
 def pack_sequences(
     lengths: Int64[Tensor, "num_sequences"],
     max_seq_len: int,
@@ -88,6 +108,13 @@ def pack_sequences(
 
     A length above ``max_seq_len`` is clamped to it, because the grid has no
     positions beyond that. Checking for it would cost another host read.
+
+    Example:
+        >>> packed = pack_sequences(torch.tensor([2, 1, 3]), max_seq_len=3)
+        >>> packed.flat_index.tolist()
+        [0, 1, 3, 6, 7, 8]
+        >>> packed.cu_seqlens.tolist()
+        [0, 2, 3, 6]
 
     Args:
         lengths: ``[num_sequences]`` number of valid positions of each sequence.
@@ -137,11 +164,7 @@ def select_sequences(
     priority: Optional[Tensor] = None,
     ties_by_column: bool = False,
     include_anchor: bool = True,
-) -> tuple[
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors max_seq_len"],
-    Int64[Tensor, "num_anchors"],
-]:
+) -> SelectedSequences:
     """Picks each anchor's tokens from its candidates, with fixed shapes.
 
     Every anchor's sequence is the anchor, then its distinct candidate nodes other
@@ -151,6 +174,42 @@ def select_sequences(
     of a node first. This is the selection step shared by the k-hop and PPR
     sequence builders: they differ in how they generate the candidates and in
     what ``priority`` ranks.
+
+    Example:
+        Two anchors, 0 and 1. Node 3 is a duplicate candidate of anchor 0, anchor 0
+        is among its own candidates, and -1 is padding::
+
+            >>> anchors = torch.tensor([0, 1])
+            >>> candidates = torch.tensor([[5, 3, 0, 3, -1], [4, 1, 6, 4, 2]])
+            >>> nodes, source, lengths = select_sequences(anchors, candidates, 4)
+            >>> nodes.tolist()
+            [[0, 3, 5, -1], [1, 2, 4, 6]]
+            >>> lengths.tolist()
+            [3, 4]
+
+        Gather a per-candidate payload with ``source``, zeroing the anchor and
+        padding tokens::
+
+            >>> payload = torch.arange(10, 20).reshape(2, 5)
+            >>> (payload.gather(1, source.clamp(min=0)) * (source >= 0)).tolist()
+            [[0, 11, 10, 0], [0, 19, 15, 17]]
+
+        A ``priority`` ranks the candidates (smaller first); equal priorities go by
+        node id, or by column with ``ties_by_column``::
+
+            >>> priority = torch.tensor([[0, 1, 0, 1, 0], [2, 9, 0, 5, 0]])
+            >>> select_sequences(anchors, candidates, 4, priority).nodes.tolist()
+            [[0, 5, 3, -1], [1, 2, 6, 4]]
+            >>> select_sequences(
+            ...     anchors, candidates, 4, priority, ties_by_column=True
+            ... ).nodes.tolist()
+            [[0, 5, 3, -1], [1, 6, 2, 4]]
+
+        Without ``include_anchor`` the candidates are the whole sequence, so anchor
+        0 stays in its sequence as the candidate it is::
+
+            >>> select_sequences(anchors, candidates, 4, include_anchor=False).source.tolist()
+            [[2, 1, 0, -1], [1, 4, 0, 2]]
 
     Args:
         anchor_indices: ``[num_anchors]`` node ids of the anchors.
@@ -170,15 +229,7 @@ def select_sequences(
             the anchor stays in it if it is one of them.
 
     Returns:
-        - ``nodes``: ``[num_anchors, max_seq_len]`` long node ids, the anchor in
-          column 0 if ``include_anchor``, -1 from the sequence length on.
-        - ``source``: ``[num_anchors, max_seq_len]`` long column of ``candidates``
-          each token came from, so a per-candidate payload follows with
-          ``payload.gather(1, source.clamp(min=0))``. It is -1 at the anchor and
-          at padding.
-        - ``lengths``: ``[num_anchors]`` long count of valid tokens, anchor
-          included. It is at most ``max_seq_len``, except that it counts the
-          anchor even when ``max_seq_len`` is 0.
+        The ``SelectedSequences``: ``nodes``, ``source`` and ``lengths``.
     """
     anchor_indices = anchor_indices.long()
     num_candidates = candidates.size(1)
@@ -238,4 +289,6 @@ def select_sequences(
     source = torch.where(packed >= 0, packed & _COLUMN_MASK, -1)
     if include_anchor and max_seq_len > 0:
         source[:, 0] = -1
-    return packed >> _COLUMN_BITS, source, first_position + keep.sum(dim=1)
+    return SelectedSequences(
+        packed >> _COLUMN_BITS, source, first_position + keep.sum(dim=1)
+    )
