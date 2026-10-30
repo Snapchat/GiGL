@@ -236,4 +236,3 @@ jobs:
           * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
 
           Updated `gigl/dep_vars.env` with every per-minor ref.
-          Updated the `_BUILDER_IMAGE` default in `.github/cloud_builder/run_command_on_active_checkout.yaml` to the new builder for the `.python-version` minor.

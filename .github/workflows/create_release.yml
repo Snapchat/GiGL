@@ -43,6 +43,7 @@ jobs:
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
       bump_type: ${{ steps.set_vars.outputs.bump_type }}
+      minors: ${{ steps.versions.outputs.minors }}
 
     steps:
     - name: Checkout code
@@ -128,33 +129,20 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
-
-  # Read from the release branch: that is the dep_vars.env the release legs run with.
-  python-versions:
-    name: Read the supported Python versions
-    needs: bump_version
-    runs-on: ubuntu-24.04
-    outputs:
-      minors: ${{ steps.versions.outputs.minors }}
-    steps:
-    - name: Checkout release branch
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        ref: ${{ needs.bump_version.outputs.release_branch_name }}
-
+    # The release branch's dep_vars.env is the one the release legs run with.
     - name: Read SUPPORTED_PYTHON_VERSIONS
       id: versions
       run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
 
   # One leg per Python minor, each run in that minor's builder image.
   release_gigl_kfp_pipeline:
-    needs: [bump_version, python-versions]
+    needs: bump_version
     runs-on: ubuntu-24.04
     strategy:
       # A failing minor must not cancel another minor's leg in the middle of its pushes.
       fail-fast: false
       matrix:
-        python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
+        python: ${{ fromJSON(needs.bump_version.outputs.minors) }}
     permissions:
       contents: write
       pull-requests: write

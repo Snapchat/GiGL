@@ -1,9 +1,7 @@
 substitutions:
   _CMD: ""
-  # The builder image that runs _CMD. The default is the builder for the Python minor in .python-version;
-  # the run-cloud-run-command-on-active-checkout action passes another minor's builder from gigl/dep_vars.env.
-  # update_docker_image_refs.sh rewrites the default.
-  _BUILDER_IMAGE: "us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:0c41d2857437453a651888d02978071c5c3ab1e2.113.1-py311"
+  # _BUILDER_IMAGE, the builder image that runs _CMD, has no default. The run-cloud-run-command-on-active-checkout
+  # action passes it from gigl/dep_vars.env, and Cloud Build fails a submit that uses it without a value.
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:

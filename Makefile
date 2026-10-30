@@ -30,7 +30,7 @@ DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}-${PY_TAG}
 DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}-${PY_TAG}
 DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}-${PY_TAG}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}-${PY_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
 
 # Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
@@ -326,8 +326,8 @@ run_all_e2e_tests:
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
 
-# Compiles and uploads the released KFP pipeline for this Python minor on the release src images
-# dep_vars.env lists under the keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
+# Builds and pushes this minor's 3 release src images (cuda, cpu, cpu-dataflow) and compiles and uploads its KFP
+# pipeline, using the refs under the dep_vars.env keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
 release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
 release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))

@@ -72,10 +72,7 @@ _PER_MINOR_KEY_FAMILIES = {
 
 
 def check_per_minor_keys(repo_root: Path = REPO_ROOT) -> None:
-    """Every supported minor has each per-minor key, ending in its `-py<XY>` tag, and no other minor has keys.
-
-    Also checks that the Cloud Build `_BUILDER_IMAGE` default is the `.python-version` minor's builder.
-    """
+    """Every supported minor has each per-minor key, ending in its `-py<XY>` tag, and no other minor has keys."""
     values = _read_dep_vars(repo_root)
     tags = [
         "py" + "".join(version.split(".")[:2])
@@ -93,21 +90,6 @@ def check_per_minor_keys(repo_root: Path = REPO_ROOT) -> None:
     stray_keys = {key for key in values if re.search(r"_py\d+$", key)} - expected_keys
     assert not stray_keys, (
         f"gigl/dep_vars.env has per-minor keys for minors not in SUPPORTED_PYTHON_VERSIONS: {sorted(stray_keys)}"
-    )
-
-    default_tag = "py" + "".join(
-        (repo_root / ".python-version").read_text().strip().split(".")[:2]
-    )
-    cloud_build = (
-        repo_root / ".github" / "cloud_builder" / "run_command_on_active_checkout.yaml"
-    ).read_text()
-    match = re.search(r'^\s*_BUILDER_IMAGE: "(.*)"$', cloud_build, re.MULTILINE)
-    assert match, "run_command_on_active_checkout.yaml has no _BUILDER_IMAGE default"
-    expected_builder = values[
-        f"DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG_{default_tag}"
-    ]
-    assert match.group(1) == expected_builder, (
-        f"Cloud Build _BUILDER_IMAGE {match.group(1)} != {expected_builder}"
     )
 
 
