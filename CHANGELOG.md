@@ -42,9 +42,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The compact CSR build keeps int32 column ids when the edge index is int32, which the patched GLT samplers read
   directly; peak conversion memory drops from ~2x one int64 edge array to ~1.5x by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/788
+- Cache built GraphLearn-Torch wheels per machine (`~/.cache/gigl/glt-wheels/`, override with
+  `GIGL_GLT_WHEEL_CACHE_DIR`) in `post_install.py`, keyed on the pinned commit, patch contents, build script, CPU/CUDA
+  variant, torch version, python version and platform, so only the first environment on a machine compiles GLT. The
+  cache logs each wheel's sha256, can be disabled with `GIGL_GLT_WHEEL_CACHE=0`, and is off in CI and as root. Ninja for
+  the build now comes from the PyPI `ninja` package (`glt-build-backend` dependency group) instead of `apt` by
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/805
+- Add `SKIP_SCALA=1` to `make install_dev_deps` to skip the Scala toolchain download, and document the git worktree
+  workflow in `CLAUDE.md` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/805
+- Add a `precondition_tests` check (`tests/config_tests/glt_patches_check.py`) that the local GLT patches apply to the
+  pinned `GLT_COMMIT`, so a bumped pin or edited patch fails fast instead of in an image build by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/805
 - The compact CSR build counts degrees, scatters edges and sorts rows with multi-threaded numba kernels when its output
   is in memory; column ids are unchanged, and a 200M-edge build on 32 threads drops from 34 s to 4 s. Adds `numba` as a
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
+- Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
+  spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
 - Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
   `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING

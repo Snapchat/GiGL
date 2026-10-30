@@ -58,6 +58,8 @@ COPY uv.lock uv.lock
 COPY gigl/dep_vars.env gigl/dep_vars.env
 COPY requirements requirements
 # Needed to install GLT
+# post_install.py imports gigl.scripts.glt_wheel_cache, so `gigl` must be a package here.
+COPY gigl/__init__.py gigl/__init__.py
 COPY gigl/scripts gigl/scripts
 
 
@@ -72,9 +74,11 @@ ARG PYTHON_VERSION
 # Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
 # uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
 ENV UV_PYTHON=${PYTHON_VERSION}
+# The wheel cache only helps repeated installs on one machine; an image build is one-shot. post_install.py
+# also turns it off when running as root, but say so explicitly so no wheel is ever written into the layer.
 # only-managed keeps uv from settling for a system Python that matches the request.
 RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
-    && UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh --dev
+    && GIGL_GLT_WHEEL_CACHE=0 UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh --dev
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.
