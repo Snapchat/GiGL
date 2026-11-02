@@ -126,8 +126,9 @@ no-build-isolation-package = ["gigl-core"]
 gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 # ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
 # is on PATH when the build runs, so the PyPI binary is found.
-# setuptools is for the GLT build (`python setup.py bdist_wheel` in gigl/scripts/install_glt.sh); a fresh uv venv
-# does not include it. 70.1 is the first release with bdist_wheel built in, so the `wheel` package is not needed.
+# setuptools is declared for the GLT build (`python setup.py bdist_wheel` in gigl/scripts/install_glt.sh) rather
+# than left to come in through tensorflow. 70.1 is the first release with bdist_wheel built in, so the `wheel`
+# package is not needed.
 glt-build-backend = ["ninja", "setuptools>=70.1"]
 # What the GitHub Actions scripts under .github/scripts import, without the project, Beam, TensorFlow, or
 # torch: `uv run --frozen --only-group gh-actions python <script>` with PYTHONPATH set to the checkout
