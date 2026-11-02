@@ -49,6 +49,12 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+    # Read before the bump and the push, so a bad list fails before the release branch exists. The bump
+    # does not change SUPPORTED_PYTHON_VERSIONS, so this is the release branch's list.
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
+
     - name: Setup Machine for bumping version
       uses: ./.github/actions/setup-python-tools
       with:
@@ -115,11 +121,6 @@ jobs:
         commit_message: "[AUTOMATED] Bumped version to v${{ steps.get_new_version.outputs.new_version }}"
         github_token: ${{ secrets.GITHUB_TOKEN }}
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
-
-    # The release branch's dep_vars.env is the one the release legs run with.
-    - name: Read SUPPORTED_PYTHON_VERSIONS
-      id: versions
-      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
 
   # One leg per Python minor, each run in that minor's builder image.
   release_gigl_kfp_pipeline:
