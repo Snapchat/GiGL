@@ -25,6 +25,9 @@ def get_help_text():
             # Process jobs from parsed YAML
             if "jobs" in workflow_data:
                 for job_name, job_config in workflow_data["jobs"].items():
+                    # A job with outputs feeds other jobs (e.g. a plan job for a matrix) and is never a command.
+                    if "outputs" in job_config:
+                        continue
                     # Extract the commands from the job's if condition, if any.
                     # Searching for lines like: "contains(github.event.comment.body,'/unit_test_py')"
                     # or "endsWith(github.event.comment.body, '/unit_test')" and extracting the command
