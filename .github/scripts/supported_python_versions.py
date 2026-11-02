@@ -7,9 +7,8 @@ Example:
     $ python .github/scripts/supported_python_versions.py
     versions=["3.11.14","3.12.14","3.13.15"]
     minors=["3.11","3.12","3.13"]
-    default_minor=3.11
     nondefault_minors=["3.12","3.13"]
-    builds=[{"python":"3.11.14","tag":"py311"},{"python":"3.12.14","tag":"py312"},{"python":"3.13.15","tag":"py313"}]
+    builds=[{"python":"3.11.14","minor":"3.11","tag":"py311"},{"python":"3.12.14","minor":"3.12","tag":"py312"},{"python":"3.13.15","minor":"3.13","tag":"py313"}]
     minor_count=3
 """
 
@@ -64,7 +63,11 @@ def outputs(repo_root: Path) -> dict[str, str]:
     default_minor = read_default_minor(repo_root, versions)
     minors = [minor_of(version) for version in versions]
     builds = [
-        {"python": version, "tag": "py" + minor_of(version).replace(".", "")}
+        {
+            "python": version,
+            "minor": minor_of(version),
+            "tag": "py" + minor_of(version).replace(".", ""),
+        }
         for version in versions
     ]
 
@@ -74,7 +77,6 @@ def outputs(repo_root: Path) -> dict[str, str]:
     return {
         "versions": dump(versions),
         "minors": dump(minors),
-        "default_minor": default_minor,
         "nondefault_minors": dump([m for m in minors if m != default_minor]),
         "builds": dump(builds),
         "minor_count": str(len(minors)),

@@ -34,11 +34,12 @@ class SupportedPythonVersionsTest(TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         outputs = dict(line.split("=", 1) for line in result.stdout.splitlines())
         self.assertEqual(json.loads(outputs["minors"]), ["3.11", "3.12", "3.13"])
-        self.assertEqual(outputs["default_minor"], "3.12")
+        self.assertNotIn("default_minor", outputs)
         self.assertEqual(json.loads(outputs["nondefault_minors"]), ["3.11", "3.13"])
         self.assertEqual(outputs["minor_count"], "3")
         self.assertEqual(
-            json.loads(outputs["builds"])[2], {"python": "3.13.15", "tag": "py313"}
+            json.loads(outputs["builds"])[2],
+            {"python": "3.13.15", "minor": "3.13", "tag": "py313"},
         )
 
     def test_rejects_default_not_listed(self) -> None:

@@ -25,8 +25,8 @@ PR. Trigger it manually:
 
 The workflow will:
 
-- Bump the version in `pyproject.toml` (both `gigl` and `gigl-core`), re-lock `uv.lock` and `gigl-core/uv.lock`, and
-  commit it to a new `release/vX.Y.Z` branch. The re-lock fails the workflow if it moves anything but the two versions.
+- Bump the version in `pyproject.toml` (both `gigl` and `gigl-core`) and commit it, with the re-locked `uv.lock` and
+  `gigl-core/uv.lock`, to a new `release/vX.Y.Z` branch.
 - Release the GiGL KFP pipeline from that branch.
 - Create and push a version tag `vX.Y.Z`.
 - Open a PR to merge `release/vX.Y.Z` back to `main`.

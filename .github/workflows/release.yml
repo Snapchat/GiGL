@@ -79,9 +79,9 @@ jobs:
     - name: Install C++ toolchain
       run: bash ./gigl-core/requirements/install_cpp_deps.sh
 
-    # Installs this matrix variant's torch and gigl-core's build backend into the project environment, and nothing else:
-    # no `dev` group, no GLT, and no `transform` extra (whose TFDV wheel needs glibc 2.39). The `Build gigl-core wheel`
-    # step builds gigl-core itself.
+    # Installs gigl-core's build backend and this matrix variant's torch/pyg set into the project environment. There is
+    # no `dev` group, no GLT, and no `transform` extra (whose TFDV wheel needs glibc 2.39). The base dependencies still
+    # install. The `Build gigl-core wheel` step builds gigl-core itself.
     - name: Install build dependencies
       env:
         TORCH_VARIANT: ${{ matrix.torch-variant }}
