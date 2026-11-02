@@ -18,7 +18,7 @@ inputs:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
   python_version:
-    description: "Python major.minor, e.g. 3.13. Runs the command in that minor's builder image, read from gigl/dep_vars.env. Empty uses the default builder."
+    description: "Python major.minor, e.g. 3.13. Runs the command in that minor's builder image, read from gigl/dep_vars.env. Empty uses the minor in .python-version."
     required: false
     default: ""
 

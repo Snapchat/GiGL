@@ -1,9 +1,7 @@
 substitutions:
   _CMD: ""
-  # The builder image that runs _CMD. The run-cloud-run-command-on-active-checkout action always passes it,
-  # read from gigl/dep_vars.env. The default is for callers that predate that and equals
-  # DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG; update_docker_image_refs.sh keeps the two in sync.
-  _BUILDER_IMAGE: "us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:86b4bc2e01ded1e5181c56fb7f85015833676308.115.1"
+  # _BUILDER_IMAGE, the builder image that runs _CMD, has no default. The run-cloud-run-command-on-active-checkout
+  # action passes it from gigl/dep_vars.env, and Cloud Build fails a submit that uses it without a value.
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
