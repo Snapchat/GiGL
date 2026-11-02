@@ -42,11 +42,10 @@ jobs:
   # Reads SUPPORTED_PYTHON_VERSIONS and the comment to pick the unit-test and e2e legs. GitHub rejects
   # `matrix` in a job-level `if`, so the matrix jobs read their legs from this job's outputs. The scripts
   # run from the default branch; the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as
-  # data. `contains( github.event.comment.body, ...)` has a space after `(` because `/help` lists the
-  # first `contains(github.event.comment.body, '<command>')` of every job `if`, and this job is not a command.
+  # data.
   plan:
     name: Plan the Python and E2E test matrices
-    if: ${{ github.event.issue.pull_request && (contains( github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains( github.event.comment.body, '/all_test') || contains( github.event.comment.body, '/e2e_test')) }}
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test') || contains(github.event.comment.body, '/e2e_test')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -84,7 +83,7 @@ jobs:
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:
         pr_number: ${{ github.event.issue.number }}
-        message: "Could not read `SUPPORTED_PYTHON_VERSIONS` or `.python-version` from this PR, so no tests started. Merge `main` into this PR and comment again. Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        message: "Could not read `SUPPORTED_PYTHON_VERSIONS` or `.python-version` from this PR, so the Python unit and e2e jobs did not start. If this PR is behind `main`, merge `main` into it and comment again. Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   unit-test-python:
     needs: plan
