@@ -52,7 +52,7 @@ jobs:
           This may take a while, please be patient.
           The images will be pushed to the GCP Artifact Registry.
           Each image is pushed once per version, as `<ref>-py<major><minor>`.
-          Once done, the workflow will update `gigl/dep_vars.env` and the Cloud Build default builder with the new refs.
+          Once done, the workflow will update `gigl/dep_vars.env` with the new refs.
 
   build-cuda-base-image:
     runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
@@ -82,12 +82,13 @@ jobs:
     - name: Build and Push CUDA Base Image
       env:
         PYTHON_VERSION: ${{ matrix.python }}
+        MINOR: ${{ matrix.minor }}
         IMAGE: ${{ env.GIGL_BASE_CUDA_IMAGE }}-${{ matrix.tag }}
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cuda.base -t "${IMAGE}" .
         docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
-          /gigl_scripts/smoke_test_image.py --image-type cuda --python "${PYTHON_VERSION%.*}"
+          /gigl_scripts/smoke_test_image.py --image-type cuda --python "${MINOR}"
         docker push "${IMAGE}"
         echo "Pushed CUDA base image to ${IMAGE}"
 
@@ -118,13 +119,14 @@ jobs:
     - name: Build and Push CPU Base Image and Docker CPU Image
       env:
         PYTHON_VERSION: ${{ matrix.python }}
+        MINOR: ${{ matrix.minor }}
         IMAGE: ${{ env.GIGL_BASE_CPU_IMAGE }}-${{ matrix.tag }}
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.cpu.base -t "${IMAGE}" .
         docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
-          /gigl_scripts/smoke_test_image.py --image-type cpu --python "${PYTHON_VERSION%.*}"
+          /gigl_scripts/smoke_test_image.py --image-type cpu --python "${MINOR}"
         docker push "${IMAGE}"
         echo "Pushed CPU base image to ${IMAGE}"
 
@@ -155,12 +157,13 @@ jobs:
     - name: Build and Push Dataflow Base Image
       env:
         PYTHON_VERSION: ${{ matrix.python }}
+        MINOR: ${{ matrix.minor }}
         IMAGE: ${{ env.GIGL_BASE_DATAFLOW_IMAGE }}-${{ matrix.tag }}
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.dataflow.base -t "${IMAGE}" .
         docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
-          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_VERSION%.*}"
+          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${MINOR}"
         docker push "${IMAGE}"
         echo "Pushed Dataflow base image to ${IMAGE}"
 
@@ -192,6 +195,7 @@ jobs:
     - name: Build and Push the builder image used by cloud build
       env:
         PYTHON_VERSION: ${{ matrix.python }}
+        MINOR: ${{ matrix.minor }}
         IMAGE: ${{ env.GIGL_BUILDER_IMAGE }}-${{ matrix.tag }}
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
@@ -200,7 +204,7 @@ jobs:
         bash ./requirements/install_scala_deps.sh --download-only
         docker build --build-arg PYTHON_VERSION="${PYTHON_VERSION}" -f ./containers/Dockerfile.builder -t "${IMAGE}" .
         docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${IMAGE}" \
-          /gigl_scripts/smoke_test_image.py --image-type builder --python "${PYTHON_VERSION%.*}"
+          /gigl_scripts/smoke_test_image.py --image-type builder --python "${MINOR}"
         docker push "${IMAGE}"
         echo "Pushed Builder image to ${IMAGE}"
 
