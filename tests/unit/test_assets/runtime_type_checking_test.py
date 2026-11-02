@@ -1,12 +1,14 @@
 """Unit tests for the test-only Jaxtyping hook in runtime_type_checking."""
 
 import cloudpickle
+import jaxtyping
 import numpy as np
 from absl.testing import absltest
 from jaxtyping import Float, TypeCheckError
 
 from tests.test_assets.runtime_type_checking import (
     _jaxtyped_shape_contracts_only,
+    install_runtime_typechecking,
     shape_contract_typechecker,
 )
 from tests.test_assets.test_case import TestCase
@@ -41,6 +43,11 @@ class JaxtypedShapeContractsOnlyTest(TestCase):
         self.assertEqual(decorated(np.zeros((3, 2))), 3)
         with self.assertRaises(TypeCheckError):
             decorated(np.zeros((3, 5)))
+
+    def test_install_replaces_jaxtyped(self) -> None:
+        install_runtime_typechecking()
+
+        self.assertIs(jaxtyping.jaxtyped, _jaxtyped_shape_contracts_only)
 
 
 if __name__ == "__main__":
