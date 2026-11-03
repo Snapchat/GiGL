@@ -128,6 +128,38 @@ from gigl.transforms.sequence_layout import PackedLayout
 # return only the output and logsumexp, and the backward supplies its own.
 
 
+def _kernel_bias_view(
+    attn_bias: Tensor, num_query_tokens: int, num_key_tokens: int
+) -> Tensor:
+    """Views a per-sequence bias grid as the kernel's ``[1, num_heads, num_query_tokens, num_key_tokens]`` bias.
+
+    The view keeps the strides of ``attn_bias``, so the kernel reads sequence
+    ``i`` at ``i * stride(0)``. The kernel reads only the rows and columns of
+    each sequence, which are inside the grid.
+
+    The view's own extent can be larger than the grid. With one head and full
+    sequences, its last query row starts past the end of the grid. In that case
+    the grid is copied into a zero buffer that holds the whole view.
+
+    Args:
+        attn_bias: ``[num_sequences, num_heads, query_len, key_len]`` grid with a
+            last-dim stride of 1.
+        num_query_tokens: Number of packed query tokens.
+        num_key_tokens: Number of packed key tokens.
+
+    Returns:
+        A ``[1, num_heads, num_query_tokens, num_key_tokens]`` strided view.
+    """
+    size = (1, attn_bias.size(1), num_query_tokens, num_key_tokens)
+    stride = attn_bias.stride()
+    view_extent = 1 + sum((dim - 1) * step for dim, step in zip(size, stride))
+    if view_extent > attn_bias.numel():
+        storage = attn_bias.new_zeros(view_extent)
+        storage.as_strided(attn_bias.shape, stride).copy_(attn_bias)
+        attn_bias = storage
+    return attn_bias.as_strided(size, stride)
+
+
 @torch.library.custom_op("gigl::varlen_attention", mutates_args=())
 def _varlen_attention_op(
     query: Tensor,
@@ -155,10 +187,7 @@ def _varlen_attention_op(
     has no backward for a bias with ``cu_seqlens``.
     """
     if attn_bias is not None:
-        attn_bias = attn_bias.as_strided(
-            (1, attn_bias.size(1), query.size(0), key.size(0)),
-            attn_bias.stride(),
-        )
+        attn_bias = _kernel_bias_view(attn_bias, query.size(0), key.size(0))
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_forward,
@@ -615,7 +644,9 @@ def packed_attention(
     if per_pair is not None and query_is_first_token:
         first_row = per_pair[:, :, 0, :].permute(0, 2, 1).flatten(0, 1)
         first_row = first_row[layout.flat_index]
-        per_key = first_row if per_key is None else per_key + first_row
+        if per_key is not None:
+            first_row = per_key + first_row
+        per_key = first_row
         per_pair = None
     if per_pair is not None and _requires_grad(query, key, value, per_key, per_pair):
         return _padded_packed_attention(

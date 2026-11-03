@@ -517,6 +517,32 @@ class PackedAttentionCudaTest(TestCase):
                 atol=1e-4,
             )
 
+    def test_per_pair_bias_with_one_head_and_full_sequences_matches_the_padded_path(
+        self,
+    ) -> None:
+        # With one head and every sequence full, the kernel's strided bias view
+        # reaches past the end of the bias grid.
+        device = torch.device("cuda")
+        for max_seq_len in (_MAX_SEQ_LEN, 20):
+            with self.subTest(max_seq_len=max_seq_len):
+                lengths = torch.full((3,), max_seq_len, device=device)
+                layout = pack_sequences(lengths, max_seq_len)
+                num_tokens = int(lengths.sum())
+                query, key, value = (
+                    torch.randn(num_tokens, 1, 64, device=device) for _ in range(3)
+                )
+                per_pair = torch.randn(3, 1, max_seq_len, max_seq_len, device=device)
+                bias = PackedAttentionBias(per_pair=per_pair)
+                with torch.no_grad():
+                    torch.testing.assert_close(
+                        packed_attention(query, key, value, layout, False, bias),
+                        _padded_packed_attention(
+                            query, key, value, layout, False, bias
+                        ),
+                        rtol=0,
+                        atol=1e-4,
+                    )
+
     def _dispatched_kernel(
         self, query_is_first_token: bool, requires_grad: bool
     ) -> bool:
@@ -525,10 +551,13 @@ class PackedAttentionCudaTest(TestCase):
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
         layout = pack_sequences(lengths, _MAX_SEQ_LEN)
         num_tokens = int(lengths.sum())
-        num_queries = lengths.numel() if query_is_first_token else num_tokens
+        num_queries = num_tokens
+        query_len = _MAX_SEQ_LEN
+        if query_is_first_token:
+            num_queries = lengths.numel()
+            query_len = 1
         query = torch.randn(num_queries, 2, 64, device=device)
         key, value = (torch.randn(num_tokens, 2, 64, device=device) for _ in range(2))
-        query_len = 1 if query_is_first_token else _MAX_SEQ_LEN
         per_pair = torch.randn(5, 2, query_len, _MAX_SEQ_LEN, device=device)
         for tensor in (query, key, value, per_pair):
             tensor.requires_grad_(requires_grad)
