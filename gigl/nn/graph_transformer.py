@@ -204,15 +204,17 @@ class FeedForwardNetwork(nn.Module):
                         nn.init.zeros_(layer.bias)
 
     def forward(
-        self, x: Float[Tensor, "batch sequence model_dim"]
-    ) -> Float[Tensor, "batch sequence model_dim"]:
+        self, x: Float[Tensor, "*tokens model_dim"]
+    ) -> Float[Tensor, "*tokens model_dim"]:
         """Forward pass.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            x: Input tensor of shape ``(..., model_dim)``. The network applies per
+                token, so padded ``(batch, seq, model_dim)`` and packed
+                ``(tokens, model_dim)`` inputs both work.
 
         Returns:
-            Output tensor of shape ``(batch, seq, model_dim)``.
+            Output tensor with the same shape as ``x``.
         """
         if self._is_xglu:
             # XGLU gating: activation(x @ W1) * (x @ W2)
