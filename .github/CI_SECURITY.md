@@ -19,15 +19,14 @@ credentials.
 3. **Pinned, verified checkout.** `actions/checkout-pr-branch` takes a required `sha` input, checks out the PR head, and
    **fails closed** if `git rev-parse HEAD` is not that SHA. A push that races the approval moves the tip and aborts the
    job before any PR code runs.
-4. **Least privilege + token kept off disk.** `checkout-pr-branch` always checks out PR code with
-   `persist-credentials: false`, and `commit-and-push` supplies its own push token via `git -c` rather than persisting
-   it to `.git/config`. `commit-and-push` also disables git hooks and `core.fsmonitor` (via `GIT_CONFIG_*` environment
-   config, which overrides anything planted in `.git/config` or `.git/hooks`) for every git call it makes, so a hook
-   planted by PR-authored code earlier in the writeback job cannot run during `git commit` / `git push` with the token
-   in its environment. This keeps the token off disk; note it does **not** fully isolate the token from PR-authored code
-   that ran earlier in the same writeback job (a lingering background process could read git's argv/env during the
-   push). That residual is bounded by the maintainer-reviewed `commit_sha` pin; full isolation would require pushing
-   from a separate job. Jobs also declare scoped `permissions`.
+4. **Least privilege + a writeback job that runs no PR code.** `checkout-pr-branch` always checks out PR code with
+   `persist-credentials: false`. In `build-base-docker-images.yml`, the `build-and-commit-base-images` job holds the
+   `contents: write` token, so it never executes PR-authored code: it checks out the PR at the reviewed `commit_sha`
+   (verified) and treats it as data only, then checks out the workflow's own commit (`github.sha`) into `.trusted` and
+   runs the image-ref update script from there. The commit step has no token in its environment and checks that only
+   `gigl/dep_vars.env` and `.github/cloud_builder/run_command_on_active_checkout.yaml` changed. Every git call disables
+   hooks and `core.fsmonitor`, and only the final push step sees `GITHUB_TOKEN`, supplied inline via `git -c` rather
+   than persisted to `.git/config`. Fork PRs skip writeback (see below). Jobs also declare scoped `permissions`.
 5. **Fail-closed authorization.** `actions/assert-is-collaborator` now denies on any result other than an explicit 204
    (previously a 403 was logged and allowed through).
 
@@ -73,8 +72,9 @@ process control, not a purely mechanical guarantee.
 ## Writeback works only for same-repo PRs
 
 `build-base-docker-images.yml` commits generated files back to the PR branch. `GITHUB_TOKEN` cannot push to a fork, so
-the writeback (commit) step only succeeds for same-repo branches; for a fork PR the push fails after the images are
-produced. This is pre-existing behavior, unchanged by this hardening.
+the writeback job detects fork PRs up front and skips every writeback step. Instead it comments on the PR with the built
+image refs, and the author must update `gigl/dep_vars.env` and
+`.github/cloud_builder/run_command_on_active_checkout.yaml` themselves.
 
 ## Deferred (defense-in-depth follow-up)
 

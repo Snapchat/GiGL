@@ -7,9 +7,11 @@ description: |
   Otherwise, the action will push the changes to the current branch.
 
   Authentication for the push is supplied inline, scoped to each git invocation, rather than
-  relying on credentials persisted in .git/config by actions/checkout. This lets callers run
-  (pinned) PR-authored code earlier in the job WITHOUT a push-capable token on disk, then push
-  safely from this trusted step.
+  relying on credentials persisted in .git/config by actions/checkout. This keeps the token
+  off disk for callers that check out with persist-credentials: false.
+
+  Only use this in jobs that run trusted code (e.g. create_release.yml). Do NOT use it in a job
+  that has run PR-authored code earlier: such code could leave processes that read the token.
 
 
 inputs:
@@ -36,21 +38,19 @@ runs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Disable git hooks and fsmonitor for EVERY git invocation in this step. PR-authored code
-        # that ran earlier in the job (e.g. the image-ref update script) could plant a hook under
-        # .git/hooks or set core.hooksPath / core.fsmonitor in .git/config; any of those would
-        # execute during `git commit` / `git push` below with GITHUB_TOKEN in the environment.
-        # Environment config takes precedence over .git/config, so a planted core.hooksPath
-        # cannot re-enable them. (GIT_CONFIG_COUNT/KEY/VALUE are supported since git 2.31.)
+        # Disable git hooks and fsmonitor for EVERY git invocation in this step, as defense in
+        # depth: a hook under .git/hooks or a core.hooksPath / core.fsmonitor entry in
+        # .git/config would otherwise execute during `git commit` / `git push` below with
+        # GITHUB_TOKEN in the environment. Environment config takes precedence over .git/config,
+        # so a planted core.hooksPath cannot re-enable them. (GIT_CONFIG_COUNT/KEY/VALUE are
+        # supported since git 2.31.)
         export GIT_CONFIG_COUNT=2
         export GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null
         export GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
 
         # Build an inline auth header (same scheme actions/checkout uses) and pass it only on
-        # the push commands via `git -c`, so it is not persisted to .git/config. Note this
-        # keeps the token off disk but does NOT fully isolate it from PR-authored code that ran
-        # earlier in the same job (e.g. a lingering background process could read git's argv);
-        # full isolation would require pushing from a separate job.
+        # the push commands via `git -c`, so it is not persisted to .git/config. Callers must
+        # not have run PR-authored code earlier in the job (see the action description).
         AUTH_B64="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
         echo "::add-mask::$AUTH_B64"
         # Prepend an empty extraheader entry to RESET any header persisted in .git/config by a
