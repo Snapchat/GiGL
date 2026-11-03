@@ -1128,6 +1128,10 @@ class GraphTransformerEncoder(nn.Module):
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
 
+    To compile, compile the whole encoder with ``torch.compile(encoder)``. Replacing
+    ``_encoder_layers`` entries with ``torch.compile``d modules is not supported on
+    the packed path.
+
     Args:
         node_type_to_feat_dim_map: Dictionary mapping node types to their
             input feature dimensions.
@@ -2060,6 +2064,13 @@ class GraphTransformerEncoder(nn.Module):
                 token_projection = cast(nn.Module, self._token_input_projection)
                 x = x + token_projection(token_hop.unsqueeze(-1).to(x.dtype))
         for layer_index, encoder_layer in enumerate(self._encoder_layers):
+            if isinstance(encoder_layer, torch._dynamo.eval_frame.OptimizedModule):
+                raise ValueError(
+                    f"Encoder layer {layer_index} is a torch.compile'd module. "
+                    "torch.compile(layer) compiles only forward(), so the packed "
+                    "path would run it eagerly. Compile the whole encoder with "
+                    "torch.compile(encoder), or compile layer.forward_packed instead."
+                )
             x = cast(GraphTransformerEncoderLayer, encoder_layer).forward_packed(
                 x,
                 packed,
