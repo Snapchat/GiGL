@@ -1745,9 +1745,9 @@ def _lookup_pairwise_relation_indices(
     matched_relations = edge_relations[edge_indices]
     keep = torch.ones_like(edge_indices, dtype=torch.bool)
     if frontier_batch_node_keys is not None:
-        expanded_positions = (
-            query_positions if sampling_direction == "in" else key_positions
-        )
+        expanded_positions = key_positions
+        if sampling_direction == "in":
+            expanded_positions = query_positions
         keep &= _sorted_contains(
             sorted_values=frontier_batch_node_keys,
             values=batch_indices * num_nodes
