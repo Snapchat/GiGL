@@ -4,5 +4,5 @@ requires-python = "==3.11.*"
 
 [[package]]
 name = "gigl-core"
-version = "0.3.1"
+version = "0.3.1.dev20261103191303"
 source = { editable = "." }
