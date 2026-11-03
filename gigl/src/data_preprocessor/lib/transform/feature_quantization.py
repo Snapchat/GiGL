@@ -269,6 +269,26 @@ def _build_feature_matrix(
             raise ValueError(f"Feature key {key} not found in RecordBatch.")
 
         col = batch.column(key_to_idx[key])
+        if (
+            pa.types.is_list(col.type)
+            or pa.types.is_large_list(col.type)
+            or pa.types.is_fixed_size_list(col.type)
+        ):
+            # TFT emits scalar features as list columns holding one value per
+            # row. NumPy 2.4+ refuses to cast the object array of 1-element
+            # arrays that to_numpy() returns for them, so unwrap to the values.
+            if col.null_count:
+                raise ValueError(
+                    f"Quantization expects a value in every row, got {key} with "
+                    f"{col.null_count} null rows."
+                )
+            lengths = col.value_lengths().to_numpy(zero_copy_only=False)
+            if not (lengths == 1).all():
+                raise ValueError(
+                    f"Quantization expects scalar features, got {key} with rows "
+                    "that do not hold exactly one value."
+                )
+            col = col.flatten()
         values = np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float32)
         if values.ndim != 1:
             raise ValueError(

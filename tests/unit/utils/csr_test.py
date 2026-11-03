@@ -7,6 +7,7 @@ from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
 from gigl.utils.csr import CompactTopology, _scatter_in_bands, build_csr_from_coo
+from gigl.utils.csr_parallel import parallel_scatter
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -135,6 +136,13 @@ class BuildCsrFromCooTest(TestCase):
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
+        # Duplicates may take any order, but every edge id must name its own edge.
+        edge_ids = result.edge_ids
+        assert edge_ids is not None
+        self.assertEqual(sorted(edge_ids.tolist()), list(range(row.numel())))
+        csr_rows = torch.repeat_interleave(torch.arange(4), result.indptr.diff())
+        torch.testing.assert_close(row[edge_ids], csr_rows, rtol=0, atol=0)
+        torch.testing.assert_close(col[edge_ids], result.indices, rtol=0, atol=0)
 
     def test_trailing_rows_beyond_max_row_id_are_empty(self) -> None:
         generator = torch.Generator().manual_seed(19)
@@ -221,6 +229,17 @@ class BuildCsrFromCooTest(TestCase):
     def test_row_id_beyond_num_rows_raises(self) -> None:
         with self.assertRaises(ValueError):
             build_csr_from_coo(torch.tensor([5]), torch.tensor([0]), num_rows=3)
+
+    def test_parallel_scatter_raises_when_degrees_disagree_with_edges(self) -> None:
+        # indptr claims row 0 holds one edge, but two edges name row 0.
+        with self.assertRaises(ValueError):
+            parallel_scatter(
+                row=torch.tensor([0, 0]),
+                col=torch.tensor([1, 2]),
+                indptr=torch.tensor([0, 1, 2]),
+                indices=torch.empty(2, dtype=torch.int64),
+                edge_ids=None,
+            )
 
     def test_mismatched_lengths_raise(self) -> None:
         with self.assertRaises(ValueError):

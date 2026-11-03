@@ -13,7 +13,10 @@ from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.sampler import EDGE_PACKED_FEATURES_METADATA_KEY
+from gigl.distributed.sampler import (
+    EDGE_PACKED_FEATURES_METADATA_KEY,
+    NODE_PACKED_FEATURES_METADATA_KEY,
+)
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
@@ -419,12 +422,17 @@ def _run_featureless_edge_ids_absent(
     )
     count = 0
     edge_ids_absent = True
+    packed_features_absent = True
     for datum in loader:
         assert isinstance(datum, Data)
         if getattr(datum, "edge", None) is not None:
             edge_ids_absent = False
+        # Unquantized node features have no sidecar, so no packed-feature key may leak onto the batch.
+        if getattr(datum, NODE_PACKED_FEATURES_METADATA_KEY, None) is not None:
+            packed_features_absent = False
         count += 1
     holder["edge_ids_absent"] = edge_ids_absent
+    holder["packed_features_absent"] = packed_features_absent
     holder["count"] = count
     shutdown_rpc()
 
@@ -1122,6 +1130,7 @@ class WithEdgeDerivationTest(TestCase):
         proc.join(timeout=120)
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
+        self.assertTrue(holder["packed_features_absent"])
 
 
 class SamplingSeedTest(TestCase):
