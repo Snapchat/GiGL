@@ -1028,14 +1028,13 @@ class PackedPathCudaTest(TestCase):
         anchor_node_ids = None
         if anchors is not None:
             anchor_node_ids = torch.tensor(anchors)
-        kwargs = _encoder_kwargs(
-            **{
-                "hid_dim": 128,
-                "hop_distance": hop_distance,
-                "dropout_rate": 0.0,
-                **overrides,
-            }
-        )
+        encoder_overrides: dict[str, Any] = {
+            "hid_dim": 128,
+            "hop_distance": hop_distance,
+            "dropout_rate": 0.0,
+            **overrides,
+        }
+        kwargs = _encoder_kwargs(**encoder_overrides)
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
         self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
