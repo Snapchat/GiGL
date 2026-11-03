@@ -8,11 +8,12 @@ calls run. Production imports do not install this hook.
 
 import atexit
 import os
-from functools import reduce
+from functools import reduce, wraps
 from operator import or_
 from types import FunctionType, UnionType
 from typing import Any, Final, Optional, Union, cast, get_args, get_origin
 
+import torch
 from jaxtyping import AbstractArray, install_import_hook
 from typeguard import typechecked
 
@@ -27,6 +28,9 @@ logger = Logger()
 
 def shape_contract_typechecker(function: FunctionType) -> FunctionType:
     """Apply Typeguard only to annotations containing Jaxtyping arrays.
+
+    Checks run in eager calls; they are skipped while torch.compile traces, because
+    Dynamo cannot trace Typeguard.
 
     Args:
         function: Function imported from a Shape Contract module.
@@ -84,10 +88,17 @@ def shape_contract_typechecker(function: FunctionType) -> FunctionType:
     )
     checking_function.__annotations__ = shape_annotations
     checking_function.__kwdefaults__ = function.__kwdefaults__
-    wrapped_function = typechecked(checking_function)
+    checked_function = typechecked(checking_function)
+
+    @wraps(function)
+    def wrapped_function(*args: Any, **kwargs: Any) -> Any:
+        if torch.compiler.is_compiling():
+            return function(*args, **kwargs)
+        return checked_function(*args, **kwargs)
+
     wrapped_function.__annotations__ = annotations
     _instrumented_functions.add(f"{function.__module__}.{function.__qualname__}")
-    return wrapped_function
+    return cast(FunctionType, wrapped_function)
 
 
 def install_runtime_typechecking() -> None:

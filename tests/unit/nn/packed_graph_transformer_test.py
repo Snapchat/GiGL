@@ -603,6 +603,29 @@ class PackedPathTest(TestCase):
         with self.assertRaises(ValueError):
             layer.train().forward_packed(torch.randn(2, 16), packed)
 
+    def test_compiled_layer_module_is_rejected_on_the_packed_path(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        layers = cast(Any, encoder._encoder_layers)
+        layers[0] = torch.compile(layers[0], backend="eager")
+        with torch.no_grad(), self.assertRaises(ValueError):
+            _run_packed(encoder, data)
+
+    def test_compiled_forward_packed_matches_eager(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with torch.no_grad():
+            expected = _run_packed(encoder, data)
+            for layer in cast(Any, encoder._encoder_layers):
+                layer.forward_packed = torch.compile(
+                    layer.forward_packed, backend="eager"
+                )
+            torch.testing.assert_close(_run_packed(encoder, data), expected)
+
     @parameterized.expand(
         [
             param("without_fallback", fall_back_at=(), settled_from=2),
