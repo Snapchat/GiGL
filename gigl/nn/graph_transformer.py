@@ -208,15 +208,17 @@ class FeedForwardNetwork(nn.Module):
                         nn.init.zeros_(layer.bias)
 
     def forward(
-        self, x: Float[Tensor, "batch sequence model_dim"]
-    ) -> Float[Tensor, "batch sequence model_dim"]:
+        self, x: Float[Tensor, "*tokens model_dim"]
+    ) -> Float[Tensor, "*tokens model_dim"]:
         """Forward pass.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            x: Input tensor of shape ``(..., model_dim)``. The network applies per
+                token, so padded ``(batch, seq, model_dim)`` and packed
+                ``(tokens, model_dim)`` inputs both work.
 
         Returns:
-            Output tensor of shape ``(batch, seq, model_dim)``.
+            Output tensor with the same shape as ``x``.
         """
         if self._is_xglu:
             # XGLU gating: activation(x @ W1) * (x @ W2)
@@ -1204,6 +1206,10 @@ class GraphTransformerEncoder(nn.Module):
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
 
+    To compile, compile the whole encoder with ``torch.compile(encoder)``. Replacing
+    ``_encoder_layers`` entries with ``torch.compile``d modules is not supported on
+    the packed path.
+
     Args:
         node_type_to_feat_dim_map: Dictionary mapping node types to their
             input feature dimensions.
@@ -1683,12 +1689,12 @@ class GraphTransformerEncoder(nn.Module):
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
         self._attention_dropout_rate = attention_dropout_rate
-        blockers = self._packed_backend_blockers()
-        self._supports_packed_backend = not blockers
-        if blockers:
+        unsupported_reasons = self._packed_unsupported_reasons()
+        self._supports_packed_backend = not unsupported_reasons
+        if unsupported_reasons:
             logger.info(
                 "GraphTransformerEncoder will run on padded sequences, not packed "
-                "tokens, because: " + "; ".join(blockers)
+                "tokens, because: " + "; ".join(unsupported_reasons)
             )
         self._packed_fallback_count = 0
         # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
@@ -1711,32 +1717,32 @@ class GraphTransformerEncoder(nn.Module):
                     f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
                 )
 
-    def _packed_backend_blockers(self) -> list[str]:
+    def _packed_unsupported_reasons(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
-        blockers: list[str] = []
+        unsupported_reasons: list[str] = []
         if self._sequence_construction_method != "khop":
-            blockers.append("sequence_construction_method is not 'khop'")
+            unsupported_reasons.append("sequence_construction_method is not 'khop'")
         if self._relation_attention_mode != "none":
-            blockers.append("relation_attention_mode is not 'none'")
+            unsupported_reasons.append("relation_attention_mode is not 'none'")
         if self._pairwise_attention_bias_attr_names:
-            blockers.append("pairwise attention biases are set")
+            unsupported_reasons.append("pairwise attention biases are set")
         ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         if ppr_attr_names & (
             set(self._anchor_based_attention_bias_attr_names)
             | set(self._anchor_based_input_attr_names)
         ):
-            blockers.append("ppr_weight or ppr_relation_features is set")
+            unsupported_reasons.append("ppr_weight or ppr_relation_features is set")
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
         # every batch would exceed it.
         if self._hop_distance > 4:
-            blockers.append("hop_distance is above 4")
+            unsupported_reasons.append("hop_distance is above 4")
         # The varlen kernel's dropout has not been tested against the padded
-        # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
-        # training and eval on the same path.
+        # path's per-head, per-sequence masks. Reporting dropout as unsupported
+        # keeps training and eval on the same path.
         if self._attention_dropout_rate > 0:
-            blockers.append("attention_dropout_rate is above 0")
-        return blockers
+            unsupported_reasons.append("attention_dropout_rate is above 0")
+        return unsupported_reasons
 
     def _use_packed_backend(self, device: torch.device) -> bool:
         """Returns whether this forward runs on packed tokens (supported config, on CUDA)."""
@@ -2292,6 +2298,13 @@ class GraphTransformerEncoder(nn.Module):
         anchor_only = self._readout_mode == "anchor_only"
         num_layers = len(self._encoder_layers)
         for layer_index, encoder_layer in enumerate(self._encoder_layers):
+            if isinstance(encoder_layer, torch._dynamo.eval_frame.OptimizedModule):
+                raise ValueError(
+                    f"Encoder layer {layer_index} is a torch.compile'd module. "
+                    "torch.compile(layer) compiles only forward(), so the packed "
+                    "path would run it eagerly. Compile the whole encoder with "
+                    "torch.compile(encoder), or compile layer.forward_packed instead."
+                )
             first_token_output = anchor_only and layer_index == num_layers - 1
             relation_edges = layout.relation_edges
             if first_token_output and relation_edges is not None:
