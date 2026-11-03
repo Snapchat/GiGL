@@ -890,6 +890,29 @@ class PackedPathTest(TestCase):
                     self.assertTrue(torch.isfinite(parameter.grad).all(), name)
         self.assertFalse(torch.allclose(outputs[0], outputs[1]))
 
+    def test_compiled_layer_module_is_rejected_on_the_packed_path(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        layers = cast(Any, encoder._encoder_layers)
+        layers[0] = torch.compile(layers[0], backend="eager")
+        with torch.no_grad(), self.assertRaises(ValueError):
+            _run_packed(encoder, data)
+
+    def test_compiled_forward_packed_matches_eager(self) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with torch.no_grad():
+            expected = _run_packed(encoder, data)
+            for layer in cast(Any, encoder._encoder_layers):
+                layer.forward_packed = torch.compile(
+                    layer.forward_packed, backend="eager"
+                )
+            torch.testing.assert_close(_run_packed(encoder, data), expected)
+
     @parameterized.expand(
         [
             param("without_fallback", fall_back_at=(), settled_from=2),
@@ -1285,7 +1308,7 @@ class PackedRelationMessageTest(TestCase):
                 self,
                 layer: GraphTransformerEncoderLayer,
                 x: torch.Tensor,
-                packed: PackedLayout,
+                layout: PackedLayout,
                 first_token_output: bool,
                 relation_edges: PackedRelationEdges | None,
                 bias: PackedAttentionBias | None = None,
@@ -1293,7 +1316,7 @@ class PackedRelationMessageTest(TestCase):
                 def run(x: torch.Tensor) -> torch.Tensor:
                     self.layer_calls += 1
                     return super(CheckpointedEncoder, self)._run_packed_layer(
-                        layer, x, packed, first_token_output, relation_edges, bias
+                        layer, x, layout, first_token_output, relation_edges, bias
                     )
 
                 return checkpoint(run, x, use_reentrant=False)
@@ -1385,14 +1408,13 @@ class PackedPathCudaTest(TestCase):
         anchor_node_ids = None
         if anchors is not None:
             anchor_node_ids = torch.tensor(anchors)
-        kwargs = _encoder_kwargs(
-            **{
-                "hid_dim": 128,
-                "hop_distance": hop_distance,
-                "dropout_rate": 0.0,
-                **overrides,
-            }
-        )
+        encoder_overrides: dict[str, Any] = {
+            "hid_dim": 128,
+            "hop_distance": hop_distance,
+            "dropout_rate": 0.0,
+            **overrides,
+        }
+        kwargs = _encoder_kwargs(**encoder_overrides)
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         if overrides.get("pairwise_attention_bias_attr_names"):
             _randomize_pairwise_biases(cpu_encoder)
