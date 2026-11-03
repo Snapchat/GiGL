@@ -19,6 +19,7 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
 )
+from gigl.nn.packed_attention import PackedAttentionBias
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.sequence_layout import (
@@ -859,14 +860,15 @@ class PackedRelationMessageTest(TestCase):
                 self,
                 layer: GraphTransformerEncoderLayer,
                 x: torch.Tensor,
-                packed: PackedLayout,
+                layout: PackedLayout,
                 first_token_output: bool,
                 relation_edges: PackedRelationEdges | None,
+                bias: PackedAttentionBias | None = None,
             ) -> torch.Tensor:
                 def run(x: torch.Tensor) -> torch.Tensor:
                     self.layer_calls += 1
                     return super(CheckpointedEncoder, self)._run_packed_layer(
-                        layer, x, packed, first_token_output, relation_edges
+                        layer, x, layout, first_token_output, relation_edges, bias
                     )
 
                 return checkpoint(run, x, use_reentrant=False)

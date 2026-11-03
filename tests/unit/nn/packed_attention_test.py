@@ -226,7 +226,7 @@ class PackedAttentionCudaTest(TestCase):
         for num_sequences in (2, 1):
             with self.subTest(num_sequences=num_sequences):
                 torch._dynamo.reset()
-                _, layout = pack_sequences(
+                layout = pack_sequences(
                     torch.full((num_sequences,), 12, device=device), _MAX_SEQ_LEN
                 )
                 inputs = torch.randn(
