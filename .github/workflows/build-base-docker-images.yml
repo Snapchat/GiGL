@@ -278,21 +278,20 @@ jobs:
         fi
         "${git_safe[@]}" commit -m "$COMMIT_MESSAGE"
         echo "has_changes=true" >> "$GITHUB_OUTPUT"
-    # The ONLY step that sees the write token. The auth header is passed inline via `git -c`
-    # (same scheme as actions/checkout and the commit-and-push action) so it is never written to disk.
+    # The ONLY step that sees the write token.
     - name: Push image refs
       if: ${{ steps.fork-check.outputs.is_fork == 'false' && steps.commit.outputs.has_changes == 'true' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        AUTH_B64="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
-        echo "::add-mask::$AUTH_B64"
-        # The empty extraheader entry resets any persisted header so only one Authorization header is sent.
+        # The credential helper reads the token from this step's env, so the token is not in
+        # argv or on disk. The single quotes keep `${GITHUB_TOKEN}` literal until git runs the
+        # helper. The empty helper entry clears any inherited helper first.
         git \
           -c core.hooksPath=/dev/null \
           -c core.fsmonitor=false \
-          -c "http.https://github.com/.extraheader=" \
-          -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_B64}" \
+          -c credential.helper= \
+          -c 'credential.helper=!f() { echo username=x-access-token; echo "password=${GITHUB_TOKEN}"; }; f' \
           push
     - name: Comment that image refs were written back
       if: ${{ steps.fork-check.outputs.is_fork == 'false' && steps.commit.outputs.has_changes == 'true' }}

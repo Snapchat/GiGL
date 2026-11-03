@@ -25,8 +25,9 @@ credentials.
    (verified) and treats it as data only, then checks out the workflow's own commit (`github.sha`) into `.trusted` and
    runs the image-ref update script from there. The commit step has no token in its environment and checks that only
    `gigl/dep_vars.env` and `.github/cloud_builder/run_command_on_active_checkout.yaml` changed. Every git call disables
-   hooks and `core.fsmonitor`, and only the final push step sees `GITHUB_TOKEN`, supplied inline via `git -c` rather
-   than persisted to `.git/config`. Fork PRs skip writeback (see below). Jobs also declare scoped `permissions`.
+   hooks and `core.fsmonitor`, and only the final push step sees `GITHUB_TOKEN`. That step passes it to git through an
+   inline credential helper that reads it from the step's env, so the token is not in argv or persisted to
+   `.git/config`. Fork PRs skip writeback (see below). Jobs also declare scoped `permissions`.
 5. **Fail-closed authorization.** `actions/assert-is-collaborator` now denies on any result other than an explicit 204
    (previously a 403 was logged and allowed through).
 
