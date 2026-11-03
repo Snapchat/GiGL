@@ -27,10 +27,10 @@ jobs:
     # Uses the 'fossa' environment which contains the required information to run fossa
     environment:
       name: fossa
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Machine for fossa-analyze
         uses: snapchat/gigl/.github/actions/setup-python-tools@main

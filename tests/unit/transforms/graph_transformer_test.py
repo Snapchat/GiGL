@@ -13,6 +13,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
+    tensors_to_graph_transformer_input,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -414,6 +415,71 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
         self.assertFalse((pairwise_relation_indices[:, 1:3] == 3).any().item())
         self.assertFalse((pairwise_relation_indices[:, 3] == 2).any().item())
+
+    def test_relation_indices_exclude_edges_into_last_hop_tokens(self):
+        """Relations into the last hop come from other seeds and are dropped.
+
+        Batch of seeds user0 (anchor) and user1 (its positive), sampled two hops
+        over in-edges. user1 sits at hop 2 of user0's sequence; its in-edges
+        (user3 -> user1, item0 -> user1) exist only because user1 is also a seed.
+        For "out" every edge is reversed and the same relations must result.
+        """
+        for sampling_direction in ["in", "out"]:
+            with self.subTest(sampling_direction=sampling_direction):
+                direction = cast(Literal["in", "out"], sampling_direction)
+                user = NodeType("user")
+                item = NodeType("item")
+                friends = EdgeType(user, Relation("friends"), user)
+                engages = EdgeType(item, Relation("engages"), user)
+                # (source_id, target_id) pairs, written as in-edges.
+                friend_edges = [(2, 0), (1, 2), (3, 1)]
+                engage_edges = [(0, 2), (0, 1)]
+                if direction == "out":
+                    engages = EdgeType(user, Relation("engages"), item)
+                    friend_edges = [(dst, src) for src, dst in friend_edges]
+                    engage_edges = [(dst, src) for src, dst in engage_edges]
+
+                data = HeteroData()
+                # Item first so user nodes get a nonzero homogeneous offset.
+                # Each feature is a unique node id: items 10.., users 0...
+                data["item"].x = torch.tensor([[10.0]])
+                data["user"].x = torch.arange(4, dtype=torch.float).unsqueeze(1)
+                data[friends.tuple_repr()].edge_index = torch.tensor(friend_edges).t()
+                data[engages.tuple_repr()].edge_index = torch.tensor(engage_edges).t()
+
+                sequences, _, auxiliary_data = heterodata_to_graph_transformer_input(
+                    data=data,
+                    batch_size=2,
+                    max_seq_len=6,
+                    anchor_node_type="user",
+                    hop_distance=2,
+                    sampling_direction=direction,
+                    relation_edge_types=[friends, engages],
+                )
+                relation_indices = auxiliary_data["pairwise_relation_indices"]
+                assert relation_indices is not None
+                node_ids = sequences[..., 0].long()
+                # (anchor, query node id, key node id, relation index)
+                relation_node_triples = {
+                    (b, int(node_ids[b, q]), int(node_ids[b, k]), r)
+                    for b, q, k, r in relation_indices.tolist()
+                }
+
+                # "in": query is the edge target. "out" reverses every edge, so the
+                # same token pairs appear with query and key swapped.
+                expected = {
+                    (0, 0, 2, 0),  # user2 -> user0 into hop 0
+                    (0, 2, 1, 0),  # user1 -> user2 into hop 1
+                    (0, 2, 10, 1),  # item0 -> user2 into hop 1
+                    (1, 1, 3, 0),  # user3 -> user1 into user1's own anchor
+                    (1, 1, 10, 1),  # item0 -> user1 into user1's own anchor
+                }
+                if direction == "out":
+                    expected = {(b, k, q, r) for b, q, k, r in expected}
+
+                # item0 -> user1 is a sampled edge into user0's last-hop token
+                # user1 and must not appear as a relation for anchor user0.
+                self.assertEqual(relation_node_triples, expected)
 
     def test_sampling_direction_defaults_to_out(self):
         """Out sampling preserves existing k-hop reachability."""
@@ -1316,6 +1382,136 @@ class TestGraphTransformerRelativeBiasAssembly(TestCase):
                     "pairwise_distance_sparse_mismatch",
                 ],
             )
+
+
+class TestTensorsToGraphTransformerInput(TestCase):
+    def test_matches_heterodata_input_on_two_node_types(self) -> None:
+        data = create_simple_hetero_data()
+        expected = heterodata_to_graph_transformer_input(
+            data=data, batch_size=3, max_seq_len=4, anchor_node_type="user"
+        )
+        actual = tensors_to_graph_transformer_input(
+            x_dict={"user": data["user"].x, "item": data["item"].x},
+            edge_index_dict={
+                edge_type: data[edge_type].edge_index for edge_type in data.edge_types
+            },
+            batch_size=3,
+            max_seq_len=4,
+            anchor_node_type="user",
+        )
+        self.assertTrue(torch.equal(actual[0], expected[0]))
+        self.assertTrue(torch.equal(actual[1], expected[1]))
+
+    def test_edgeless_batch_has_only_anchor_tokens(self) -> None:
+        x = torch.arange(12.0).view(4, 3)
+        sequences, valid_mask, _ = tensors_to_graph_transformer_input(
+            x_dict={"user": x},
+            edge_index_dict={},
+            batch_size=2,
+            max_seq_len=3,
+            anchor_node_type="user",
+            padding_value=-1.0,
+        )
+        self.assertEqual(valid_mask.tolist(), [[True, False, False]] * 2)
+        self.assertEqual(
+            sequences.tolist(),
+            [
+                [[0, 1, 2], [-1, -1, -1], [-1, -1, -1]],
+                [[3, 4, 5], [-1, -1, -1], [-1, -1, -1]],
+            ],
+        )
+
+
+class TestPprRelationExpandedSourceFilter(TestCase):
+    """A relation edge is kept for an anchor only when the anchor's own PPR push
+    expanded the edge's OWNER -- the node whose adjacency row was fetched, which
+    ``ppr_is_expanded`` describes. GLT reverses sampled edges during collation, so
+    in the batch the owner is the target (``edge_index[1]``) and the fetched
+    neighbour is the source (``edge_index[0]``). A co-seeded ABLP positive reaches
+    the anchor's sequence as a residual top-up node the anchor never expanded, so
+    edges owned by it must be dropped.
+    """
+
+    def _build(self, with_expanded_flag: bool) -> tuple[HeteroData, list[EdgeType]]:
+        user = NodeType("user")
+        likes = EdgeType(user, Relation("likes"), user)
+        data = HeteroData()
+        # 0 = anchor A, 1 = shared neighbour n (A expanded), 2 = positive P (top-up).
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        # A's PPR neighbourhood: A->n (0.9), A->P (0.6) -> sequence [A@0, n@1, P@2].
+        data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data["user", "ppr", "user"].edge_attr = torch.tensor([0.9, 0.6])
+        if with_expanded_flag:
+            # n is finalized/expanded by A's push; P entered via residual top-up.
+            data["user", "ppr", "user"].ppr_is_expanded = torch.tensor([True, False])
+        # Sampled relation edges in collated [neighbour, owner] orientation
+        # (edge_index[0]=neighbour/source, edge_index[1]=owner/target):
+        #   column 0 (n -> P): owner P, from P's row -- A never expanded P (leak).
+        #   column 1 (P -> n): owner n, from n's row -- A expanded n (legitimate).
+        data[likes.tuple_repr()].edge_index = torch.tensor([[1, 2], [2, 1]])
+        return data, [likes]
+
+    def _coords(self, with_expanded_flag: bool) -> set[tuple[int, int, int, int]]:
+        data, rel = self._build(with_expanded_flag)
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            relation_edge_types=rel,
+        )
+        idx = aux["pairwise_relation_indices"]
+        assert idx is not None
+        return {tuple(c) for c in idx.tolist()}
+
+    def test_leak_present_without_expanded_flag(self) -> None:
+        coords = self._coords(with_expanded_flag=False)
+        # (batch, query=target/owner pos, key=source/neighbour pos, relation_idx).
+        self.assertIn((0, 1, 2, 0), coords)  # owner n (query@1): legitimate
+        self.assertIn(
+            (0, 2, 1, 0), coords
+        )  # owner P (query@2): leaks, nothing to filter
+
+    def test_leak_removed_with_expanded_flag(self) -> None:
+        coords = self._coords(with_expanded_flag=True)
+        self.assertIn((0, 1, 2, 0), coords)  # owner n expanded by A -> kept
+        self.assertNotIn((0, 2, 1, 0), coords)  # owner P not expanded by A -> dropped
+
+    def test_typed_channel_mask_drops_edge_type_not_fetched(self) -> None:
+        # Typed PPR: the owner's ppr_is_expanded is a per-node *channel* bitmask.
+        # Here A pushed owner n only in channel 0 (bit 0b01). A relation edge is
+        # kept only if its edge type is covered by a channel A pushed n in.
+        user = NodeType("user")
+        r0 = EdgeType(user, Relation("r0"), user)  # covered by channel 0
+        r1 = EdgeType(user, Relation("r1"), user)  # covered by channel 1 only
+        data = HeteroData()
+        data["user"].x = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+        data["user", "ppr", "user"].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data["user", "ppr", "user"].edge_attr = torch.tensor([0.9, 0.6])
+        # Channel bitmask: n pushed in channel 0 (0b01); P not pushed by A (0b00).
+        data["user", "ppr", "user"].ppr_is_expanded = torch.tensor([1, 0])
+        # Both relation edges have owner n (edge_index[1] = 1), neighbour A.
+        data[r0.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data[r1.tuple_repr()].edge_index = torch.tensor([[0], [1]])
+        data.ppr_relation_channel_masks = {
+            r0.tuple_repr(): 0b01,  # fetched by channel 0 (which pushed n)
+            r1.tuple_repr(): 0b10,  # fetched only by channel 1 (A never pushed n there)
+        }
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=4,
+            anchor_node_type="user",
+            sequence_construction_method="ppr",
+            relation_edge_types=[r0, r1],
+        )
+        indices = aux["pairwise_relation_indices"]
+        assert indices is not None
+        coords = {tuple(c) for c in indices.tolist()}
+        # owner n at query@1; r0 is relation_idx 0, r1 is relation_idx 1.
+        self.assertIn((0, 1, 0, 0), coords)  # r0 kept: n pushed in channel 0
+        self.assertNotIn((0, 1, 0, 1), coords)  # r1 dropped: n not pushed in channel 1
 
 
 if __name__ == "__main__":

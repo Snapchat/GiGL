@@ -1,25 +1,28 @@
 from collections import abc
 
+import torch
 from absl.testing import absltest
 from parameterized import param, parameterized
 
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
-from gigl.distributed.dist_context import DistributedContext
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
+from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
 
 # TODO(kmonte, mkolodner): Add more tests for heterogeneous datasets.
 class TestDatasetFactory(TestCase):
-    def setUp(self):
-        # Set up any necessary context or mock data
-        self._dist_context = DistributedContext(
-            main_worker_ip_address="localhost", global_rank=0, global_world_size=1
-        )
+    def setUp(self) -> None:
+        # A process group on a free port lets the factory pick free dataset building ports.
+        create_test_process_group()
+
+    def tearDown(self) -> None:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
     @parameterized.expand(
         [
@@ -37,7 +40,6 @@ class TestDatasetFactory(TestCase):
 
         dataset = build_dataset_from_task_config_uri(
             task_config_uri,
-            self._dist_context,
             is_inference=is_inference,
             _tfrecord_uri_pattern=".*data.tfrecord$",
         )

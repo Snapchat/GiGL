@@ -430,6 +430,31 @@ class DistSamplingProducerTest(TestCase):
         self.assertFalse(worker_thread.is_alive())
 
 
+class AllToAllRejectionTest(TestCase):
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
+    )
+    def test_shared_worker_rejects_all_to_all(
+        self, _mock_init_worker_group: MagicMock
+    ) -> None:
+        worker_options = MagicMock()
+        worker_options.worker_world_size = 1
+        worker_options.worker_ranks = [0]
+        worker_options.use_all2all = True
+
+        with self.assertRaises(ValueError):
+            _shared_sampling_worker_loop(
+                0,
+                MagicMock(num_partitions=1),
+                worker_options,
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                KHopNeighborSamplerOptions(num_neighbors=[2]),
+                None,
+            )
+
+
 class _BoundedBlockingChannel:
     """Bounded channel fake whose sends block when the consumer stops draining.
 

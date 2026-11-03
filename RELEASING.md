@@ -46,10 +46,37 @@ variant registries.
 
 Once both workflows succeed, merge the PR opened by **Create Release** to bring the version bump back into `main`.
 
+## Refreshing pinned CI dependencies
+
+Third-party GitHub Actions under `.github/` are pinned to full commit SHAs (with the release tag in a trailing comment).
+Dependabot (`.github/dependabot.yml`) checks daily and opens one grouped PR when any pinned action has a newer release;
+review and merge it like any other PR.
+
+Dependabot does not cover the Cloud Build helper image `multiarch/qemu-user-static`, which is pinned by digest in
+`.github/cloud_builder/run_command_on_active_checkout.yaml`. To refresh it, look up the current digest and update it
+there:
+
+```sh
+docker buildx imagetools inspect multiarch/qemu-user-static:latest
+```
+
 ## Nightly releases
 
 Nightly builds are triggered automatically by `nightly_release_&_test.yml`, which calls `create_release.yml` with
 `bump_type=nightly`. The **Release GiGL** wheel-publish step is not part of the nightly flow.
+
+## Release identity and permissions
+
+Jobs that publish release artifacts (`release_gigl_kfp_pipeline` in `create_release.yml`, and all of `release.yml`) run
+in the `release` GitHub environment under a dedicated release identity. Every other job, including the base image and
+integration test builds, runs under the PR/test identity, which cannot push to the release registries (`public-gigl`,
+`gigl`, `gigl-cu128`) or to the release paths in `gs://public-gigl`.
+
+Dispatch `create_release.yml` from `main`. The `release` environment admits only `main` and `release/v*` branches, so a
+dispatch from another branch fails at the environment check.
+
+When you add a new publish target (a registry, a bucket path), grant it to the release identity only, and run the
+publishing step in a job that declares `environment: release`. Do not widen the PR/test identity.
 
 ## What gets published
 

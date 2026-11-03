@@ -28,6 +28,11 @@ import torch
 from graphlearn_torch.data import Topology
 
 from gigl.common.logger import Logger
+from gigl.utils.csr_parallel import (
+    parallel_degrees,
+    parallel_scatter,
+    parallel_sort_within_rows,
+)
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 
 logger = Logger()
@@ -315,7 +320,7 @@ def build_csr_from_coo(
             edge_ids=edge_ids,
         )
     indptr[0] = 0
-    torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
+    torch.cumsum(parallel_degrees(row, num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
@@ -327,17 +332,21 @@ def build_csr_from_coo(
     scatter_band_bytes = None
     if is_disk_backed(indices) or (edge_ids is not None and is_disk_backed(edge_ids)):
         scatter_band_bytes = band_bytes
-    _scatter_in_bands(
-        row=row,
-        col=col,
-        indptr=indptr,
-        indices=indices,
-        chunk_size=chunk_size,
-        band_bytes=scatter_band_bytes,
-        edge_ids=edge_ids,
-    )
-    gc.collect()
-    _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
+    if scatter_band_bytes is None:
+        parallel_scatter(row, col, indptr, indices, edge_ids)
+        parallel_sort_within_rows(indptr, indices, edge_ids)
+    else:
+        _scatter_in_bands(
+            row=row,
+            col=col,
+            indptr=indptr,
+            indices=indices,
+            chunk_size=chunk_size,
+            band_bytes=scatter_band_bytes,
+            edge_ids=edge_ids,
+        )
+        gc.collect()
+        _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "

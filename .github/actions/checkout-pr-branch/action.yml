@@ -23,7 +23,7 @@ runs:
   # Never persist the git token in .git/config. This action checks out UNTRUSTED PR code, and
   # nothing here needs to push: writeback callers push via commit-and-push, which supplies its
   # own token scoped to the push. (gh pr checkout below authenticates via GH_TOKEN, not git config.)
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     with:
       persist-credentials: false
   # Pass the PR number via env, never interpolated into the shell, to prevent command

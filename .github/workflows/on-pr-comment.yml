@@ -13,7 +13,7 @@ permissions:
 jobs:
   help:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/help') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # `help` checks out the base default branch (trusted) and runs no PR code, so it needs no
     # collaborator gate or environment approval -- only the ability to comment on the PR
@@ -24,12 +24,12 @@ jobs:
       issues: write
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
 
     - name: Setup Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version-file: ".python-version"
 
@@ -60,7 +60,7 @@ jobs:
         contains(github.event.comment.body, '/notebook_tests') ||
         contains(github.event.comment.body, '/lint_test')
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read # Required to inspect the environment's protection rules.
@@ -90,7 +90,7 @@ jobs:
     # approval (fail open). This makes the gate mechanically verified rather than setup-dependent.
     - name: Verify approval environment is protected (fork PRs only)
       if: ${{ steps.resolve.outputs.is_cross_repository == 'true' }}
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       with:
         script: |
           const environment_name = "pr-command-execution";
@@ -132,7 +132,7 @@ jobs:
   unit-test-python:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -167,7 +167,7 @@ jobs:
   unit-test-cpp:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_cpp') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -196,7 +196,7 @@ jobs:
   unit-test-scala:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_scala') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -226,7 +226,7 @@ jobs:
   integration-test:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/integration_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -258,7 +258,7 @@ jobs:
   integration-e2e-test:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -288,7 +288,7 @@ jobs:
   notebooks-e2e-test:
     needs: prepare
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
@@ -319,7 +319,7 @@ jobs:
   lint-test:
     needs: prepare
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/lint_test') || contains(github.event.comment.body, '/all_test')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
     # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
     environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}

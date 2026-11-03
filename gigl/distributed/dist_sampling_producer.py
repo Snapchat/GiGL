@@ -4,7 +4,6 @@
 # DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
 # GLT's DistNeighborSampler directly.
 
-import datetime
 import queue
 from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
@@ -44,7 +43,10 @@ from gigl.distributed.constants import (
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.dist_sampler import create_dist_sampler
+from gigl.distributed.utils.dist_sampler import (
+    create_dist_sampler,
+    join_workers_with_shared_deadline,
+)
 
 logger = Logger()
 
@@ -92,14 +94,9 @@ def _sampling_worker_loop(
             group_name="_sampling_worker_subprocess",
         )
         if worker_options.use_all2all:
-            torch.distributed.init_process_group(
-                backend="gloo",
-                timeout=datetime.timedelta(seconds=worker_options.rpc_timeout),
-                rank=worker_options.worker_ranks[rank],
-                world_size=worker_options.worker_world_size,
-                init_method="tcp://{}:{}".format(
-                    worker_options.master_addr, worker_options.master_port
-                ),
+            raise ValueError(
+                "All-to-all feature collection (use_all2all=True) is not supported; "
+                "features are fetched through the fused feature store."
             )
 
         if worker_options.num_rpc_threads is None:
@@ -302,3 +299,28 @@ class DistSamplingProducer(DistMpSamplingProducer):
                 f"barrier. Raise {SAMPLING_RPC_INIT_TIMEOUT_ENV} (this bound is a multiple of "
                 f"it) if init is legitimately slower than this on a cold cache."
             ) from None
+
+    def shutdown(self) -> None:
+        """Stops the sampling workers, waiting at most ``MP_STATUS_CHECK_INTERVAL`` in total.
+
+        Same as GLT's ``DistMpSamplingProducer.shutdown`` [1] except that the grace period
+        is a single deadline shared by all workers.
+        See :func:`join_workers_with_shared_deadline`.
+
+        [1]:
+        https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_sampling_producer.py#L223-L239
+        """
+        if self._shutdown:
+            return
+        self._shutdown = True
+        try:
+            for task_queue in self._task_queues:
+                task_queue.put((MpCommand.STOP, None))
+            join_workers_with_shared_deadline(self._workers, MP_STATUS_CHECK_INTERVAL)
+            for task_queue in self._task_queues:
+                task_queue.cancel_join_thread()
+                task_queue.close()
+        finally:
+            for worker in self._workers:
+                if worker.is_alive():
+                    worker.terminate()
