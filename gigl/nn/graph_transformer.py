@@ -2373,9 +2373,12 @@ class GraphTransformerEncoder(nn.Module):
                     "Pairwise attention biases are configured, but no pairwise "
                     "features were found."
                 )
+            # The projection output is a permuted view, so its last dim has a
+            # stride of num_heads. Every layer's attention reads this bias; one
+            # contiguous copy here keeps that strided read out of each layer.
             per_pair = self._pairwise_pair_bias(
                 features, nonmissing_indices, pairwise_projection.weight.dtype
-            )
+            ).contiguous()
         if per_key is None and per_pair is None:
             return None
         return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
