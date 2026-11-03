@@ -1,6 +1,7 @@
 """The packed ``GraphTransformerEncoder`` path matches the padded path."""
 
 import copy
+import functools
 import itertools
 import unittest
 import warnings
@@ -1405,6 +1406,66 @@ class PackedPathCudaTest(TestCase):
                 expected = encoder(data, anchor_node_type=_USER)
             graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"])
             torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+        self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
+
+    @parameterized.expand(
+        [
+            param("anchor_only"),
+            param("neighbor_readout", readout_mode=_NEIGHBOR_READOUT),
+            param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_bias_neighbor_readout",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
+            param("relation_bilinear", relation_attention_mode="edge_type_bilinear"),
+            param("relation_hgt", relation_attention_mode="edge_type_hgt"),
+            param("relation_message", relation_message_mode="edge_type_attention"),
+        ]
+    )
+    def test_whole_encoder_inductor_compile_training_gradients_match_eager(
+        self, _: str, **overrides: Any
+    ) -> None:
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        if any(name.startswith("relation") for name in overrides):
+            relation_message_mode = overrides.pop("relation_message_mode", "none")
+            kwargs = _relation_encoder_kwargs(
+                relation_message_mode,
+                hid_dim=128,
+                anchor_based_input_embedding_dict=nn.ModuleDict(
+                    {_HOP: nn.Embedding(3, 128)}
+                ),
+                **overrides,
+            )
+            encoder = _relation_encoder(_three_relation_batch(0), kwargs)
+            make_batch: Callable[[int], HeteroData] = _three_relation_batch
+        else:
+            kwargs = _encoder_kwargs(hid_dim=128, dropout_rate=0.0, **overrides)
+            encoder = _materialized_encoder(_random_batch(0), kwargs)
+            if "pairwise_attention_bias_attr_names" in overrides:
+                _randomize_pairwise_biases(encoder)
+            make_batch = _random_batch
+        encoder = encoder.to("cuda").train()
+        compiled = torch.compile(encoder)
+        graph_counts: list[int] = []
+        for seed in range(5):
+            data = make_batch(seed).to("cuda")
+            with self.subTest(seed=seed):
+                _assert_training_gradients_match(
+                    self,
+                    _gradients(
+                        functools.partial(encoder, data, anchor_node_type=_USER),
+                        encoder,
+                    ),
+                    _gradients(
+                        functools.partial(compiled, data, anchor_node_type=_USER),
+                        encoder,
+                    ),
+                    atol=1e-3,
+                )
+            graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"])
         self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
     @parameterized.expand(_READOUT_MODES)
