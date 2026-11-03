@@ -12,11 +12,11 @@ Why this exists:
     most of the linear-layer, FFN and attention work on a padded
     ``[num_sequences, max_seq_len, dim]`` batch is spent on padding. Packed
     tokens spend it only on real ones.
-  - On CUDA this calls aten's memory-efficient varlen attention kernel directly.
-    That op is private because torch 2.8 has no public attention API that takes
+  - On CUDA this calls aten's memory-efficient varlen attention kernel, wrapped
+    in a custom op. The kernel is private because torch 2.8 has no public attention API that takes
     ``cu_seqlens``; ``_varlen_attention`` explains why the public options do not
     fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
-    own autograd formula supplies the backward.
+    own backward kernel supplies the gradients.
   - On CPU the same inputs go through SDPA on a padded grid. That is the
     reference the CUDA path is tested against, and it lets the packed backend run
     anywhere.
@@ -64,7 +64,7 @@ Constraints:
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
 
 Example:
-    >>> from gigl.transforms.static_khop import pack_sequences
+    >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
     >>> packed = pack_sequences(lengths, max_seq_len=3)
     >>> packed.flat_index.tolist()
@@ -113,9 +113,171 @@ import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float, Int32
 from torch import Tensor
-from torch_geometric.utils import to_dense_batch
 
-from gigl.transforms.static_khop import PackedLayout
+from gigl.transforms.sequence_layout import PackedLayout
+
+# The kernel returns its philox seed and offset on the CPU when dropout is off,
+# but its meta registration returns them as CUDA tensors. ``torch.compile`` then
+# treats them as CUDA buffers and can reuse their storage for another small int64
+# buffer, such as the sequence-start index of a one-sequence batch, so a kernel
+# writes through a host pointer. These ops hide the kernel's seed and offset: they
+# return only the output and logsumexp, and the backward supplies its own.
+
+
+@torch.library.custom_op("gigl::varlen_attention", mutates_args=())
+def _varlen_attention_op(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    compute_log_sumexp: bool,
+) -> tuple[Tensor, Tensor]:
+    """Runs the varlen kernel and returns ``(output, logsumexp)``.
+
+    The type stub of the aten op declares every argument as ``...``. It returns
+    (output, logsumexp, philox_seed, philox_offset, max_q, max_k). The kernel takes
+    ``[batch, tokens, heads, head_dim]``, and ``cu_seqlens`` splits the single
+    batch row into sequences.
+    """
+    efficient_attention_forward = cast(
+        Callable[..., tuple[Tensor, ...]],
+        torch.ops.aten._efficient_attention_forward,
+    )
+    output, logsumexp = efficient_attention_forward(
+        query.unsqueeze(0),
+        key.unsqueeze(0),
+        value.unsqueeze(0),
+        None,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        0.0,
+        0,
+        compute_log_sumexp,
+    )[:2]
+    return output.squeeze(0), logsumexp
+
+
+@_varlen_attention_op.register_fake
+def _(
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+    compute_log_sumexp: bool,
+) -> tuple[Tensor, Tensor]:
+    output = torch.empty_like(query)
+    logsumexp_size = 0
+    if compute_log_sumexp:
+        # The kernel pads the logsumexp rows to a multiple of 32.
+        logsumexp_size = (max_seqlen_q + 31) // 32 * 32
+    logsumexp = query.new_empty(
+        (cu_seqlens_q.size(0) - 1, query.size(1), logsumexp_size), dtype=torch.float32
+    )
+    return output, logsumexp
+
+
+@torch.library.custom_op("gigl::varlen_attention_backward", mutates_args=())
+def _varlen_attention_backward_op(
+    grad_output: Tensor,
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    output: Tensor,
+    logsumexp: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Returns the gradients of ``_varlen_attention_op`` in query, key and value."""
+    efficient_attention_backward = cast(
+        Callable[..., tuple[Tensor, ...]],
+        torch.ops.aten._efficient_attention_backward,
+    )
+    # Without dropout the kernel does not read the seed and offset.
+    philox = torch.zeros((), dtype=torch.long)
+    grad_query, grad_key, grad_value = efficient_attention_backward(
+        grad_output.unsqueeze(0),
+        query.unsqueeze(0),
+        key.unsqueeze(0),
+        value.unsqueeze(0),
+        None,
+        output.unsqueeze(0),
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        logsumexp,
+        0.0,
+        philox,
+        philox,
+        0,
+        False,
+    )[:3]
+    return grad_query.squeeze(0), grad_key.squeeze(0), grad_value.squeeze(0)
+
+
+@_varlen_attention_backward_op.register_fake
+def _(
+    grad_output: Tensor,
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    output: Tensor,
+    logsumexp: Tensor,
+    cu_seqlens_q: Tensor,
+    cu_seqlens_k: Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    return (
+        torch.empty_like(query),
+        torch.empty_like(key),
+        torch.empty_like(value),
+    )
+
+
+def _setup_varlen_attention_context(ctx, inputs, output) -> None:
+    query, key, value, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, _ = (
+        inputs
+    )
+    ctx.save_for_backward(
+        query, key, value, output[0], output[1], cu_seqlens_q, cu_seqlens_k
+    )
+    ctx.max_seqlen_q = max_seqlen_q
+    ctx.max_seqlen_k = max_seqlen_k
+
+
+def _varlen_attention_backward(ctx, grad_output, grad_logsumexp):
+    query, key, value, output, logsumexp, cu_seqlens_q, cu_seqlens_k = ctx.saved_tensors
+    grad_query, grad_key, grad_value = _varlen_attention_backward_op(
+        grad_output,
+        query,
+        key,
+        value,
+        output,
+        logsumexp,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        ctx.max_seqlen_q,
+        ctx.max_seqlen_k,
+    )
+    return grad_query, grad_key, grad_value, None, None, None, None, None
+
+
+torch.library.register_autograd(
+    "gigl::varlen_attention",
+    _varlen_attention_backward,
+    setup_context=_setup_varlen_attention_context,
+)
 
 
 def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
@@ -186,7 +348,7 @@ def _varlen_attention(
     nothing. The kernel reads the sequence offsets on the device and takes the
     length bounds as host ints, so the call does not sync with the host (it can
     be compiled). Differentiable in ``query``, ``key`` and ``value`` through the
-    autograd formula that aten registers for the kernel.
+    backward registered on ``gigl::varlen_attention``.
 
     CUDA only; see the module docstring for the dropout limit. The head dims of
     ``query`` and ``key`` must be a multiple of 8; ``value`` may differ. The
@@ -197,7 +359,8 @@ def _varlen_attention(
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
 
-    This calls the private ``aten._efficient_attention_forward`` op because torch
+    This calls the private ``aten._efficient_attention_forward`` op, wrapped in
+    ``gigl::varlen_attention``, because torch
     2.8 has no public attention API that takes ``cu_seqlens``:
 
     - ``F.scaled_dot_product_attention`` only takes padded
@@ -230,28 +393,16 @@ def _varlen_attention(
     needs_grad = torch.is_grad_enabled() and any(
         tensor.requires_grad for tensor in (query, key, value)
     )
-    # The op's type stub declares every argument as ``...``. It returns
-    # (output, logsumexp, philox_seed, philox_offset, max_q, max_k); only the
-    # output is used. The kernel takes ``[batch, tokens, heads, head_dim]``, and
-    # ``cu_seqlens`` splits the single batch row into sequences.
-    efficient_attention_forward = cast(
-        Callable[..., tuple[Tensor, ...]],
-        torch.ops.aten._efficient_attention_forward,
-    )
-    output = efficient_attention_forward(
-        query.unsqueeze(0),
-        key.unsqueeze(0),
-        value.unsqueeze(0),
-        None,
+    return _varlen_attention_op(
+        query,
+        key,
+        value,
         cu_seqlens_q,
         cu_seqlens_k,
         max_seqlen_q,
         max_seqlen_k,
-        0.0,
-        0,
         needs_grad,
     )[0]
-    return output.squeeze(0)
 
 
 class PackedAttentionBias(NamedTuple):
@@ -326,11 +477,14 @@ def _padded_packed_attention(
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
 
-    Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
-    with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    adds ``bias`` when given, and unpacks the outputs. ``_varlen_attention`` is
-    checked against this. With ``query_is_first_token``, the query grid holds one
-    row per sequence, so only the first token's scores are computed.
+    Scatters the tokens to the ``[num_sequences, max_seq_len]`` grid through
+    ``layout.flat_index``, masks padded keys with the same additive
+    ``finfo.min / 2`` bias as ``GraphTransformerEncoder``, adds ``bias`` when
+    given, and gathers the outputs back. Every shape is known from the layout,
+    so the call does not sync with the host and compiles without graph breaks.
+    ``_varlen_attention`` is checked against this. With ``query_is_first_token``,
+    the query grid holds one row per sequence, so only the first token's scores
+    are computed.
 
     Args:
         query: Packed queries, or one query per sequence when
@@ -346,49 +500,31 @@ def _padded_packed_attention(
     """
     lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
     num_sequences = lengths.numel()
-    token_sequence = torch.repeat_interleave(
-        torch.arange(num_sequences, device=lengths.device),
-        lengths,
-        output_size=key.size(0),
-    )
+    max_seq_len = layout.max_seq_len
+    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
+
+    def to_grid(tokens: Tensor) -> Tensor:
+        """``[tokens, heads, dim]`` to ``[num_sequences, heads, max_seq_len, dim]``, zeros in padding."""
+        grid = tokens.new_zeros(num_sequences * max_seq_len, *tokens.shape[1:])
+        grid = grid.index_copy(0, layout.flat_index, tokens)
+        return grid.view(num_sequences, max_seq_len, *tokens.shape[1:]).transpose(1, 2)
+
     if query_is_first_token:
-        # One query row per sequence; only key and value go to the grid.
-        kv_grid, mask = to_dense_batch(
-            torch.cat([key, value], dim=1),
-            token_sequence,
-            batch_size=num_sequences,
-            max_num_nodes=layout.max_seq_len,
-        )
-        key_grid, value_grid = (
-            grid.transpose(1, 2) for grid in kv_grid.chunk(2, dim=2)
-        )
-        output = F.scaled_dot_product_attention(
-            query.unsqueeze(2),
-            key_grid,
-            value_grid,
-            attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype, 1),
-            dropout_p=dropout_p,
-        )
-        return output.squeeze(2)
-    qkv_grid, mask = to_dense_batch(
-        torch.cat([query, key, value], dim=1),
-        token_sequence,
-        batch_size=num_sequences,
-        max_num_nodes=layout.max_seq_len,
-    )
-    query_grid, key_grid, value_grid = (
-        grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
-    )
+        query_grid = query.unsqueeze(2)
+        query_len = 1
+    else:
+        query_grid = to_grid(query)
+        query_len = max_seq_len
     output = F.scaled_dot_product_attention(
         query_grid,
-        key_grid,
-        value_grid,
-        attn_mask=_dense_attention_bias(
-            layout, bias, mask, query.dtype, layout.max_seq_len
-        ),
+        to_grid(key),
+        to_grid(value),
+        attn_mask=_dense_attention_bias(layout, bias, valid, query.dtype, query_len),
         dropout_p=dropout_p,
     )
-    return output.transpose(1, 2)[mask]
+    if query_is_first_token:
+        return output.squeeze(2)
+    return output.transpose(1, 2).flatten(0, 1)[layout.flat_index]
 
 
 def packed_attention(

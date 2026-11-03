@@ -5,6 +5,7 @@ import unittest
 
 import torch
 from absl.testing import absltest
+from torch.utils.checkpoint import checkpoint
 
 from gigl.nn.packed_attention import (
     PackedAttentionBias,
@@ -15,7 +16,7 @@ from gigl.nn.packed_attention import (
     _varlen_attention,
     packed_attention,
 )
-from gigl.transforms.static_khop import pack_sequences
+from gigl.transforms.sequence_layout import pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
@@ -493,6 +494,55 @@ class PackedAttentionCudaTest(TestCase):
                 atol=5e-2,
                 check_gradients=False,
             )
+
+    def test_compiled_first_token_attention_backpropagates_for_any_sequence_count(
+        self,
+    ) -> None:
+        # The kernel's philox seed and offset are CPU tensors without dropout, but
+        # a bare aten call registers them as CUDA tensors under compile. The
+        # compiled backward can then reuse the freed offset as the one-element
+        # int64 sequence-start index that a single sequence produces, and the
+        # launch gets a host pointer.
+        device = torch.device("cuda")
+        for num_sequences in (2, 1):
+            with self.subTest(num_sequences=num_sequences):
+                torch._dynamo.reset()
+                layout = pack_sequences(
+                    torch.full((num_sequences,), 12, device=device), _MAX_SEQ_LEN
+                )
+                inputs = torch.randn(
+                    int(layout.cu_seqlens[-1]),
+                    64,
+                    device=device,
+                    dtype=torch.bfloat16,
+                    requires_grad=True,
+                )
+                weight = torch.randn(
+                    64, 512, device=device, dtype=torch.bfloat16, requires_grad=True
+                )
+
+                def attend(inputs, weight, layout):
+                    hidden = inputs @ weight
+                    first = layout.cu_seqlens[:-1].long()
+                    heads = hidden.view(-1, 8, 64)
+                    output = packed_attention(
+                        hidden[first].view(-1, 8, 64),
+                        heads,
+                        heads,
+                        layout,
+                        query_is_first_token=True,
+                    )
+                    return output.sum() + hidden[first.clamp(min=0)].sum()
+
+                def checkpointed(inputs, weight, layout):
+                    return checkpoint(
+                        attend, inputs, weight, layout, use_reentrant=False
+                    )
+
+                torch.compile(checkpointed)(inputs, weight, layout).backward()
+                torch.cuda.synchronize()
+                assert inputs.grad is not None
+                self.assertTrue(torch.isfinite(inputs.grad).all())
 
 
 if __name__ == "__main__":

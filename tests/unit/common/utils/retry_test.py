@@ -37,7 +37,7 @@ class RetryUtilsTest(TestCase):
             return True
 
         self.assertTrue(should_succeed_after_3_tries())
-        self.assertEquals(exec_counter, 3)
+        self.assertEqual(exec_counter, 3)
 
     def test_retry_with_function_deadlines(self):
         exec_counter = 0
@@ -53,7 +53,7 @@ class RetryUtilsTest(TestCase):
 
         start = time()
         self.assertTrue(should_timeout_first_try_and_then_succeed())
-        self.assertEquals(exec_counter, 2)
+        self.assertEqual(exec_counter, 2)
         total_time_s = time() - start
         self.assertLessEqual(
             total_time_s, 10

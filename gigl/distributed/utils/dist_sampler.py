@@ -104,7 +104,6 @@ def create_dist_sampler(
         edge_dir=sampling_config.edge_dir,
         collect_features=sampling_config.collect_features,
         channel=channel,
-        use_all2all=worker_options.use_all2all,
         concurrency=worker_options.worker_concurrency,
         device=current_device,
         seed=(

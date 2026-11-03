@@ -2,9 +2,9 @@
 
 This is the layout half of the packed backend of ``GraphTransformerEncoder``. For
 every anchor it picks which nodes become its tokens (the anchor, then its
-neighbours within ``hop_distance`` hops), and ``pack_sequences`` turns the padded
-result into the offsets that ``gigl.nn.packed_attention`` needs to run the
-transformer on real tokens only.
+neighbours within ``hop_distance`` hops), and ``pack_sequences`` (in
+``gigl.transforms.sequence_layout``) turns the padded result into the offsets that
+``gigl.nn.packed_attention`` needs to run the transformer on real tokens only.
 
 Why this exists:
   - Sequences are short and uneven (about 90 real tokens out of a 256-token
@@ -39,11 +39,11 @@ How a layout is built::
         |  hop h: gather the rows of the hop h - 1 frontier -> [num_anchors, width ** h]
         v
     candidates [num_anchors, 1 + width + ... + width ** hop_distance]
-        |  sort each row by (node id, hop); the first copy of a node is its
-        |  first-reach hop, so drop repeats, padding and the anchor itself
+        |  select_sequences: the first copy of a node is its first-reach hop, so
+        |  drop repeats, padding and the anchor itself
         v
     anchor first, then neighbours in ascending node id (or by hop, then node id,
-    with ``prioritize_hop_order``), cut at max_seq_len
+    or in expansion order, per ``ordering``), cut at max_seq_len
         |
         v
     layout [num_anchors, max_seq_len] of (node << hop_bits) | hop (-1 at padding), lengths
@@ -59,6 +59,7 @@ Constraints:
   - ``cu_seqlens`` is int32, so the total token count must fit in int32.
 
 Example:
+    >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
     >>> layout, lengths, hop_bits = khop_layout(
     ...     edge_index,
@@ -83,12 +84,17 @@ Example:
     [0, 3, 6]
 """
 
-from typing import Literal, NamedTuple, Optional
+from typing import Literal, NamedTuple
 
 import torch
-import torch.nn.functional as F
-from jaxtyping import Int, Int32, Int64
+from jaxtyping import Int, Int64
 from torch import Tensor
+
+from gigl.transforms.sequence_layout import (
+    PackedLayout,
+    pack_sequences,
+    select_sequences,
+)
 
 # Maximum number of int64 cells ``khop_layout`` builds: the candidates,
 # ``num_anchors * (1 + width + ... + width ** hop_distance)``, plus the neighbour
@@ -98,116 +104,33 @@ from torch import Tensor
 # over the limit and send the batch to the padded path.
 MAX_LAYOUT_CANDIDATES = 2**25
 
+KhopOrdering = Literal["node_id", "hop", "input"]
+
+
+class KhopLayout(NamedTuple):
+    """The k-hop token layout of every anchor, as built by ``khop_layout``.
+
+    Attributes:
+        layout: ``[num_anchors, max_seq_len]`` long. Each valid cell packs a
+            token's local node id and first-reach hop as
+            ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
+            ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
+            followed by its neighbours within ``hop_distance`` hops in the
+            ``ordering`` order. The hop is the fewest hops from the anchor to the
+            node. Cells at and after the sequence length are -1, so only decode
+            the valid ones.
+        lengths: ``[num_anchors]`` long count of valid tokens per anchor, anchor
+            included, so at least 1 and at most ``max_seq_len``.
+        hop_bits: Python int, ``hop_distance.bit_length()``.
+    """
+
+    layout: Int64[Tensor, "num_anchors max_seq_len"]
+    lengths: Int64[Tensor, "num_anchors"]
+    hop_bits: int
+
 
 class KhopLayoutTooLargeError(ValueError):
     """The k-hop layout would have more candidates than the allowed maximum."""
-
-
-class PackedRelationEdges(NamedTuple):
-    """Relation edges between packed tokens, grouped by relation.
-
-    Attributes:
-        target: ``[num_edges]`` long row of each edge's target in the layer's
-            queries and outputs.
-        source: ``[num_edges]`` long packed token row of each edge's source.
-        relation: ``[num_edges]`` long relation of each edge.
-        segments: ``(relation, start, end)`` edge range of every relation, in
-            order, covering ``[0, num_edges)``; empty if there are no edges. They
-            are host values, so the per-relation transforms never read the device.
-        all_filtered: The batch has relation edges but none reach these outputs.
-    """
-
-    target: Tensor
-    source: Tensor
-    relation: Tensor
-    segments: tuple[tuple[int, int, int], ...]
-    all_filtered: bool = False
-
-
-class PackedLayout(NamedTuple):
-    """Where each sequence lives in the packed token buffer, and what each token is.
-
-    Attributes:
-        cu_seqlens: ``[num_sequences + 1]`` int32 cumulative sequence lengths,
-            on the same device as the tokens. Sequence ``i`` occupies
-            ``[cu_seqlens[i], cu_seqlens[i + 1])``. The attention kernel
-            requires int32, so the total token count must fit in int32.
-        max_seq_len: Python int upper bound on any sequence length. It must be at
-            least the longest sequence, or the attention kernel skips rows. The
-            attention clamps it to the token count.
-        flat_index: ``[num_tokens]`` long indices of the valid cells of the
-            flattened ``[num_sequences, max_seq_len]`` grid, sequence by sequence.
-        sequence_id: ``[num_tokens]`` long sequence of each token,
-            ``flat_index // max_seq_len``.
-        position: ``[num_tokens]`` long position of each token within its
-            sequence, ``flat_index % max_seq_len``. Position 0 is the anchor.
-        node_index: ``[num_tokens]`` long row of each token in the concatenated
-            node features.
-        token_attrs: Per-token values the builder knows, each
-            ``[num_tokens, ...]``.
-        relation_edges: Relation edges in token coordinates, when the builder
-            makes them.
-    """
-
-    cu_seqlens: Int32[Tensor, "num_sequences_plus_one"]
-    max_seq_len: int
-    flat_index: Int64[Tensor, "num_tokens"]
-    sequence_id: Int64[Tensor, "num_tokens"]
-    position: Int64[Tensor, "num_tokens"]
-    node_index: Int64[Tensor, "num_tokens"]
-    token_attrs: dict[str, Tensor]
-    relation_edges: Optional[PackedRelationEdges] = None
-
-
-def pack_sequences(
-    lengths: Int64[Tensor, "num_sequences"],
-    max_seq_len: int,
-    node_grid: Optional[Int64[Tensor, "num_sequences max_seq_len"]] = None,
-    attr_grids: Optional[dict[str, Tensor]] = None,
-) -> PackedLayout:
-    """Computes what is needed to drop the padding from a padded grid of sequences.
-
-    Sequence ``i`` is valid in its first ``lengths[i]`` positions. Any
-    ``[num_sequences, max_seq_len]`` per-position tensor gathers into packed
-    order with ``grid.flatten()[flat_index]``, and ``cu_seqlens`` marks where
-    each packed sequence starts. This costs one host read, of the total token
-    count; it is why the packed buffer holds exactly the real tokens.
-
-    A length above ``max_seq_len`` is clamped to it, because the grid has no
-    positions beyond that. Checking for it would cost another host read.
-
-    Args:
-        lengths: ``[num_sequences]`` number of valid positions of each sequence.
-        max_seq_len: Width of the padded grid.
-        node_grid: ``[num_sequences, max_seq_len]`` node row of each cell. If
-            None, ``node_index`` is the flat index.
-        attr_grids: ``[num_sequences, max_seq_len, ...]`` grids to gather into
-            ``token_attrs``, by name.
-
-    Returns:
-        The packed layout, without relation edges.
-    """
-    lengths = lengths.clamp(max=max_seq_len)
-    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
-    cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
-    flat_index = valid.flatten().nonzero().squeeze(1)
-    if node_grid is None:
-        node_index = flat_index
-    else:
-        node_index = node_grid.flatten()[flat_index]
-    token_attrs = {}
-    if attr_grids is not None:
-        for name, grid in attr_grids.items():
-            token_attrs[name] = grid.flatten(0, 1)[flat_index]
-    return PackedLayout(
-        cu_seqlens=cu_seqlens.to(torch.int32),
-        max_seq_len=max_seq_len,
-        flat_index=flat_index,
-        sequence_id=flat_index // max_seq_len,
-        position=flat_index % max_seq_len,
-        node_index=node_index,
-        token_attrs=token_attrs,
-    )
 
 
 def _build_neighbor_table(
@@ -283,19 +206,24 @@ def _khop_sequence_layout(
     anchor_indices: Int[Tensor, "num_anchors"],
     hop_distance: int,
     max_seq_len: int,
-    prioritize_hop_order: bool = False,
-) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
+    ordering: KhopOrdering = "node_id",
+) -> KhopLayout:
     """Picks the tokens of every anchor's k-hop neighbourhood, with fixed shapes.
 
     Gathering through the neighbour table, rather than sparse matrix ops, keeps
-    every tensor's shape independent of the data. Each sequence is the anchor, then every other node within ``hop_distance``
-    hops in ascending node id, truncated to ``max_seq_len``. The sparse path gets
-    the same order from ``coalesce``, so this layout equals
-    ``_get_k_hop_neighbors_sparse`` followed by
+    every tensor's shape independent of the data. The gathers produce the
+    candidates, hop by hop, and ``select_sequences`` turns them into sequences.
+    With the default ``ordering``, each sequence is the anchor, then every other
+    node within ``hop_distance`` hops in ascending node id, truncated to
+    ``max_seq_len``. The sparse path gets the same order from ``coalesce``, so
+    this layout equals ``_get_k_hop_neighbors_sparse`` followed by
     ``_build_sequence_layout_from_sparse_neighbors`` with the anchor moved first.
-    With ``prioritize_hop_order`` the neighbours are ordered by first-reach hop,
-    then node id, so truncation drops the farthest hops first, as in
-    ``_build_hop_ordered_sequence_layout_from_sparse_edges``.
+    With ``ordering="hop"`` the neighbours are ordered by first-reach hop, then
+    node id, so truncation drops the farthest hops first, as in
+    ``_build_hop_ordered_sequence_layout_from_sparse_edges``. With
+    ``ordering="input"`` they are ordered by first reach in the expansion: by hop,
+    then by the position of the node's parent in the previous hop, then by its
+    slot in the parent's table row.
 
     A token's hop is the hop at which it is first reached; the anchor's is 0.
 
@@ -304,45 +232,32 @@ def _khop_sequence_layout(
     """
     anchor_indices = anchor_indices.long()
     hop_bits = hop_distance.bit_length()
-    padding_key = torch.iinfo(torch.long).max
+    device = anchor_indices.device
 
-    # A candidate's sort key is ``(node << hop_bits) | hop``. It groups each node's
-    # copies with the smallest hop first, so the first copy carries the
-    # first-reach hop. Padding gets the largest key and sorts last.
+    # The candidates are laid out hop by hop, so a node's lowest column is its
+    # first-reach hop, which is the copy ``select_sequences`` keeps.
     frontier = anchor_indices.unsqueeze(1)
-    key_parts = [frontier << hop_bits]
+    candidate_parts = [frontier]
+    hop_parts = [torch.zeros(1, dtype=torch.long, device=device)]
     for hop in range(1, hop_distance + 1):
         # A -1 id selects the all -1 last row of the table.
         frontier = neighbor_table[frontier].flatten(1)
-        key_parts.append(
-            torch.where(frontier >= 0, (frontier << hop_bits) | hop, padding_key)
-        )
-    keys = torch.sort(torch.cat(key_parts, dim=1), dim=1).values
-    nodes = keys >> hop_bits
-    hops = keys & ((1 << hop_bits) - 1)
-    keep = (keys != padding_key) & F.pad(nodes.diff(dim=1) != 0, (1, 0), value=True)
-    if prioritize_hop_order:
-        # Re-sort the kept candidates by (hop, node id) so truncation below drops
-        # the farthest hops first.
-        node_radix = neighbor_table.size(0)
-        order_keys = torch.sort(
-            torch.where(keep, hops * node_radix + nodes, padding_key), dim=1
-        ).values
-        keep = order_keys != padding_key
-        nodes = order_keys % node_radix
-        keys = (nodes << hop_bits) | (order_keys // node_radix)
-    # The anchor goes to column 0 below; the other kept candidates are numbered
-    # from 1 and cut at ``max_seq_len``.
-    keep = keep & (nodes != anchor_indices.unsqueeze(1))
-    positions = torch.cumsum(keep, dim=1)
-    keep = keep & (positions < max_seq_len)
-    # Dropped candidates scatter into column 0, which the anchor overwrites.
-    layout = torch.full(
-        (anchor_indices.numel(), max_seq_len), -1, dtype=torch.long, device=keys.device
+        candidate_parts.append(frontier)
+        hop_parts.append(torch.full((frontier.size(1),), hop, device=device))
+    candidates = torch.cat(candidate_parts, dim=1)
+    hop_of_column = torch.cat(hop_parts)
+    if ordering == "hop":
+        priority = hop_of_column.expand_as(candidates)
+    elif ordering == "input":
+        priority = torch.arange(candidates.size(1), device=device).expand_as(candidates)
+    else:
+        priority = None
+    nodes, source, lengths = select_sequences(
+        anchor_indices, candidates, max_seq_len, priority
     )
-    layout.scatter_(1, torch.where(keep, positions, 0), keys)
-    layout[:, 0] = anchor_indices << hop_bits
-    return layout, 1 + keep.sum(dim=1), hop_bits
+    hops = hop_of_column[source.clamp(min=0)]
+    layout = torch.where(nodes >= 0, (nodes << hop_bits) | hops, -1)
+    return KhopLayout(layout, lengths, hop_bits)
 
 
 def khop_layout(
@@ -353,8 +268,8 @@ def khop_layout(
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
-    prioritize_hop_order: bool = False,
-) -> tuple[Int64[Tensor, "num_anchors max_seq_len"], Int64[Tensor, "num_anchors"], int]:
+    ordering: KhopOrdering = "node_id",
+) -> KhopLayout:
     """Builds the k-hop token layout of every anchor; the entry point of this module.
 
     Builds the neighbour table, checks the candidate budget, then expands and
@@ -373,24 +288,29 @@ def khop_layout(
         sampling_direction: ``"in"`` reverses the edges, ``"out"`` keeps them.
         max_candidates: Maximum number of candidates plus neighbour-table cells; see
             ``MAX_LAYOUT_CANDIDATES``.
-        prioritize_hop_order: Order neighbours by hop before node id.
+        ordering: How neighbours are ordered, and so which are cut at
+            ``max_seq_len``: ``"node_id"`` by ascending node id, ``"hop"`` by
+            first-reach hop and then node id, ``"input"`` by first reach in the
+            expansion (hop, then the parent's position, then the slot in the
+            parent's neighbour-table row, which follows the edge order).
 
     Returns:
-        - ``layout``: ``[num_anchors, max_seq_len]`` long. Each valid cell packs
-          a token's local node id and first-reach hop as
-          ``(node << hop_bits) | hop``; decode with ``cell >> hop_bits`` and
-          ``cell & ((1 << hop_bits) - 1)``. Column 0 is the anchor (hop 0),
-          followed by its neighbours within ``hop_distance`` hops, in ascending
-          node id (or by hop, then node id, with ``prioritize_hop_order``). The
-          hop is the fewest hops from the anchor to the node. Cells at and after
-          the sequence length are -1, so only decode the valid ones.
-        - ``lengths``: ``[num_anchors]`` long count of valid tokens per anchor,
-          anchor included, so at least 1 and at most ``max_seq_len``.
-        - ``hop_bits``: Python int, ``hop_distance.bit_length()``.
+        The ``KhopLayout``: ``layout``, ``lengths`` and ``hop_bits``.
 
     Raises:
+        ValueError: If ``sampling_direction`` is not ``"in"`` or ``"out"``, or
+            ``ordering`` is not ``"node_id"``, ``"hop"`` or ``"input"``.
         KhopLayoutTooLargeError: If the table cells plus candidates exceed ``max_candidates``.
     """
+    if sampling_direction not in {"in", "out"}:
+        raise ValueError(
+            "sampling_direction must be one of {'in', 'out'}, "
+            f"got '{sampling_direction}'."
+        )
+    if ordering not in {"node_id", "hop", "input"}:
+        raise ValueError(
+            f"ordering must be one of {{'node_id', 'hop', 'input'}}, got '{ordering}'."
+        )
     neighbor_table = _build_neighbor_table(
         edge_index,
         num_nodes,
@@ -404,7 +324,7 @@ def khop_layout(
         anchor_indices,
         hop_distance,
         max_seq_len,
-        prioritize_hop_order,
+        ordering,
     )
 
 
@@ -416,7 +336,7 @@ def pack_khop_layout(
     max_seq_len: int,
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
-    prioritize_hop_order: bool = False,
+    ordering: KhopOrdering = "node_id",
 ) -> PackedLayout:
     """Builds the k-hop token layout of every anchor and packs it.
 
@@ -435,7 +355,7 @@ def pack_khop_layout(
         max_seq_len,
         sampling_direction=sampling_direction,
         max_candidates=max_candidates,
-        prioritize_hop_order=prioritize_hop_order,
+        ordering=ordering,
     )
     return pack_sequences(
         lengths,

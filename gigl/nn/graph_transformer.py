@@ -42,12 +42,8 @@ from gigl.transforms.graph_transformer import (
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
 )
-from gigl.transforms.static_khop import (
-    KhopLayoutTooLargeError,
-    PackedLayout,
-    PackedRelationEdges,
-    pack_khop_layout,
-)
+from gigl.transforms.sequence_layout import PackedLayout, PackedRelationEdges
+from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 
 logger = Logger()
 
@@ -213,15 +209,17 @@ class FeedForwardNetwork(nn.Module):
                         nn.init.zeros_(layer.bias)
 
     def forward(
-        self, x: Float[Tensor, "batch sequence model_dim"]
-    ) -> Float[Tensor, "batch sequence model_dim"]:
+        self, x: Float[Tensor, "*tokens model_dim"]
+    ) -> Float[Tensor, "*tokens model_dim"]:
         """Forward pass.
 
         Args:
-            x: Input tensor of shape ``(batch, seq, model_dim)``.
+            x: Input tensor of shape ``(..., model_dim)``. The network applies per
+                token, so padded ``(batch, seq, model_dim)`` and packed
+                ``(tokens, model_dim)`` inputs both work.
 
         Returns:
-            Output tensor of shape ``(batch, seq, model_dim)``.
+            Output tensor with the same shape as ``x``.
         """
         if self._is_xglu:
             # XGLU gating: activation(x @ W1) * (x @ W2)
@@ -627,13 +625,15 @@ class GraphTransformerEncoderLayer(nn.Module):
         x = residual + self._dropout(self._output_projection(attention_output))
         if relation_edges is not None:
             if relation_edges.segments:
-                uses_attention = self._relation_message_mode == "edge_type_attention"
+                edge_queries = None
+                edge_keys = None
+                if self._relation_message_mode == "edge_type_attention":
+                    edge_queries = query[relation_edges.target]
+                    edge_keys = key[relation_edges.source]
                 messages = self._aggregate_relation_messages(
                     source_features=x_norm[relation_edges.source],
-                    edge_queries=(
-                        query[relation_edges.target] if uses_attention else None
-                    ),
-                    edge_keys=key[relation_edges.source] if uses_attention else None,
+                    edge_queries=edge_queries,
+                    edge_keys=edge_keys,
                     relation_indices=relation_edges.relation,
                     relation_segments=relation_edges.segments,
                     target_rows=relation_edges.target,
@@ -1209,6 +1209,13 @@ class GraphTransformerEncoder(nn.Module):
     Conforms to the same forward interface as ``HGT`` and ``SimpleHGN``,
     making it a drop-in encoder for ``LinkPredictionGNN``.
 
+    To compile, compile the whole encoder with ``torch.compile(encoder)``, or
+    compile each layer's ``forward`` and ``forward_packed`` in place, for example
+    ``layer.forward_packed = torch.compile(layer.forward_packed)``.
+
+    Replacing ``_encoder_layers`` entries with ``torch.compile``d modules is not
+    supported on the packed path, because those modules compile only ``forward``.
+
     Args:
         node_type_to_feat_dim_map: Dictionary mapping node types to their
             input feature dimensions.
@@ -1691,12 +1698,12 @@ class GraphTransformerEncoder(nn.Module):
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
         self._attention_dropout_rate = attention_dropout_rate
-        blockers = self._packed_backend_blockers()
-        self._supports_packed_backend = not blockers
-        if blockers:
+        unsupported_reasons = self._packed_unsupported_reasons()
+        self._supports_packed_backend = not unsupported_reasons
+        if unsupported_reasons:
             logger.info(
                 "GraphTransformerEncoder will run on padded sequences, not packed "
-                "tokens, because: " + "; ".join(blockers)
+                "tokens, because: " + "; ".join(unsupported_reasons)
             )
         self._packed_fallback_count = 0
         # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
@@ -1719,25 +1726,25 @@ class GraphTransformerEncoder(nn.Module):
                     f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
                 )
 
-    def _packed_backend_blockers(self) -> list[str]:
+    def _packed_unsupported_reasons(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
-        blockers: list[str] = []
+        unsupported_reasons: list[str] = []
         if self._sequence_construction_method != "khop":
-            blockers.append("sequence_construction_method is not 'khop'")
+            unsupported_reasons.append("sequence_construction_method is not 'khop'")
         if self._relation_attention_mode != "none":
-            blockers.append("relation_attention_mode is not 'none'")
+            unsupported_reasons.append("relation_attention_mode is not 'none'")
         ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         if ppr_attr_names & (
             set(self._anchor_based_attention_bias_attr_names)
             | set(self._anchor_based_input_attr_names)
         ):
-            blockers.append("ppr_weight or ppr_relation_features is set")
+            unsupported_reasons.append("ppr_weight or ppr_relation_features is set")
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
         # every batch would exceed it.
         if self._hop_distance > 4:
-            blockers.append("hop_distance is above 4")
-        return blockers
+            unsupported_reasons.append("hop_distance is above 4")
+        return unsupported_reasons
 
     def _use_packed_backend(self, device: torch.device) -> bool:
         """Returns whether this forward runs on packed tokens (supported config, on CUDA)."""
@@ -2122,6 +2129,10 @@ class GraphTransformerEncoder(nn.Module):
             is on, or None if the batch's k-hop candidate set is too large to lay
             out.
         """
+        if self._prioritize_hop_order:
+            ordering = "hop"
+        else:
+            ordering = "node_id"
         try:
             layout = pack_khop_layout(
                 edge_index,
@@ -2130,7 +2141,7 @@ class GraphTransformerEncoder(nn.Module):
                 hop_distance=self._hop_distance,
                 max_seq_len=self._max_seq_len,
                 sampling_direction=self._sampling_direction,
-                prioritize_hop_order=self._prioritize_hop_order,
+                ordering=ordering,
             )
         except KhopLayoutTooLargeError as error:
             self._record_packed_fallback(error)
@@ -2316,6 +2327,17 @@ class GraphTransformerEncoder(nn.Module):
         anchor_only = self._readout_mode == "anchor_only"
         num_layers = len(self._encoder_layers)
         for layer_index, encoder_layer in enumerate(self._encoder_layers):
+            if isinstance(encoder_layer, torch._dynamo.eval_frame.OptimizedModule):
+                raise ValueError(
+                    f"Encoder layer {layer_index} is a torch.compile'd module. "
+                    "torch.compile(layer) compiles only forward(), so the packed "
+                    "path would run it eagerly. Compile the whole encoder with "
+                    "torch.compile(encoder), or compile each layer's methods in "
+                    "place:\n"
+                    "    for layer in encoder._encoder_layers:\n"
+                    "        layer.forward = torch.compile(layer.forward)\n"
+                    "        layer.forward_packed = torch.compile(layer.forward_packed)"
+                )
             first_token_output = anchor_only and layer_index == num_layers - 1
             relation_edges = layout.relation_edges
             if first_token_output and relation_edges is not None:

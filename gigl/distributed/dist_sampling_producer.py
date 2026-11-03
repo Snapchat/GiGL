@@ -4,7 +4,6 @@
 # DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
 # GLT's DistNeighborSampler directly.
 
-import datetime
 import queue
 from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
@@ -95,14 +94,9 @@ def _sampling_worker_loop(
             group_name="_sampling_worker_subprocess",
         )
         if worker_options.use_all2all:
-            torch.distributed.init_process_group(
-                backend="gloo",
-                timeout=datetime.timedelta(seconds=worker_options.rpc_timeout),
-                rank=worker_options.worker_ranks[rank],
-                world_size=worker_options.worker_world_size,
-                init_method="tcp://{}:{}".format(
-                    worker_options.master_addr, worker_options.master_port
-                ),
+            raise ValueError(
+                "All-to-all feature collection (use_all2all=True) is not supported; "
+                "features are fetched through the fused feature store."
             )
 
         if worker_options.num_rpc_threads is None:
