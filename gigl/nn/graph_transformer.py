@@ -2368,6 +2368,11 @@ class GraphTransformerEncoder(nn.Module):
                 attr_names=names,
                 device=layout.node_index.device,
             )
+            if features is None:
+                raise ValueError(
+                    "Pairwise attention biases are configured, but no pairwise "
+                    "features were found."
+                )
             per_pair = self._pairwise_pair_bias(
                 features, nonmissing_indices, pairwise_projection.weight.dtype
             )
