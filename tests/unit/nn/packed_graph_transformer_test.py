@@ -435,9 +435,8 @@ class PackedPathTest(TestCase):
         self.addCleanup(torch._dynamo.reset)
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
-        encoder._encoder_layers[0] = torch.compile(
-            encoder._encoder_layers[0], backend="eager"
-        )
+        layers = cast(Any, encoder._encoder_layers)
+        layers[0] = torch.compile(layers[0], backend="eager")
         with torch.no_grad(), self.assertRaises(ValueError):
             _run_packed(encoder, data)
 
@@ -448,7 +447,7 @@ class PackedPathTest(TestCase):
         encoder = _materialized_encoder(data, _encoder_kwargs())
         with torch.no_grad():
             expected = _run_packed(encoder, data)
-            for layer in encoder._encoder_layers:
+            for layer in cast(Any, encoder._encoder_layers):
                 layer.forward_packed = torch.compile(
                     layer.forward_packed, backend="eager"
                 )
