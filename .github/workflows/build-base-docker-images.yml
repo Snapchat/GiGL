@@ -9,9 +9,12 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  GIGL_BASE_CPU_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-cpu-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
-  GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/public-gigl/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  # Base images are build inputs, not releases, so they live in gigl-base-images, the only
+  # Docker repository the PR/test service account can write to. Only the release workflows
+  # may write to public-gigl. See RELEASING.md, "Release identity and permissions".
+  GIGL_BASE_CUDA_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-cuda-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BASE_CPU_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-cpu-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
+  GIGL_BASE_DATAFLOW_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-dataflow-base:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   GIGL_BUILDER_IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gigl-base-images/gigl-builder:${{ github.sha }}.${{ github.run_number }}.${{ github.run_attempt }}
   WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
