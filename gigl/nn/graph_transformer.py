@@ -620,13 +620,15 @@ class GraphTransformerEncoderLayer(nn.Module):
         x = residual + self._dropout(self._output_projection(attention_output))
         if relation_edges is not None:
             if relation_edges.segments:
-                uses_attention = self._relation_message_mode == "edge_type_attention"
+                edge_queries = None
+                edge_keys = None
+                if self._relation_message_mode == "edge_type_attention":
+                    edge_queries = query[relation_edges.target]
+                    edge_keys = key[relation_edges.source]
                 messages = self._aggregate_relation_messages(
                     source_features=x_norm[relation_edges.source],
-                    edge_queries=(
-                        query[relation_edges.target] if uses_attention else None
-                    ),
-                    edge_keys=key[relation_edges.source] if uses_attention else None,
+                    edge_queries=edge_queries,
+                    edge_keys=edge_keys,
                     relation_indices=relation_edges.relation,
                     relation_segments=relation_edges.segments,
                     target_rows=relation_edges.target,
