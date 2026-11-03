@@ -1600,12 +1600,12 @@ class GraphTransformerEncoder(nn.Module):
         self._output_projection = nn.Linear(hid_dim, out_dim)
 
         self._attention_dropout_rate = attention_dropout_rate
-        blockers = self._packed_backend_blockers()
-        self._supports_packed_backend = not blockers
-        if blockers:
+        unsupported_reasons = self._packed_unsupported_reasons()
+        self._supports_packed_backend = not unsupported_reasons
+        if unsupported_reasons:
             logger.info(
                 "GraphTransformerEncoder will run on padded sequences, not packed "
-                "tokens, because: " + "; ".join(blockers)
+                "tokens, because: " + "; ".join(unsupported_reasons)
             )
         self._packed_fallback_count = 0
         # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
@@ -1628,39 +1628,43 @@ class GraphTransformerEncoder(nn.Module):
                     f"{self._hop_distance + 1} (hops 0 to {self._hop_distance})."
                 )
 
-    def _packed_backend_blockers(self) -> list[str]:
+    def _packed_unsupported_reasons(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
-        blockers: list[str] = []
+        unsupported_reasons: list[str] = []
         if self._sequence_construction_method != "khop":
-            blockers.append("sequence_construction_method is not 'khop'")
+            unsupported_reasons.append("sequence_construction_method is not 'khop'")
         if self._readout_mode != "anchor_only":
-            blockers.append("readout_mode is not 'anchor_only'")
+            unsupported_reasons.append("readout_mode is not 'anchor_only'")
         if self._relation_attention_mode != "none":
-            blockers.append("relation_attention_mode is not 'none'")
+            unsupported_reasons.append("relation_attention_mode is not 'none'")
         if self._relation_message_mode != "none":
-            blockers.append("relation_message_mode is not 'none'")
+            unsupported_reasons.append("relation_message_mode is not 'none'")
         if self._anchor_based_attention_bias_attr_names:
-            blockers.append("anchor-based attention biases are set")
+            unsupported_reasons.append("anchor-based attention biases are set")
         if self._pairwise_attention_bias_attr_names:
-            blockers.append("pairwise attention biases are set")
+            unsupported_reasons.append("pairwise attention biases are set")
         if not set(self._anchor_based_input_attr_names) <= {HOP_DISTANCE_FEATURE_NAME}:
-            blockers.append("anchor-based inputs other than hop_distance are set")
+            unsupported_reasons.append(
+                "anchor-based inputs other than hop_distance are set"
+            )
         # The CUDA memory-efficient varlen kernel only has aligned variants for
         # head dims divisible by 8. For other dims, the padded path's SDPA picks
         # a different kernel.
         if (self._hid_dim // self._num_heads) % 8 != 0:
-            blockers.append("head dim (hid_dim // num_heads) is not divisible by 8")
+            unsupported_reasons.append(
+                "head dim (hid_dim // num_heads) is not divisible by 8"
+            )
         # Packed memory is O(anchors * width ** hop_distance), and the candidate
         # budget sends batches over it to the padded path. Past four hops nearly
         # every batch would exceed it.
         if self._hop_distance > 4:
-            blockers.append("hop_distance is above 4")
+            unsupported_reasons.append("hop_distance is above 4")
         # The varlen kernel's dropout has not been tested against the padded
-        # path's per-head, per-sequence masks. Treating dropout as a blocker keeps
-        # training and eval on the same path.
+        # path's per-head, per-sequence masks. Reporting dropout as unsupported
+        # keeps training and eval on the same path.
         if self._attention_dropout_rate > 0:
-            blockers.append("attention_dropout_rate is above 0")
-        return blockers
+            unsupported_reasons.append("attention_dropout_rate is above 0")
+        return unsupported_reasons
 
     def _use_packed_backend(self, device: torch.device) -> bool:
         """Returns whether this forward runs on packed tokens (supported config, on CUDA)."""
