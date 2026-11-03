@@ -25,8 +25,7 @@ runs:
           // Fail closed: authorization succeeds ONLY on an explicit 204 from
           // checkCollaborator. Every other outcome -- 404 (not a collaborator),
           // 403 (token/permission/rate-limit), any other status, or any thrown
-          // error -- denies the run. A previous version logged 403/other errors
-          // instead of throwing, which let a non-collaborator through.
+          // error -- denies the run.
           const username = process.env.USERNAME;
           let result;
           try {

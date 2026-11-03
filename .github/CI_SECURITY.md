@@ -19,17 +19,19 @@ credentials.
 3. **Pinned, verified checkout.** `actions/checkout-pr-branch` takes a required `sha` input, checks out the PR head, and
    **fails closed** if `git rev-parse HEAD` is not that SHA. A push that races the approval moves the tip and aborts the
    job before any PR code runs.
-4. **Least privilege + a writeback job that runs no PR code.** `checkout-pr-branch` always checks out PR code with
-   `persist-credentials: false`. In `build-base-docker-images.yml`, the `build-and-commit-base-images` job holds the
-   `contents: write` token, so it never executes PR-authored code: it checks out the PR at the reviewed `commit_sha`
-   (verified) and treats it as data only, then checks out the workflow's own commit (`github.sha`) into `.trusted` and
-   runs the image-ref update script from there. The commit step has no token in its environment and checks that only
-   `gigl/dep_vars.env` and `.github/cloud_builder/run_command_on_active_checkout.yaml` changed. Every git call disables
-   hooks and `core.fsmonitor`, and only the final push step sees `GITHUB_TOKEN`. That step passes it to git through an
-   inline credential helper that reads it from the step's env, so the token is not in argv or persisted to
-   `.git/config`. Fork PRs skip writeback (see below). Jobs also declare scoped `permissions`.
-5. **Fail-closed authorization.** `actions/assert-is-collaborator` now denies on any result other than an explicit 204
-   (previously a 403 was logged and allowed through).
+4. **Least privilege + a writeback job that runs no PR code.** Jobs declare scoped `permissions`, and
+   `checkout-pr-branch` always checks out PR code with `persist-credentials: false`. In `build-base-docker-images.yml`,
+   the `build-and-commit-base-images` job holds the `contents: write` token, so it never executes PR-authored code:
+   - It checks out the PR at the reviewed `commit_sha` (verified) and treats it as data only.
+   - It checks out the workflow's own commit (`github.sha`) into `.trusted` and runs the image-ref update script from
+     there.
+   - The commit step has no token in its environment. It fails if any file other than `gigl/dep_vars.env` and
+     `.github/cloud_builder/run_command_on_active_checkout.yaml` changed.
+   - Every git call disables hooks and `core.fsmonitor`.
+   - Only the final push step sees `GITHUB_TOKEN`. It passes the token to git through an inline credential helper that
+     reads it from the step's env, so the token is not in argv or persisted to `.git/config`.
+   - Fork PRs skip writeback (see below).
+5. **Fail-closed authorization.** `actions/assert-is-collaborator` denies on any result other than an explicit 204.
 
 The manually dispatched `build-base-docker-images.yml` workflow is `workflow_dispatch`-gated (maintainer-triggered) and
 takes a required **`commit_sha`** input: paste the exact commit you reviewed. All its jobs pin to it and abort if the PR
