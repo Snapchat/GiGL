@@ -36,13 +36,19 @@ from gigl.transforms.graph_transformer import (
     _lookup_csr_values,
     _lookup_pairwise_relation_indices,
     _lookup_pairwise_relative_features,
+    _validate_ppr_sequence_input,
     _validate_reserved_anchor_feature_usage,
+    build_ppr_sequence_grids,
     concat_tensors,
     get_node_type_offsets,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
 )
-from gigl.transforms.sequence_layout import PackedLayout, PackedRelationEdges
+from gigl.transforms.sequence_layout import (
+    PackedLayout,
+    PackedRelationEdges,
+    pack_sequences,
+)
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 
 logger = Logger()
@@ -1448,10 +1454,10 @@ class GraphTransformerEncoder(nn.Module):
     Notes:
         Packed backend: on CUDA, the encoder runs on packed tokens (one
         ``[tokens, hid_dim]`` buffer and a varlen attention kernel, so no FLOPs go
-        to padding) when the config meets all of these:
-          - ``sequence_construction_method="khop"``
-          - no ``ppr_weight`` or ``ppr_relation_features``
-          - ``hop_distance <= 4``
+        to padding) unless ``sequence_construction_method="khop"`` and
+        ``hop_distance > 4``. PPR sequences, their ``ppr_weight`` and
+        ``ppr_relation_features``, and sinusoidal sequence positions all run on
+        packed tokens.
 
         With ``attention_dropout_rate > 0``, training attention runs on the
         padded-grid SDPA backend and eval attention on the varlen kernel. With
@@ -1829,18 +1835,11 @@ class GraphTransformerEncoder(nn.Module):
     def _packed_unsupported_reasons(self) -> list[str]:
         """Lists why this config cannot run on packed tokens; empty if it can."""
         unsupported_reasons: list[str] = []
-        if self._sequence_construction_method != "khop":
-            unsupported_reasons.append("sequence_construction_method is not 'khop'")
-        ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
-        if ppr_attr_names & (
-            set(self._anchor_based_attention_bias_attr_names)
-            | set(self._anchor_based_input_attr_names)
-        ):
-            unsupported_reasons.append("ppr_weight or ppr_relation_features is set")
-        # Packed memory is O(anchors * width ** hop_distance), and the candidate
-        # budget sends batches over it to the padded path. Past four hops nearly
-        # every batch would exceed it.
-        if self._hop_distance > 4:
+        # Packed k-hop memory is O(anchors * width ** hop_distance), and the
+        # candidate budget sends batches over it to the padded path. Past four
+        # hops nearly every batch would exceed it. PPR sequences do not grow
+        # with hop_distance.
+        if self._sequence_construction_method == "khop" and self._hop_distance > 4:
             unsupported_reasons.append("hop_distance is above 4")
         return unsupported_reasons
 
@@ -1958,6 +1957,8 @@ class GraphTransformerEncoder(nn.Module):
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
+                edge_attr_dict=edge_attr_dict,
+                ppr_is_expanded_dict=ppr_is_expanded_dict,
                 anchor_node_type=anchor_node_type,
                 num_anchor_nodes=num_anchor_nodes,
                 anchor_node_ids=anchor_node_ids,
@@ -2103,6 +2104,8 @@ class GraphTransformerEncoder(nn.Module):
         self,
         projected_x_dict: dict[NodeType, Tensor],
         edge_index_dict: dict[tuple[str, str, str], Tensor],
+        edge_attr_dict: dict[tuple[str, str, str], Tensor],
+        ppr_is_expanded_dict: dict[tuple[str, str, str], Tensor],
         anchor_node_type: NodeType,
         num_anchor_nodes: int,
         anchor_node_ids: Optional[Tensor],
@@ -2110,6 +2113,10 @@ class GraphTransformerEncoder(nn.Module):
         data: torch_geometric.data.hetero_data.HeteroData,
     ) -> Optional[Tensor]:
         """Encodes the anchors on packed tokens.
+
+        With ``sequence_construction_method="ppr"``, ``_build_packed_ppr_layout``
+        builds the layout from the batch's PPR edges instead, and the rest is the
+        same. The example below is the k-hop case.
 
         ``_build_packed_layout`` calls ``pack_khop_layout``
         (``gigl.transforms.static_khop``), which decides which nodes each anchor
@@ -2189,18 +2196,32 @@ class GraphTransformerEncoder(nn.Module):
         else:
             anchor_local_indices = torch.arange(num_anchor_nodes, device=device)
         anchor_node_index = node_type_offsets[anchor_node_type] + anchor_local_indices
-        layout = self._build_packed_layout(
-            edge_index=edge_index,
-            num_nodes=node_features.size(0),
-            anchor_indices=anchor_node_index,
-            edge_index_dict=edge_index_dict,
-            node_type_offsets=node_type_offsets,
-        )
+        if self._sequence_construction_method == "ppr":
+            layout: Optional[PackedLayout] = self._build_packed_ppr_layout(
+                edge_index_dict=edge_index_dict,
+                edge_attr_dict=edge_attr_dict,
+                ppr_is_expanded_dict=ppr_is_expanded_dict,
+                node_type_offsets=node_type_offsets,
+                num_nodes=node_features.size(0),
+                anchor_indices=anchor_node_index,
+                data=data,
+            )
+        else:
+            layout = self._build_packed_layout(
+                edge_index=edge_index,
+                num_nodes=node_features.size(0),
+                anchor_indices=anchor_node_index,
+                edge_index_dict=edge_index_dict,
+                node_type_offsets=node_type_offsets,
+            )
         if layout is None:
             return None
         x = self._packed_token_inputs(
             node_features[layout.node_index], layout, anchor_node_index, data
         )
+        if self._sequence_positional_encoding_table is not None:
+            position_table = cast(Tensor, self._sequence_positional_encoding_table)
+            x = x + position_table[layout.position].to(x.dtype)
         bias = self._packed_attention_bias(layout, anchor_node_index, data)
         x = self._run_packed_layers(x, layout, bias)
         return self._project_output(self._packed_readout(x, layout))
@@ -2255,19 +2276,97 @@ class GraphTransformerEncoder(nn.Module):
             )
         )
 
+    def _build_packed_ppr_layout(
+        self,
+        edge_index_dict: dict[tuple[str, str, str], Tensor],
+        edge_attr_dict: dict[tuple[str, str, str], Tensor],
+        ppr_is_expanded_dict: dict[tuple[str, str, str], Tensor],
+        node_type_offsets: dict[NodeType, int],
+        num_nodes: int,
+        anchor_indices: Tensor,
+        data: torch_geometric.data.hetero_data.HeteroData,
+    ) -> PackedLayout:
+        """Builds the packed PPR layout of the anchors.
+
+        ``build_ppr_sequence_grids`` picks each anchor's tokens, as on the padded
+        path, so both paths see the same sequences, PPR features and relation
+        filter. ``pack_sequences`` then packs the grids. The PPR weight, relation
+        features and the per-token expansion bitmask go into ``token_attrs``.
+
+        Args:
+            edge_index_dict: Batch edges by edge type.
+            edge_attr_dict: Edge features by edge type.
+            ppr_is_expanded_dict: Per-edge ``ppr_is_expanded`` flags by edge type.
+            node_type_offsets: Offset of each node type in the homogeneous ids.
+            num_nodes: Number of nodes over all node types.
+            anchor_indices: Homogeneous node id of each anchor.
+            data: The batch, read for ``ppr_relation_channel_masks``.
+
+        Returns:
+            The layout, with ``relation_edges`` set when a relation attention or
+            message mode is on.
+        """
+        _validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
+        token_attr_names = set(self._anchor_based_attention_bias_attr_names) | set(
+            self._anchor_based_input_attr_names
+        )
+        grids = build_ppr_sequence_grids(
+            edge_index_dict=edge_index_dict,
+            edge_attr_dict=edge_attr_dict,
+            ppr_is_expanded_dict=ppr_is_expanded_dict,
+            node_type_offsets=node_type_offsets,
+            anchor_indices=anchor_indices,
+            num_nodes=num_nodes,
+            max_seq_len=self._max_seq_len,
+            include_anchor_first=True,
+            device=anchor_indices.device,
+            return_edge_weights=PPR_WEIGHT_FEATURE_NAME in token_attr_names,
+            return_relation_features=PPR_RELATION_FEATURES_NAME in token_attr_names,
+        )
+        attr_grids: dict[str, Tensor] = {}
+        if grids.ppr_weight is not None:
+            attr_grids[PPR_WEIGHT_FEATURE_NAME] = grids.ppr_weight
+        if grids.ppr_relation_features is not None:
+            attr_grids[PPR_RELATION_FEATURES_NAME] = grids.ppr_relation_features
+        layout = pack_sequences(
+            grids.valid_mask.sum(dim=1),
+            self._max_seq_len,
+            node_grid=grids.node_index,
+            attr_grids=attr_grids,
+        )
+        if not self._relation_attention_edge_types:
+            return layout
+        relation_channel_masks = None
+        # Check membership first: a missing-attribute lookup on HeteroData runs
+        # a regex, which torch.compile guards on.
+        if "ppr_relation_channel_masks" in data:
+            relation_channel_masks = data.ppr_relation_channel_masks
+        return layout._replace(
+            relation_edges=self._build_packed_relation_edges(
+                edge_index_dict=edge_index_dict,
+                node_type_offsets=node_type_offsets,
+                num_nodes=num_nodes,
+                layout=layout,
+                expanded_token_mask=grids.expanded_token_mask,
+                relation_channel_masks=relation_channel_masks,
+            )
+        )
+
     def _packed_anchor_relative_features(
         self,
         attr_names: Sequence[str],
         layout: PackedLayout,
         anchor_node_index: Int64[Tensor, "num_sequences"],
         data: torch_geometric.data.hetero_data.HeteroData,
-    ) -> Float[Tensor, "num_tokens num_attrs"]:
+    ) -> Float[Tensor, "num_tokens num_columns"]:
         """Looks up each token's value of the anchor-relative attributes.
 
-        The hop distance comes from the layout. Any other attribute is a sparse CSR
-        matrix on the batch, indexed by (anchor, token node). It is looked up with
-        ``_lookup_csr_values``, which reads the longest row's length back from the
-        device and has data-dependent shapes.
+        An attribute in ``layout.token_attrs`` comes from the layout: the hop
+        distance of a k-hop layout, and ``ppr_weight`` and
+        ``ppr_relation_features`` of a PPR layout. Any other attribute is a sparse
+        CSR matrix on the batch, indexed by (anchor, token node). It is looked up
+        with ``_lookup_csr_values``, which reads the longest row's length back
+        from the device and has data-dependent shapes.
 
         Args:
             attr_names: Attributes to look up, one output column each.
@@ -2276,13 +2375,15 @@ class GraphTransformerEncoder(nn.Module):
             data: The batch holding the sparse attributes.
 
         Returns:
-            ``[num_tokens, len(attr_names)]`` values, 0 where a matrix has no entry.
+            ``[num_tokens, num_columns]`` values, one column per attribute and
+            ``num_features`` columns for ``ppr_relation_features``. 0 where a
+            matrix has no entry.
 
         Raises:
             ValueError: If a sparse attribute is not on ``data``.
         """
         sparse_attr_names = [
-            name for name in attr_names if name != HOP_DISTANCE_FEATURE_NAME
+            name for name in attr_names if name not in layout.token_attrs
         ]
         matrices = {}
         if sparse_attr_names:
@@ -2301,17 +2402,18 @@ class GraphTransformerEncoder(nn.Module):
             )
         columns: list[Tensor] = []
         for name in attr_names:
-            if name == HOP_DISTANCE_FEATURE_NAME:
-                columns.append(layout.token_attrs[HOP_DISTANCE_FEATURE_NAME].float())
+            if name in layout.token_attrs:
+                values = layout.token_attrs[name].float()
             else:
-                columns.append(
-                    _lookup_csr_values(
-                        csr_matrix=matrices[name],
-                        row_indices=anchor_node_index[layout.sequence_id],
-                        col_indices=layout.node_index,
-                    )
+                values = _lookup_csr_values(
+                    csr_matrix=matrices[name],
+                    row_indices=anchor_node_index[layout.sequence_id],
+                    col_indices=layout.node_index,
                 )
-        return torch.stack(columns, dim=-1)
+            if values.dim() == 1:
+                values = values.unsqueeze(-1)
+            columns.append(values)
+        return torch.cat(columns, dim=-1)
 
     def _packed_token_inputs(
         self,
@@ -2572,47 +2674,39 @@ class GraphTransformerEncoder(nn.Module):
         node_type_offsets: dict[NodeType, int],
         num_nodes: int,
         layout: PackedLayout,
+        expanded_token_mask: Optional[Tensor] = None,
+        relation_channel_masks: Optional[dict[tuple[str, str, str], int]] = None,
     ) -> PackedRelationEdges:
         """Matches the batch's edges to packed token pairs.
 
         Uses the padded path's edge matcher on the layout, so the edges are the
-        ones it would give the padded sequences: those between two kept tokens
-        whose target (``"in"`` sampling) or source (``"out"``) is fewer than
-        ``hop_distance`` hops from the anchor.
+        ones it would give the padded sequences. For k-hop sequences these are
+        the edges between two kept tokens whose target (``"in"`` sampling) or
+        source (``"out"``) is fewer than ``hop_distance`` hops from the anchor.
+        For PPR sequences, ``expanded_token_mask`` and ``relation_channel_masks``
+        drop the edges of tokens the anchor did not expand.
 
         Args:
             edge_index_dict: Batch edges by edge type.
             node_type_offsets: Offset of each node type in the homogeneous ids.
             num_nodes: Number of nodes over all node types.
-            layout: Layout of the packed tokens, with ``hop_distance`` in
-                ``token_attrs``.
+            layout: Layout of the packed tokens. A k-hop layout has
+                ``hop_distance`` in ``token_attrs``.
+            expanded_token_mask: PPR only: ``[num_sequences, max_seq_len]``
+                bitmask of the channels in which the anchor pushed each token.
+            relation_channel_masks: PPR only: the channels allowed to fetch each
+                edge type, for typed PPR.
 
         Returns:
             The edges into every token, grouped by relation.
         """
         device = layout.node_index.device
-        num_sequences = layout.cu_seqlens.numel() - 1
         node_index, valid_mask = self._layout_grids(layout)
-        hop_index = torch.zeros(
-            num_sequences * layout.max_seq_len, dtype=torch.long, device=device
-        )
-        hop_index[layout.flat_index] = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
-        hop_index = hop_index.view(num_sequences, layout.max_seq_len)
-        # Sorted batch * num_nodes + node keys of the tokens fewer than hop_distance
-        # hops out; the rest sort last as a key no edge has.
-        batch_node_keys = (
-            torch.arange(num_sequences, device=device).unsqueeze(1) * num_nodes
-            + node_index
-        )
-        frontier_keys, _ = (
-            torch.where(
-                valid_mask & (hop_index < self._hop_distance),
-                batch_node_keys,
-                torch.iinfo(torch.long).max,
+        frontier_keys = None
+        if self._sequence_construction_method == "khop":
+            frontier_keys = self._packed_khop_frontier_keys(
+                layout, node_index, valid_mask, num_nodes
             )
-            .flatten()
-            .sort()
-        )
         relation_edges = _lookup_pairwise_relation_indices(
             edge_index_dict=edge_index_dict,
             node_index_sequences=node_index,
@@ -2621,6 +2715,8 @@ class GraphTransformerEncoder(nn.Module):
             node_type_offsets=node_type_offsets,
             num_nodes=num_nodes,
             device=device,
+            expanded_token_mask=expanded_token_mask,
+            relation_channel_masks=relation_channel_masks,
             frontier_batch_node_keys=frontier_keys,
             sampling_direction=self._sampling_direction,
         )
@@ -2645,6 +2741,45 @@ class GraphTransformerEncoder(nn.Module):
             relation=relations,
             segments=_get_relation_segments_from_bounds(bounds),
         )
+
+    def _packed_khop_frontier_keys(
+        self,
+        layout: PackedLayout,
+        node_index: Tensor,
+        valid_mask: Tensor,
+        num_nodes: int,
+    ) -> Tensor:
+        """Sorted ``sequence * num_nodes + node`` keys of the k-hop tokens fewer
+        than ``hop_distance`` hops out; the rest sort last as a key no edge has.
+
+        Args:
+            layout: Layout of the packed tokens, with ``hop_distance`` in
+                ``token_attrs``.
+            node_index: ``[num_sequences, max_seq_len]`` node id grid.
+            valid_mask: ``[num_sequences, max_seq_len]`` real-token mask.
+            num_nodes: Number of nodes over all node types.
+        """
+        device = layout.node_index.device
+        num_sequences = layout.cu_seqlens.numel() - 1
+        hop_index = torch.zeros(
+            num_sequences * layout.max_seq_len, dtype=torch.long, device=device
+        )
+        hop_index[layout.flat_index] = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
+        hop_index = hop_index.view(num_sequences, layout.max_seq_len)
+        batch_node_keys = (
+            torch.arange(num_sequences, device=device).unsqueeze(1) * num_nodes
+            + node_index
+        )
+        frontier_keys, _ = (
+            torch.where(
+                valid_mask & (hop_index < self._hop_distance),
+                batch_node_keys,
+                torch.iinfo(torch.long).max,
+            )
+            .flatten()
+            .sort()
+        )
+        return frontier_keys
 
     def _get_sequence_positional_encoding(
         self,
