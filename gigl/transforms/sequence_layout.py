@@ -135,7 +135,7 @@ def pack_sequences(
         node_index = flat_index
     else:
         node_index = node_grid.flatten()[flat_index]
-    token_attrs = {}
+    token_attrs: dict[str, Tensor] = {}
     if attr_grids is not None:
         for name, grid in attr_grids.items():
             token_attrs[name] = grid.flatten(0, 1)[flat_index]

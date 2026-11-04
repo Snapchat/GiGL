@@ -131,7 +131,9 @@ from gigl.transforms.sequence_layout import PackedLayout
 def _kernel_bias_view(
     attn_bias: Tensor, num_query_tokens: int, num_key_tokens: int
 ) -> Tensor:
-    """Views a per-sequence bias grid as the kernel's ``[1, num_heads, num_query_tokens, num_key_tokens]`` bias.
+    """Views a per-sequence bias grid as the varlen kernel's bias.
+
+    The view is ``[1, num_heads, num_query_tokens, num_key_tokens]``.
 
     The view keeps the strides of ``attn_bias``, so the kernel reads sequence
     ``i`` at ``i * stride(0)``. The kernel reads only the rows and columns of
@@ -348,11 +350,12 @@ def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
 
 
 def _rescale_query(query: Tensor, padded_dim: int) -> Tensor:
-    """Scales q by ``sqrt(padded_dim / head_dim)`` so the kernel's scores use the unpadded head dim.
+    """Scales q so the kernel's scores use the unpadded head dim.
 
-    The kernel scales scores by ``1 / sqrt(padded_dim)``. An explicit ``scale`` is
-    not passed because torch 2.8's meta backward rejects it, and compiled training
-    traces that meta backward.
+    The factor is ``sqrt(padded_dim / head_dim)``. The kernel scales scores by
+    ``1 / sqrt(padded_dim)``. An explicit ``scale`` is not passed because torch
+    2.8's meta backward rejects it, and compiled training traces that meta
+    backward.
     """
     return query * math.sqrt(padded_dim / query.size(-1))
 

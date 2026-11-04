@@ -1843,16 +1843,17 @@ def _lookup_pairwise_relation_indices(
         owner_mask = expanded_token_mask[batch_indices, query_positions]
         # -1 sets every channel bit, so a relation without a channel mask keeps
         # any pushed owner.
+        channel_masks: list[int] = []
+        for edge_type in relation_edge_types:
+            channel_mask = -1
+            if (
+                relation_channel_masks is not None
+                and edge_type.tuple_repr() in relation_channel_masks
+            ):
+                channel_mask = relation_channel_masks[edge_type.tuple_repr()]
+            channel_masks.append(channel_mask)
         relation_channel_mask_values = torch.tensor(
-            [
-                -1
-                if relation_channel_masks is None
-                or edge_type.tuple_repr() not in relation_channel_masks
-                else relation_channel_masks[edge_type.tuple_repr()]
-                for edge_type in relation_edge_types
-            ],
-            dtype=torch.long,
-            device=device,
+            channel_masks, dtype=torch.long, device=device
         )
         keep &= (owner_mask & relation_channel_mask_values[matched_relations]) != 0
     matches = torch.stack(
