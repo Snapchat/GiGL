@@ -578,9 +578,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         Args:
             x: ``(tokens, model_dim)`` packed token states.
             layout: Layout of the sequences in ``x``. With a relation attention or
-                message mode, ``layout.relation_edges`` is required. Its ``target`` indexes the
-                output rows, so with ``first_token_output`` it is the sequence
-                index and the edges into later tokens are left out.
+                message mode, ``layout.relation_edges`` is required. Its
+                ``target`` indexes the output rows, so with ``first_token_output``
+                it is the sequence index and the edges into later tokens are left
+                out.
             first_token_output: Compute only each sequence's first token.
             bias: Optional additive attention bias. ``bias.per_pair`` may be set.
 
@@ -1346,7 +1347,7 @@ class GraphTransformerEncoder(nn.Module):
             existing behavior by adding the encoded anchor token to an
             attention-weighted neighbor aggregation. ``"anchor_only"`` returns
             only the encoded anchor token. Both run on the packed backend, but
-            ``"anchor_only"`` lets the last layer skip the neighbour tokens, so it
+            ``"anchor_only"`` lets the last layer skip the neighbor tokens, so it
             is cheaper there.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
@@ -2170,7 +2171,7 @@ class GraphTransformerEncoder(nn.Module):
         is ``[num_anchors, hidden]`` and goes straight to the final norm.
         With ``readout_mode="anchor_neighbor_attention"`` the last layer runs on all
         tokens instead, and ``_packed_neighbor_readout`` adds each anchor's
-        attention-weighted neighbours to it.
+        attention-weighted neighbors to it.
 
         Returns:
             ``[num_anchor_nodes, out_dim]`` embeddings after the final norm, the readout
@@ -2224,8 +2225,8 @@ class GraphTransformerEncoder(nn.Module):
 
         Returns:
             The layout, with ``relation_edges`` set when a relation attention or
-            message mode is on, or None if the batch's k-hop candidate set is too large to lay
-            out.
+            message mode is on, or None if the batch's k-hop candidate set is too
+            large to lay out.
         """
         if self._prioritize_hop_order:
             ordering = "hop"
@@ -2284,7 +2285,7 @@ class GraphTransformerEncoder(nn.Module):
         sparse_attr_names = [
             name for name in attr_names if name != HOP_DISTANCE_FEATURE_NAME
         ]
-        matrices = {}
+        matrices: dict[str, Tensor] = {}
         if sparse_attr_names:
             graph_attr_dict = {
                 name: getattr(data, name) for name in sparse_attr_names if name in data
@@ -2330,6 +2331,9 @@ class GraphTransformerEncoder(nn.Module):
             layout: Layout of the sequences.
             anchor_node_index: Homogeneous node id of each sequence's anchor.
             data: The batch holding the sparse attributes.
+
+        Returns:
+            ``x`` plus the anchor-relative input contributions, same shape.
         """
         embedding_dict = self._anchor_based_input_embedding_dict
         if embedding_dict is not None:
@@ -2486,7 +2490,7 @@ class GraphTransformerEncoder(nn.Module):
     ) -> Float[Tensor, "sequences hid_dim"]:
         """Packed version of the ``anchor_neighbor_attention`` readout.
 
-        Each anchor gets itself plus the sum of its neighbours weighted by a softmax
+        Each anchor gets itself plus the sum of its neighbors weighted by a softmax
         over its own sequence. Boolean indexing and the softmax's default node count
         would read sizes back from the GPU, so the anchor tokens are masked out of
         the softmax instead of dropped, and the softmax is given ``num_nodes``.
@@ -2496,7 +2500,7 @@ class GraphTransformerEncoder(nn.Module):
             layout: Layout of the sequences in ``x``.
 
         Returns:
-            One embedding per sequence. A sequence with no neighbours gives its anchor.
+            One embedding per sequence. A sequence with no neighbors gives its anchor.
         """
         if self._readout_attention is None:
             raise ValueError("Readout attention layer is not initialized.")
@@ -2869,6 +2873,8 @@ class GraphTransformerEncoder(nn.Module):
             nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
                 dtype=pairwise_bias.dtype
             ).view(1, -1)
+            # The permuted view shares storage with pairwise_bias, so this adds
+            # the nonmissing bias in place at (batch, row, col) for every head.
             pairwise_bias.permute(0, 2, 3, 1).index_put_(
                 (
                     nonmissing_indices[:, 0],
