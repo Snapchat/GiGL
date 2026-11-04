@@ -1962,6 +1962,91 @@ def _match_directed_edges_to_token_pairs(
     )
 
 
+def _get_anchor_hop_distance_matrix(
+    anchor_indices: Tensor,
+    edge_index: Tensor,
+    num_nodes: int,
+    hop_distance: int,
+    device: torch.device,
+) -> Tensor:
+    """Computes the first-reach hop from each anchor to every node it reaches.
+
+    The result has the format of ``AddHeteroHopDistanceEncoding`` output, restricted
+    to the anchor rows. Duplicate anchors share one row.
+
+    Args:
+        anchor_indices: (batch_size,) anchor node indices.
+        edge_index: (2, num_edges) edge index, already oriented for the walk
+            direction.
+        num_nodes: Total number of nodes.
+        hop_distance: Maximum number of hops to expand.
+        device: Device for tensors.
+
+    Returns:
+        A ``(num_nodes, num_nodes)`` float sparse CSR tensor. Row ``a`` of an
+        anchor holds the hop (1 to ``hop_distance``) at which each reachable node is
+        first reached. The diagonal and unreachable pairs are not stored. Rows of
+        non-anchors are empty.
+    """
+    unique_anchors = torch.unique(anchor_indices)
+    num_anchors = unique_anchors.size(0)
+    anchor_positions = torch.arange(num_anchors, device=device, dtype=torch.long)
+    visited_keys = anchor_positions * num_nodes + unique_anchors
+    frontier = torch.sparse_coo_tensor(
+        torch.stack([anchor_positions, unique_anchors]),
+        torch.ones(num_anchors, dtype=torch.float, device=device),
+        size=(num_anchors, num_nodes),
+    ).coalesce()
+    adj = _binarize_sparse_tensor(
+        sparse_tensor=to_torch_sparse_tensor(edge_index, size=(num_nodes, num_nodes)),
+        device=device,
+    )
+
+    reached_positions: list[Tensor] = []
+    reached_nodes: list[Tensor] = []
+    reached_hops: list[Tensor] = []
+    for hop in range(1, hop_distance + 1):
+        if frontier._nnz() == 0:
+            break
+        frontier = _binarize_sparse_tensor(
+            sparse_tensor=torch.sparse.mm(frontier, adj),
+            device=device,
+        )
+        position_indices, node_indices = frontier.indices()
+        keys = position_indices * num_nodes + node_indices
+        is_new = ~_sorted_contains(visited_keys.sort()[0], keys)
+        new_positions = position_indices[is_new]
+        new_nodes = node_indices[is_new]
+        visited_keys = torch.cat([visited_keys, keys[is_new]])
+        reached_positions.append(new_positions)
+        reached_nodes.append(new_nodes)
+        reached_hops.append(
+            torch.full((new_positions.size(0),), hop, dtype=torch.float, device=device)
+        )
+        frontier = torch.sparse_coo_tensor(
+            torch.stack([new_positions, new_nodes]),
+            torch.ones(new_positions.size(0), dtype=torch.float, device=device),
+            size=(num_anchors, num_nodes),
+        ).coalesce()
+
+    if not reached_positions:
+        return torch.sparse_coo_tensor(
+            torch.zeros((2, 0), dtype=torch.long, device=device),
+            torch.zeros(0, dtype=torch.float, device=device),
+            size=(num_nodes, num_nodes),
+        ).to_sparse_csr()
+    rows = unique_anchors[torch.cat(reached_positions)]
+    return (
+        torch.sparse_coo_tensor(
+            torch.stack([rows, torch.cat(reached_nodes)]),
+            torch.cat(reached_hops),
+            size=(num_nodes, num_nodes),
+        )
+        .coalesce()
+        .to_sparse_csr()
+    )
+
+
 def _get_k_hop_neighbors_sparse(
     anchor_indices: Tensor,
     edge_index: Tensor,

@@ -7,11 +7,14 @@ from typing import Literal, cast
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from parameterized import parameterized
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_ppr_edges,
+    _get_anchor_hop_distance_matrix,
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
     tensors_to_graph_transformer_input,
@@ -287,6 +290,102 @@ class TestGetKHopNeighborsSparse(TestCase):
         mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertEqual(nodes_reached, [0])
+
+
+class TestGetAnchorHopDistanceMatrix(TestCase):
+    """Tests for _get_anchor_hop_distance_matrix against the hop transform."""
+
+    @parameterized.expand(
+        [
+            (sampling_direction, hop_distance)
+            for sampling_direction in ("in", "out")
+            for hop_distance in (1, 2, 3)
+        ]
+    )
+    def test_matches_transform_on_anchor_rows(
+        self, sampling_direction: str, hop_distance: int
+    ) -> None:
+        generator = torch.Generator().manual_seed(0)
+        num_nodes = 30
+        edge_index = torch.randint(0, num_nodes, (2, 80), generator=generator)
+        # Self-loops and duplicate edges.
+        edge_index = torch.cat(
+            [edge_index, torch.tensor([[3, 5], [3, 5]]), edge_index[:, :10]], dim=1
+        )
+        anchors = torch.tensor([0, 7, 19])
+
+        data = HeteroData()
+        data["user"].x = torch.zeros(num_nodes, 1)
+        data["user", "to", "user"].edge_index = edge_index
+        transformed = AddHeteroHopDistanceEncoding(
+            h_max=hop_distance,
+            is_undirected=False,
+            sampling_direction=sampling_direction,
+        )(data)
+        expected = transformed["hop_distance"].to_dense()[anchors]
+
+        walk_edge_index = edge_index
+        if sampling_direction == "in":
+            walk_edge_index = edge_index.flip(0)
+        actual = _get_anchor_hop_distance_matrix(
+            anchor_indices=anchors,
+            edge_index=walk_edge_index,
+            num_nodes=num_nodes,
+            hop_distance=hop_distance,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(actual.layout, torch.sparse_csr)
+        self.assertEqual(actual.dtype, transformed["hop_distance"].dtype)
+        torch.testing.assert_close(actual.to_dense()[anchors], expected, rtol=0, atol=0)
+
+    def test_duplicate_anchors_do_not_add_values(self) -> None:
+        edge_index = torch.tensor([[4, 4, 9, 2], [2, 9, 2, 4]])
+        kwargs = dict(
+            edge_index=edge_index,
+            num_nodes=12,
+            hop_distance=2,
+            device=torch.device("cpu"),
+        )
+        duplicated = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([4, 4, 9]), **kwargs
+        )
+        unique = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([4, 9]), **kwargs
+        )
+        torch.testing.assert_close(
+            duplicated.to_dense(), unique.to_dense(), rtol=0, atol=0
+        )
+
+    def test_rows_of_non_anchors_are_empty(self) -> None:
+        edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]])
+        matrix = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([1]),
+            edge_index=edge_index,
+            num_nodes=4,
+            hop_distance=3,
+            device=torch.device("cpu"),
+        )
+        row_counts = matrix.crow_indices().diff()
+        self.assertEqual(row_counts.tolist(), [0, 3, 0, 0])
+
+    def test_zero_hops_and_edgeless_graph_are_empty(self) -> None:
+        edge_index = torch.tensor([[0, 1], [1, 2]])
+        zero_hops = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([0]),
+            edge_index=edge_index,
+            num_nodes=3,
+            hop_distance=0,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(zero_hops._nnz(), 0)
+        edgeless = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([0]),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=3,
+            hop_distance=2,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(edgeless._nnz(), 0)
 
 
 class TestHeteroToGraphTransformerInput(TestCase):
