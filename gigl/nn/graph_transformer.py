@@ -2189,7 +2189,7 @@ class GraphTransformerEncoder(nn.Module):
         sparse_attr_names = [
             name for name in attr_names if name != HOP_DISTANCE_FEATURE_NAME
         ]
-        matrices = {}
+        matrices: dict[str, Tensor] = {}
         if sparse_attr_names:
             graph_attr_dict = {
                 name: getattr(data, name) for name in sparse_attr_names if name in data
@@ -2235,6 +2235,9 @@ class GraphTransformerEncoder(nn.Module):
             layout: Layout of the sequences.
             anchor_node_index: Homogeneous node id of each sequence's anchor.
             data: The batch holding the sparse attributes.
+
+        Returns:
+            ``x`` plus the anchor-relative input contributions, same shape.
         """
         embedding_dict = self._anchor_based_input_embedding_dict
         if embedding_dict is not None:
