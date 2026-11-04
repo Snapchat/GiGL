@@ -180,7 +180,7 @@ class PackedAttentionCudaTest(TestCase):
         num_sequences, num_heads, head_dim = 6, 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12, 9], device=device)
         num_tokens = int(lengths.sum())
-        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
         for dtype, atol in ((torch.float32, 1e-4), (torch.bfloat16, 5e-2)):
             for query_is_first_token, track_grad in itertools.product(
@@ -194,30 +194,16 @@ class PackedAttentionCudaTest(TestCase):
                     for rows in (num_queries, num_tokens, num_tokens)
                 )
                 expected = _padded_packed_attention(
-                    query, key, value, packed, query_is_first_token
+                    query, key, value, layout, query_is_first_token
                 )
-                if query_is_first_token:
-                    cu_seqlens_q = torch.arange(
-                        num_sequences + 1, dtype=torch.int32, device=device
-                    )
-                    max_seqlen_q = 1
-                else:
-                    cu_seqlens_q = packed.cu_seqlens
-                    max_seqlen_q = _MAX_SEQ_LEN
                 with (
                     self.subTest(
                         dtype=dtype, first_token=query_is_first_token, grad=track_grad
                     ),
                     torch.set_grad_enabled(track_grad),
                 ):
-                    actual = _varlen_attention(
-                        query,
-                        key,
-                        value,
-                        cu_seqlens_q,
-                        packed.cu_seqlens,
-                        max_seqlen_q,
-                        _MAX_SEQ_LEN,
+                    actual = packed_attention(
+                        query, key, value, layout, query_is_first_token
                     )
                     self.assertEqual(actual.requires_grad, track_grad)
                     torch.testing.assert_close(
@@ -232,7 +218,7 @@ class PackedAttentionCudaTest(TestCase):
         num_heads, head_dim = 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
         num_tokens = int(lengths.sum())
-        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
 
         def random_rows(num_rows: int) -> torch.Tensor:
@@ -252,26 +238,18 @@ class PackedAttentionCudaTest(TestCase):
                     [tensor.clone().requires_grad_() for tensor in inputs]
                     for _ in range(2)
                 )
-                if query_is_first_token:
-                    cu_seqlens_q = torch.arange(6, dtype=torch.int32, device=device)
-                    max_seqlen_q = 1
-                else:
-                    cu_seqlens_q = packed.cu_seqlens
-                    max_seqlen_q = _MAX_SEQ_LEN
-                _varlen_attention(
+                packed_attention(
                     varlen_inputs[0],
                     varlen_inputs[1],
                     varlen_inputs[2],
-                    cu_seqlens_q,
-                    packed.cu_seqlens,
-                    max_seqlen_q,
-                    _MAX_SEQ_LEN,
+                    layout,
+                    query_is_first_token,
                 ).backward(grad_output)
                 _padded_packed_attention(
                     padded_inputs[0],
                     padded_inputs[1],
                     padded_inputs[2],
-                    packed,
+                    layout,
                     query_is_first_token,
                 ).backward(grad_output)
                 for name, actual, expected in zip(
