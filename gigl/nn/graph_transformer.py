@@ -576,9 +576,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         Args:
             x: ``(tokens, model_dim)`` packed token states.
             layout: Layout of the sequences in ``x``. With a relation attention or
-                message mode, ``layout.relation_edges`` is required. Its ``target`` indexes the
-                output rows, so with ``first_token_output`` it is the sequence
-                index and the edges into later tokens are left out.
+                message mode, ``layout.relation_edges`` is required. Its
+                ``target`` indexes the output rows, so with ``first_token_output``
+                it is the sequence index and the edges into later tokens are left
+                out.
             first_token_output: Compute only each sequence's first token.
             bias: Optional additive attention bias. ``bias.per_pair`` may be set.
 
@@ -2196,8 +2197,8 @@ class GraphTransformerEncoder(nn.Module):
 
         Returns:
             The layout, with ``relation_edges`` set when a relation attention or
-            message mode is on, or None if the batch's k-hop candidate set is too large to lay
-            out.
+            message mode is on, or None if the batch's k-hop candidate set is too
+            large to lay out.
         """
         if self._prioritize_hop_order:
             ordering = "hop"
