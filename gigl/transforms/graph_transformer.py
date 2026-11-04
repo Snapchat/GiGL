@@ -1270,8 +1270,9 @@ def build_ppr_sequence_grids(
     # _lookup_pairwise_relation_indices and must not leak into the sequence.
     #
     # Gather just the "ppr" edges and remap their endpoints with the SAME
-    # node_type_offsets used for homo_x, so the indices line up with
-    # anchor_indices and num_nodes (both computed over every node type).
+    # node_type_offsets the caller used for the node features, so the indices
+    # line up with anchor_indices and num_nodes (both computed over every node
+    # type).
     ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
     ppr_source_indices: list[Tensor] = []
     ppr_target_indices: list[Tensor] = []

@@ -2758,8 +2758,11 @@ class GraphTransformerEncoder(nn.Module):
         valid_mask: Tensor,
         num_nodes: int,
     ) -> Tensor:
-        """Sorted ``sequence * num_nodes + node`` keys of the k-hop tokens fewer
-        than ``hop_distance`` hops out; the rest sort last as a key no edge has.
+        """Builds the sorted frontier keys of the k-hop tokens.
+
+        A frontier token is fewer than ``hop_distance`` hops out. Its key is
+        ``sequence * num_nodes + node``. The other grid cells, padding included,
+        sort last as a key that no edge has.
 
         Args:
             layout: Layout of the packed tokens, with ``hop_distance`` in
@@ -2767,6 +2770,9 @@ class GraphTransformerEncoder(nn.Module):
             node_index: ``[num_sequences, max_seq_len]`` node id grid.
             valid_mask: ``[num_sequences, max_seq_len]`` real-token mask.
             num_nodes: Number of nodes over all node types.
+
+        Returns:
+            ``[num_sequences * max_seq_len]`` sorted keys, one per grid cell.
         """
         device = layout.node_index.device
         num_sequences = layout.cu_seqlens.numel() - 1
