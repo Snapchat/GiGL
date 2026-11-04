@@ -173,7 +173,8 @@ def _(
     max_seqlen_k: int,
     compute_log_sumexp: bool,
 ) -> tuple[Tensor, Tensor]:
-    output = torch.empty_like(query)
+    # The per-key fold widens q and k but not v, so the output takes v's head dim.
+    output = query.new_empty((*query.shape[:-1], value.size(-1)))
     logsumexp_size = 0
     if compute_log_sumexp:
         # The kernel pads the logsumexp rows to a multiple of 32.
