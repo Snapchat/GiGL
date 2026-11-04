@@ -528,7 +528,7 @@ def packed_attention(
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
     On CUDA, ``per_key`` runs on the varlen kernel through ``_fold_per_key_bias``;
-    ``per_pair`` raises ``NotImplementedError`` (no FlexAttention backend).
+    a ``per_pair`` bias raises ``NotImplementedError``.
 
     Args and returns are as in ``_padded_packed_attention``.
     """
@@ -537,7 +537,9 @@ def packed_attention(
             query, key, value, layout, query_is_first_token, bias
         )
     if bias is not None and bias.per_pair is not None:
-        raise NotImplementedError("the FlexAttention backend is not in yet")
+        raise NotImplementedError(
+            "A per_pair bias is not supported on the CUDA varlen path."
+        )
     head_dim = query.size(-1)
     if bias is not None and bias.per_key is not None:
         query, key = _fold_per_key_bias(query, key, bias.per_key)
