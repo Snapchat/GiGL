@@ -206,8 +206,10 @@ def _run_packed(
 
 
 def _randomize_pairwise_biases(encoder: GraphTransformerEncoder) -> None:
-    """Gives the pairwise projection and nonmissing bias, which start at (near) zero,
-    random values."""
+    """Gives the pairwise projection and nonmissing bias random values.
+
+    Both start at (near) zero, which would hide a wrong pairwise path.
+    """
     generator = torch.Generator().manual_seed(1)
     projection = encoder._pairwise_pe_attention_bias_projection
     nonmissing = encoder._pairwise_nonmissing_attention_bias

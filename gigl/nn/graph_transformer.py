@@ -2771,6 +2771,8 @@ class GraphTransformerEncoder(nn.Module):
             nonmissing_bias = self._pairwise_nonmissing_attention_bias.to(
                 dtype=pairwise_bias.dtype
             ).view(1, -1)
+            # The permuted view shares storage with pairwise_bias, so this adds
+            # the nonmissing bias in place at (batch, row, col) for every head.
             pairwise_bias.permute(0, 2, 3, 1).index_put_(
                 (
                     nonmissing_indices[:, 0],
