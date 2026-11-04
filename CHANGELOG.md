@@ -61,9 +61,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
   `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
   https://github.com/Snapchat/GiGL/pull/PENDING
-  - 3.11 stays the default: the published images and the full CI suite run on Python 3.11.14. Ray and Beam require one
-    Python per job, so consumers on 3.12 or 3.13 build the CPU, CUDA and Dataflow images from `containers/` at their own
-    minor until published per-minor images are available.
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
+    `.python-version` value), 3.12.14 or 3.13.15.
+  - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
+    `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
+    release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline
+    refs. `gigl.common.constants` picks the images and pipeline for the running Python minor, because Ray and Beam
+    require one Python per job.
   - The dependency stack moves to:
     - TensorFlow 2.21
     - Apache Beam 2.76.0
