@@ -1,11 +1,12 @@
 """Attention over packed variable-length sequences: the compute half of the packed backend.
 
 This is the attention side of the packed backend of ``GraphTransformerEncoder``.
-The encoder turns each anchor's k-hop neighbourhood into a token sequence
-(``gigl.transforms.static_khop``), copies the real tokens of all sequences into
-one ``[num_tokens, dim]`` buffer, and runs the transformer on that buffer.
-``packed_attention`` is the attention step: each sequence attends only to itself,
-with boundaries given by ``cu_seqlens``.
+The encoder builds one token sequence per anchor (for example, from its k-hop
+neighborhood with ``gigl.transforms.static_khop``), copies the real tokens of all
+sequences into one ``[num_tokens, dim]`` buffer, and runs the transformer on that
+buffer. ``packed_attention`` is the attention step and does not depend on how the
+sequences were built: each sequence attends only to itself, with boundaries given
+by ``cu_seqlens``.
 
 Why this exists:
   - With uneven sequence lengths (about 90 real tokens out of 256 in our models),
@@ -36,7 +37,7 @@ Data flow of a packed forward::
         |
         |  per layer, on real tokens only:
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
-        |    packed_attention(q, k, v, packed, ...)
+        |    packed_attention(q, k, v, layout, ...)
         |        CUDA: aten memory-efficient attention with cu_seqlens
         |              (SDPA on a padded grid for per-pair biases or dropout)
         |        CPU:  SDPA on a padded grid (reference)
@@ -68,21 +69,21 @@ Constraints:
 Example:
     >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
-    >>> packed = pack_sequences(lengths, max_seq_len=3)
-    >>> packed.flat_index.tolist()
+    >>> layout = pack_sequences(lengths, max_seq_len=3)
+    >>> layout.flat_index.tolist()
     [0, 1, 2, 3, 6, 7]
     >>> num_tokens = int(lengths.sum())
     >>> query = key = value = torch.randn(num_tokens, 2, 8)
     >>> output = packed_attention(
-    ...     query, key, value, packed, query_is_first_token=False
+    ...     query, key, value, layout, query_is_first_token=False
     ... )
     >>> output.shape
     torch.Size([6, 2, 8])
     >>> first_token_only = packed_attention(
-    ...     query[packed.cu_seqlens[:-1].long()],
+    ...     query[layout.cu_seqlens[:-1].long()],
     ...     key,
     ...     value,
-    ...     packed,
+    ...     layout,
     ...     query_is_first_token=True,
     ... )
     >>> first_token_only.shape
