@@ -23,6 +23,10 @@ PR. Trigger it manually:
 2. Select **Create Release** from the left sidebar.
 3. Click **Run workflow**, choose the bump type (`major`, `minor`, or `patch`), and click **Run workflow**.
 
+The dispatch form also has an optional `version_override` field. When set (for example `0.3.3`), the workflow releases
+that exact version instead of applying the bump type. Use it when a version number was consumed by a failed release (for
+example, images were already pushed under that tag) and cannot be reused.
+
 The workflow will:
 
 - Bump the version in `pyproject.toml` (both `gigl` and `gigl-core`) and commit it to a new `release/vX.Y.Z` branch.

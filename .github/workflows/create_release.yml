@@ -17,6 +17,11 @@ on:
           - minor
           - patch
           - nightly
+      version_override:
+        description: 'Exact version to release (e.g. 0.3.3) instead of applying bump_type. Use when a version number was consumed by a failed release and cannot be reused.'
+        required: false
+        default: ''
+        type: string
 
   workflow_call:
     inputs:
@@ -24,6 +29,11 @@ on:
         description: 'Type of version bump'
         required: true
         type: string # workflow_call doesnt support choice inputs
+      version_override:
+        description: 'Exact version to release (e.g. 0.3.3) instead of applying bump_type. Use when a version number was consumed by a failed release and cannot be reused.'
+        required: false
+        default: ''
+        type: string
     outputs:
       release_branch_name:
         description: "Generated release branch name"
@@ -83,10 +93,12 @@ jobs:
       env:
         BUMP_TYPE: ${{ steps.set_vars.outputs.bump_type }}
         PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        VERSION_OVERRIDE: ${{ inputs.version_override }}
       run: |
         uv run python -m scripts.bump_version \
           --bump_type "${BUMP_TYPE}" \
-          --project "${PROJECT}"
+          --project "${PROJECT}" \
+          ${VERSION_OVERRIDE:+--version_override "${VERSION_OVERRIDE}"}
 
     # bump_version rewrites the gigl-core version in gigl-core/pyproject.toml, so gigl-core/uv.lock is re-locked here
     # and picked up by the commit step below. The root uv.lock needs no step: the `uv run` calls re-lock it. The
