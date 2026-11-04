@@ -198,11 +198,15 @@ def heterodata_to_graph_transformer_input(
             looked up from ``data`` and the reserved name ``"ppr_weight"``
             resolves to PPR edge weights in PPR sequence mode.
             Example: ['hop_distance', 'ppr_weight'].
+            For k-hop sequences, a missing ``hop_distance`` is computed from the
+            k-hop expansion instead of raising.
         anchor_based_input_attr_names: List of anchor-relative attribute names
             returned as token-aligned model-input features. Sparse graph-level
             attributes are looked up from ``data`` and ``"ppr_weight"`` resolves
             to PPR edge weights in PPR sequence mode.
             Example: ['hop_distance', 'ppr_weight'].
+            For k-hop sequences, a missing ``hop_distance`` is computed from the
+            k-hop expansion instead of raising.
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             attributes on ``data``. Example: ['pairwise_distance'].
@@ -377,11 +381,15 @@ def tensors_to_graph_transformer_input(
             looked up from ``graph_attr_dict`` and the reserved name
             ``"ppr_weight"`` resolves to PPR edge weights in PPR sequence mode.
             Example: ['hop_distance', 'ppr_weight'].
+            For k-hop sequences, a missing ``hop_distance`` is computed from the
+            k-hop expansion instead of raising.
         anchor_based_input_attr_names: List of anchor-relative attribute names
             returned as token-aligned model-input features. Sparse graph-level
             attributes are looked up from ``graph_attr_dict`` and
             ``"ppr_weight"`` resolves to PPR edge weights in PPR sequence mode.
             Example: ['hop_distance', 'ppr_weight'].
+            For k-hop sequences, a missing ``hop_distance`` is computed from the
+            k-hop expansion instead of raising.
         pairwise_attention_bias_attr_names: List of pairwise feature names used
             as attention bias. These must correspond to sparse graph-level
             entries of ``graph_attr_dict``. Example: ['pairwise_distance'].
@@ -662,8 +670,24 @@ def tensors_to_graph_transformer_input(
             if attr_name not in {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         }
     )
+    anchor_graph_attr_dict = graph_attr_dict
+    if (
+        sequence_construction_method == "khop"
+        and HOP_DISTANCE_FEATURE_NAME in anchor_matrix_attr_names
+        and HOP_DISTANCE_FEATURE_NAME not in graph_attr_dict
+    ):
+        anchor_graph_attr_dict = dict(graph_attr_dict)
+        anchor_graph_attr_dict[HOP_DISTANCE_FEATURE_NAME] = (
+            _get_anchor_hop_distance_matrix(
+                anchor_indices=anchor_indices,
+                edge_index=homo_edge_index,
+                num_nodes=num_nodes,
+                hop_distance=hop_distance,
+                device=device,
+            )
+        )
     anchor_based_matrices = _get_sparse_feature_matrices(
-        graph_attr_dict=graph_attr_dict,
+        graph_attr_dict=anchor_graph_attr_dict,
         attr_names=anchor_matrix_attr_names,
         missing_attr_error_prefix="Anchor-based attribute",
     )

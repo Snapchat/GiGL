@@ -388,6 +388,105 @@ class TestGetAnchorHopDistanceMatrix(TestCase):
         self.assertEqual(edgeless._nnz(), 0)
 
 
+def _assert_nested_equal(actual: object, expected: object) -> None:
+    """Asserts that two nested tuples/dicts/tensors/None values are exactly equal."""
+    if isinstance(expected, torch.Tensor):
+        assert isinstance(actual, torch.Tensor)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    elif isinstance(expected, dict):
+        assert isinstance(actual, dict)
+        assert actual.keys() == expected.keys()
+        for key in expected:
+            _assert_nested_equal(actual[key], expected[key])
+    elif isinstance(expected, tuple):
+        assert isinstance(actual, tuple)
+        assert len(actual) == len(expected)
+        for actual_item, expected_item in zip(actual, expected):
+            _assert_nested_equal(actual_item, expected_item)
+    else:
+        assert actual == expected
+
+
+class TestMissingHopDistanceAttribute(TestCase):
+    """The padded builder computes a missing anchor-relative ``hop_distance``."""
+
+    @parameterized.expand(
+        [
+            (sampling_direction, prioritize_hop_order, role)
+            for sampling_direction in ("in", "out")
+            for prioritize_hop_order in (False, True)
+            for role in (
+                "anchor_based_input_attr_names",
+                "anchor_based_attention_bias_attr_names",
+            )
+        ]
+    )
+    def test_missing_hop_distance_matches_transform(
+        self, sampling_direction: str, prioritize_hop_order: bool, role: str
+    ) -> None:
+        torch.manual_seed(0)
+        data = create_larger_hetero_data(num_users=12, num_items=8)
+        with_attribute = AddHeteroHopDistanceEncoding(
+            h_max=2, is_undirected=False, sampling_direction=sampling_direction
+        )(data.clone())
+        without_attribute = data.clone()
+        self.assertFalse(hasattr(without_attribute, "hop_distance"))
+        kwargs = dict(
+            batch_size=4,
+            max_seq_len=5,
+            anchor_node_type="user",
+            hop_distance=2,
+            sampling_direction=sampling_direction,
+            prioritize_hop_order=prioritize_hop_order,
+            **{role: ["hop_distance"]},
+        )
+        expected = heterodata_to_graph_transformer_input(data=with_attribute, **kwargs)
+        actual = heterodata_to_graph_transformer_input(data=without_attribute, **kwargs)
+        _assert_nested_equal(actual, expected)
+        self.assertFalse(hasattr(without_attribute, "hop_distance"))
+
+    def test_supplied_hop_distance_is_used_unchanged(self) -> None:
+        data = create_directed_chain_data()
+        data = AddHeteroHopDistanceEncoding(h_max=1)(data)
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            hop_distance=2,
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+        )
+        anchor_bias = aux["anchor_bias"]
+        assert anchor_bias is not None
+        self.assertEqual(anchor_bias[0, :, 0].tolist(), [0.0, 1.0, 0.0])
+
+    def test_missing_pairwise_hop_distance_still_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            heterodata_to_graph_transformer_input(
+                data=create_directed_chain_data(),
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                pairwise_attention_bias_attr_names=["hop_distance"],
+            )
+
+    def test_caller_attribute_dict_is_not_mutated(self) -> None:
+        data = create_directed_chain_data()
+        graph_attr_dict: dict[str, torch.Tensor] = {}
+        tensors_to_graph_transformer_input(
+            x_dict={"user": data["user"].x},
+            edge_index_dict={
+                ("user", "to", "user"): data["user", "to", "user"].edge_index
+            },
+            graph_attr_dict=graph_attr_dict,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_based_input_attr_names=["hop_distance"],
+        )
+        self.assertNotIn("hop_distance", graph_attr_dict)
+
+
 class TestHeteroToGraphTransformerInput(TestCase):
     """Tests for heterodata_to_graph_transformer_input function."""
 
