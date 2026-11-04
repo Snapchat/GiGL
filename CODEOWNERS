@@ -1,5 +1,5 @@
 # Global rule: All files need review from any of these
-* @svij-sc @kmontemayor2-sc @yliu2-sc @mkolodner-sc @xgao4-sc @zfan3-sc
+* @svij-sc @kmontemayor2-sc @yliu2-sc @mkolodner-sc @bkumar4-sc @zfan3-sc
 
 # More strict rules for specific files and directories
 .github/ @svij-sc @kmontemayor2-sc @mkolodner-sc @yliu2-sc
@@ -8,4 +8,4 @@ pyproject.toml @svij-sc @kmontemayor2-sc @mkolodner-sc @yliu2-sc
 
 # run_command_on_active_checkout.yaml gets updated when we build new images
 # As all devs may setup new images, we allow all of us to review it
-.github/cloud_builder/run_command_on_active_checkout.yaml @svij-sc @kmontemayor2-sc @nshah-sc @yliu2-sc @mkolodner-sc
+.github/cloud_builder/run_command_on_active_checkout.yaml @svij-sc @kmontemayor2-sc @bkumar4-sc @yliu2-sc @mkolodner-sc
