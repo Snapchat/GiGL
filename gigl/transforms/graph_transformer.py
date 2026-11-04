@@ -71,6 +71,7 @@ from torch_geometric.typing import EdgeType, NodeType
 from torch_geometric.utils import to_torch_sparse_tensor
 
 from gigl.src.common.types.graph_data import EdgeType as GiGLEdgeType
+from gigl.transforms.sequence_layout import select_sequences
 
 TokenInputData = dict[str, Tensor]
 
@@ -1277,15 +1278,9 @@ def _build_sequence_layout_from_ppr_edges(
     The sequence order is:
     1. Anchor node first, when ``include_anchor_first`` is True.
     2. Destination nodes reachable by outgoing ``"ppr"`` edges from that anchor,
-       sorted by descending PPR weight.
+       sorted by descending PPR weight, with equal weights in edge order.
     """
     batch_size = anchor_indices.size(0)
-    node_index_sequences = torch.full(
-        (batch_size, max_seq_len),
-        fill_value=-1,
-        dtype=torch.long,
-        device=device,
-    )
     valid_mask = torch.zeros(
         (batch_size, max_seq_len),
         dtype=torch.bool,
@@ -1301,13 +1296,20 @@ def _build_sequence_layout_from_ppr_edges(
     ppr_relation_feature_sequences = None
 
     if include_anchor_first and max_seq_len > 0:
-        node_index_sequences[:, 0] = anchor_indices
-        valid_mask[:, 0] = True
         start_pos = 1
     else:
         start_pos = 0
 
     if start_pos >= max_seq_len:
+        node_index_sequences = torch.full(
+            (batch_size, max_seq_len),
+            fill_value=-1,
+            dtype=torch.long,
+            device=device,
+        )
+        if start_pos > 0:
+            node_index_sequences[:, 0] = anchor_indices
+            valid_mask[:, 0] = True
         return (
             node_index_sequences,
             valid_mask,
@@ -1330,13 +1332,6 @@ def _build_sequence_layout_from_ppr_edges(
                 f"Requested '{PPR_RELATION_FEATURES_NAME}' but PPR edge_attr only "
                 "contains the scalar weight column."
             )
-        ppr_relation_feature_sequences = torch.zeros(
-            (batch_size, max_seq_len, edge_features.size(1) - 1),
-            dtype=torch.float,
-            device=device,
-        )
-    edge_weights = edge_features[:, 0]
-    relation_features = edge_features[:, 1:] if return_relation_features else None
 
     anchor_batch_index_by_homo_idx = torch.full(
         (num_nodes,),
@@ -1347,97 +1342,52 @@ def _build_sequence_layout_from_ppr_edges(
     anchor_batch_index_by_homo_idx[anchor_indices] = torch.arange(
         batch_size, device=device
     )
-
-    src_idx = edge_index[0]
-    dst_idx = edge_index[1]
-    anchor_batch_idx = anchor_batch_index_by_homo_idx[src_idx]
+    anchor_batch_idx = anchor_batch_index_by_homo_idx[edge_index[0]]
     keep = anchor_batch_idx >= 0
-    if not keep.any():
-        return (
-            node_index_sequences,
-            valid_mask,
-            ppr_weight_sequences,
-            ppr_relation_feature_sequences,
-        )
+    anchor_batch_idx = anchor_batch_idx[keep]
+    dst_idx = edge_index[1][keep]
+    edge_features = edge_features[keep]
 
-    all_anchor_batch_idx = anchor_batch_idx[keep]
-    all_dst_idx = dst_idx[keep]
-    all_weights = edge_weights[keep]
-    all_relation_features = (
-        relation_features[keep] if relation_features is not None else None
+    # Pad each anchor's edges, in edge order, into one row of a ``[batch_size,
+    # num_candidates]`` table; at least one column, so the gathers below have
+    # something to index.
+    batch_order = torch.argsort(anchor_batch_idx, stable=True)
+    sorted_batch_idx = anchor_batch_idx[batch_order]
+    edge_counts = torch.bincount(sorted_batch_idx, minlength=batch_size)
+    num_candidates = max(1, int(edge_counts.max()))
+    group_starts = torch.cumsum(edge_counts, dim=0) - edge_counts
+    column = (
+        torch.arange(sorted_batch_idx.numel(), device=device)
+        - group_starts[sorted_batch_idx].long()
     )
-
-    if include_anchor_first:
-        keep = all_dst_idx != anchor_indices[all_anchor_batch_idx]
-        if not keep.any():
-            return (
-                node_index_sequences,
-                valid_mask,
-                ppr_weight_sequences,
-                ppr_relation_feature_sequences,
-            )
-        all_anchor_batch_idx = all_anchor_batch_idx[keep]
-        all_dst_idx = all_dst_idx[keep]
-        all_weights = all_weights[keep]
-        all_relation_features = (
-            all_relation_features[keep] if all_relation_features is not None else None
-        )
-
-    # Flattened COO edges can be laid out in one pass by sorting first on weight
-    # and then stably on anchor batch id, which preserves descending-weight order
-    # within each anchor group without a Python loop. Relation features, when
-    # present, are reordered by the same permutation to stay aligned with edges.
-    weight_order = torch.argsort(all_weights, descending=True, stable=True)
-    all_anchor_batch_idx = all_anchor_batch_idx[weight_order]
-    all_dst_idx = all_dst_idx[weight_order]
-    all_weights = all_weights[weight_order]
-    if all_relation_features is not None:
-        all_relation_features = all_relation_features[weight_order]
-
-    batch_order = torch.argsort(all_anchor_batch_idx, stable=True)
-    sorted_batch_idx = all_anchor_batch_idx[batch_order]
-    sorted_dst_idx = all_dst_idx[batch_order]
-    sorted_weights = all_weights[batch_order]
-    sorted_relation_features = (
-        all_relation_features[batch_order]
-        if all_relation_features is not None
-        else None
+    candidates = torch.full(
+        (batch_size, num_candidates), -1, dtype=torch.long, device=device
     )
-
-    n = sorted_batch_idx.size(0)
-    is_group_start = torch.zeros(n, dtype=torch.long, device=device)
-    is_group_start[0] = 1
-    if n > 1:
-        is_group_start[1:] = (sorted_batch_idx[1:] != sorted_batch_idx[:-1]).long()
-
-    group_id = is_group_start.cumsum(0) - 1
-    group_starts = torch.nonzero(is_group_start, as_tuple=True)[0]
-    positions = torch.arange(n, device=device) - group_starts[group_id] + start_pos
-
-    valid = positions < max_seq_len
-    valid_batch_idx = sorted_batch_idx[valid]
-    valid_positions = positions[valid]
-    valid_dst_idx = sorted_dst_idx[valid]
-    valid_weights = sorted_weights[valid]
-    valid_relation_features = (
-        sorted_relation_features[valid]
-        if sorted_relation_features is not None
-        else None
+    candidates[sorted_batch_idx, column] = dst_idx[batch_order]
+    padded_features = edge_features.new_zeros(
+        (batch_size, num_candidates, edge_features.size(1))
     )
+    padded_features[sorted_batch_idx, column] = edge_features[batch_order]
 
-    node_index_sequences[valid_batch_idx, valid_positions] = valid_dst_idx
-    valid_mask[valid_batch_idx, valid_positions] = True
-    if ppr_weight_sequences is not None:
-        ppr_weight_sequences[valid_batch_idx, valid_positions, 0] = (
-            valid_weights.float()
-        )
-    if (
-        ppr_relation_feature_sequences is not None
-        and valid_relation_features is not None
-    ):
-        ppr_relation_feature_sequences[valid_batch_idx, valid_positions] = (
-            valid_relation_features.float()
-        )
+    node_index_sequences, source, lengths = select_sequences(
+        anchor_indices,
+        candidates,
+        max_seq_len,
+        priority=-padded_features[:, :, 0],
+        ties_by_column=True,
+        include_anchor=include_anchor_first,
+    )
+    valid_mask = torch.arange(max_seq_len, device=device) < lengths.unsqueeze(1)
+    # Anchor and padding tokens have no source edge; their payload is zero.
+    has_edge = (source >= 0).unsqueeze(-1)
+    token_features = padded_features.gather(
+        1,
+        source.clamp(min=0).unsqueeze(-1).expand(-1, -1, padded_features.size(-1)),
+    ).masked_fill(~has_edge, 0.0)
+    if return_edge_weights:
+        ppr_weight_sequences = token_features[:, :, :1]
+    if return_relation_features:
+        ppr_relation_feature_sequences = token_features[:, :, 1:]
 
     return (
         node_index_sequences,
