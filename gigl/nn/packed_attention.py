@@ -222,6 +222,7 @@ def _(
     compute_log_sumexp: bool,
     attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
+    # The per-key fold widens q and k but not v, so the output takes v's head dim.
     output = query.new_empty((*query.shape[:-1], value.size(-1)))
     logsumexp_size = 0
     if compute_log_sumexp:
