@@ -87,6 +87,7 @@ install_deps:
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
 	uv run python tests/config_tests/glt_patches_check.py
+	uv run python tests/config_tests/beam_sdk_image_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test

@@ -58,6 +58,9 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build -f ./containers/Dockerfile.cuda.base -t ${GIGL_BASE_CUDA_IMAGE} .
+        PYTHON_MINOR="$(cut -d. -f1,2 .python-version)"
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${GIGL_BASE_CUDA_IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cuda --python "${PYTHON_MINOR}"
         docker push ${GIGL_BASE_CUDA_IMAGE}
         echo "Pushed CUDA base image to ${GIGL_BASE_CUDA_IMAGE}"
 
@@ -86,6 +89,9 @@ jobs:
         gcloud auth configure-docker us-central1-docker.pkg.dev
 
         docker build -f ./containers/Dockerfile.cpu.base -t ${GIGL_BASE_CPU_IMAGE} .
+        PYTHON_MINOR="$(cut -d. -f1,2 .python-version)"
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${GIGL_BASE_CPU_IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type cpu --python "${PYTHON_MINOR}"
         docker push ${GIGL_BASE_CPU_IMAGE}
         echo "Pushed CPU base image to ${GIGL_BASE_CPU_IMAGE}"
 
@@ -113,6 +119,9 @@ jobs:
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
         docker build -f ./containers/Dockerfile.dataflow.base -t ${GIGL_BASE_DATAFLOW_IMAGE} .
+        PYTHON_MINOR="$(cut -d. -f1,2 .python-version)"
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${GIGL_BASE_DATAFLOW_IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type dataflow --python "${PYTHON_MINOR}"
         docker push ${GIGL_BASE_DATAFLOW_IMAGE}
         echo "Pushed Dataflow base image to ${GIGL_BASE_DATAFLOW_IMAGE}"
 
@@ -144,6 +153,9 @@ jobs:
         # See: Dockerfile.builder
         bash ./requirements/install_scala_deps.sh --download-only
         docker build -f ./containers/Dockerfile.builder  -t ${GIGL_BUILDER_IMAGE} .
+        PYTHON_MINOR="$(cut -d. -f1,2 .python-version)"
+        docker run --rm -v "${PWD}/scripts:/gigl_scripts:ro" --entrypoint python "${GIGL_BUILDER_IMAGE}" \
+          /gigl_scripts/smoke_test_image.py --image-type builder --python "${PYTHON_MINOR}"
         docker push ${GIGL_BUILDER_IMAGE}
         echo "Pushed Builder image to ${GIGL_BUILDER_IMAGE}"
 
