@@ -2,7 +2,7 @@
 Tests for heterodata_to_graph_transformer_input transform.
 """
 
-from typing import Literal, cast
+from typing import Any, Literal, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -320,7 +320,7 @@ class TestGetAnchorHopDistanceMatrix(TestCase):
         transformed = AddHeteroHopDistanceEncoding(
             h_max=hop_distance,
             is_undirected=False,
-            sampling_direction=sampling_direction,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
         )(data)
         expected = transformed["hop_distance"].to_dense()[anchors]
 
@@ -340,17 +340,19 @@ class TestGetAnchorHopDistanceMatrix(TestCase):
 
     def test_duplicate_anchors_do_not_add_values(self) -> None:
         edge_index = torch.tensor([[4, 4, 9, 2], [2, 9, 2, 4]])
-        kwargs = dict(
+        duplicated = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([4, 4, 9]),
             edge_index=edge_index,
             num_nodes=12,
             hop_distance=2,
             device=torch.device("cpu"),
         )
-        duplicated = _get_anchor_hop_distance_matrix(
-            anchor_indices=torch.tensor([4, 4, 9]), **kwargs
-        )
         unique = _get_anchor_hop_distance_matrix(
-            anchor_indices=torch.tensor([4, 9]), **kwargs
+            anchor_indices=torch.tensor([4, 9]),
+            edge_index=edge_index,
+            num_nodes=12,
+            hop_distance=2,
+            device=torch.device("cpu"),
         )
         torch.testing.assert_close(
             duplicated.to_dense(), unique.to_dense(), rtol=0, atol=0
@@ -388,7 +390,7 @@ class TestGetAnchorHopDistanceMatrix(TestCase):
         self.assertEqual(edgeless._nnz(), 0)
 
 
-def _assert_nested_equal(actual: object, expected: object) -> None:
+def _assert_nested_equal(actual: Any, expected: Any) -> None:
     """Asserts that two nested tuples/dicts/tensors/None values are exactly equal."""
     if isinstance(expected, torch.Tensor):
         assert isinstance(actual, torch.Tensor)
@@ -427,21 +429,40 @@ class TestMissingHopDistanceAttribute(TestCase):
         torch.manual_seed(0)
         data = create_larger_hetero_data(num_users=12, num_items=8)
         with_attribute = AddHeteroHopDistanceEncoding(
-            h_max=2, is_undirected=False, sampling_direction=sampling_direction
+            h_max=2,
+            is_undirected=False,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
         )(data.clone())
         without_attribute = data.clone()
         self.assertFalse(hasattr(without_attribute, "hop_distance"))
-        kwargs = dict(
+        input_attr_names: Optional[list[str]] = None
+        bias_attr_names: Optional[list[str]] = None
+        if role == "anchor_based_input_attr_names":
+            input_attr_names = ["hop_distance"]
+        else:
+            bias_attr_names = ["hop_distance"]
+        expected = heterodata_to_graph_transformer_input(
+            data=with_attribute,
             batch_size=4,
             max_seq_len=5,
-            anchor_node_type="user",
+            anchor_node_type=NodeType("user"),
             hop_distance=2,
-            sampling_direction=sampling_direction,
+            anchor_based_input_attr_names=input_attr_names,
+            anchor_based_attention_bias_attr_names=bias_attr_names,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
             prioritize_hop_order=prioritize_hop_order,
-            **{role: ["hop_distance"]},
         )
-        expected = heterodata_to_graph_transformer_input(data=with_attribute, **kwargs)
-        actual = heterodata_to_graph_transformer_input(data=without_attribute, **kwargs)
+        actual = heterodata_to_graph_transformer_input(
+            data=without_attribute,
+            batch_size=4,
+            max_seq_len=5,
+            anchor_node_type=NodeType("user"),
+            hop_distance=2,
+            anchor_based_input_attr_names=input_attr_names,
+            anchor_based_attention_bias_attr_names=bias_attr_names,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
+            prioritize_hop_order=prioritize_hop_order,
+        )
         _assert_nested_equal(actual, expected)
         self.assertFalse(hasattr(without_attribute, "hop_distance"))
 
