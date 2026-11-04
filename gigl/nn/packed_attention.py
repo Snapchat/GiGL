@@ -1,11 +1,12 @@
 """Attention over packed variable-length sequences: the compute half of the packed backend.
 
 This is the attention side of the packed backend of ``GraphTransformerEncoder``.
-The encoder turns each anchor's k-hop neighbourhood into a token sequence
-(``gigl.transforms.static_khop``), copies the real tokens of all sequences into
-one ``[num_tokens, dim]`` buffer, and runs the transformer on that buffer.
-``packed_attention`` is the attention step: each sequence attends only to itself,
-with boundaries given by ``cu_seqlens``.
+The encoder builds one token sequence per anchor (for example, from its k-hop
+neighborhood with ``gigl.transforms.static_khop``), copies the real tokens of all
+sequences into one ``[num_tokens, dim]`` buffer, and runs the transformer on that
+buffer. ``packed_attention`` is the attention step and does not depend on how the
+sequences were built: each sequence attends only to itself, with boundaries given
+by ``cu_seqlens``.
 
 Why this exists:
   - With uneven sequence lengths (about 90 real tokens out of 256 in our models),
@@ -36,7 +37,7 @@ Data flow of a packed forward::
         |
         |  per layer, on real tokens only:
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
-        |    packed_attention(q, k, v, packed, ...)
+        |    packed_attention(q, k, v, layout, ...)
         |        CUDA: aten memory-efficient attention with cu_seqlens
         |        CPU:  SDPA on a padded grid (reference)
         |    output linear + residual -> FFN + residual
@@ -53,21 +54,21 @@ Constraints:
 Example:
     >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
-    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=3)
+    >>> flat_index, layout = pack_sequences(lengths, max_seq_len=3)
     >>> flat_index.tolist()
     [0, 1, 2, 3, 6, 7]
     >>> num_tokens = int(lengths.sum())
     >>> query = key = value = torch.randn(num_tokens, 2, 8)
     >>> output = packed_attention(
-    ...     query, key, value, packed, query_is_first_token=False
+    ...     query, key, value, layout, query_is_first_token=False
     ... )
     >>> output.shape
     torch.Size([6, 2, 8])
     >>> first_token_only = packed_attention(
-    ...     query[packed.cu_seqlens[:-1].long()],
+    ...     query[layout.cu_seqlens[:-1].long()],
     ...     key,
     ...     value,
-    ...     packed,
+    ...     layout,
     ...     query_is_first_token=True,
     ... )
     >>> first_token_only.shape
@@ -339,7 +340,7 @@ def _padded_packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
     value: Float[Tensor, "num_tokens num_heads head_dim"],
-    packed: PackedLayout,
+    layout: PackedLayout,
     query_is_first_token: bool,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
@@ -351,15 +352,15 @@ def _padded_packed_attention(
     Args:
         query: Packed queries, or one query per sequence when
             ``query_is_first_token``.
-        packed: Layout from ``pack_sequences``.
+        layout: Layout from ``pack_sequences``.
         query_is_first_token: ``query`` holds one query per sequence, the
             sequence's first token.
 
     Returns:
         Attention output shaped like ``query``.
     """
-    first_token = packed.cu_seqlens[:-1].long()
-    lengths = packed.cu_seqlens[1:] - packed.cu_seqlens[:-1]
+    first_token = layout.cu_seqlens[:-1].long()
+    lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
     num_sequences = lengths.numel()
     token_sequence = torch.repeat_interleave(
         torch.arange(num_sequences, device=lengths.device),
@@ -374,7 +375,7 @@ def _padded_packed_attention(
         torch.cat([query, key, value], dim=1),
         token_sequence,
         batch_size=num_sequences,
-        max_num_nodes=packed.max_seq_len,
+        max_num_nodes=layout.max_seq_len,
     )
     query_grid, key_grid, value_grid = (
         grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
@@ -397,7 +398,7 @@ def packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
     value: Float[Tensor, "num_tokens num_heads head_dim"],
-    packed: PackedLayout,
+    layout: PackedLayout,
     query_is_first_token: bool,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
@@ -409,21 +410,21 @@ def packed_attention(
     Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda:
-        return _padded_packed_attention(query, key, value, packed, query_is_first_token)
+        return _padded_packed_attention(query, key, value, layout, query_is_first_token)
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
-            packed.cu_seqlens.size(0), dtype=torch.int32, device=query.device
+            layout.cu_seqlens.size(0), dtype=torch.int32, device=query.device
         )
         max_seqlen_q = 1
     else:
-        cu_seqlens_q = packed.cu_seqlens
-        max_seqlen_q = min(packed.max_seq_len, query.size(0))
+        cu_seqlens_q = layout.cu_seqlens
+        max_seqlen_q = min(layout.max_seq_len, query.size(0))
     return _varlen_attention(
         query,
         key,
         value,
         cu_seqlens_q,
-        packed.cu_seqlens,
+        layout.cu_seqlens,
         max_seqlen_q,
-        min(packed.max_seq_len, key.size(0)),
+        min(layout.max_seq_len, key.size(0)),
     )
