@@ -290,14 +290,26 @@ class DataPreprocessor:
                 ),
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
+            logger.info(
+                __get_feature_preprocessing_job_msgs(
+                    is_start=True,
+                )
+            )
             feature_transform_pipeline_result = p.run()
+            if not isinstance(
+                feature_transform_pipeline_result, DataflowPipelineResult
+            ):
+                # A pipeline that does not run on Dataflow executes in this process.
+                # DirectRunner can delegate to Beam's PrismRunner, whose run() returns
+                # while the pipeline is still executing. TFT's object tracker is
+                # process-global and both pipeline construction and execution enter
+                # it, so overlapping TFT pipelines trip its `_OBJECT_TRACKER is None`
+                # assertion. Local pipelines therefore finish before the lock is
+                # released; Dataflow jobs run remotely and are waited on below, outside
+                # the lock.
+                feature_transform_pipeline_result.wait_until_finish()
             logger.debug(f"[{feature_type}:{entity_type}] releasing lock.")
 
-        logger.info(
-            __get_feature_preprocessing_job_msgs(
-                is_start=True,
-            )
-        )
         feature_transform_pipeline_result.wait_until_finish()
         logger.info(
             __get_feature_preprocessing_job_msgs(
