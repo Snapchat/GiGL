@@ -2,7 +2,7 @@
 
 import itertools
 import unittest
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 from absl.testing import absltest
@@ -383,6 +383,42 @@ class PackedAttentionCudaTest(TestCase):
                 self._assert_matches_cpu_reference(
                     head_dim=12, query_is_first_token=query_is_first_token
                 )
+
+    def test_compiled_per_key_bias_training_matches_eager(self) -> None:
+        # The per-key fold widens q and k to 72 but not v, so the varlen op's
+        # fake output must take the value head dim for compiled calls.
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        num_tokens = int(lengths.sum())
+        generator = torch.Generator(device=device).manual_seed(0)
+        inputs = [
+            torch.randn(num_tokens, 2, 64, device=device, generator=generator)
+            for _ in range(3)
+        ]
+        bias = PackedAttentionBias(
+            per_key=torch.randn(num_tokens, 2, device=device, generator=generator)
+        )
+
+        def run(
+            attention: Callable[..., torch.Tensor],
+        ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+            leaves = [tensor.clone().requires_grad_() for tensor in inputs]
+            output = attention(*leaves, layout, False, bias)
+            output.sum().backward()
+            gradients: list[torch.Tensor] = []
+            for leaf in leaves:
+                assert leaf.grad is not None
+                gradients.append(leaf.grad)
+            return output.detach(), gradients
+
+        expected_output, expected_gradients = run(packed_attention)
+        actual_output, actual_gradients = run(torch.compile(packed_attention))
+        torch.testing.assert_close(actual_output, expected_output, rtol=1e-4, atol=1e-4)
+        for actual, expected in zip(actual_gradients, expected_gradients):
+            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
 
     def test_varlen_per_key_bias_under_bf16_autocast_matches_fp32_reference(
         self,
