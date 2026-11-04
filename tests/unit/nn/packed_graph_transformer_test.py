@@ -266,7 +266,10 @@ class PackedPathTest(TestCase):
                 encoder = _materialized_encoder(
                     data, _encoder_kwargs(num_layers=num_layers)
                 )
-                layer_outputs = []
+                # The spy checks the contract between the layer loop and the
+                # readout: with anchor_only, _run_packed_layers returns one
+                # [hid_dim] row per anchor, with or without layers.
+                layer_outputs: list[torch.Tensor] = []
                 run_layers = encoder._run_packed_layers
 
                 def record(*args: Any) -> torch.Tensor:
@@ -514,7 +517,7 @@ class PackedPathTest(TestCase):
             )
 
     @parameterized.expand(_READOUT_MODES)
-    def test_anchors_without_neighbours_match_padded_path(
+    def test_anchors_without_neighbors_match_padded_path(
         self, readout_mode: str
     ) -> None:
         # Nodes 3 and 4 have no edges, so their sequences hold only the anchor.
