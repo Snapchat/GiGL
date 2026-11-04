@@ -41,6 +41,11 @@ Example:
         $ python scripts/smoke_test_image.py --python 3.11 \
             --imports torch,graphlearn_torch,gigl_core
 
+    In a build job that must have this torch variant, whatever the runner's hardware::
+
+        $ python scripts/smoke_test_image.py --python 3.11 --imports torch \
+            --torch-variant cu128
+
     On a GPU host, where the driver is mounted and ``torchrec`` joins the cuda preset::
 
         $ python scripts/smoke_test_image.py --image-type cuda --python 3.11 --cuda
@@ -203,6 +208,26 @@ def check_imports(module_names: list[str]) -> None:
     for module_name in module_names:
         importlib.import_module(module_name)
         print(f"OK  import {module_name}")
+
+
+def check_torch_variant(variant: str) -> None:
+    """Asserts the installed torch is the ``cpu`` or ``cu128`` build.
+
+    Args:
+        variant (str): ``cpu`` or ``cu128``, the local version suffix of the torch wheel.
+
+    Raises:
+        AssertionError: When the torch version suffix or its CUDA version differs.
+    """
+    import torch
+    import torch.version
+
+    # "2.8.0+cu128" -> "cu128"; a wheel without a local suffix, e.g. "2.8.0", has none.
+    _, plus, suffix = torch.__version__.rpartition("+")
+    assert_equal("torch variant", variant, suffix if plus else "")
+    assert_equal(
+        "torch.version.cuda", "12.8" if variant == "cu128" else None, torch.version.cuda
+    )
 
 
 def check_cuda_build() -> None:
@@ -381,6 +406,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "torch,gigl_core. Required without --image-type, which brings its own imports.",
     )
     parser.add_argument(
+        "--torch-variant",
+        choices=["cpu", "cu128"],
+        default=None,
+        help="Torch build the environment must have: the wheel's local version suffix "
+        "and, for cu128, CUDA 12.8. The checked imports must include torch.",
+    )
+    parser.add_argument(
         "--cuda",
         action="store_true",
         help="Also require a working CUDA runtime and a CUDA-enabled graphlearn_torch. "
@@ -413,6 +445,8 @@ def main() -> None:
     if preset and preset.require_nvidia_driver_path:
         check_nvidia_driver_path()
     check_imports(module_names=imports)
+    if args.torch_variant is not None:
+        check_torch_variant(variant=args.torch_variant)
     if (preset and preset.require_cuda_build) or args.cuda:
         check_cuda_build()
     if args.cuda:
