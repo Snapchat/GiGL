@@ -568,12 +568,14 @@ class GraphTransformerEncoderLayer(nn.Module):
         """Runs the layer on packed tokens (see ``gigl.nn.packed_attention``).
 
         The tokens of each sequence sit back to back in ``x``. Each token attends
-        only to tokens of its own sequence. With a relation attention mode, the
-        layer adds the per-edge relation scores to ``bias.per_pair`` as a
-        per-layer pair bias, so attention runs on the padded-grid backend, or on
-        the varlen kernel without a gradient. With ``first_token_output`` the scores
-        are per-key and attention runs on the varlen kernel. In training,
-        attention dropout runs on the padded-grid backend.
+        only to tokens of its own sequence.
+
+        With a relation attention mode, the layer adds the per-edge relation
+        scores to ``bias.per_pair`` as a per-layer pair bias. Attention then runs
+        on the varlen kernel without a gradient, and on the padded-grid backend
+        with one. With ``first_token_output`` the scores are per key, and
+        attention runs on the varlen kernel. In training, attention dropout runs on
+        the padded-grid backend.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
@@ -1455,11 +1457,14 @@ class GraphTransformerEncoder(nn.Module):
           - ``hop_distance <= 4``
 
         With ``attention_dropout_rate > 0``, training attention runs on the
-        padded-grid SDPA backend and eval attention on the varlen kernel. With
-        pairwise attention biases, attention always runs on the padded-grid SDPA
-        backend, since the bias is one value per (query, key) pair. Relation
-        attention (``edge_type_bilinear``, ``edge_type_hgt``) adds one such bias
-        per layer, so it also runs on that backend.
+        padded-grid SDPA backend and eval attention on the varlen kernel.
+
+        Pairwise attention biases and relation attention (``edge_type_bilinear``,
+        ``edge_type_hgt``) add one bias value per (query, key) pair. Attention
+        with such a bias runs on the varlen kernel when nothing needs a gradient,
+        and in the last layer with ``readout_mode="anchor_only"``, where the bias
+        is folded per key. Otherwise, in training, it runs on the padded-grid SDPA
+        backend, because the varlen kernel has no backward for a bias.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
