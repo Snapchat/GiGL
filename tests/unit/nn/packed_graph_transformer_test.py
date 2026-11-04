@@ -294,7 +294,7 @@ class PackedPathTest(TestCase):
             )
 
     @parameterized.expand(_READOUT_MODES)
-    def test_anchors_without_neighbours_match_padded_path(
+    def test_anchors_without_neighbors_match_padded_path(
         self, readout_mode: str
     ) -> None:
         # Nodes 3 and 4 have no edges, so their sequences hold only the anchor.
