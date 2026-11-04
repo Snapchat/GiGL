@@ -467,8 +467,8 @@ def packed_attention(
     is all the anchor readout of the last layer needs. An empty
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
-    The varlen kernel takes no bias yet: on CUDA, ``per_key`` raises
-    ``NotImplementedError``, as does ``per_pair`` (no FlexAttention backend).
+    The varlen kernel takes no bias: on CUDA, a ``per_key`` or ``per_pair`` bias
+    raises ``NotImplementedError``.
 
     Args and returns are as in ``_padded_packed_attention``.
     """
@@ -477,9 +477,13 @@ def packed_attention(
             query, key, value, layout, query_is_first_token, bias
         )
     if bias is not None and bias.per_pair is not None:
-        raise NotImplementedError("the FlexAttention backend is not in yet")
+        raise NotImplementedError(
+            "A per_pair bias is not supported on the CUDA varlen path."
+        )
     if bias is not None and bias.per_key is not None:
-        raise NotImplementedError("the varlen kernel takes no per-key bias yet")
+        raise NotImplementedError(
+            "A per_key bias is not supported on the CUDA varlen path."
+        )
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
             layout.cu_seqlens.size(0), dtype=torch.int32, device=query.device

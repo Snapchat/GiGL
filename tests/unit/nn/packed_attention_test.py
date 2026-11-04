@@ -2,6 +2,7 @@
 
 import itertools
 import unittest
+from typing import Optional
 
 import torch
 from absl.testing import absltest
@@ -13,7 +14,7 @@ from gigl.nn.packed_attention import (
     _varlen_attention,
     packed_attention,
 )
-from gigl.transforms.sequence_layout import pack_sequences
+from gigl.transforms.sequence_layout import PackedLayout, pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
@@ -33,7 +34,17 @@ class PackedAttentionTest(TestCase):
             assert tensor.grad is not None
             self.assertEqual(tensor.grad.shape, tensor.shape)
 
-    def _bias_inputs(self):
+    def _bias_inputs(
+        self,
+    ) -> tuple[
+        list[int],
+        PackedLayout,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         lengths = [3, 1, 2]
         layout = pack_sequences(torch.tensor(lengths), 3)
         generator = torch.Generator().manual_seed(0)
@@ -44,9 +55,17 @@ class PackedAttentionTest(TestCase):
         per_pair = torch.randn(3, 2, 3, 3, generator=generator)
         return lengths, layout, query, key, value, per_key, per_pair
 
-    def _dense_reference(self, lengths, query, key, value, per_key, per_pair):
+    def _dense_reference(
+        self,
+        lengths: list[int],
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        per_key: Optional[torch.Tensor],
+        per_pair: Optional[torch.Tensor],
+    ) -> torch.Tensor:
         """Returns softmax(q k^T / sqrt(D) + bias) v per sequence, as [num_tokens, H, D]."""
-        outputs = []
+        outputs: list[torch.Tensor] = []
         start = 0
         for sequence, length in enumerate(lengths):
             rows = slice(start, start + length)
