@@ -192,16 +192,18 @@ class PackedAttentionTest(TestCase):
 
     def test_dropout_changes_output_and_backpropagates(self) -> None:
         _, layout, query, key, value, _, _ = self._bias_inputs()
-        without = packed_attention(query, key, value, layout, False)
+        first_query = query[layout.cu_seqlens[:-1].long()]
+        without_by_first_token = {
+            False: packed_attention(query, key, value, layout, False),
+            True: packed_attention(first_query, key, value, layout, True),
+        }
         for query_is_first_token in (False, True):
             with self.subTest(first_token=query_is_first_token):
                 leaves = [
                     tensor.clone().requires_grad_() for tensor in (query, key, value)
                 ]
                 if query_is_first_token:
-                    leaves[0] = (
-                        query[layout.cu_seqlens[:-1].long()].clone().requires_grad_()
-                    )
+                    leaves[0] = first_query.clone().requires_grad_()
                 torch.manual_seed(0)
                 output = packed_attention(
                     leaves[0],
@@ -212,8 +214,9 @@ class PackedAttentionTest(TestCase):
                     dropout_p=0.5,
                 )
                 self.assertEqual(output.shape, leaves[0].shape)
-                if not query_is_first_token:
-                    self.assertFalse(torch.allclose(output, without))
+                self.assertFalse(
+                    torch.allclose(output, without_by_first_token[query_is_first_token])
+                )
                 output.sum().backward()
                 for leaf in leaves:
                     assert leaf.grad is not None
@@ -497,6 +500,9 @@ class PackedAttentionCudaTest(TestCase):
         )
         output = packed_attention(query, key, value, layout, False, dropout_p=0.3)
         self.assertEqual(output.shape, query.shape)
+        with torch.no_grad():
+            without = packed_attention(query, key, value, layout, False)
+        self.assertFalse(torch.allclose(output, without))
         output.sum().backward()
         for leaf in (query, key, value):
             assert leaf.grad is not None
