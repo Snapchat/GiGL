@@ -2162,16 +2162,15 @@ class GraphTransformerEncoder(nn.Module):
                 )
             is_last_layer = layer_index == len(self._encoder_layers) - 1
             first_token_output = anchor_only and is_last_layer
+            layer_relation_edges = None
+            if relation_edges is not None:
+                layer_relation_edges = relation_edges[first_token_output]
             x = self._run_packed_layer(
                 cast(GraphTransformerEncoderLayer, encoder_layer),
                 x,
                 packed,
                 first_token_output=first_token_output,
-                relation_edges=(
-                    None
-                    if relation_edges is None
-                    else relation_edges[first_token_output]
-                ),
+                relation_edges=layer_relation_edges,
             )
         if anchor_only:
             if len(self._encoder_layers) == 0:
