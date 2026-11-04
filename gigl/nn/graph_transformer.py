@@ -1193,12 +1193,18 @@ class GraphTransformerEncoder(nn.Module):
             when the batch has no such attribute, so
             ``AddHeteroHopDistanceEncoding`` is optional. The computed value is
             the first-reach directed hop in this encoder's ``sampling_direction``
-            up to its ``hop_distance``. When the attribute is present, the padded
-            path reads it, and it must match this encoder's ``hop_distance`` and
-            direction (``is_undirected=False``, ``sampling_direction`` equal to
-            this encoder's, ``h_max`` at least this encoder's ``hop_distance``),
-            or the two paths disagree. An embedding for ``hop_distance`` needs
-            more than ``hop_distance`` entries on a config that can run packed.
+            up to its ``hop_distance``.
+
+            When the attribute is present, the padded path reads it. It must come
+            from ``AddHeteroHopDistanceEncoding`` with these settings, or the two
+            paths disagree:
+
+            - ``is_undirected=False``
+            - ``sampling_direction`` equal to this encoder's
+            - ``h_max`` at least this encoder's ``hop_distance``
+
+            An embedding for ``hop_distance`` needs more than ``hop_distance``
+            entries on a config that can run packed.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their

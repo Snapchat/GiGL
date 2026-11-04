@@ -392,21 +392,22 @@ class TestGetAnchorHopDistanceMatrix(TestCase):
 
 def _assert_nested_equal(actual: Any, expected: Any) -> None:
     """Asserts that two nested tuples/dicts/tensors/None values are exactly equal."""
+    if type(actual) is not type(expected):
+        raise AssertionError(f"Type {type(actual)} != {type(expected)}")
     if isinstance(expected, torch.Tensor):
-        assert isinstance(actual, torch.Tensor)
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     elif isinstance(expected, dict):
-        assert isinstance(actual, dict)
-        assert actual.keys() == expected.keys()
+        if actual.keys() != expected.keys():
+            raise AssertionError(f"Keys {actual.keys()} != {expected.keys()}")
         for key in expected:
             _assert_nested_equal(actual[key], expected[key])
     elif isinstance(expected, tuple):
-        assert isinstance(actual, tuple)
-        assert len(actual) == len(expected)
+        if len(actual) != len(expected):
+            raise AssertionError(f"Length {len(actual)} != {len(expected)}")
         for actual_item, expected_item in zip(actual, expected):
             _assert_nested_equal(actual_item, expected_item)
-    else:
-        assert actual == expected
+    elif actual != expected:
+        raise AssertionError(f"{actual!r} != {expected!r}")
 
 
 class TestMissingHopDistanceAttribute(TestCase):
