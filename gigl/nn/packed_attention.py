@@ -291,9 +291,10 @@ def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
 def _rescale_query(query: Tensor, padded_dim: int) -> Tensor:
     """Scales q so the kernel's scores use the unpadded head dim.
 
-    The factor is ``sqrt(padded_dim / head_dim)``. The kernel scales scores by ``1 / sqrt(padded_dim)``. An explicit ``scale`` is
-    not passed because torch 2.8's meta backward rejects it, and compiled training
-    traces that meta backward.
+    The factor is ``sqrt(padded_dim / head_dim)``. The kernel scales scores by
+    ``1 / sqrt(padded_dim)``. An explicit ``scale`` is not passed because torch
+    2.8's meta backward rejects it, and compiled training traces that meta
+    backward.
     """
     return query * math.sqrt(padded_dim / query.size(-1))
 
