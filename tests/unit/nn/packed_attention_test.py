@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import torch
 from absl.testing import absltest
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils.checkpoint import checkpoint
 
@@ -19,6 +20,7 @@ from gigl.nn.packed_attention import (
     packed_attention,
 )
 from gigl.transforms.sequence_layout import PackedLayout, pack_sequences
+from tests.test_assets.packed_attention_reference import reference_packed_attention
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
@@ -261,6 +263,52 @@ class PackedAttentionTest(TestCase):
         )
         torch.testing.assert_close(empty, without, rtol=0, atol=0)
 
+    def test_packed_attention_matches_reference_on_cpu(self) -> None:
+        num_heads, head_dim = 2, 4
+        lengths = torch.tensor([5, 1, 7, 3])
+        num_tokens = int(lengths.sum())
+        layout = pack_sequences(lengths, 8)
+        generator = torch.Generator().manual_seed(0)
+        for query_is_first_token in (False, True):
+            num_queries = lengths.numel()
+            if not query_is_first_token:
+                num_queries = num_tokens
+            query, key, value = (
+                torch.randn(
+                    rows, num_heads, head_dim, generator=generator, dtype=torch.float64
+                ).requires_grad_()
+                for rows in (num_queries, num_tokens, num_tokens)
+            )
+            grad_output = torch.randn(
+                num_queries,
+                num_heads,
+                head_dim,
+                generator=generator,
+                dtype=torch.float64,
+            )
+            with self.subTest(first_token=query_is_first_token):
+                actual = packed_attention(
+                    query, key, value, layout, query_is_first_token
+                )
+                expected = reference_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout.cu_seqlens,
+                    query_is_first_token=query_is_first_token,
+                )
+                torch.testing.assert_close(actual, expected, rtol=0, atol=1e-10)
+                actual_grads = torch.autograd.grad(
+                    actual, (query, key, value), grad_output
+                )
+                expected_grads = torch.autograd.grad(
+                    expected, (query, key, value), grad_output
+                )
+                for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+                    torch.testing.assert_close(
+                        actual_grad, expected_grad, rtol=0, atol=1e-10
+                    )
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedAttentionCudaTest(TestCase):
@@ -285,6 +333,17 @@ class PackedAttentionCudaTest(TestCase):
                 expected = _padded_packed_attention(
                     query, key, value, layout, query_is_first_token
                 )
+                with sdpa_kernel(SDPBackend.MATH):
+                    expected_math = _padded_packed_attention(
+                        query, key, value, layout, query_is_first_token
+                    )
+                expected_reference = reference_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout.cu_seqlens,
+                    query_is_first_token=query_is_first_token,
+                )
                 with (
                     self.subTest(
                         dtype=dtype, first_token=query_is_first_token, grad=track_grad
@@ -295,12 +354,13 @@ class PackedAttentionCudaTest(TestCase):
                         query, key, value, layout, query_is_first_token
                     )
                     self.assertEqual(actual.requires_grad, track_grad)
-                    torch.testing.assert_close(
-                        actual.float().cpu(),
-                        expected.float().cpu(),
-                        rtol=0,
-                        atol=atol,
-                    )
+                    for reference in (expected, expected_math, expected_reference):
+                        torch.testing.assert_close(
+                            actual.float().cpu(),
+                            reference.float().cpu(),
+                            rtol=0,
+                            atol=atol,
+                        )
 
     def test_varlen_attention_gradients_match_padded_packed_attention(self) -> None:
         device = torch.device("cuda")
@@ -323,9 +383,9 @@ class PackedAttentionCudaTest(TestCase):
                     for rows in (num_queries, num_tokens, num_tokens)
                 ]
                 grad_output = random_rows(num_queries).to(dtype)
-                varlen_inputs, padded_inputs = (
+                varlen_inputs, padded_inputs, math_inputs, reference_inputs = (
                     [tensor.clone().requires_grad_() for tensor in inputs]
-                    for _ in range(2)
+                    for _ in range(4)
                 )
                 packed_attention(
                     varlen_inputs[0],
@@ -341,19 +401,43 @@ class PackedAttentionCudaTest(TestCase):
                     layout,
                     query_is_first_token,
                 ).backward(grad_output)
-                for name, actual, expected in zip(
-                    ("query", "key", "value"), varlen_inputs, padded_inputs
-                ):
-                    with self.subTest(
-                        dtype=dtype, first_token=query_is_first_token, grad=name
+                with sdpa_kernel(SDPBackend.MATH):
+                    _padded_packed_attention(
+                        math_inputs[0],
+                        math_inputs[1],
+                        math_inputs[2],
+                        layout,
+                        query_is_first_token,
+                    ).backward(grad_output)
+                reference_packed_attention(
+                    reference_inputs[0],
+                    reference_inputs[1],
+                    reference_inputs[2],
+                    layout.cu_seqlens,
+                    query_is_first_token=query_is_first_token,
+                ).backward(grad_output)
+                for name, index in (("query", 0), ("key", 1), ("value", 2)):
+                    actual = varlen_inputs[index]
+                    for reference_name, references in (
+                        ("padded", padded_inputs),
+                        ("math", math_inputs),
+                        ("reference", reference_inputs),
                     ):
-                        assert actual.grad is not None and expected.grad is not None
-                        torch.testing.assert_close(
-                            actual.grad.float(),
-                            expected.grad.float(),
-                            rtol=0,
-                            atol=atol,
-                        )
+                        expected = references[index]
+                        with self.subTest(
+                            dtype=dtype,
+                            first_token=query_is_first_token,
+                            grad=name,
+                            against=reference_name,
+                        ):
+                            assert actual.grad is not None
+                            assert expected.grad is not None
+                            torch.testing.assert_close(
+                                actual.grad.float(),
+                                expected.grad.float(),
+                                rtol=0,
+                                atol=atol,
+                            )
 
     def _assert_matches_cpu_reference(
         self,
