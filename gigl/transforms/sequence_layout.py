@@ -16,6 +16,14 @@ from jaxtyping import Int, Int32, Int64
 from torch import Tensor
 
 
+class RelationSegment(NamedTuple):
+    """A relation id with the ``[start, end)`` range of its edges."""
+
+    relation: int
+    start: int
+    end: int
+
+
 class PackedRelationEdges(NamedTuple):
     """Relation edges between packed tokens, grouped by relation.
 
@@ -33,7 +41,7 @@ class PackedRelationEdges(NamedTuple):
     target: Tensor
     source: Tensor
     relation: Tensor
-    segments: tuple[tuple[int, int, int], ...]
+    segments: tuple[RelationSegment, ...]
     all_filtered: bool = False
 
 
