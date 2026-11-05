@@ -552,6 +552,9 @@ def packed_attention(
     ``_fold_per_key_bias``. A ``per_pair`` bias or ``dropout_p > 0`` runs the
     padded SDPA path on the GPU. Off CUDA, the padded SDPA path always runs.
 
+    Every sequence must contain at least one token (``lengths >= 1``). An empty
+    sequence gives wrong output on the padded path and is not supported.
+
     Args and returns are as in ``_padded_packed_attention``.
     """
     has_per_pair = bias is not None and bias.per_pair is not None
