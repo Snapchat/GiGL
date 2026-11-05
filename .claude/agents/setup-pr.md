@@ -104,7 +104,7 @@ rewrite history or change remote state. Local commits are allowed only for the c
 ## Final report
 
 Report the branch and commit range, the chosen tier and why, files reviewed, any cleanup commits made and what they
-removed, formatter commands run (or why each was not applicable), test results for the tier, review results (or why
-the tier did not require them), any findings resolved or waived, the review-readiness confirmation, the drafted PR
-title and description, the path to the PR links doc, and the final status. If any blocking item failed or is ambiguous, clearly say that the branch
-is not ready for review. Never push, open, or update a PR yourself.
+removed, formatter commands run (or why each was not applicable), test results for the tier, review results (or why the
+tier did not require them), any findings resolved or waived, the review-readiness confirmation, the drafted PR title and
+description, the path to the PR links doc, and the final status. If any blocking item failed or is ambiguous, clearly
+say that the branch is not ready for review. Never push, open, or update a PR yourself.
