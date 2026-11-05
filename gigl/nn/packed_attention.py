@@ -407,6 +407,9 @@ def packed_attention(
     ``query_is_first_token``, only each sequence's first token is queried, which
     is all the anchor readout of the last layer needs.
 
+    Every sequence must contain at least one token (``lengths >= 1``). An empty
+    sequence gives wrong output on the padded path and is not supported.
+
     Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda:
