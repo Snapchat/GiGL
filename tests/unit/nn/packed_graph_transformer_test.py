@@ -24,6 +24,7 @@ from gigl.nn.graph_transformer import (
 from gigl.nn.packed_attention import PackedAttentionBias
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
+from gigl.transforms.graph_transformer import build_ppr_sequence_grids
 from gigl.transforms.sequence_layout import (
     PackedLayout,
     PackedRelationEdges,
@@ -2040,6 +2041,113 @@ class ReferencePairwiseBiasTest(TestCase):
             )
             actual = layer.forward_packed(x, layout, bias=bias)
         torch.testing.assert_close(actual, expected, rtol=0, atol=2e-5)
+
+
+class ReferencePprSequenceTest(TestCase):
+    """PPR sequences of a hand-written graph, derived from the edge weights.
+
+    Each anchor lists its outgoing ``ppr`` targets by descending weight, ties
+    in edge order, keeps ``max_seq_len - 1`` of them behind the anchor, and the
+    sequence ends there.
+    """
+
+    # (anchor, target, weight, ppr_is_expanded), in edge order. Anchor 0 has
+    # a tie at 0.9 (3 before 7) and one at 0.5 (4 before 6), and loses its
+    # lowest-weight target to the length limit. Anchor 2 has no edges.
+    _EDGES = [
+        (0, 4, 0.5, 1),
+        (1, 5, 0.3, 0),
+        (0, 3, 0.9, 1),
+        (0, 6, 0.5, 0),
+        (1, 0, 0.8, 1),
+        (0, 5, 0.2, 1),
+        (0, 7, 0.9, 0),
+    ]
+    _MAX_SEQ_LEN = 4
+    _NODE_GRID = [[0, 3, 7, 4], [1, 0, 5, -1], [2, -1, -1, -1]]
+    _WEIGHT_GRID = [[0.0, 0.9, 0.9, 0.5], [0.0, 0.8, 0.3, 0.0], [0.0] * 4]
+    # The anchor has every bit set; a padded cell is 0.
+    _EXPANDED_GRID = [[-1, 1, 0, 1], [-1, 1, 0, 0], [-1, 0, 0, 0]]
+
+    def _data(self) -> HeteroData:
+        data = HeteroData()
+        data[_USER].x = torch.randn(8, 8)
+        data[_USER].batch_size = 3
+        data[_PPR.tuple_repr()].edge_index = torch.tensor(
+            [[edge[0] for edge in self._EDGES], [edge[1] for edge in self._EDGES]]
+        )
+        data[_PPR.tuple_repr()].edge_attr = torch.tensor(
+            [[edge[2]] for edge in self._EDGES]
+        )
+        data[_PPR.tuple_repr()].ppr_is_expanded = torch.tensor(
+            [edge[3] for edge in self._EDGES]
+        )
+        return data
+
+    def test_grids_match_the_hand_built_sequences(self) -> None:
+        data = self._data()
+        grids = build_ppr_sequence_grids(
+            edge_index_dict={_PPR.tuple_repr(): data[_PPR.tuple_repr()].edge_index},
+            edge_attr_dict={_PPR.tuple_repr(): data[_PPR.tuple_repr()].edge_attr},
+            ppr_is_expanded_dict={
+                _PPR.tuple_repr(): data[_PPR.tuple_repr()].ppr_is_expanded
+            },
+            node_type_offsets={_USER: 0},
+            anchor_indices=torch.arange(3),
+            num_nodes=8,
+            max_seq_len=self._MAX_SEQ_LEN,
+            include_anchor_first=True,
+            device=torch.device("cpu"),
+            return_edge_weights=True,
+            return_relation_features=False,
+        )
+        expected_nodes = torch.tensor(self._NODE_GRID)
+        torch.testing.assert_close(grids.node_index, expected_nodes)
+        torch.testing.assert_close(grids.valid_mask, expected_nodes >= 0)
+        assert grids.ppr_weight is not None and grids.expanded_token_mask is not None
+        torch.testing.assert_close(
+            grids.ppr_weight.squeeze(-1),
+            torch.tensor(self._WEIGHT_GRID),
+            rtol=0,
+            atol=1e-6,
+        )
+        torch.testing.assert_close(
+            grids.expanded_token_mask, torch.tensor(self._EXPANDED_GRID)
+        )
+
+    def test_packed_layout_matches_the_hand_built_sequences(self) -> None:
+        data = self._data()
+        encoder = _ppr_encoder(
+            data,
+            max_seq_len=self._MAX_SEQ_LEN,
+            edge_type_to_feat_dim_map={_PPR: 0},
+            anchor_based_attention_bias_attr_names=["ppr_weight"],
+        )
+        captured: list[PackedLayout] = []
+        real_run_layers = encoder._run_packed_layers
+
+        def record(x, layout, bias):
+            captured.append(layout)
+            return real_run_layers(x, layout, bias)
+
+        with (
+            mock.patch.object(encoder, "_run_packed_layers", side_effect=record),
+            torch.no_grad(),
+        ):
+            _run_packed(encoder, data)
+        layout = captured[0]
+        expected_nodes = torch.tensor(self._NODE_GRID)
+        self.assertEqual(layout.cu_seqlens.tolist(), [0, 4, 7, 8])
+        self.assertEqual(
+            layout.node_index.tolist(), expected_nodes[expected_nodes >= 0].tolist()
+        )
+        self.assertEqual(layout.position.tolist(), [0, 1, 2, 3, 0, 1, 2, 0])
+        torch.testing.assert_close(
+            layout.token_attrs["ppr_weight"].flatten(),
+            torch.tensor(self._WEIGHT_GRID)[expected_nodes >= 0],
+            rtol=0,
+            atol=1e-6,
+        )
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
