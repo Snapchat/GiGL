@@ -107,6 +107,11 @@ class FusedFeatureStore:
                 store.lazy_init_with_ipc_handle()
 
     @property
+    def has_features(self) -> bool:
+        """Whether the store has a raw or packed feature store, rather than labels alone."""
+        return self._raw is not None or self._packed is not None
+
+    @property
     def _label_row_bytes(self) -> int:
         if self._labels is None:
             return 0

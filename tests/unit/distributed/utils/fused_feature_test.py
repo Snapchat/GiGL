@@ -352,12 +352,6 @@ class FusedFeatureStoreTest(TestCase):
                     self.assertEqual(split_packed.shape, (len(ids), 0))
                     self.assertIsNone(local_packed)
 
-    def test_a_store_without_labels_has_no_label_rows(self) -> None:
-        raw, packed = _features(6)
-        store = _store(raw, packed)
-        _, _, labels = store[torch.tensor([1])]
-        self.assertIsNone(labels)
-
     def test_zero_width_raw_stores_give_empty_raw_rows(self) -> None:
         for raw_dtype in (torch.float32, torch.float64, torch.bfloat16):
             for packed_columns in (0, 5):

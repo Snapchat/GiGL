@@ -411,10 +411,15 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if self.dist_node_feature is not None:
                 for ntype, nodes in output.node.items():
                     if ntype in self.dist_node_feature.local_feature:
-                        # Only the seed node type has labels.
+                        # Batches carry labels for the seed node type only. A fused row always includes the type's
+                        # label bytes, so a non-seed type with labels but no features is not requested at all.
                         labels_key = None
                         if ntype == input_type:
                             labels_key = f"{as_str(ntype)}.nlabels"
+                        elif not self.dist_node_feature.local_feature[
+                            ntype
+                        ].has_features:
+                            continue
                         request_features(
                             self.dist_node_feature,
                             nodes,

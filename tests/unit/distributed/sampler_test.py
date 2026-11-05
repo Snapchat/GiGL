@@ -1,7 +1,17 @@
+import asyncio
 from collections.abc import Mapping
+from types import SimpleNamespace
+from typing import Optional
+from unittest.mock import Mock, patch
 
 import torch
-from graphlearn_torch.sampler import NodeSamplerInput
+from graphlearn_torch.data import Feature
+from graphlearn_torch.distributed.rpc import RpcDataPartitionRouter
+from graphlearn_torch.sampler import (
+    HeteroSamplerOutput,
+    NodeSamplerInput,
+    SamplerOutput,
+)
 
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
@@ -12,6 +22,10 @@ from gigl.distributed.sampler import (
     NEGATIVE_LABEL_METADATA_KEY,
     POSITIVE_LABEL_METADATA_KEY,
     ABLPNodeSamplerInput,
+)
+from gigl.distributed.utils.fused_feature import (
+    FusedDistFeature,
+    build_fused_dist_feature,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from tests.test_assets.test_case import TestCase
@@ -266,3 +280,119 @@ class TestBaseGiGLSamplerPreparation(TestCase):
         self.assertEqual(set(result.nodes_to_sample.keys()), {_USER})
         self.assert_tensor_equality(result.nodes_to_sample[_USER], torch.tensor([1, 2]))  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
         self.assertEqual(result.metadata, {})
+
+
+class _CountingFusedDistFeature(FusedDistFeature):
+    """Records the node types a batch requests."""
+
+    requested_types: list[Optional[str]]
+
+    def async_get(self, ids, input_type=None):  # type: ignore[override]
+        self.requested_types.append(input_type)
+        return super().async_get(ids, input_type)
+
+
+def _fused_node_lookup(
+    features: dict[str, torch.Tensor], labels: dict[str, torch.Tensor]
+) -> FusedDistFeature:
+    """A single-partition fused lookup over the given per-type features and labels."""
+    owner = torch.zeros(4, dtype=torch.long)
+
+    def store(values: torch.Tensor, dtype: Optional[torch.dtype]) -> Feature:
+        return Feature(values, id2index=torch.arange(4), with_gpu=False, dtype=dtype)
+
+    with patch("gigl.distributed.utils.fused_feature.rpc_register"):
+        lookup = build_fused_dist_feature(
+            1,
+            0,
+            {key: store(value, None) for key, value in features.items()},
+            None,
+            {key: owner for key in features.keys() | labels.keys()},
+            Mock(spec=RpcDataPartitionRouter),
+            labels={key: store(value, torch.int64) for key, value in labels.items()},
+        )
+    assert lookup is not None
+    lookup.__class__ = _CountingFusedDistFeature
+    lookup.requested_types = []
+    return lookup
+
+
+class TestCollateFnNodeLabels(TestCase):
+    def _collate(
+        self,
+        lookup: FusedDistFeature,
+        output: "SamplerOutput | HeteroSamplerOutput",
+        is_hetero: bool,
+    ) -> dict[str, torch.Tensor]:
+        sampler = _build_sampler_stub()
+        sampler.dist_graph = SimpleNamespace(data_cls="hetero" if is_hetero else "homo")
+        sampler.with_edge = False
+        sampler.edge_types = []
+        sampler.dist_node_feature = lookup
+        sampler.dist_edge_feature = None
+        return asyncio.run(sampler._collate_fn(output))
+
+    def test_labels_are_kept_for_the_seed_type_only(self) -> None:
+        # "item" has features and labels, "tag" has labels only; the seeds are "user".
+        lookup = _fused_node_lookup(
+            features={"user": torch.rand(4, 2), "item": torch.rand(4, 2)},
+            labels={
+                "user": torch.tensor([[1], [2], [3], [4]]),
+                "item": torch.tensor([[5], [6], [7], [8]]),
+                "tag": torch.tensor([[9], [9], [9], [9]]),
+            },
+        )
+        nodes = torch.tensor([2, 0])
+        output = HeteroSamplerOutput(
+            node={"user": nodes, "item": nodes, "tag": nodes},
+            row={},
+            col={},
+            edge=None,
+            input_type="user",
+        )
+
+        result = self._collate(lookup, output, is_hetero=True)
+
+        self.assertEqual(result["user.nlabels"].tolist(), [3, 1])
+        self.assertEqual(result["user.nfeats"].shape, (2, 2))
+        self.assertEqual(result["item.nfeats"].shape, (2, 2))
+        self.assertNotIn("item.nlabels", result)
+        self.assertNotIn("tag.nlabels", result)
+        self.assertNotIn("tag.nfeats", result)
+        self.assertCountEqual(lookup.requested_types, ["user", "item"])
+
+    def test_a_label_only_seed_type_is_requested(self) -> None:
+        lookup = _fused_node_lookup(
+            features={}, labels={"user": torch.tensor([[1, 5], [2, 6], [3, 7], [4, 8]])}
+        )
+        output = HeteroSamplerOutput(
+            node={"user": torch.tensor([3, 1])},
+            row={},
+            col={},
+            edge=None,
+            input_type="user",
+        )
+
+        result = self._collate(lookup, output, is_hetero=True)
+
+        self.assertEqual(result["user.nlabels"].tolist(), [[4, 8], [2, 6]])
+        self.assertNotIn("user.nfeats", result)
+
+    def test_homogeneous_labels_are_squeezed_to_one_dimension(self) -> None:
+        lookup = _fused_node_lookup(
+            features={}, labels={"user": torch.tensor([[1], [2], [3], [4]])}
+        )
+        # A homogeneous store is keyed by a single FusedFeatureStore rather than by type.
+        lookup.local_feature = lookup.local_feature["user"]
+        lookup.feature_pb = lookup.feature_pb["user"]
+        lookup.data_cls = "homo"
+        output = SamplerOutput(
+            node=torch.tensor([3, 1]),
+            row=torch.tensor([0]),
+            col=torch.tensor([1]),
+            edge=None,
+        )
+
+        result = self._collate(lookup, output, is_hetero=False)
+
+        self.assertEqual(result["nlabels"].tolist(), [4, 2])
