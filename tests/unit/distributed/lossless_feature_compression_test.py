@@ -1,4 +1,6 @@
+import os
 from typing import Optional, cast
+from unittest import mock
 
 import numpy as np
 import torch
@@ -15,7 +17,11 @@ from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_te
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.utils.lossless_compression import compress_lossless_columns
+from gigl.distributed.utils.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+    FeatureCompression,
+    compress_lossless_columns,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
@@ -541,24 +547,32 @@ class LosslessCompressionLoaderTest(TestCase):
 class BuildDatasetLosslessCompressionTest(TestCase):
     """``build_dataset`` infers the kind of every node feature column from the real partitioned data on every rank."""
 
-    def _build(self, info, **kwargs) -> DistDataset:
-        return run_distributed_dataset(
-            rank=0,
-            world_size=1,
-            mocked_dataset_info=info,
-            _port=gigl.distributed.utils.get_free_port(),
-            **kwargs,
-        )
+    def _build(
+        self,
+        info,
+        feature_compression: FeatureCompression,
+        weight_edge_feat_name: Optional[dict[EdgeType, str]] = None,
+    ) -> DistDataset:
+        with mock.patch.dict(
+            os.environ, {FEATURE_COMPRESSION_ENV: feature_compression.value}
+        ):
+            return run_distributed_dataset(
+                rank=0,
+                world_size=1,
+                mocked_dataset_info=info,
+                _port=gigl.distributed.utils.get_free_port(),
+                weight_edge_feat_name=weight_edge_feat_name,
+            )
 
     def test_homogeneous_binary_node_features_are_stored_as_bits_and_decode_exactly(
         self,
     ) -> None:
         info = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
-        reference = self._build(info)
+        reference = self._build(info, feature_compression=FeatureCompression.OFF)
         assert isinstance(reference.node_feature_info, FeatureInfo)
         dim = reference.node_feature_info.dim
 
-        dataset = self._build(info, compress_node_features=True)
+        dataset = self._build(info, feature_compression=FeatureCompression.AUTO)
 
         metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)
@@ -581,10 +595,10 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        reference = self._build(info)
+        reference = self._build(info, feature_compression=FeatureCompression.OFF)
         # author features are 0/1 (334 columns) and paper features are small counts (4231 columns);
         # term features (50 columns) are real valued, so they stay float32.
-        dataset = self._build(info, compress_node_features=True)
+        dataset = self._build(info, feature_compression=FeatureCompression.AUTO)
 
         node_metadata = cast(
             dict[NodeType, FeatureQuantizationMetadata],
@@ -616,9 +630,9 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        reference = self._build(info)
+        reference = self._build(info, FeatureCompression.OFF)
 
-        dataset = self._build(info, compress_edge_features=True)
+        dataset = self._build(info, FeatureCompression.AUTO)
 
         edge_metadata = cast(
             dict[EdgeType, FeatureQuantizationMetadata],
@@ -650,10 +664,12 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         # Feature f0 of author-to-paper edges is the sampling weight; f1..f4 are small counts.
         weights = {_AUTHOR_TO_PAPER: "f0"}
-        reference = self._build(info, weight_edge_feat_name=weights)
+        reference = self._build(
+            info, FeatureCompression.OFF, weight_edge_feat_name=weights
+        )
 
         dataset = self._build(
-            info, weight_edge_feat_name=weights, compress_edge_features=True
+            info, FeatureCompression.AUTO, weight_edge_feat_name=weights
         )
 
         edge_metadata = cast(

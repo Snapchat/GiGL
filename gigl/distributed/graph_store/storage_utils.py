@@ -19,7 +19,6 @@ import torch
 
 from gigl.common import Uri
 from gigl.common.logger import Logger
-from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -63,11 +62,9 @@ def build_storage_dataset(
     all storage nodes before calling this function so that the dataset can
     be partitioned correctly.
 
-    Node and edge features are losslessly compressed (see ``compress_node_features`` and ``compress_edge_features`` of
-    :func:`~gigl.distributed.dataset_factory.build_dataset`) unless the task config's ``trainerArgs`` or
-    ``inferencerArgs`` sets the matching flag to ``"False"``. A storage node serves both training and inference, so one
-    explicit opt-out in either disables compression of that entity, and the flags default to on. Clients pick up the
-    compressed layout from the quantization metadata the storage server serves, so compute nodes need no configuration.
+    Node and edge features are losslessly compressed unless ``GIGL_FEATURE_COMPRESSION`` is ``off`` (see
+    :func:`~gigl.distributed.dataset_factory.build_dataset`). Clients pick up the compressed layout from the
+    quantization metadata the storage server serves, so compute nodes need no configuration.
 
     Args:
         task_config_uri: URI pointing to a frozen ``GbmlConfig`` protobuf.
@@ -92,16 +89,6 @@ def build_storage_dataset(
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )
-    compress_node_features = True
-    compress_edge_features = True
-    for args in (
-        gbml_config_pb_wrapper.trainer_config.trainer_args,
-        gbml_config_pb_wrapper.inferencer_config.inferencer_args,
-    ):
-        if not str_to_bool(args.get("compress_node_features", "True")):
-            compress_node_features = False
-        if not str_to_bool(args.get("compress_edge_features", "True")):
-            compress_edge_features = False
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
@@ -115,8 +102,6 @@ def build_storage_dataset(
         partitioner_class=DistRangePartitioner,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
-        compress_node_features=compress_node_features,
-        compress_edge_features=compress_edge_features,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
     return dataset

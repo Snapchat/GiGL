@@ -1,21 +1,18 @@
-import tempfile
+import os
 from collections import abc
-from typing import Optional
+from unittest import mock
 
 import torch
 from absl.testing import absltest
 from parameterized import param, parameterized
 
-from gigl.common import LocalUri, Uri
-from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
-from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
+from gigl.distributed.utils.lossless_compression import FEATURE_COMPRESSION_ENV
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureQuantizationMetadata
-from snapchat.research.gbml import gbml_config_pb2
 from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
 
@@ -70,25 +67,25 @@ class TestDatasetFactory(TestCase):
                 dataset.val_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
             )
 
-    @parameterized.expand(
-        [
-            param("training", is_inference=False),
-            param("inference", is_inference=True),
-        ]
-    )
-    def test_node_features_are_compressed_by_default_and_opt_out_keeps_float32(
-        self, _, is_inference: bool
+    def test_node_and_edge_features_are_compressed_by_default_and_off_keeps_float32(
+        self,
     ) -> None:
-        compressed = build_dataset_from_task_config_uri(
-            self._task_config_uri_with_compress_arg(is_inference, None),
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
-        opted_out = build_dataset_from_task_config_uri(
-            self._task_config_uri_with_compress_arg(is_inference, "False"),
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
+        task_config_uri = get_mocked_dataset_artifact_metadata()[
+            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        ].frozen_gbml_config_uri
+        with mock.patch.dict(os.environ):
+            os.environ.pop(FEATURE_COMPRESSION_ENV, None)
+            compressed = build_dataset_from_task_config_uri(
+                task_config_uri,
+                is_inference=False,
+                _tfrecord_uri_pattern=".*data.tfrecord$",
+            )
+        with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: "OFF"}):
+            uncompressed = build_dataset_from_task_config_uri(
+                task_config_uri,
+                is_inference=False,
+                _tfrecord_uri_pattern=".*data.tfrecord$",
+            )
 
         # Cora's features are all 0/1, so every column is inferred as a lossless bit column.
         metadata = compressed.node_quantization_metadata
@@ -100,66 +97,19 @@ class TestDatasetFactory(TestCase):
             metadata.lossless_column_kinds, ("bit",) * metadata.feature_dim
         )
         self.assertIsNone(compressed.node_features)
-        self.assertIsNone(opted_out.node_quantization_metadata)
-        self.assertIsNotNone(opted_out.node_features)
+        self.assertIsNone(uncompressed.node_quantization_metadata)
+        self.assertIsNotNone(uncompressed.node_features)
 
-    @parameterized.expand(
-        [
-            param("training", is_inference=False),
-            param("inference", is_inference=True),
-        ]
-    )
-    def test_edge_features_are_compressed_by_default_and_opt_out_keeps_float32(
-        self, _, is_inference: bool
-    ) -> None:
-        compressed = build_dataset_from_task_config_uri(
-            self._task_config_uri_with_compress_arg(is_inference, None),
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
-        opted_out = build_dataset_from_task_config_uri(
-            self._task_config_uri_with_compress_arg(
-                is_inference, "False", arg_name="compress_edge_features"
-            ),
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
-
-        metadata = compressed.edge_quantization_metadata
-        assert isinstance(metadata, FeatureQuantizationMetadata)
-        self.assertEqual(metadata.feature_dim, 4)
+        edge_metadata = compressed.edge_quantization_metadata
+        assert isinstance(edge_metadata, FeatureQuantizationMetadata)
+        self.assertEqual(edge_metadata.feature_dim, 4)
         self.assertEqual(
-            metadata.lossless_feature_indices, tuple(range(metadata.feature_dim))
+            edge_metadata.lossless_feature_indices,
+            tuple(range(edge_metadata.feature_dim)),
         )
         self.assertIsNone(compressed.edge_features)
-        self.assertIsNone(opted_out.edge_quantization_metadata)
-        self.assertIsNotNone(opted_out.edge_features)
-        # Opting out of edge compression leaves node compression on.
-        self.assertIsNotNone(opted_out.node_quantization_metadata)
-
-    def _task_config_uri_with_compress_arg(
-        self,
-        is_inference: bool,
-        compress_value: Optional[str],
-        arg_name: str = "compress_node_features",
-    ) -> Uri:
-        """Copies the Cora task config, setting ``arg_name`` in the args the run reads (unset if ``None``)."""
-        tmp_dir = self.enterContext(tempfile.TemporaryDirectory())
-        original = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-            get_mocked_dataset_artifact_metadata()[
-                CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-            ].frozen_gbml_config_uri
-        )
-        config = gbml_config_pb2.GbmlConfig()
-        config.CopyFrom(original.gbml_config_pb)
-        if compress_value is not None:
-            if is_inference:
-                config.inferencer_config.inferencer_args[arg_name] = compress_value
-            else:
-                config.trainer_config.trainer_args[arg_name] = compress_value
-        config_uri = LocalUri(f"{tmp_dir}/frozen_gbml_config.yaml")
-        ProtoUtils().write_proto_to_yaml(config, config_uri)
-        return config_uri
+        self.assertIsNone(uncompressed.edge_quantization_metadata)
+        self.assertIsNotNone(uncompressed.edge_features)
 
 
 if __name__ == "__main__":

@@ -39,7 +39,11 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
-from gigl.distributed.utils.lossless_compression import compress_loaded_features
+from gigl.distributed.utils.lossless_compression import (
+    FeatureCompression,
+    compress_loaded_features,
+    resolve_feature_compression,
+)
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -74,8 +78,6 @@ def _load_and_build_partitioned_dataset(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    compress_node_features: bool = False,
-    compress_edge_features: bool = False,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -103,7 +105,6 @@ def _load_and_build_partitioned_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        compress_node_features, compress_edge_features: See ``build_dataset``.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -135,7 +136,8 @@ def _load_and_build_partitioned_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         weight_edge_feat_name=weight_edge_feat_name,
     )
-    if compress_node_features:
+    compression_mode = resolve_feature_compression()
+    if compression_mode == FeatureCompression.AUTO:
         (
             loaded_graph_tensors.node_features,
             loaded_graph_tensors.node_packed_features,
@@ -149,7 +151,7 @@ def _load_and_build_partitioned_dataset(
             ),
             default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
         )
-    if compress_edge_features:
+    if compression_mode == FeatureCompression.AUTO:
         (
             loaded_graph_tensors.edge_features,
             loaded_graph_tensors.edge_packed_features,
@@ -311,8 +313,6 @@ def _build_dataset_process(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    compress_node_features: bool = False,
-    compress_edge_features: bool = False,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -396,8 +396,6 @@ def _build_dataset_process(
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
         weight_edge_feat_name=weight_edge_feat_name,
         retain_edge_ids=retain_edge_ids,
-        compress_node_features=compress_node_features,
-        compress_edge_features=compress_edge_features,
     )
 
     output_dict["dataset"] = output_dataset
@@ -425,8 +423,6 @@ def build_dataset(
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    compress_node_features: bool = False,
-    compress_edge_features: bool = False,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -470,14 +466,14 @@ def build_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        compress_node_features (bool): Losslessly compress node feature columns. Every column that is integral on all
-            ranks (for example one-hot columns and categorical ids) is stored as the narrowest integer kind that holds
-            its values, and other columns stay float32. The kinds are inferred from the data, columns that
-            preprocessing already quantized are left alone, and batches are unchanged because loaders decode back to
-            float32. Disabled by default here; ``build_dataset_from_task_config_uri`` enables it by default.
-            See :mod:`gigl.common.utils.feature_quantization.lossless` for the storage kinds and an example.
-        compress_edge_features (bool): The same for the main edge features. The sampling-weight feature is not
-            included: it is removed from the edge features before they are compressed.
+
+    Node and edge feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
+    ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
+    one-hot columns and categorical ids) is stored as the narrowest integer kind that holds its values, and other
+    columns stay float32. The kinds are inferred from the data, columns that preprocessing already quantized are left
+    alone, and batches are unchanged because loaders decode back to float32. Any other value raises ``ValueError``.
+    The sampling-weight edge feature is not compressed: it is removed from the edge features before they are.
+    See :mod:`gigl.common.utils.feature_quantization.lossless` for the storage kinds and an example.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -574,8 +570,6 @@ def build_dataset(
             _ssl_positive_label_percentage,
             weight_edge_feat_name,
             retain_edge_ids,
-            compress_node_features,
-            compress_edge_features,
         ),
     )
 
@@ -622,10 +616,6 @@ def build_dataset_from_task_config_uri(
       Set to False only when sampling with ``with_edge=False``.
       Set this to False for graphs without edge features. GiGL loaders already sample them
       with ``with_edge=False``. The default is True only for backwards compatibility.
-    - compress_node_features (bool): Losslessly compress node feature columns that hold only whole numbers (one-hot
-      columns, categorical ids), inferred from the data (see ``compress_node_features`` of ``build_dataset``),
-      defaulting to True. Set to "False" to keep every column as float32.
-    - compress_edge_features (bool): The same for main edge features, defaulting to True.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -742,15 +732,6 @@ def build_dataset_from_task_config_uri(
         tfrecord_uri_pattern=_tfrecord_uri_pattern,
     )
 
-    compress_node_features = str_to_bool(args.get("compress_node_features", "True"))
-    logger.info(
-        f"Inferred 'compress_node_features' argument as : {compress_node_features} from argument path {args_path}. To override, please provide 'compress_node_features' flag."
-    )
-    compress_edge_features = str_to_bool(args.get("compress_edge_features", "True"))
-    logger.info(
-        f"Inferred 'compress_edge_features' argument as : {compress_edge_features} from argument path {args_path}. To override, please provide 'compress_edge_features' flag."
-    )
-
     # Need to do this "backwards" so the parent class can be defined first.
     # Otherwise, the type checker complains that:
     # "expression has type "type[DistPartitioner]", variable has type "type[DistRangePartitioner]"
@@ -768,8 +749,6 @@ def build_dataset_from_task_config_uri(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,
-        compress_node_features=compress_node_features,
-        compress_edge_features=compress_edge_features,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 

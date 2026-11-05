@@ -1,4 +1,6 @@
+import os
 from typing import Optional
+from unittest import mock
 
 import numpy as np
 import torch
@@ -17,8 +19,11 @@ from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+    FeatureCompression,
     compress_loaded_features,
     compress_lossless_columns,
+    resolve_feature_compression,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
@@ -309,6 +314,26 @@ class FeatureQuantizationMetadataLayoutTest(TestCase):
         )
         self.assertEqual(metadata.packed_feature_dim, 1)
         self.assertEqual(metadata.raw_feature_indices, (1, 4))
+
+
+class ResolveFeatureCompressionTest(TestCase):
+    def test_environment_variable_selects_the_mode(self) -> None:
+        for raw_value, expected in (
+            ("", FeatureCompression.AUTO),
+            ("auto", FeatureCompression.AUTO),
+            ("OFF", FeatureCompression.OFF),
+            ("Off", FeatureCompression.OFF),
+        ):
+            with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: raw_value}):
+                self.assertEqual(resolve_feature_compression(), expected)
+        with mock.patch.dict(os.environ):
+            os.environ.pop(FEATURE_COMPRESSION_ENV, None)
+            self.assertEqual(resolve_feature_compression(), FeatureCompression.AUTO)
+
+    def test_unknown_value_raises(self) -> None:
+        with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: "lossy"}):
+            with self.assertRaises(ValueError):
+                resolve_feature_compression()
 
 
 if __name__ == "__main__":
