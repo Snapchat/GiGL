@@ -241,6 +241,14 @@ class FeedForwardNetwork(nn.Module):
         return x
 
 
+class RelationSegment(NamedTuple):
+    """A relation id with the ``[start, end)`` range of its edges."""
+
+    relation: int
+    start: int
+    end: int
+
+
 class PackedRelationEdges(NamedTuple):
     """Relation edges between packed tokens, grouped by relation.
 
@@ -258,13 +266,13 @@ class PackedRelationEdges(NamedTuple):
     target: Tensor
     source: Tensor
     relation: Tensor
-    segments: tuple[tuple[int, int, int], ...]
+    segments: tuple[RelationSegment, ...]
     all_filtered: bool = False
 
 
 def _get_relation_segments_from_bounds(
     bounds: Sequence[int],
-) -> tuple[tuple[int, int, int], ...]:
+) -> tuple[RelationSegment, ...]:
     """Returns a ``(relation, start, end)`` segment for every relation.
 
     ``bounds[r]`` to ``bounds[r + 1]`` is relation ``r``'s edge range. A relation
@@ -274,23 +282,23 @@ def _get_relation_segments_from_bounds(
     if bounds[-1] == 0:
         return ()
     return tuple(
-        (relation, bounds[relation], bounds[relation + 1])
+        RelationSegment(relation, bounds[relation], bounds[relation + 1])
         for relation in range(len(bounds) - 1)
     )
 
 
 def _get_relation_segments(
-    relation_indices: Tensor,
-) -> tuple[tuple[int, int, int], ...]:
+    relation_indices: Int64[Tensor, "num_edges"],
+) -> tuple[RelationSegment, ...]:
     """Returns the ``(relation, start, end)`` runs of equal consecutive relations.
 
     Costs one host read.
     """
     relations, counts = torch.unique_consecutive(relation_indices, return_counts=True)
-    segments: list[tuple[int, int, int]] = []
+    segments: list[RelationSegment] = []
     start = 0
     for relation, count in torch.stack([relations, counts]).t().tolist():
-        segments.append((relation, start, start + count))
+        segments.append(RelationSegment(relation, start, start + count))
         start += count
     return tuple(segments)
 
@@ -1070,7 +1078,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         edge_queries: Optional[Tensor],
         edge_keys: Optional[Tensor],
         relation_indices: Tensor,
-        relation_segments: Sequence[tuple[int, int, int]],
+        relation_segments: Sequence[RelationSegment],
         target_rows: Tensor,
         num_target_rows: int,
     ) -> Tensor:
