@@ -39,10 +39,11 @@ dimension, logical feature positions, and the statistics needed to invert the co
 
 ## Lossless Columns
 
-The packed sidecar also carries lossless columns: categorical id columns stored as narrow integers (`int8`, `uint8`,
-`uint8_bias1` for ids in `[-1, 254]`, `int16`, `int32`; `bfloat16` is available for real-valued columns but lossy) by
-`lossless.FeatureCodec`. A row of the sidecar holds the quantized region first (padded to four bytes) and then the
-lossless region, and `FeatureQuantizationMetadata.lossless_feature_indices` / `lossless_column_kinds` describe it. The
+The packed sidecar also carries lossless columns: categorical id columns stored as narrow integers by
+`lossless.FeatureCodec`. The module docstring of `lossless.py` lists the storage kinds and their value ranges.
+
+A row of the sidecar holds the quantized region first (padded to four bytes) and then the lossless region.
+`FeatureQuantizationMetadata.lossless_feature_indices` and `lossless_column_kinds` describe the lossless region. The
 loader decodes both regions with `dequantize_torch_tensor` and scatters them with the raw columns, so the rest of the
 pipeline treats the two kinds of packed column uniformly.
 
