@@ -284,17 +284,23 @@ def _anchor_relation_edges(
     ``all_filtered`` is set when ``edges`` has edges but none reach an anchor.
     """
     into_anchor = layout.position[edges.target] == 0
-    relations = edges.relation[into_anchor]
     num_relations = 0
     if edges.segments:
         num_relations = edges.segments[-1][0] + 1
+    # Edges that do not reach an anchor sort after every relation. One sort and
+    # one host read give the order, every relation's bounds and the edge count.
+    sort_keys = torch.where(
+        into_anchor, edges.relation, torch.full_like(edges.relation, num_relations)
+    )
+    sorted_keys, order = torch.sort(sort_keys, stable=True)
     bounds = torch.searchsorted(
-        relations, torch.arange(num_relations + 1, device=relations.device)
+        sorted_keys, torch.arange(num_relations + 1, device=sorted_keys.device)
     ).tolist()
+    anchor_order = order[: bounds[-1]]
     return PackedRelationEdges(
-        target=layout.sequence_id[edges.target[into_anchor]],
-        source=edges.source[into_anchor],
-        relation=relations,
+        target=layout.sequence_id[edges.target[anchor_order]],
+        source=edges.source[anchor_order],
+        relation=edges.relation[anchor_order],
         segments=_get_relation_segments_from_bounds(bounds),
         all_filtered=edges.target.numel() > 0 and bounds[-1] == 0,
     )
