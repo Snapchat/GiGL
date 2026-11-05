@@ -72,10 +72,10 @@ jobs:
       head_ref: ${{ steps.resolve.outputs.head_ref }}
       is_cross_repository: ${{ steps.resolve.outputs.is_cross_repository }}
     steps:
-    # Gate the commenter here too (not only inside run-command-on-pr) so a non-collaborator
+    # Gate the commenter here too (not only inside run-command-on-pr) so a non-maintainer
     # cannot trigger the SHA-freeze comment or a pending environment-approval notification.
-    - name: Verify commenter is a collaborator
-      uses: snapchat/gigl/.github/actions/assert-is-collaborator@main
+    - name: Verify commenter is a maintainer
+      uses: snapchat/gigl/.github/actions/assert-is-maintainer@main
       with:
         username: ${{ github.event.comment.user.login }}
         initiating-pr-number: ${{ github.event.issue.number }}
@@ -90,35 +90,9 @@ jobs:
     # approval (fail open). This makes the gate mechanically verified rather than setup-dependent.
     - name: Verify approval environment is protected (fork PRs only)
       if: ${{ steps.resolve.outputs.is_cross_repository == 'true' }}
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      uses: snapchat/gigl/.github/actions/assert-environment-protected@main
       with:
-        script: |
-          const environment_name = "pr-command-execution";
-          let data;
-          try {
-            ({ data } = await github.rest.repos.getEnvironment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              environment_name,
-            }));
-          } catch (error) {
-            throw new Error(
-              `Cannot verify the '${environment_name}' environment (${error.status || "error"}: ${error.message}). ` +
-              `Refusing to run fork-PR commands.`
-            );
-          }
-          const rules = data.protection_rules || [];
-          const hasRequiredReviewers = rules.some(
-            (rule) => rule.type === "required_reviewers" && (rule.reviewers || []).length > 0
-          );
-          if (!hasRequiredReviewers) {
-            throw new Error(
-              `The '${environment_name}' environment has no required-reviewers protection rule. ` +
-              `Refusing to run fork-PR commands (the approval gate would fail open). ` +
-              `Configure required reviewers under Settings -> Environments.`
-            );
-          }
-          console.log(`Verified '${environment_name}' has a required-reviewers protection rule.`);
+        environment-name: pr-command-execution
     - name: Post frozen SHA
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:

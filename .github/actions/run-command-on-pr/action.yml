@@ -57,8 +57,8 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: snapchat/gigl/.github/actions/assert-is-collaborator@main
-      id: assert_collaborator_ran_workflow
+    - uses: snapchat/gigl/.github/actions/assert-is-maintainer@main
+      id: assert_maintainer_ran_workflow
       with:
         username: ${{ github.triggering_actor }}
         initiating-pr-number: ${{ github.event.issue.number }}
@@ -121,8 +121,8 @@ runs:
 
     # Failure handling step
     - name: Comment workflow failed
-      # If assert_collaborator_ran_workflow step failed we can skip commenting, as that is handled already in the assertion step
-      if: ${{ inputs.should_leave_progress_comments == 'true' && failure() && steps.assert_collaborator_ran_workflow.outcome != 'failure' }}
+      # If assert_maintainer_ran_workflow step failed we can skip commenting, as that is handled already in the assertion step
+      if: ${{ inputs.should_leave_progress_comments == 'true' && failure() && steps.assert_maintainer_ran_workflow.outcome != 'failure' }}
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:
         pr_number: ${{ inputs.pr_number }}

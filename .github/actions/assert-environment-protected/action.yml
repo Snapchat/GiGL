@@ -1,0 +1,54 @@
+name: Assert Environment Is Protected
+description: |
+  Fails unless the named GitHub environment exists, has a required-reviewers protection rule,
+  and has "Prevent self-review" enabled.
+  GitHub auto-creates a referenced environment with no protection rules, so a job that relies on
+  an environment for human approval would otherwise run unapproved if the environment were
+  deleted or misconfigured. Run this in a job that the gated jobs `need`.
+  The calling job must grant its token `actions: read`, which the environments API requires.
+inputs:
+  environment-name:
+    description: The environment that must have a required-reviewers rule
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Verify environment has required reviewers
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      env:
+        ENVIRONMENT_NAME: ${{ inputs.environment-name }}
+      with:
+        script: |
+          const environment_name = process.env.ENVIRONMENT_NAME;
+          let data;
+          try {
+            ({ data } = await github.rest.repos.getEnvironment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment_name,
+            }));
+          } catch (error) {
+            throw new Error(
+              `Cannot verify the '${environment_name}' environment (${error.status || "error"}: ${error.message}). ` +
+              `Refusing to continue.`
+            );
+          }
+          const rules = data.protection_rules || [];
+          const reviewerRule = rules.find(
+            (rule) => rule.type === "required_reviewers" && (rule.reviewers || []).length > 0
+          );
+          if (!reviewerRule) {
+            throw new Error(
+              `The '${environment_name}' environment has no required-reviewers protection rule. ` +
+              `Refusing to continue (the approval gate would fail open). ` +
+              `Configure required reviewers under Settings -> Environments.`
+            );
+          }
+          // Without this setting, the person who triggered the run can approve it themselves.
+          if (reviewerRule.prevent_self_review !== true) {
+            throw new Error(
+              `The '${environment_name}' environment allows self-review. ` +
+              `Refusing to continue. Enable "Prevent self-review" under Settings -> Environments.`
+            );
+          }
+          console.log(`Verified '${environment_name}' requires a reviewer other than the triggering user.`);

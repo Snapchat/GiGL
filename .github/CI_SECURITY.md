@@ -15,7 +15,7 @@ credentials.
    SHA posted by `prepare`. For same-repo PRs the environment resolves to an empty string (no approval gate): only
    collaborators can push branches to this repo, so the author is already trusted and there is no untrusted party to
    race the checkout. This keeps the normal `/all_test` flow friction-free for maintainers while gating only untrusted
-   fork code. The collaborator check and the SHA pin still apply to both paths.
+   fork code. The maintainer check and the SHA pin still apply to both paths.
 3. **Pinned, verified checkout.** `actions/checkout-pr-branch` takes a required `sha` input, checks out the PR head, and
    **fails closed** if `git rev-parse HEAD` is not that SHA. A push that races the approval moves the tip and aborts the
    job before any PR code runs.
@@ -31,11 +31,14 @@ credentials.
    - Only the final push step sees `GITHUB_TOKEN`. It passes the token to git through an inline credential helper that
      reads it from the step's env, so the token is not in argv or persisted to `.git/config`.
    - Fork PRs skip writeback (see below).
-5. **Fail-closed authorization.** `actions/assert-is-collaborator` denies on any result other than an explicit 204.
+5. **Fail-closed authorization.** `actions/assert-is-maintainer` allows a command only when the commenter's repository
+   role is `maintain` or `admin`. Write-role collaborators, and any API error, are denied.
 
-The manually dispatched `build-base-docker-images.yml` workflow is `workflow_dispatch`-gated (maintainer-triggered) and
-takes a required **`commit_sha`** input: paste the exact commit you reviewed. All its jobs pin to it and abort if the PR
-head has moved.
+The manually dispatched `build-base-docker-images.yml` workflow takes a required **`commit_sha`** input: paste the exact
+commit you reviewed. All its jobs pin to it and abort if the PR head has moved. Its four build jobs run PR code with GCP
+credentials, so they always attach to the `pr-command-execution` environment, for same-repo and fork PRs alike. A
+reviewer must approve the run before any build starts. The first job fails closed if that environment has no
+required-reviewers rule.
 
 ## Required repository setup (one-time, done in Settings — not in YAML)
 
@@ -43,9 +46,13 @@ Create a GitHub **Environment** named **`pr-command-execution`** (Settings → E
 `https://github.com/<owner>/<repo>/settings/environments`):
 
 1. **New environment** → name `pr-command-execution`.
-2. Enable **Required reviewers** and add the maintainers/team allowed to approve fork-PR command runs.
-3. (Recommended) Confirm the Workload Identity Federation provider's attribute condition binds to this repository (and
-   ideally to this environment), and that the mapped service account has minimal roles.
+2. Enable **Required reviewers** and add the maintainers/team allowed to approve fork-PR command runs and base-image
+   builds.
+3. Enable **Prevent self-review**, so the person who triggered a run cannot approve it.
+4. Give everyone who should run `/all_test` and other commands the **Maintain** (or Admin) role. Write is not enough.
+5. (Recommended) Confirm the Workload Identity Federation binding for the PR/test service account allows only the
+   workflow files and refs that need it (see `job_workflow_ref` in the GitHub OIDC token), and that the account has
+   minimal roles.
 
 > **This is a hard precondition — the approval gate fails OPEN without it.** If a workflow references an environment
 > that does not exist, GitHub **auto-creates it with no protection rules**, so fork-PR command jobs would run
@@ -60,11 +67,13 @@ Create a GitHub **Environment** named **`pr-command-execution`** (Settings → E
 > exactly why the IssueOps TOCTOU exists). The two are complementary: keep the external-contributor setting for the
 > `pull_request`/CI path, and add this Environment for the comment-command path.
 
-**Mechanically enforced:** the `prepare` job runs a preflight (for fork PRs only) that calls
+**Mechanically enforced:** `actions/assert-environment-protected` calls
 `GET /repos/{owner}/{repo}/environments/pr-command-execution` and **fails closed** if the environment is missing or has
-no required-reviewers rule — so a removed/misconfigured environment blocks fork commands instead of silently failing
-open. The `prepare` job explicitly grants its workflow token `actions: read`, which is required to inspect the
-environment. If that API call ever fails, the preflight fails closed and the error explains why.
+no required-reviewers rule, or if that rule does not have **Prevent self-review** enabled — so a removed or
+misconfigured environment blocks the gated jobs instead of silently failing open. It runs in the `prepare` job of
+`on-pr-comment.yml` (fork PRs only) and in the first job of `build-base-docker-images.yml` (every run). Both jobs grant
+their workflow token `actions: read`, which is required to inspect the environment. If that API call ever fails, the
+preflight fails closed and the error explains why.
 
 ## Known limitation
 
