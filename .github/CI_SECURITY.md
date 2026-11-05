@@ -12,10 +12,10 @@ credentials.
    frozen SHA.
 2. **Human approval bound to the SHA — for fork PRs only.** For a cross-repository (fork) PR, the command jobs attach to
    the `pr-command-execution` GitHub Environment (see setup below) and a reviewer approves the run knowing the frozen
-   SHA posted by `prepare`. For same-repo PRs the environment resolves to an empty string (no approval gate): only
-   collaborators can push branches to this repo, so the author is already trusted and there is no untrusted party to
-   race the checkout. This keeps the normal `/all_test` flow friction-free for maintainers while gating only untrusted
-   fork code. The maintainer check and the SHA pin still apply to both paths.
+   SHA posted by `prepare`. For same-repo PRs the environment resolves to an empty string (no approval gate): the
+   maintainer who commented has reviewed the frozen SHA, only collaborators can push to the branch, and the SHA pin
+   aborts the run if anyone pushes after the comment. This keeps the normal `/all_test` flow friction-free for
+   maintainers while gating only untrusted fork code. The maintainer check and the SHA pin still apply to both paths.
 3. **Pinned, verified checkout.** `actions/checkout-pr-branch` takes a required `sha` input, checks out the PR head, and
    **fails closed** if `git rev-parse HEAD` is not that SHA. A push that races the approval moves the tip and aborts the
    job before any PR code runs.
@@ -38,7 +38,7 @@ The manually dispatched `build-base-docker-images.yml` workflow takes a required
 commit you reviewed. All its jobs pin to it and abort if the PR head has moved. Its four build jobs run PR code with GCP
 credentials, so they always attach to the `pr-command-execution` environment, for same-repo and fork PRs alike. A
 reviewer must approve the run before any build starts. The first job fails closed if that environment has no
-required-reviewers rule.
+required-reviewers rule or allows self-review.
 
 ## Required repository setup (one-time, done in Settings — not in YAML)
 
@@ -78,8 +78,9 @@ preflight fails closed and the error explains why.
 ## Known limitation
 
 For `issue_comment` events the Environment approval UI shows the base-branch commit, not the frozen fork-head SHA. The
-frozen SHA is surfaced in the `prepare` job's PR comment; reviewers must approve based on that comment. This is a
-process control, not a purely mechanical guarantee.
+frozen SHA is surfaced in the `prepare` job's PR comment; reviewers must approve based on that comment. The same applies
+to `build-base-docker-images.yml`: the approval UI shows the dispatched ref, so reviewers approve based on the
+`commit_sha` posted in the PR comment. This is a process control, not a purely mechanical guarantee.
 
 ## Writeback works only for same-repo PRs
 

@@ -55,8 +55,7 @@ jobs:
 
   build-cuda-base-image:
     needs: comment-workflow-started
-    # Runs PR code with GCP credentials, so it waits for environment approval. With "Prevent
-    # self-review" on, the approver must be someone other than the dispatcher.
+    # Runs PR code with GCP credentials, so it waits for a second maintainer's approval.
     environment: pr-command-execution
     runs-on: gigl-large-instances # x64 Ubuntu:latest w/ 8-cores, 32GB RAM, 300 GB SSD
     permissions:
@@ -92,8 +91,7 @@ jobs:
 
   build-cpu-base-image:
     needs: comment-workflow-started
-    # Runs PR code with GCP credentials, so it waits for environment approval. With "Prevent
-    # self-review" on, the approver must be someone other than the dispatcher.
+    # Runs PR code with GCP credentials, so it waits for a second maintainer's approval.
     environment: pr-command-execution
     runs-on: ubuntu-24.04
     permissions:
@@ -129,8 +127,7 @@ jobs:
 
   build-dataflow-base-image:
     needs: comment-workflow-started
-    # Runs PR code with GCP credentials, so it waits for environment approval. With "Prevent
-    # self-review" on, the approver must be someone other than the dispatcher.
+    # Runs PR code with GCP credentials, so it waits for a second maintainer's approval.
     environment: pr-command-execution
     runs-on: ubuntu-24.04
     permissions:
@@ -165,8 +162,7 @@ jobs:
 
   build-builder-image:
     needs: comment-workflow-started
-    # Runs PR code with GCP credentials, so it waits for environment approval. With "Prevent
-    # self-review" on, the approver must be someone other than the dispatcher.
+    # Runs PR code with GCP credentials, so it waits for a second maintainer's approval.
     environment: pr-command-execution
     runs-on: ubuntu-24.04
     permissions:
