@@ -5,7 +5,6 @@ process which initializes rpc + worker group, loads and builds a partitioned dat
 
 import time
 from collections.abc import Mapping
-from distutils.util import strtobool
 from typing import Literal, MutableMapping, Optional, Tuple, Type, Union
 
 import torch
@@ -29,6 +28,7 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
@@ -652,14 +652,14 @@ def build_dataset_from_task_config_uri(
         f"Provided edge direction from args must be one of `in` or `out`, got {sample_edge_direction}"
     )
 
-    should_use_range_partitioning = bool(
-        strtobool(args.get("should_use_range_partitioning", "True"))
+    should_use_range_partitioning = str_to_bool(
+        args.get("should_use_range_partitioning", "True")
     )
 
-    should_load_tensors_in_parallel = bool(
-        strtobool(args.get("should_load_tensors_in_parallel", "True"))
+    should_load_tensors_in_parallel = str_to_bool(
+        args.get("should_load_tensors_in_parallel", "True")
     )
-    retain_edge_ids = bool(strtobool(args.get("retain_edge_ids", "True")))
+    retain_edge_ids = str_to_bool(args.get("retain_edge_ids", "True"))
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
