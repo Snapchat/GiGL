@@ -133,17 +133,24 @@ def _materialized_encoder(data: HeteroData, kwargs: dict) -> GraphTransformerEnc
 
 
 def _three_relation_batch(
-    seed: int, num_edges: int = 80, num_relations: int = 3
+    seed: int,
+    num_edges: int = 80,
+    num_relations: int = 3,
+    has_self_loops: bool = True,
 ) -> HeteroData:
-    """A user graph with ``num_relations`` of three user-to-user edge types."""
+    """A user graph with ``num_relations`` of three user-to-user edge types.
+
+    With ``has_self_loops=False``, edges from a node to itself are dropped.
+    """
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
     data[_USER].x = torch.randn(60, 8, generator=generator)
     data[_USER].batch_size = 12
     for edge_type in _USER_EDGE_TYPES[:num_relations]:
-        data[edge_type.tuple_repr()].edge_index = torch.randint(
-            0, 60, (2, num_edges), generator=generator
-        )
+        edge_index = torch.randint(0, 60, (2, num_edges), generator=generator)
+        if not has_self_loops:
+            edge_index = edge_index[:, edge_index[0] != edge_index[1]]
+        data[edge_type.tuple_repr()].edge_index = edge_index
     return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
 
 
@@ -568,11 +575,16 @@ class PackedPathTest(TestCase):
                     anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
                 )
             )
-        # A config that always runs padded reads the batch's own hop values.
+
+    def test_hop_embedding_size_is_not_checked_for_ppr(self) -> None:
+        # PPR sequences take their hops from the batch, not from ``hop_distance``.
         encoder = GraphTransformerEncoder(
             **_encoder_kwargs(
-                pairwise_attention_bias_attr_names=["x"],
-                anchor_based_input_embedding_dict=nn.ModuleDict(too_small),
+                sequence_construction_method="ppr",
+                sampling_direction="out",
+                anchor_based_input_embedding_dict=nn.ModuleDict(
+                    {_HOP: nn.Embedding(2, 16)}
+                ),
             )
         )
         self.assertFalse(encoder._supports_packed_backend)
@@ -885,25 +897,41 @@ class PackedRelationMessageTest(TestCase):
 
     @parameterized.expand(
         [
-            param("no_edges", num_edges=0),
+            param("no_edges", num_edges=0, expects_all_filtered=False),
             # Every edge into an anchor is dropped: with "out" sampling and one hop
-            # the expanded endpoint of such an edge is a last-hop token.
-            param("no_edges_into_anchors", sampling_direction="out", hop_distance=1),
+            # the expanded endpoint of such an edge is a last-hop token. Anchor
+            # self-loops would survive the filter, so the batch has none.
+            param(
+                "no_edges_into_anchors",
+                has_self_loops=False,
+                expects_all_filtered=True,
+                sampling_direction="out",
+                hop_distance=1,
+            ),
         ]
     )
     def test_training_gradients_match_padded_path_when_edges_are_filtered(
-        self, _: str, num_edges: int = 80, **overrides: Any
+        self,
+        _: str,
+        expects_all_filtered: bool,
+        num_edges: int = 80,
+        has_self_loops: bool = True,
+        **overrides: Any,
     ) -> None:
-        data = _three_relation_batch(0, num_edges)
+        data = _three_relation_batch(0, num_edges, has_self_loops=has_self_loops)
         if overrides:
             data = AddHeteroHopDistanceEncoding(h_max=1, sampling_direction="out")(data)
         encoder = _relation_encoder(data, _relation_encoder_kwargs(**overrides)).train()
-        _assert_training_gradients_match(
-            self,
-            _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder),
-            _gradients(lambda: _run_packed(encoder, data), encoder),
-            atol=1e-5,
-        )
+        expected = _gradients(lambda: encoder(data, anchor_node_type=_USER), encoder)
+        with mock.patch.object(
+            GraphTransformerEncoderLayer,
+            "_zero_relation_parameter_dependency",
+            autospec=True,
+            side_effect=GraphTransformerEncoderLayer._zero_relation_parameter_dependency,
+        ) as zero_dependency:
+            actual = _gradients(lambda: _run_packed(encoder, data), encoder)
+        self.assertEqual(zero_dependency.called, expects_all_filtered)
+        _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
     @parameterized.expand(
         [
