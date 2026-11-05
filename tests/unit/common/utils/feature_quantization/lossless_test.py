@@ -248,6 +248,52 @@ class FeatureCodecTest(TestCase):
             FeatureCodec.from_stats(stats).column_dtypes, ("int32", "float32")
         )
 
+    @parameterized.expand(
+        [
+            ("float32", torch.float32),
+            ("float64", torch.float64),
+            ("float16", torch.float16),
+            ("bfloat16", torch.bfloat16),
+        ]
+    )
+    def test_stats_report_extremes_integrality_and_negative_zero(
+        self, _: str, dtype: torch.dtype
+    ) -> None:
+        # Columns: whole numbers, a -0.0 among zeros, a fraction, a NaN, and only +0.0.
+        nan = float("nan")
+        features = torch.tensor(
+            [
+                [-3.0, 0.0, 0.5, 1.0, 0.0],
+                [7.0, -0.0, 2.0, nan, 0.0],
+                [2.0, 0.0, -1.0, 4.0, 0.0],
+            ],
+            dtype=dtype,
+        )
+        stats = ColumnStats.from_features(features)
+        for column, (low, high) in {
+            0: (-3, 7),
+            1: (0, 0),
+            2: (-1, 2),
+            4: (0, 0),
+        }.items():
+            self.assertEqual(stats.minimum[column].item(), low)
+            self.assertEqual(stats.maximum[column].item(), high)
+        self.assertTrue(stats.minimum[3].isnan() and stats.maximum[3].isnan())
+        self.assertEqual(stats.integral.tolist(), [True, True, False, False, True])
+        self.assertEqual(
+            stats.has_negative_zero.tolist(), [False, True, False, False, False]
+        )
+
+    def test_stats_find_a_negative_zero_in_a_late_chunk_of_a_column_slice(
+        self,
+    ) -> None:
+        width = 64
+        rows = 3 * chunk_rows(width, 4) + 5
+        features = torch.ones(rows, width + 2)
+        features[rows - 1, 11] = -0.0
+        stats = ColumnStats.from_features(features[:, 1:-1])
+        self.assertEqual(stats.has_negative_zero.nonzero().flatten().tolist(), [10])
+
     def test_hand_written_spec_packs_without_any_schema(self) -> None:
         codec = FeatureCodec(("float32", "int8", "uint8", "int16", "uint8_bias1"))
         features = torch.tensor(

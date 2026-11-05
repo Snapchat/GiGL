@@ -109,6 +109,15 @@ _INTEGER_KINDS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
 _CHUNK_BYTES: Final[int] = 8 << 20
 
 
+# Signed integer type of the same width as each float type, to read a float's bit pattern.
+_SIGN_BIT_INTEGER_DTYPES: Final[dict[torch.dtype, torch.dtype]] = {
+    torch.float16: torch.int16,
+    torch.bfloat16: torch.int16,
+    torch.float32: torch.int32,
+    torch.float64: torch.int64,
+}
+
+
 def chunk_rows(num_columns: int, element_size: int) -> int:
     """Rows per chunk so that one chunk of the input is about ``_CHUNK_BYTES``."""
     return max(1, _CHUNK_BYTES // max(1, num_columns * element_size))
@@ -165,13 +174,20 @@ class ColumnStats:
         minimum, maximum = stats.minimum, stats.maximum
         integral, has_negative_zero = stats.integral, stats.has_negative_zero
         rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
+        # -0.0 is the one value whose bit pattern is only the sign bit, which as a signed integer is its minimum.
+        sign_bit_dtype = _SIGN_BIT_INTEGER_DTYPES.get(features.dtype)
         for start in range(0, features.shape[0], rows_per_chunk):
             chunk = features[start : start + rows_per_chunk]
-            chunk_min, chunk_max = torch.aminmax(chunk, dim=0)
-            minimum = torch.minimum(minimum, chunk_min.to(torch.float64))
-            maximum = torch.maximum(maximum, chunk_max.to(torch.float64))
+            # Separate amin and amax are several times faster than the fused aminmax.
+            minimum = torch.minimum(minimum, chunk.amin(dim=0).to(torch.float64))
+            maximum = torch.maximum(maximum, chunk.amax(dim=0).to(torch.float64))
             integral &= (chunk == chunk.floor()).all(dim=0)
-            has_negative_zero |= ((chunk == 0) & torch.signbit(chunk)).any(dim=0)
+            if sign_bit_dtype is None:
+                has_negative_zero |= ((chunk == 0) & torch.signbit(chunk)).any(dim=0)
+            else:
+                has_negative_zero |= (
+                    chunk.view(sign_bit_dtype) == torch.iinfo(sign_bit_dtype).min
+                ).any(dim=0)
         return cls(minimum, maximum, integral, has_negative_zero)
 
     @classmethod
