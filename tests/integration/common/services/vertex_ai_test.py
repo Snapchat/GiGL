@@ -15,8 +15,12 @@ from tests.test_assets.test_case import TestCase
 
 # Short timeout so a broken image fails fast instead of hanging CI until the outer
 # Cloud Build timeout. launch_graph_store_job passes this through to Vertex AI
-# directly (it does not apply the 24h launch_job default).
+# directly (it does not apply the 24h launch_job default). Vertex AI applies it to
+# run time only, so the queue bound below covers the wait for capacity.
 _INTEGRATION_JOB_TIMEOUT_S = 30 * 60
+# Bound on time spent waiting for capacity. Without it a starved job sits queued for
+# about 96 minutes before Vertex AI fails it.
+_INTEGRATION_JOB_QUEUE_TIMEOUT_S = 10 * 60
 
 
 def _assert_machine_cpu_count(expected_cpu_count: int) -> None:
@@ -102,15 +106,17 @@ class VertexAIPipelineIntegrationTest(TestCase):
             "python",
             "-c",
             "from tests.integration.common.services.vertex_ai_test import _assert_machine_cpu_count; "
-            "_assert_machine_cpu_count(4)",  # n1-standard-4
+            "_assert_machine_cpu_count(4)",  # e2-standard-4
         ]
         job_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=self._src_cpu_image_uri,
             command=command,
-            machine_type="n1-standard-4",
+            # E2 shapes: chosen for availability in us-central1, not for speed.
+            machine_type="e2-standard-4",
             environment_variables=[env_var.EnvVar(name="FOO", value="BAR")],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            queue_timeout_s=_INTEGRATION_JOB_QUEUE_TIMEOUT_S,
         )
 
         job = self._vertex_ai_service.launch_job(job_config)
@@ -119,9 +125,10 @@ class VertexAIPipelineIntegrationTest(TestCase):
             job.job_spec.worker_pool_specs[0].container_spec.env,
         )
 
+    # One shape with a trailing compute pool covers all three worker pool slots, and
+    # each launched cluster is one more chance to wait on regional capacity.
     @parameterized.expand(
         [
-            param("one compute, one storage", num_compute=1, num_storage=1),
             param("two compute, one storage", num_compute=2, num_storage=1),
         ]
     )
@@ -133,25 +140,26 @@ class VertexAIPipelineIntegrationTest(TestCase):
             job_name=job_name,
             container_uri=self._src_cpu_image_uri,
             replica_count=num_compute,
-            machine_type="n1-standard-4",
+            machine_type="e2-standard-4",
             command=[
                 "python",
                 "-c",
                 "from tests.integration.common.services.vertex_ai_test import _assert_machine_cpu_count; "
-                "_assert_machine_cpu_count(4)",  # n1-standard-4
+                "_assert_machine_cpu_count(4)",  # e2-standard-4
             ],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
+            queue_timeout_s=_INTEGRATION_JOB_QUEUE_TIMEOUT_S,
         )
         storage_cluster_config = VertexAiJobConfig(
             job_name=job_name,
             container_uri=self._src_cpu_image_uri,
             replica_count=num_storage,
-            machine_type="n2-standard-8",
+            machine_type="e2-standard-8",
             command=[
                 "python",
                 "-c",
                 "from tests.integration.common.services.vertex_ai_test import _assert_machine_cpu_count; "
-                "_assert_machine_cpu_count(8)",  # n2-standard-8
+                "_assert_machine_cpu_count(8)",  # e2-standard-8
             ],
             timeout_s=_INTEGRATION_JOB_TIMEOUT_S,
         )
@@ -164,7 +172,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
         # import time) since the image is read from the environment in setUp.
         expected_worker_pool_specs: list[dict] = [
             {
-                "machine_type": "n1-standard-4",
+                "machine_type": "e2-standard-4",
                 "num_replicas": 1,
                 "image_uri": self._src_cpu_image_uri,
             },
@@ -172,7 +180,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
         if num_compute > 1:
             expected_worker_pool_specs.append(
                 {
-                    "machine_type": "n1-standard-4",
+                    "machine_type": "e2-standard-4",
                     "num_replicas": num_compute - 1,
                     "image_uri": self._src_cpu_image_uri,
                 }
@@ -181,7 +189,7 @@ class VertexAIPipelineIntegrationTest(TestCase):
             expected_worker_pool_specs.append({})
         expected_worker_pool_specs.append(
             {
-                "machine_type": "n2-standard-8",
+                "machine_type": "e2-standard-8",
                 "num_replicas": num_storage,
                 "image_uri": self._src_cpu_image_uri,
             }

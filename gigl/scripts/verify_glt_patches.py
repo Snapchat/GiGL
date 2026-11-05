@@ -1,10 +1,10 @@
 """Assert that the patches in ``gigl/scripts/patches/`` are live in the INSTALLED graphlearn_torch.
 
-Run by ``install_glt.sh`` immediately after ``uv pip install dist/*.whl``, and exits non-zero if
+Run by ``post_install.py`` immediately after the GLT wheel is installed, and exits non-zero if
 any patched behaviour is missing.
 
 WHY THIS EXISTS
-    ``install_glt.sh`` already fails loudly if a patch file does not APPLY. That is a weaker
+    ``install_glt.sh`` (the wheel build) already fails loudly if a patch file does not APPLY. That is a weaker
     guarantee than it looks: applying is a property of the source tree, while what ships is a
     compiled ``.so``. A patch can apply to a file the build then excludes, a stale build directory
     can be reused, or a wheel can be installed from somewhere other than the tree that was

@@ -60,6 +60,7 @@ scripts/_local/
 .claude/plans/
 .claude/tmp/
 .claude/worktrees/
+.worktrees/
 .sdd/
 .superpowers/
 docs/plans/
