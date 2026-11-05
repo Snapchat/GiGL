@@ -103,7 +103,15 @@ _INTEGER_KINDS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
     "int16",
     "int32",
 )
-_CHUNK_ROWS: Final[int] = 1 << 16
+# A chunk and its temporaries should fit in CPU cache. A 65536-row chunk of a 512-column float32
+# matrix is 128 MiB, which made every scan step stream through main memory; a sweep showed
+# about 2x faster scans at 1 thread with chunks of this size.
+_CHUNK_BYTES: Final[int] = 8 << 20
+
+
+def chunk_rows(num_columns: int, element_size: int) -> int:
+    """Rows per chunk so that one chunk of the input is about ``_CHUNK_BYTES``."""
+    return max(1, _CHUNK_BYTES // max(1, num_columns * element_size))
 
 
 def kind_holding_domain(low: float, high: float) -> Optional[str]:
@@ -303,8 +311,9 @@ class FeatureCodec:
         out = torch.zeros(
             features.shape[0], self.row_bytes, dtype=torch.uint8, device=features.device
         )
-        for start in range(0, features.shape[0], _CHUNK_ROWS):
-            chunk = features[start : start + _CHUNK_ROWS]
+        rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
+        for start in range(0, features.shape[0], rows_per_chunk):
+            chunk = features[start : start + rows_per_chunk]
             for group in self._groups:
                 index = torch.tensor(
                     group.columns, dtype=torch.long, device=chunk.device
