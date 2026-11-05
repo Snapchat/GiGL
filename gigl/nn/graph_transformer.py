@@ -1200,7 +1200,7 @@ class GraphTransformerEncoder(nn.Module):
             every batch is sure to fit the layout budget. When the attribute is
             present, it must match this encoder's ``hop_distance`` and direction,
             or the two paths disagree. An embedding for ``hop_distance`` needs more
-            than ``hop_distance`` entries on a config that can run packed.
+            than ``hop_distance`` entries on a ``khop`` config.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1617,11 +1617,11 @@ class GraphTransformerEncoder(nn.Module):
                 "tokens, because: " + "; ".join(unsupported_reasons)
             )
         self._packed_fallback_count = 0
-        # The packed path looks up hops 0 to ``hop_distance`` in the embedding. The
-        # padded path only looks up the values stored on the batch, so only configs
-        # that can run packed are checked.
+        # A khop sequence holds hops 0 to ``hop_distance``, so the embedding needs
+        # ``hop_distance + 1`` entries. PPR sequences take their hops from the
+        # batch, so there is nothing to check.
         if (
-            self._supports_packed_backend
+            self._sequence_construction_method == "khop"
             and self._anchor_based_input_embedding_dict is not None
             and HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_embedding_dict
         ):
