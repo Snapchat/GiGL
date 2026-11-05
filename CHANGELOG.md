@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
   `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
   with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
-  without it. A config that can run packed now raises a `ValueError` at construction if its `hop_distance` embedding has
+  without it. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has
   `hop_distance` or fewer entries by @kmontemayor2-sc
 - Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
