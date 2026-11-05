@@ -15,15 +15,13 @@ GiGL is distributed as two wheels that are installed together:
 - **`gigl`** — pure Python package (same wheel for CPU and CUDA users)
 - **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant
 
-You do not need to install `gigl-core` directly; it is a dependency of `gigl` and is resolved automatically from the
-same registry.
+`gigl` pins the matching `gigl-core` version. Both wheels are published to one registry per torch variant, and each
+registry holds everything GiGL itself needs:
 
-Each registry is self-contained — you only need one GCP extra-index URL:
-
-| Variant   | Registry                                                                                                                                                                      |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CPU       | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)              |
-| CUDA 12.8 | [gigl-cu128 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl) |
+| Variant   | Package index URL                                                                    | Registry                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CPU       | `https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/`       | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)              |
+| CUDA 12.8 | `https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/` | [gigl-cu128 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl-cu128/gigl?project=external-snap-ci-github-gigl) |
 
 ## Install Prerequisites - setting up your dev machine
 
@@ -110,38 +108,174 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 ### Install Wheel
 
-1. Create a python virtual environment w/ `python==3.11.*`
+GiGL and its torch and PyG dependencies come from four package indexes:
 
-2. Install GiGL
+- the GiGL registry for your variant (see [Available Versions](#available-versions))
+- the PyTorch index
+- the PyG wheel page
+- PyPI, for everything else
 
-#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CUDA 12.8
+We recommend [uv](https://docs.astral.sh/uv/getting-started/installation/), which can pin each package to the index it
+must come from.
 
-```bash
-pip install "gigl[pyg27-torch28-cu128, transform]==0.2.0" \
---extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
---extra-index-url=https://download.pytorch.org/whl/cu128 \
---extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
+```{note}
+Avoid `pip install --extra-index-url` for GiGL. pip picks the highest version of each package across every index it is
+given, so a package published to PyPI under the name `gigl-core` would win over the one in the GiGL registry.
 ```
 
-#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
+1. Create a project directory with the `pyproject.toml` below.
 
-```bash
-pip install "gigl[pyg27-torch28-cpu, transform]==0.2.0" \
---extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
---extra-index-url=https://download.pytorch.org/whl/cpu \
---extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
-```
+   It declares one extra per variant. Change `name` and add your own dependencies to `dependencies`.
 
-pip resolves and installs `gigl-core` automatically from the same GCP registry. No separate install step is needed.
+   `gigl-core` is listed next to `gigl` because uv applies `[tool.uv.sources]` only to direct dependencies. Without it,
+   uv would look for `gigl-core` on PyPI.
 
-GraphLearn-Torch (GLT) is not on PyPI; the post-install script builds a patched wheel from source and caches it per
-machine under `~/.cache/gigl/glt-wheels/`, so only the first environment on a machine compiles it. The build needs
-`ninja`, which pip does not install for you:
+   ```toml
+   [project]
+   name = "my-gigl-project"
+   version = "0.0.1"
+   requires-python = "==3.11.*"
+   dependencies = [
+     # ninja is needed to build GraphLearn-Torch in `gigl-post-install`.
+     "ninja",
+   ]
 
-```bash
-pip install ninja
-gigl-post-install
-```
+   [project.optional-dependencies]
+   pyg27-torch28-cpu = [
+     "gigl[pyg27-torch28-cpu, transform, experimental]==0.3.1",
+     "gigl-core", # gigl pins the matching version.
+     "torch",
+     "torchrec",
+     "fbgemm-gpu",
+     "pyg_lib",
+     "torch_scatter",
+     "torch_sparse",
+     "torch_cluster",
+     "torch_spline_conv",
+   ]
+   pyg27-torch28-cu128 = [
+     "gigl[pyg27-torch28-cu128, transform, experimental]==0.3.1",
+     "gigl-core", # gigl pins the matching version.
+     "torch",
+     "torchrec",
+     "fbgemm-gpu",
+     "pyg_lib",
+     "torch_scatter",
+     "torch_sparse",
+     "torch_cluster",
+     "torch_spline_conv",
+   ]
+
+   [tool.uv]
+   # The CPU and CUDA extras pull different torch builds, so they are resolved separately.
+   conflicts = [
+     [{ extra = "pyg27-torch28-cpu" }, { extra = "pyg27-torch28-cu128" }],
+   ]
+   required-environments = [
+     "sys_platform == 'linux' and platform_machine == 'x86_64'",
+   ]
+
+   # PyPI stays the default index. Every index below is `explicit`, so uv only uses it for
+   # the packages mapped to it in [tool.uv.sources].
+   [[tool.uv.index]]
+   name = "torch-cpu"
+   url = "https://download.pytorch.org/whl/cpu"
+   explicit = true
+
+   [[tool.uv.index]]
+   name = "torch-cu128"
+   url = "https://download.pytorch.org/whl/cu128"
+   explicit = true
+
+   # PyG publishes a flat HTML page of wheels, not a PEP 503 index.
+   [[tool.uv.index]]
+   name = "pyg-torch28-cpu"
+   url = "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+   explicit = true
+   format = "flat"
+
+   [[tool.uv.index]]
+   name = "pyg-torch28-cu128"
+   url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
+   explicit = true
+   format = "flat"
+
+   [[tool.uv.index]]
+   name = "gigl-cpu"
+   url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/"
+   explicit = true
+
+   [[tool.uv.index]]
+   name = "gigl-cu128"
+   url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/"
+   explicit = true
+
+   [tool.uv.sources]
+   torch = [
+     { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+   ]
+   torchrec = [
+     { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+   ]
+   fbgemm-gpu = [
+     { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+   ]
+   pyg_lib = [
+     { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+   ]
+   torch_scatter = [
+     { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+   ]
+   torch_sparse = [
+     { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+   ]
+   torch_cluster = [
+     { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+   ]
+   torch_spline_conv = [
+     { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+   ]
+   gigl = [
+     { extra = "pyg27-torch28-cpu", index = "gigl-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "gigl-cu128" },
+   ]
+   gigl-core = [
+     { extra = "pyg27-torch28-cpu", index = "gigl-cpu" },
+     { extra = "pyg27-torch28-cu128", index = "gigl-cu128" },
+   ]
+   ```
+
+2. Install the extra for your variant.
+
+   CUDA 12.8:
+
+   ```bash
+   uv sync --extra pyg27-torch28-cu128
+   ```
+
+   CPU:
+
+   ```bash
+   uv sync --extra pyg27-torch28-cpu
+   ```
+
+3. Build GraphLearn-Torch (GLT).
+
+   GLT is not on PyPI; the post-install script builds a patched wheel from source and caches it per machine under
+   `~/.cache/gigl/glt-wheels/`, so only the first environment on a machine compiles it. The build uses the `ninja`
+   declared in `dependencies` above.
+
+   ```bash
+   uv run gigl-post-install
+   ```
 
 ### Install from source
 
