@@ -929,7 +929,7 @@ class DistributedNeighborLoaderTest(TestCase):
                 partitioned_node_features=FeaturePartitionData(
                     feats=raw_node_features, ids=torch.arange(2)
                 ),
-                partitioned_node_quantized_features=FeaturePartitionData(
+                partitioned_node_packed_features=FeaturePartitionData(
                     feats=packed, ids=torch.arange(2)
                 ),
                 partitioned_edge_features=None,
