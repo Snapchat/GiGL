@@ -1449,7 +1449,9 @@ def _build_sequence_layout_from_ppr_edges(
     batch_order = torch.argsort(anchor_batch_idx, stable=True)
     sorted_batch_idx = anchor_batch_idx[batch_order]
     edge_counts = torch.bincount(sorted_batch_idx, minlength=batch_size)
-    num_candidates = max(1, int(edge_counts.max()))
+    num_candidates = 1
+    if edge_counts.numel() > 0:
+        num_candidates = max(1, int(edge_counts.max()))
     group_starts = torch.cumsum(edge_counts, dim=0) - edge_counts
     column = (
         torch.arange(sorted_batch_idx.numel(), device=device)

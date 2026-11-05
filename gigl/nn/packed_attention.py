@@ -19,8 +19,9 @@ Why this exists:
     fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
     own backward kernel supplies the gradients.
   - On CPU the same inputs go through SDPA on a padded grid. That is the
-    reference the CUDA path is tested against, and it lets the packed backend run
-    anywhere.
+    reference the CUDA path is tested against, and it lets this module run
+    anywhere. ``GraphTransformerEncoder`` itself uses the packed path only on
+    CUDA, and runs padded sequences on CPU.
   - Packing needs one host read (the total token count, in ``pack_sequences``)
     so the buffer holds exactly the real tokens. Everything else has fixed
     shapes and no syncs, so the layers can be compiled with ``torch.compile``.

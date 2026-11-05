@@ -851,19 +851,6 @@ class PackedPathTest(TestCase):
                 )
             )
 
-    def test_hop_embedding_size_is_not_checked_for_ppr(self) -> None:
-        # PPR sequences take their hops from the batch, not from ``hop_distance``.
-        encoder = GraphTransformerEncoder(
-            **_encoder_kwargs(
-                sequence_construction_method="ppr",
-                sampling_direction="out",
-                anchor_based_input_embedding_dict=nn.ModuleDict(
-                    {_HOP: nn.Embedding(2, 16)}
-                ),
-            )
-        )
-        self.assertFalse(encoder._supports_packed_backend)
-
     @parameterized.expand(
         [
             param("supported", supported=True),
@@ -950,8 +937,20 @@ class PackedPathTest(TestCase):
         encoder = GraphTransformerEncoder(**_encoder_kwargs())
         for training in (True, False):
             encoder.train(training)
-            self.assertTrue(encoder._use_packed_backend(torch.device("cuda")))
-            self.assertFalse(encoder._use_packed_backend(torch.device("cpu")))
+            self.assertTrue(
+                encoder._use_packed_backend(torch.device("cuda"), torch.float32)
+            )
+            self.assertFalse(
+                encoder._use_packed_backend(torch.device("cpu"), torch.float32)
+            )
+
+    def test_packed_path_needs_a_dtype_the_varlen_kernel_supports(self) -> None:
+        encoder = GraphTransformerEncoder(**_encoder_kwargs())
+        cuda = torch.device("cuda")
+        for dtype in (torch.float16, torch.bfloat16, torch.float32):
+            with self.subTest(dtype=dtype):
+                self.assertTrue(encoder._use_packed_backend(cuda, dtype))
+        self.assertFalse(encoder._use_packed_backend(cuda, torch.float64))
 
     def test_constructor_rejects_invalid_sequence_bounds(self) -> None:
         with self.assertRaises(ValueError):
@@ -1568,6 +1567,96 @@ class PackedPprTest(TestCase):
             atol=1e-5,
         )
 
+    def test_hop_embedding_is_not_size_checked_for_ppr(self) -> None:
+        # PPR hops come from the batch, so an embedding of ``hop_distance`` or
+        # fewer entries is fine when the batch's hops fit it.
+        data = AddHeteroHopDistanceEncoding(h_max=1, sampling_direction="out")(
+            _ppr_batch(0)
+        )
+        encoder = _ppr_encoder(
+            data,
+            anchor_based_input_attr_names=[_HOP],
+            anchor_based_input_embedding_dict=nn.ModuleDict(
+                {_HOP: nn.Embedding(2, 16)}
+            ),
+        )
+        self.assertEqual(encoder._hop_distance, 2)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_packed_ppr_matches_padded_on_a_heterogeneous_batch(self) -> None:
+        data = _ppr_batch(0)
+        generator = torch.Generator().manual_seed(1)
+        num_items = 30
+        data[_ITEM].x = torch.randn(num_items, 8, generator=generator)
+        item_ppr = EdgeType(_USER, Relation("ppr"), _ITEM)
+        sources = torch.randint(1, 12, (200,), generator=generator)
+        targets = torch.randint(0, num_items, (200,), generator=generator)
+        weights = (torch.rand(200, generator=generator) * 0.9 + 0.1).round(decimals=1)
+        data[item_ppr.tuple_repr()].edge_index = torch.stack([sources, targets])
+        data[item_ppr.tuple_repr()].edge_attr = torch.cat(
+            [
+                weights.unsqueeze(1),
+                torch.randn(200, _PPR_RELATION_FEATURE_DIM, generator=generator),
+            ],
+            dim=1,
+        )
+        data[item_ppr.tuple_repr()].ppr_is_expanded = (
+            torch.rand(200, generator=generator) > 0.3
+        )
+        encoder = _ppr_encoder(
+            data,
+            node_type_to_feat_dim_map={_USER: 8, _ITEM: 8},
+            edge_type_to_feat_dim_map={
+                _PPR: 0,
+                item_ppr: 0,
+                **{edge_type: 0 for edge_type in _USER_EDGE_TYPES},
+            },
+            anchor_based_input_attr_names=["ppr_weight"],
+            relation_attention_mode="edge_type_bilinear",
+        )
+        with torch.no_grad():
+            packed = _run_packed(encoder, data)
+            padded = encoder(data, anchor_node_type=_USER)
+            torch.testing.assert_close(packed, padded, rtol=0, atol=1e-6)
+        # The item tokens take part: dropping the user-to-item PPR edges changes
+        # the output.
+        del data[item_ppr.tuple_repr()]
+        with torch.no_grad():
+            self.assertGreater((_run_packed(encoder, data) - packed).abs().max(), 1e-4)
+
+    def test_batch_without_anchors_gives_empty_output_on_both_paths(self) -> None:
+        data = _ppr_batch(0)
+        encoder = _ppr_encoder(data)
+        no_anchors = torch.empty(0, dtype=torch.long)
+        with torch.no_grad():
+            padded = encoder(data, anchor_node_type=_USER, anchor_node_ids=no_anchors)
+            packed = _run_packed(encoder, data, anchor_node_ids=no_anchors)
+        self.assertEqual(padded.shape, (0, 8))
+        self.assertEqual(packed.shape, (0, 8))
+
+    def test_relation_features_with_a_single_token_sequence_raise_a_clear_error(
+        self,
+    ) -> None:
+        data = _ppr_batch(0)
+        encoder = GraphTransformerEncoder(
+            **_encoder_kwargs(
+                sequence_construction_method="ppr",
+                sampling_direction="out",
+                edge_type_to_feat_dim_map={_PPR: 0},
+                max_seq_len=1,
+                anchor_based_input_attr_names=["ppr_relation_features"],
+                anchor_based_input_embedding_dict=None,
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "max_seq_len=1"):
+            _run_packed(encoder, data)
+
     def test_relation_leak_filter_changes_the_packed_output(self) -> None:
         # Without ppr_is_expanded the relation filter keeps the edges a
         # co-seeded node leaks, so the output differs; the parity tests above
@@ -1642,7 +1731,9 @@ class PackedPathCudaTest(TestCase):
         if overrides.get("pairwise_attention_bias_attr_names"):
             _randomize_pairwise_biases(cpu_encoder)
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
-        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
+        self.assertTrue(
+            cuda_encoder._use_packed_backend(torch.device("cuda"), torch.float32)
+        )
         cuda_anchor_node_ids = None
         if anchor_node_ids is not None:
             cuda_anchor_node_ids = anchor_node_ids.to("cuda")
@@ -1671,7 +1762,9 @@ class PackedPathCudaTest(TestCase):
     ) -> None:
         cpu_encoder = _ppr_encoder(_ppr_batch(0, typed=True), **overrides).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
-        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
+        self.assertTrue(
+            cuda_encoder._use_packed_backend(torch.device("cuda"), torch.float32)
+        )
         data = _ppr_batch(1, typed=True)
         cuda_data = _ppr_batch(1, typed=True).to("cuda")
         _assert_training_gradients_match(

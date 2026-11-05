@@ -12,7 +12,7 @@ replacement as the encoder in ``LinkPredictionGNN``.
 """
 
 import math
-from typing import Callable, Literal, Optional, Sequence, Union, cast
+from typing import Callable, Final, Literal, Optional, Sequence, Union, cast
 
 import torch
 import torch.nn as nn
@@ -52,6 +52,9 @@ from gigl.transforms.sequence_layout import (
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 
 logger = Logger()
+
+# The dtypes the CUDA varlen attention kernel supports.
+_PACKED_KERNEL_DTYPES: Final = (torch.float16, torch.bfloat16, torch.float32)
 
 
 def _get_node_type_positional_encodings(
@@ -586,8 +589,9 @@ class GraphTransformerEncoderLayer(nn.Module):
         scores to ``bias.per_pair`` as a per-layer pair bias. Attention then runs
         on the varlen kernel without a gradient, and on the padded-grid backend
         with one. With ``first_token_output`` the scores are per key, and
-        attention runs on the varlen kernel. In training, attention dropout runs on
-        the padded-grid backend.
+        attention runs on the varlen kernel, unless attention dropout is active
+        (``attention_dropout_rate > 0`` in training mode). Dropout sends attention
+        to the padded-grid backend in every layer, including this one.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
@@ -1388,16 +1392,20 @@ class GraphTransformerEncoder(nn.Module):
             ``anchor_based_input_embedding_dict``.
             The padded path reads the ``hop_distance`` attribute that
             ``AddHeteroHopDistanceEncoding`` stored on ``data`` and raises if it
-            is missing. The packed path computes the hop from the sequence layout
-            instead, so it runs without the attribute. A batch whose k-hop layout
-            is too large falls back to the padded path, though, and that batch
-            raises if the attribute is missing. Add the transform to the pipeline
-            (``is_undirected=False``, ``sampling_direction`` equal to this
-            encoder's, ``h_max`` at least this encoder's ``hop_distance``) unless
-            every batch is sure to fit the layout budget. When the attribute is
-            present, it must match this encoder's ``hop_distance`` and direction,
-            or the two paths disagree. An embedding for ``hop_distance`` needs more
-            than ``hop_distance`` entries on a ``khop`` config.
+            is missing. With ``"khop"`` sequences, the packed path computes the
+            hop from the sequence layout instead, so it runs without the
+            attribute. A batch whose k-hop layout is too large falls back to the
+            padded path, though, and that batch raises if the attribute is
+            missing. Add the transform to the pipeline (``is_undirected=False``,
+            ``sampling_direction`` equal to this encoder's, ``h_max`` at least
+            this encoder's ``hop_distance``) unless every batch is sure to fit
+            the layout budget. When the attribute is present, it must match this
+            encoder's ``hop_distance`` and direction, or the two paths disagree.
+            With ``"ppr"`` sequences both paths read the attribute from the
+            batch.
+            With ``"khop"`` sequences, an embedding for ``hop_distance`` needs
+            more than ``hop_distance`` entries. With ``"ppr"`` sequences the
+            values come from the batch and the size is not checked.
         anchor_based_input_embedding_dict: Optional ModuleDict mapping a subset
             of ``anchor_based_input_attr_names`` to per-attribute embedding
             layers. These attributes are treated as discrete indices and their
@@ -1468,36 +1476,52 @@ class GraphTransformerEncoder(nn.Module):
         ``ppr_relation_features``, and sinusoidal sequence positions all run on
         packed tokens.
 
-        With ``attention_dropout_rate > 0``, training attention runs on the
-        padded-grid SDPA backend and eval attention on the varlen kernel.
+        Below, "training" means that autograd is recording, that is, gradients are
+        enabled and an input requires grad. It is not ``module.training``, except
+        for attention dropout, which is active only in ``module.training``.
+
+        With ``attention_dropout_rate > 0``, attention in training mode runs on
+        the padded-grid SDPA backend in every layer, including the last layer of
+        ``readout_mode="anchor_only"``. Eval attention runs on the varlen kernel.
 
         Pairwise attention biases and relation attention (``edge_type_bilinear``,
         ``edge_type_hgt``) add one bias value per (query, key) pair. Attention
         with such a bias runs on the varlen kernel when nothing needs a gradient,
         and in the last layer with ``readout_mode="anchor_only"``, where the bias
-        is folded per key. Otherwise, in training, it runs on the padded-grid SDPA
-        backend, because the varlen kernel has no backward for a bias.
+        is folded per key, unless attention dropout is active. Otherwise, in
+        training, it runs on the padded-grid SDPA backend, because the varlen
+        kernel has no backward for a bias.
 
-        Every other config, and every CPU run, uses padded sequences. A batch whose
+        Every other config, and every CUDA batch with no anchors, uses padded
+        sequences. So does every CPU run, and every CUDA run in a dtype other
+        than float16, bfloat16 and float32, which the varlen kernel needs. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
         these batches are counted, and a warning is logged on the 1st, 2nd, 4th,
         ... occurrence. The reasons a config cannot be packed are logged at
         construction.
 
         Both paths give the same embeddings and gradients up to float error. With
-        ``dropout_rate > 0`` the train-mode dropout masks differ between paths, but
-        follow the same distribution.
+        ``dropout_rate > 0`` or ``attention_dropout_rate > 0`` the train-mode
+        dropout masks differ between paths, but follow the same distribution.
 
-        The packed path computes ``hop_distance`` from the layout (the first-reach
-        directed hop in ``sampling_direction``) and ignores the batch attribute.
-        That equals ``AddHeteroHopDistanceEncoding(is_undirected=False,
-        sampling_direction=<same>, h_max >= hop_distance)``.
+        With ``"khop"`` sequences, the packed path computes ``hop_distance`` from
+        the layout (the first-reach directed hop in ``sampling_direction``) and
+        ignores the batch attribute. That equals
+        ``AddHeteroHopDistanceEncoding(is_undirected=False,
+        sampling_direction=<same>, h_max >= hop_distance)``. With ``"ppr"``
+        sequences the layout holds no hop, so the packed path reads the batch
+        attribute from its sparse CSR matrix, like the padded path.
 
-        Host reads: the hop-only path keeps a fixed number of host reads per
-        batch. Relation messages add reads. Each anchor attribute other than
-        ``hop_distance`` is looked up in its sparse CSR matrix, which adds a host
-        read and data-dependent shapes, so such configs do not whole-encoder
-        compile.
+        Host reads: a ``"khop"`` config with no anchor attribute other than
+        ``hop_distance``, no pairwise bias and no relation messages keeps a fixed
+        number of host reads per batch. Relation messages add reads. Each anchor
+        attribute other than ``hop_distance``, and ``hop_distance`` itself with
+        ``"ppr"`` sequences, is looked up in its sparse CSR matrix, which adds a
+        host read and data-dependent shapes. Each pairwise attention bias adds an
+        ``.any()`` and a ``nonzero`` host read, also with data-dependent shapes.
+        The PPR sequence builder reads the longest candidate list and uses boolean
+        masks. Such configs, and every ``"ppr"`` config, do not whole-encoder
+        compile and have no fixed host-read count.
 
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
@@ -1855,9 +1879,16 @@ class GraphTransformerEncoder(nn.Module):
             unsupported_reasons.append("hop_distance is above 4")
         return unsupported_reasons
 
-    def _use_packed_backend(self, device: torch.device) -> bool:
-        """Returns whether this forward runs on packed tokens (supported config, on CUDA)."""
-        return self._supports_packed_backend and device.type == "cuda"
+    def _use_packed_backend(self, device: torch.device, dtype: torch.dtype) -> bool:
+        """Returns whether this forward runs on packed tokens.
+
+        Needs a supported config, CUDA, and a dtype the varlen kernel supports.
+        """
+        return (
+            self._supports_packed_backend
+            and device.type == "cuda"
+            and dtype in _PACKED_KERNEL_DTYPES
+        )
 
     def forward(
         self,
@@ -1965,7 +1996,9 @@ class GraphTransformerEncoder(nn.Module):
             else:
                 num_anchor_nodes = projected_x_dict[anchor_node_type].size(0)
 
-        if num_anchor_nodes > 0 and self._use_packed_backend(device):
+        if num_anchor_nodes > 0 and self._use_packed_backend(
+            device, projected_x_dict[anchor_node_type].dtype
+        ):
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
@@ -2198,11 +2231,6 @@ class GraphTransformerEncoder(nn.Module):
         """
         node_type_offsets = get_node_type_offsets(projected_x_dict)
         node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
-        edge_index = to_homogeneous_edge_index(
-            edge_index_dict=edge_index_dict,
-            node_type_offsets=node_type_offsets,
-            device=device,
-        )
         if anchor_node_ids is not None:
             anchor_local_indices = anchor_node_ids.to(device)
         else:
@@ -2219,6 +2247,11 @@ class GraphTransformerEncoder(nn.Module):
                 data=data,
             )
         else:
+            edge_index = to_homogeneous_edge_index(
+                edge_index_dict=edge_index_dict,
+                node_type_offsets=node_type_offsets,
+                device=device,
+            )
             layout = self._build_packed_layout(
                 edge_index=edge_index,
                 num_nodes=node_features.size(0),
@@ -2302,8 +2335,9 @@ class GraphTransformerEncoder(nn.Module):
 
         ``build_ppr_sequence_grids`` picks each anchor's tokens, as on the padded
         path, so both paths see the same sequences, PPR features and relation
-        filter. ``pack_sequences`` then packs the grids. The PPR weight, relation
-        features and the per-token expansion bitmask go into ``token_attrs``.
+        filter. ``pack_sequences`` then packs the grids. The PPR weight and relation
+        features go into ``token_attrs``. The per-token expansion bitmask goes to the
+        relation edge lookup, which uses it to filter the relation edges.
 
         Args:
             edge_index_dict: Batch edges by edge type.
@@ -2392,8 +2426,18 @@ class GraphTransformerEncoder(nn.Module):
             matrix has no entry.
 
         Raises:
-            ValueError: If a sparse attribute is not on ``data``.
+            ValueError: If a sparse attribute is not on ``data``, or if a PPR
+                attribute was not computed for the layout.
         """
+        if self._sequence_construction_method == "ppr":
+            for name in (PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME):
+                if name in attr_names and name not in layout.token_attrs:
+                    raise ValueError(
+                        f"'{name}' has no values: with max_seq_len="
+                        f"{self._max_seq_len} the PPR sequences have no room for "
+                        "neighbors beyond the anchor. Use max_seq_len > 1 or drop "
+                        f"'{name}' from the anchor-based attributes."
+                    )
         sparse_attr_names = [
             name for name in attr_names if name not in layout.token_attrs
         ]
@@ -2722,22 +2766,24 @@ class GraphTransformerEncoder(nn.Module):
             frontier_keys = self._packed_khop_frontier_keys(
                 layout, node_index, valid_mask, num_nodes
             )
-        relation_edges = _lookup_pairwise_relation_indices(
-            edge_index_dict=edge_index_dict,
-            node_index_sequences=node_index,
-            valid_mask=valid_mask,
-            relation_edge_types=self._relation_attention_edge_types,
-            node_type_offsets=node_type_offsets,
-            num_nodes=num_nodes,
-            device=device,
-            expanded_token_mask=expanded_token_mask,
-            relation_channel_masks=relation_channel_masks,
-            frontier_batch_node_keys=frontier_keys,
-            sampling_direction=self._sampling_direction,
+        # The callers return early when there are no relation edge types, so the
+        # lookup returns a tensor.
+        relation_edges = cast(
+            Tensor,
+            _lookup_pairwise_relation_indices(
+                edge_index_dict=edge_index_dict,
+                node_index_sequences=node_index,
+                valid_mask=valid_mask,
+                relation_edge_types=self._relation_attention_edge_types,
+                node_type_offsets=node_type_offsets,
+                num_nodes=num_nodes,
+                device=device,
+                expanded_token_mask=expanded_token_mask,
+                relation_channel_masks=relation_channel_masks,
+                frontier_batch_node_keys=frontier_keys,
+                sampling_direction=self._sampling_direction,
+            ),
         )
-        if relation_edges is None:
-            raise ValueError("Relation edge types are not initialized.")
-
         first_tokens = layout.cu_seqlens[:-1].long()
         batch_indices, target_positions, source_positions, relations = (
             relation_edges.unbind(dim=1)
