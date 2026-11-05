@@ -1004,7 +1004,7 @@ class DistDataset(glt.distributed.DistDataset):
         for unsampled node types must have) the full logical feature width.
         """
         metadata = self._node_quantization_metadata
-        packed = self._node_quantized_features
+        packed = self._node_packed_features
         if metadata is None or packed is None:
             return
         if isinstance(packed, Mapping):

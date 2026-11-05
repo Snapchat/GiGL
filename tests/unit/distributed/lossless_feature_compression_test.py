@@ -230,7 +230,7 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_node_features=FeaturePartitionData(
                     feats=raw, ids=torch.arange(_NUM_NODES)
                 ),
-                partitioned_node_quantized_features=FeaturePartitionData(
+                partitioned_node_packed_features=FeaturePartitionData(
                     feats=packed, ids=torch.arange(_NUM_NODES)
                 ),
                 partitioned_edge_features=None,
@@ -284,7 +284,7 @@ class LosslessCompressionLoaderTest(TestCase):
                         feats=expected[_STORY], ids=torch.arange(5)
                     ),
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     _USER: FeaturePartitionData(feats=packed, ids=torch.arange(5))
                 },
                 partitioned_edge_features=None,
@@ -318,7 +318,7 @@ class LosslessCompressionLoaderTest(TestCase):
                     edge_index=_ring_edges(), edge_ids=None
                 ),
                 partitioned_node_features=None,
-                partitioned_node_quantized_features=FeaturePartitionData(
+                partitioned_node_packed_features=FeaturePartitionData(
                     feats=packed, ids=torch.arange(_NUM_NODES)
                 ),
                 partitioned_edge_features=None,
@@ -368,7 +368,7 @@ class LosslessCompressionLoaderTest(TestCase):
                         feats=user_features, ids=torch.arange(5)
                     )
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     _STORY: FeaturePartitionData(feats=packed, ids=torch.arange(5))
                 },
                 partitioned_edge_features=None,
@@ -405,11 +405,11 @@ class LosslessCompressionLoaderTest(TestCase):
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
             node_features=node_raw,
-            node_quantized_features=node_packed,
+            node_packed_features=node_packed,
             node_labels=None,
             edge_index=torch.tensor([[0, 1], [1, 0]]),
             edge_features=None,
-            edge_quantized_features=edge_packed,
+            edge_packed_features=edge_packed,
             positive_label=torch.tensor([[0], [1]]),
             negative_label=torch.tensor([[0], [2]]),
         )
@@ -419,10 +419,10 @@ class LosslessCompressionLoaderTest(TestCase):
             dict[NodeType, torch.Tensor], loaded_graph_tensors.node_features
         )
         keyed_node_packed = cast(
-            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_quantized_features
+            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_packed_features
         )
         keyed_edge_packed = cast(
-            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_quantized_features
+            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_packed_features
         )
         dataset = DistDataset(
             rank=0,
@@ -449,13 +449,13 @@ class LosslessCompressionLoaderTest(TestCase):
                         ids=torch.arange(3),
                     )
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     DEFAULT_HOMOGENEOUS_NODE_TYPE: FeaturePartitionData(
                         feats=keyed_node_packed[DEFAULT_HOMOGENEOUS_NODE_TYPE],
                         ids=torch.arange(3),
                     )
                 },
-                partitioned_edge_quantized_features={
+                partitioned_edge_packed_features={
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE: FeaturePartitionData(
                         feats=keyed_edge_packed[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
                         ids=torch.arange(2),
@@ -503,7 +503,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         assert isinstance(metadata, FeatureQuantizationMetadata)
         self.assertEqual(metadata.lossless_feature_indices, tuple(range(dim)))
         self.assertIsNone(dataset.node_features)
-        packed = dataset.node_quantized_features
+        packed = dataset.node_packed_features
         assert isinstance(packed, Feature)
         packed.lazy_init_with_ipc_handle()
         # One bit per binary column, padded to a multiple of four bytes.
@@ -530,7 +530,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             dataset.node_quantization_metadata,
         )
         self.assertEqual(set(node_metadata), {_AUTHOR, _PAPER})
-        node_store = cast(dict[NodeType, Feature], dataset.node_quantized_features)
+        node_store = cast(dict[NodeType, Feature], dataset.node_packed_features)
         for node_type in (_AUTHOR, _PAPER):
             node_store[node_type].lazy_init_with_ipc_handle()
             self.assertTrue(

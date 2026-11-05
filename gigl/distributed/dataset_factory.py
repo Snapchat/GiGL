@@ -134,11 +134,11 @@ def _load_and_build_partitioned_dataset(
     if compress_node_features:
         (
             loaded_graph_tensors.node_features,
-            loaded_graph_tensors.node_quantized_features,
+            loaded_graph_tensors.node_packed_features,
             node_quantization_metadata,
         ) = compress_loaded_features(
             features=loaded_graph_tensors.node_features,
-            quantized_features=loaded_graph_tensors.node_quantized_features,
+            quantized_features=loaded_graph_tensors.node_packed_features,
             metadata=node_quantization_metadata,
             is_homogeneous=isinstance(
                 serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
