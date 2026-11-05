@@ -734,11 +734,15 @@ class GraphTransformerEncoderLayer(nn.Module):
 
     def _accumulate_relation_attention_scores(
         self,
-        grid: Tensor,
-        selected_query: Tensor,
-        selected_key: Tensor,
-        grid_index: tuple[Tensor, Tensor, Tensor],
-        segments: Sequence[tuple[int, int, int]],
+        grid: Float[Tensor, "batch num_heads query_len key_len"],
+        selected_query: Float[Tensor, "num_edges num_heads head_dim"],
+        selected_key: Float[Tensor, "num_edges num_heads head_dim"],
+        grid_index: tuple[
+            Int64[Tensor, "num_edges"],
+            Int64[Tensor, "num_edges"],
+            Int64[Tensor, "num_edges"],
+        ],
+        segments: Sequence[RelationSegment],
     ) -> None:
         """Adds each edge's per-head relation score into ``grid`` in place.
 
@@ -969,25 +973,6 @@ class GraphTransformerEncoderLayer(nn.Module):
             attn_mask=attn_bias,
             dropout_p=self._attention_dropout_rate if self.training else 0.0,
             is_causal=False,
-        )
-
-    def _build_relation_attention_bias(
-        self,
-        query: Tensor,
-        key: Tensor,
-        pairwise_relation_indices: Tensor,
-    ) -> Optional[Tensor]:
-        if pairwise_relation_indices.numel() == 0:
-            return None
-
-        batch_size, _, query_len, _ = query.shape
-        key_len = key.size(2)
-        empty_bias = query.new_zeros((batch_size, self._num_heads, query_len, key_len))
-        return self._add_relation_attention_bias(
-            attn_bias=empty_bias,
-            query=query,
-            key=key,
-            pairwise_relation_indices=pairwise_relation_indices,
         )
 
     def _add_relation_attention_bias(
