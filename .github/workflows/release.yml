@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             torch-variant: cpu
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
           - runner: gigl-gpu-instances
@@ -26,7 +26,9 @@ jobs:
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
-      # This CI environment contains relevant pip.conf and pyprci information to
+      # Runs in the release environment so GCP_SERVICE_ACCOUNT_EMAIL resolves to the release
+      # service account, the only identity allowed to publish to the gigl and gigl-cu128
+      # registries. See RELEASING.md, "Release identity and permissions".
       name: release
     steps:
     - name: Checkout
