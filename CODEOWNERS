@@ -6,6 +6,6 @@
 requirements @svij-sc @kmontemayor2-sc @mkolodner-sc @yliu2-sc
 pyproject.toml @svij-sc @kmontemayor2-sc @mkolodner-sc @yliu2-sc
 
-# run_command_on_active_checkout.yaml gets updated when we build new images
-# As all devs may setup new images, we allow all of us to review it
+# run_command_on_active_checkout.yaml is the Cloud Build config that runs CI commands
+# As all devs may change how CI commands run, we allow all of us to review it
 .github/cloud_builder/run_command_on_active_checkout.yaml @svij-sc @kmontemayor2-sc @nshah-sc @yliu2-sc @mkolodner-sc
