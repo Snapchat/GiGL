@@ -461,10 +461,16 @@ class PackedPathTest(TestCase):
                     anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
                 )
             )
-        # A config that always runs padded reads the batch's own hop values.
+
+    def test_hop_embedding_size_is_not_checked_for_ppr(self) -> None:
+        # PPR sequences take their hops from the batch, not from ``hop_distance``.
         encoder = GraphTransformerEncoder(
             **_encoder_kwargs(
-                num_heads=4, anchor_based_input_embedding_dict=nn.ModuleDict(too_small)
+                sequence_construction_method="ppr",
+                sampling_direction="out",
+                anchor_based_input_embedding_dict=nn.ModuleDict(
+                    {_HOP: nn.Embedding(2, 16)}
+                ),
             )
         )
         self.assertFalse(encoder._supports_packed_backend)
