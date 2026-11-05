@@ -1775,9 +1775,12 @@ def _reference_layer_outputs(
                 head_query, head_key = query[target, head], key[source, head]
                 score = torch.zeros((), dtype=x.dtype)
                 if layer._relation_attention_mode == "edge_type_bilinear":
+                    assert layer._relation_attention_matrices is not None
                     matrix = layer._relation_attention_matrices[relation, head]
                     score = head_query @ matrix @ head_key
                 elif layer._relation_attention_mode == "edge_type_hgt":
+                    assert layer._relation_hgt_attention_matrices is not None
+                    assert layer._relation_hgt_attention_priors is not None
                     matrix = layer._relation_hgt_attention_matrices[relation]
                     prior = layer._relation_hgt_attention_priors[relation]
                     score = prior * (head_query @ matrix @ head_key) - (
@@ -1804,6 +1807,7 @@ def _reference_layer_outputs(
                     ]
                     if not sources:
                         continue
+                    assert layer._relation_message_matrices is not None
                     transform = layer._relation_message_matrices[relation]
                     source_messages = [transform @ x_norm[source] for source in sources]
                     for head in range(num_heads):
@@ -1813,6 +1817,10 @@ def _reference_layer_outputs(
                                 (len(sources),), 1.0 / len(sources), dtype=x.dtype
                             )
                         else:
+                            assert (
+                                layer._relation_message_attention_matrices is not None
+                            )
+                            assert layer._relation_message_attention_priors is not None
                             matrix = layer._relation_message_attention_matrices[
                                 relation, head
                             ]
@@ -2031,7 +2039,7 @@ class ReferencePairwiseBiasTest(TestCase):
             )
         self.assertGreater(max(hand.abs().max() for hand in hand_biases), 0.1)
 
-        layer = encoder._encoder_layers[0]
+        layer = cast(GraphTransformerEncoderLayer, encoder._encoder_layers[0])
         sequences = [
             x[cu_seqlens[i] : cu_seqlens[i + 1]] for i in range(len(cu_seqlens) - 1)
         ]
