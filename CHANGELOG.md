@@ -29,11 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
   `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
   @kmontemayor2-sc
-- Add opt-in lossless compression of categorical id node feature columns: `build_dataset(node_lossless_codecs=...)` (or
-  `compress_node_features: "True"` in the trainer/inferencer args, with `derive_node_lossless_codecs` declaring the
-  codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so
-  sampling, RPC and the host-to-device copy move fewer bytes. Declared columns are checked against the data on every
-  rank, and columns that do not fit stay float32 by @kmontemayor2-sc
+- Add lossless compression of node feature columns, on by default. Every column that holds only whole numbers on all
+  ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer kind that
+  holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy move
+  fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical float32
+  batches. It applies to `build_dataset(compress_node_features=...)` (default `False` there), to the task-config arg
+  `compress_node_features` (default `"True"`; set `"False"` in the trainer/inferencer args to opt out) and to Graph
+  Store storage nodes (`build_storage_dataset` compresses unless the trainer or inferencer args set `"False"`) by
+  @kmontemayor2-sc
 
 ### Changed
 
