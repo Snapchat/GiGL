@@ -33,11 +33,11 @@ from gigl.transforms.graph_transformer import (
     SequenceAuxiliaryData,
     TokenInputData,
     _lookup_pairwise_relation_indices,
-    _validate_reserved_anchor_feature_usage,
     concat_tensors,
     get_node_type_offsets,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
+    validate_reserved_anchor_feature_usage,
 )
 from gigl.transforms.sequence_layout import PackedLayout, pack_sequences
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
@@ -1525,7 +1525,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names
         anchor_input_attr_names = anchor_based_input_attr_names
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names
-        _validate_reserved_anchor_feature_usage(
+        validate_reserved_anchor_feature_usage(
             pairwise_bias_attr_names=pairwise_bias_attr_names,
             anchor_bias_attr_names=anchor_bias_attr_names,
             anchor_input_attr_names=anchor_input_attr_names,
