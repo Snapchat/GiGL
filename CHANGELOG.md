@@ -25,9 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
 - Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
-  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`). `FeatureQuantizationMetadata` describes it after the
-  n-bit quantized columns and `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it
-  without further changes by @kmontemayor2-sc
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`), including a 1-bit kind for 0/1 columns such as
+  one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
+  @kmontemayor2-sc
 - Add opt-in lossless compression of categorical id node feature columns: `build_dataset(node_lossless_codecs=...)` (or
   `compress_node_features: "True"` in the trainer/inferencer args, with `derive_node_lossless_codecs` declaring the
   codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so

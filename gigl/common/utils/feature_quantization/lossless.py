@@ -16,10 +16,13 @@ Storage kinds, one per column. ``encode`` raises on a value its column's kind ca
 * ``uint8_bias1``: ids in ``[-1, 254]``, stored as ``id + 1``. Fits an out-of-vocabulary id of -1.
 * ``int16``: ids in ``[-32768, 32767]``.
 * ``int32``: ids in ``[-2**31, 2**31 - 128]``. The upper bound is the largest float32 below ``2**31``.
+* ``bit``: exactly ``0`` or ``1`` (for example a one-hot column), stored in one bit.
 
 Layout: columns are grouped by storage kind and the groups are laid out from widest to
 narrowest (4-byte, 2-byte, 1-byte) so every group starts at an offset aligned to its element
-size and can be read with ``Tensor.view(dtype)`` on a byte slice. The row is zero-padded to a
+size and can be read with ``Tensor.view(dtype)`` on a byte slice. The ``bit`` group comes last: its
+columns are packed eight per byte, column ``j`` of the group in bit ``j % 8`` of byte ``j // 8``
+(least significant bit first), and the last byte is zero-padded. The row is zero-padded to a
 multiple of four bytes so that row strides stay aligned for any row subset.
 
 Which columns are stored as narrow integers is declared by the caller (see ``gigl.distributed.utils.lossless_codecs``
@@ -29,17 +32,18 @@ A fitted codec is therefore lossless for the data it was fitted to, except that
 real-valued columns may optionally be rounded to bfloat16.
 
 Example:
-    Declare the codec of a node type with one real-valued column and three id columns. Column 0 is
-    a float column that preprocessing already quantized, so it stays ``float32``.
+    Declare the codec of a node type with one real-valued column, three id columns and one 0/1
+    column. Column 0 is a float column that preprocessing already quantized, so it stays
+    ``float32``.
 
     >>> import torch
     >>> from gigl.common.utils.feature_quantization.lossless import FeatureCodec
-    >>> codec = FeatureCodec(("float32", "int8", "uint8_bias1", "int32"))
+    >>> codec = FeatureCodec(("float32", "int8", "uint8_bias1", "int32", "bit"))
     >>> features = torch.tensor(
-    ...     [[0.5, -3.0, -1.0, 100000.0], [2.25, 127.0, 254.0, -7.0]]
+    ...     [[0.5, -3.0, -1.0, 100000.0, 1.0], [2.25, 127.0, 254.0, -7.0, 0.0]]
     ... )
 
-    ``encode`` packs each row to ``uint8``: 4 + 4 + 1 + 1 bytes, padded to 12.
+    ``encode`` packs each row to ``uint8``: 4 + 4 + 1 + 1 + 1 bytes, padded to 12.
 
     >>> rows = codec.encode(features)
     >>> rows.dtype, tuple(rows.shape)
@@ -55,7 +59,7 @@ Example:
 
     A value outside a column's range is rejected instead of silently wrapping.
 
-    >>> codec.encode(torch.tensor([[0.0, 128.0, 0.0, 0.0]]))
+    >>> codec.encode(torch.tensor([[0.0, 128.0, 0.0, 0.0, 0.0]]))
     Traceback (most recent call last):
         ...
     ValueError: Column 1 holds a value that is not an integer in [-128, 127] (kind int8); the packed layout cannot represent it
@@ -86,12 +90,15 @@ _KINDS: Final[dict[str, _StorageKind]] = {
     "int8": _StorageKind(torch.int8, 0, (-(2**7), 2**7 - 1)),
     "uint8": _StorageKind(torch.uint8, 0, (0, 2**8 - 1)),
     "uint8_bias1": _StorageKind(torch.uint8, 1, (-1, 2**8 - 2)),
+    # Eight columns per byte; ``dtype`` is the type of one packed byte.
+    "bit": _StorageKind(torch.uint8, 0, (0, 1)),
 }
 _DENSE_KINDS: Final[tuple[str, ...]] = ("float32", "bfloat16")
 # Widest first (dict order), so each group's byte offset is a multiple of its element size.
 _KIND_ORDER: Final[tuple[str, ...]] = tuple(_KINDS)
 # Narrowest first, so the first kind that holds a range is the cheapest.
 _INTEGER_KINDS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
+    "bit",
     "int8",
     "uint8",
     "uint8_bias1",
@@ -194,6 +201,8 @@ class _Group:
 
     @property
     def num_bytes(self) -> int:
+        if self.kind == "bit":
+            return (len(self.columns) + 7) // 8
         return len(self.columns) * self.dtype.itemsize
 
 
@@ -306,12 +315,42 @@ class FeatureCodec:
                     self._check_ids(values, group)
                     if group.bias:
                         values = values + group.bias
-                stored = values.to(group.dtype).contiguous().view(torch.uint8)
+                if group.kind == "bit":
+                    stored = self._pack_bits(values)
+                else:
+                    stored = values.to(group.dtype).contiguous().view(torch.uint8)
                 out[
                     start : start + chunk.shape[0],
                     group.byte_offset : group.byte_offset + group.num_bytes,
                 ] = stored
         return out
+
+    @staticmethod
+    def _pack_bits(
+        values: Float[torch.Tensor, "n columns"],
+    ) -> UInt8[torch.Tensor, "n packed_bytes"]:
+        """Packs 0/1 columns eight per byte, column ``j`` in bit ``j % 8`` of byte ``j // 8``."""
+        num_rows, num_columns = values.shape
+        num_bytes = (num_columns + 7) // 8
+        padded = torch.zeros(
+            num_rows, num_bytes * 8, dtype=torch.uint8, device=values.device
+        )
+        padded[:, :num_columns] = values.to(torch.uint8)
+        shifts = torch.arange(8, dtype=torch.uint8, device=values.device)
+        return (padded.view(num_rows, num_bytes, 8) << shifts).sum(
+            dim=-1, dtype=torch.uint8
+        )
+
+    @staticmethod
+    def _unpack_bits(
+        packed: UInt8[torch.Tensor, "n packed_bytes"], num_columns: int
+    ) -> Float32[torch.Tensor, "n {num_columns}"]:
+        """Inverse of ``_pack_bits``."""
+        shifts = torch.arange(8, dtype=torch.uint8, device=packed.device)
+        bits = (packed.unsqueeze(-1) >> shifts) & 1
+        return bits.reshape(packed.shape[0], packed.shape[1] * 8)[:, :num_columns].to(
+            torch.float32
+        )
 
     @staticmethod
     def _check_ids(values: torch.Tensor, group: _Group) -> None:
@@ -344,10 +383,11 @@ class FeatureCodec:
             rows.shape[0], self.num_columns, dtype=torch.float32, device=rows.device
         )
         for group in self._groups:
-            part = rows[
-                :, group.byte_offset : group.byte_offset + group.num_bytes
-            ].view(group.dtype)
-            part = part.to(torch.float32)
+            part = rows[:, group.byte_offset : group.byte_offset + group.num_bytes]
+            if group.kind == "bit":
+                part = self._unpack_bits(part, len(group.columns))
+            else:
+                part = part.view(group.dtype).to(torch.float32)
             if group.bias:
                 part = part - group.bias
             for first_column, first_position, length in group.runs:
