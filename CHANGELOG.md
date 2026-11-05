@@ -24,11 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
-- Extend the packed feature sidecar used by feature quantization with a lossless region: `FeatureQuantizationMetadata`
-  can describe categorical id columns stored as `int8`/`uint8`/`int16`/`int32`
-  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`) after the n-bit quantized columns, and
-  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry them without further changes by
-  @kmontemayor2-sc
+- Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`). `FeatureQuantizationMetadata` describes it after the
+  n-bit quantized columns and `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it
+  without further changes by @kmontemayor2-sc
 - Add opt-in lossless compression of categorical id node feature columns: `build_dataset(node_lossless_codecs=...)` (or
   `compress_node_features: "True"` in the trainer/inferencer args, with `derive_node_lossless_codecs` declaring the
   codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so

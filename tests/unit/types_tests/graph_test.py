@@ -201,29 +201,21 @@ class GraphTypesTyest(TestCase):
         self.assertEqual(metadata.lossless_byte_offset, 0)
         self.assertEqual(metadata.packed_feature_dim, 4)
 
-    def test_feature_quantization_metadata_requires_bits_only_for_quantized_columns(
-        self,
-    ) -> None:
+    def test_feature_quantization_metadata_rejects_inconsistent_fields(self) -> None:
         metadata = FeatureQuantizationMetadata(bits=None, feature_dim=3)
         self.assertEqual(metadata.packed_feature_dim, 0)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # quantized columns need bits
             FeatureQuantizationMetadata(
                 bits=None, feature_dim=3, quantized_feature_indices=(0,)
             )
-
-    def test_feature_quantization_metadata_rejects_unknown_lossless_kind(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # unknown lossless kind
             FeatureQuantizationMetadata(
                 bits=None,
                 feature_dim=3,
                 lossless_feature_indices=(0,),
                 lossless_column_kinds=("int12",),
             )
-
-    def test_feature_quantization_metadata_rejects_inconsistent_lossless_fields(
-        self,
-    ) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # column both quantized and lossless
             FeatureQuantizationMetadata(
                 bits=4,
                 feature_dim=7,
@@ -231,7 +223,7 @@ class GraphTypesTyest(TestCase):
                 lossless_feature_indices=(0,),
                 lossless_column_kinds=("int8",),
             )
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):  # kinds do not match the lossless columns
             FeatureQuantizationMetadata(
                 bits=4,
                 feature_dim=7,
