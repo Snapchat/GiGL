@@ -194,13 +194,22 @@ class FeatureCodec:
         return (used + 3) // 4 * 4
 
     def encode(
-        self, features: Float[torch.Tensor, "n _num_columns"]
+        self,
+        features: Float[torch.Tensor, "n _num_columns"],
+        *,
+        validate: bool = True,
     ) -> UInt8[torch.Tensor, "n {self.row_bytes}"]:
         """Packs float32 ``[N, D]`` features into ``uint8`` ``[N, row_bytes]`` rows.
 
+        Args:
+            features: The ``[N, D]`` matrix to pack.
+            validate: Whether to check that every id column holds integers its kind can store.
+                Pass ``False`` only when the statistics this codec was built from cover ``features``, because
+                they already prove that every value fits.
+
         Raises:
-            ValueError: If the width is not ``D``, or an id column holds a non-integral or
-                out-of-range value (including NaN).
+            ValueError: If the width is not ``D``, or ``validate`` is set and an id column holds a
+                non-integral or out-of-range value (including NaN).
         """
         if features.dim() != 2 or features.shape[1] != self.num_columns:
             raise ValueError(
@@ -220,8 +229,9 @@ class FeatureCodec:
                 if group.kind in _DENSE_KINDS:
                     values = values.to(torch.float32)
                 else:
-                    # Check before any narrowing cast so float64 ids are not rounded into range.
-                    self._check_ids(values, group)
+                    if validate:
+                        # Check before any narrowing cast so float64 ids are not rounded into range.
+                        self._check_ids(values, group)
                     if group.bias:
                         values = values + group.bias
                 if group.kind == "bit":

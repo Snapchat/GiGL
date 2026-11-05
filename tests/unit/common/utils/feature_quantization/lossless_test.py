@@ -230,6 +230,14 @@ class FeatureCodecTest(TestCase):
         with self.assertRaises(ValueError):
             self.codec.decode(torch.zeros(3, self.codec.row_bytes))
 
+    def test_skipping_validation_packs_valid_data_to_the_same_bytes(self) -> None:
+        self.assertTrue(
+            torch.equal(
+                self.codec.encode(self.features, validate=False),
+                self.codec.encode(self.features),
+            )
+        )
+
     def test_encode_checks_float64_ids_before_casting_to_float32(self) -> None:
         # 2**24 + 1 is a valid int32 id that float32 cannot hold; the stored id must not be rounded.
         codec = FeatureCodec(("int32",))
