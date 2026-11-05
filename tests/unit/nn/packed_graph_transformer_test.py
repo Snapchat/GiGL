@@ -3,6 +3,7 @@
 import copy
 import functools
 import itertools
+import math
 import unittest
 import warnings
 from typing import Any, Callable, Literal, Optional, cast
@@ -26,9 +27,11 @@ from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncodin
 from gigl.transforms.sequence_layout import (
     PackedLayout,
     PackedRelationEdges,
+    RelationSegment,
     pack_sequences,
 )
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
+from tests.test_assets.packed_attention_reference import reference_packed_attention
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -1674,6 +1677,369 @@ class PackedPprTest(TestCase):
                 .max(),
                 1e-4,
             )
+
+
+_REFERENCE_LENGTHS = [4, 3, 1, 5]
+# (sequence, target position, source position, relation), sorted by relation.
+# Some targets have several sources in one relation or edges of several
+# relations, and sequence 2 (one token) has no edges.
+_REFERENCE_EDGES = [
+    (0, 0, 1, 0),
+    (0, 0, 2, 0),
+    (0, 2, 3, 0),
+    (1, 1, 0, 0),
+    (3, 0, 4, 0),
+    (3, 3, 0, 0),
+    (3, 3, 1, 0),
+    (3, 3, 2, 0),
+    (0, 0, 3, 1),
+    (0, 3, 0, 1),
+    (1, 0, 2, 1),
+    (3, 2, 4, 1),
+    (0, 0, 1, 2),
+    (1, 0, 1, 2),
+    (1, 0, 2, 2),
+    (3, 0, 1, 2),
+    (3, 4, 0, 2),
+]
+_REFERENCE_NUM_RELATIONS = 3
+
+
+def _reference_layer(
+    message_mode: str = "none", attention_mode: str = "none"
+) -> GraphTransformerEncoderLayer:
+    """A float64 eval-mode layer with random relation parameters."""
+    torch.manual_seed(0)
+    layer = GraphTransformerEncoderLayer(
+        model_dim=8,
+        num_heads=2,
+        feedforward_dim=16,
+        dropout_rate=0.0,
+        relation_attention_mode=attention_mode,  # ty: ignore[invalid-argument-type]
+        relation_message_mode=message_mode,  # ty: ignore[invalid-argument-type]
+        num_relations=_REFERENCE_NUM_RELATIONS,
+    )
+    layer = layer.double().eval()
+    with torch.no_grad():
+        for name, parameter in layer.named_parameters():
+            if "relation" in name:
+                parameter.add_(0.5 * torch.randn_like(parameter))
+    return layer
+
+
+def _reference_inputs() -> list[torch.Tensor]:
+    generator = torch.Generator().manual_seed(1)
+    return [
+        torch.randn(length, 8, generator=generator, dtype=torch.float64)
+        for length in _REFERENCE_LENGTHS
+    ]
+
+
+def _reference_layer_outputs(
+    layer: GraphTransformerEncoderLayer,
+    sequences: list[torch.Tensor],
+    edges: list[tuple[int, int, int, int]],
+    first_token_only: bool = False,
+    pair_biases: Optional[list[torch.Tensor]] = None,
+) -> torch.Tensor:
+    """The layer output by plain loops over sequences, heads and edges.
+
+    Reads the layer's weights directly and calls none of its attention or
+    relation helpers. Returns the rows of all tokens, or of every sequence's
+    first token with ``first_token_only``. ``pair_biases[i]`` is an optional
+    ``[num_heads, length, length]`` score bias of sequence ``i``.
+    """
+    num_heads, head_dim = layer._num_heads, layer._head_dim
+    scale = 1.0 / math.sqrt(head_dim)
+    outputs: list[torch.Tensor] = []
+    for sequence_index, x in enumerate(sequences):
+        length = x.size(0)
+        sequence_edges = [edge[1:] for edge in edges if edge[0] == sequence_index]
+        x_norm = layer._attention_norm(x)
+        query, key, value = (
+            (x_norm @ projection.weight.T + projection.bias).view(
+                length, num_heads, head_dim
+            )
+            for projection in (
+                layer._query_projection,
+                layer._key_projection,
+                layer._value_projection,
+            )
+        )
+        bias = torch.zeros(1, num_heads, length, length, dtype=x.dtype)
+        if pair_biases is not None:
+            bias[0] += pair_biases[sequence_index]
+        for target, source, relation in sequence_edges:
+            for head in range(num_heads):
+                head_query, head_key = query[target, head], key[source, head]
+                score = torch.zeros((), dtype=x.dtype)
+                if layer._relation_attention_mode == "edge_type_bilinear":
+                    matrix = layer._relation_attention_matrices[relation, head]
+                    score = head_query @ matrix @ head_key
+                elif layer._relation_attention_mode == "edge_type_hgt":
+                    matrix = layer._relation_hgt_attention_matrices[relation]
+                    prior = layer._relation_hgt_attention_priors[relation]
+                    score = prior * (head_query @ matrix @ head_key) - (
+                        head_query @ head_key
+                    )
+                bias[0, head, target, source] += score * scale
+        attention = reference_packed_attention(
+            query,
+            key,
+            value,
+            torch.tensor([0, length], dtype=torch.int32),
+            bias=bias,
+        ).reshape(length, num_heads * head_dim)
+        hidden = x + attention @ layer._output_projection.weight.T
+        hidden = hidden + layer._output_projection.bias
+        if layer._relation_message_mode != "none":
+            messages = torch.zeros_like(hidden)
+            for target in range(length):
+                for relation in range(_REFERENCE_NUM_RELATIONS):
+                    sources = [
+                        source
+                        for edge_target, source, edge_relation in sequence_edges
+                        if edge_target == target and edge_relation == relation
+                    ]
+                    if not sources:
+                        continue
+                    transform = layer._relation_message_matrices[relation]
+                    source_messages = [transform @ x_norm[source] for source in sources]
+                    for head in range(num_heads):
+                        span = slice(head * head_dim, (head + 1) * head_dim)
+                        if layer._relation_message_mode == "edge_type_linear":
+                            weights = torch.full(
+                                (len(sources),), 1.0 / len(sources), dtype=x.dtype
+                            )
+                        else:
+                            matrix = layer._relation_message_attention_matrices[
+                                relation, head
+                            ]
+                            prior = layer._relation_message_attention_priors[
+                                relation, head
+                            ]
+                            scores = torch.stack(
+                                [
+                                    prior
+                                    * (
+                                        (key[source, head] @ matrix)
+                                        @ query[target, head]
+                                    )
+                                    * scale
+                                    for source in sources
+                                ]
+                            )
+                            weights = torch.softmax(scores, dim=0)
+                        for weight, message in zip(weights, source_messages):
+                            messages[target, span] += weight * message[span]
+            hidden = hidden + messages
+        output = hidden + layer._ffn(layer._ffn_norm(hidden))
+        if first_token_only:
+            output = output[:1]
+        outputs.append(output)
+    return torch.cat(outputs)
+
+
+def _reference_padded_outputs(
+    layer: GraphTransformerEncoderLayer,
+    sequences: list[torch.Tensor],
+    edges: list[tuple[int, int, int, int]],
+) -> torch.Tensor:
+    """The padded layer's output rows of all real tokens."""
+    max_length = max(sequence.size(0) for sequence in sequences)
+    valid = torch.zeros(len(sequences), max_length, dtype=torch.bool)
+    padded = torch.zeros(len(sequences), max_length, 8, dtype=torch.float64)
+    for index, sequence in enumerate(sequences):
+        valid[index, : sequence.size(0)] = True
+        padded[index, : sequence.size(0)] = sequence
+    attention_bias = torch.zeros(len(sequences), 1, 1, max_length, dtype=torch.float64)
+    attention_bias.masked_fill_(~valid.view(-1, 1, 1, max_length), -1e30)
+    with torch.no_grad():
+        return layer(
+            padded,
+            attn_bias=attention_bias,
+            valid_mask=valid,
+            pairwise_relation_indices=torch.tensor(edges, dtype=torch.long),
+        )[valid]
+
+
+def _reference_packed_outputs(
+    layer: GraphTransformerEncoderLayer,
+    sequences: list[torch.Tensor],
+    edges: list[tuple[int, int, int, int]],
+    first_token_output: bool = False,
+) -> torch.Tensor:
+    """``forward_packed`` on the hand-built edges, in packed token rows."""
+    lengths = torch.tensor([sequence.size(0) for sequence in sequences])
+    layout = pack_sequences(lengths, int(lengths.max()))
+    starts = layout.cu_seqlens.tolist()
+    if first_token_output:
+        edges = [edge for edge in edges if edge[1] == 0]
+    target_rows = []
+    for sequence, target, _, _ in edges:
+        if first_token_output:
+            target_rows.append(sequence)
+        else:
+            target_rows.append(starts[sequence] + target)
+    segments = tuple(
+        RelationSegment(
+            relation,
+            sum(edge[3] < relation for edge in edges),
+            sum(edge[3] <= relation for edge in edges),
+        )
+        for relation in range(_REFERENCE_NUM_RELATIONS)
+    )
+    layout = layout._replace(
+        relation_edges=PackedRelationEdges(
+            target=torch.tensor(target_rows),
+            source=torch.tensor([starts[edge[0]] + edge[2] for edge in edges]),
+            relation=torch.tensor([edge[3] for edge in edges]),
+            segments=segments,
+        )
+    )
+    with torch.no_grad():
+        return layer.forward_packed(
+            torch.cat(sequences), layout, first_token_output=first_token_output
+        )
+
+
+class ReferenceRelationLayerTest(TestCase):
+    """Layer outputs match plain loops over a hand-written edge list.
+
+    The references call none of the layer's relation helpers.
+    """
+
+    @parameterized.expand(
+        [
+            param("mean_messages", message_mode="edge_type_linear"),
+            param("attention_messages", message_mode="edge_type_attention"),
+            param("bilinear_attention", attention_mode="edge_type_bilinear"),
+            param("hgt_attention", attention_mode="edge_type_hgt"),
+            param(
+                "bilinear_attention_and_attention_messages",
+                message_mode="edge_type_attention",
+                attention_mode="edge_type_bilinear",
+            ),
+            param(
+                "hgt_attention_and_mean_messages",
+                message_mode="edge_type_linear",
+                attention_mode="edge_type_hgt",
+            ),
+        ]
+    )
+    def test_layer_matches_edge_loop_reference(
+        self, _: str, message_mode: str = "none", attention_mode: str = "none"
+    ) -> None:
+        layer = _reference_layer(message_mode, attention_mode)
+        sequences = _reference_inputs()
+        expected = _reference_layer_outputs(layer, sequences, _REFERENCE_EDGES)
+        torch.testing.assert_close(
+            _reference_padded_outputs(layer, sequences, _REFERENCE_EDGES),
+            expected,
+            rtol=0,
+            atol=1e-10,
+        )
+        torch.testing.assert_close(
+            _reference_packed_outputs(layer, sequences, _REFERENCE_EDGES),
+            expected,
+            rtol=0,
+            atol=1e-10,
+        )
+        # The relation channel changes the output; a no-op reference would pass.
+        plain = _reference_layer_outputs(
+            _reference_layer(), sequences, _REFERENCE_EDGES
+        )
+        self.assertGreater((expected - plain).abs().max(), 1e-2)
+
+    @parameterized.expand(
+        [
+            param("attention_messages", message_mode="edge_type_attention"),
+            param("hgt_attention", attention_mode="edge_type_hgt"),
+        ]
+    )
+    def test_first_token_output_matches_edge_loop_reference(
+        self, _: str, message_mode: str = "none", attention_mode: str = "none"
+    ) -> None:
+        layer = _reference_layer(message_mode, attention_mode)
+        sequences = _reference_inputs()
+        expected = _reference_layer_outputs(
+            layer, sequences, _REFERENCE_EDGES, first_token_only=True
+        )
+        torch.testing.assert_close(
+            _reference_packed_outputs(
+                layer, sequences, _REFERENCE_EDGES, first_token_output=True
+            ),
+            expected,
+            rtol=0,
+            atol=1e-10,
+        )
+
+
+class ReferencePairwiseBiasTest(TestCase):
+    def test_pairwise_bias_matches_the_hand_built_bias(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"]),
+        )
+        _randomize_pairwise_biases(encoder)
+        projection = encoder._pairwise_pe_attention_bias_projection
+        nonmissing = encoder._pairwise_nonmissing_attention_bias
+        assert projection is not None and nonmissing is not None
+        captured: list[tuple] = []
+        real_run_layers = encoder._run_packed_layers
+
+        def record(x, layout, bias):
+            captured.append((x, layout, bias))
+            return real_run_layers(x, layout, bias)
+
+        with (
+            mock.patch.object(encoder, "_run_packed_layers", side_effect=record),
+            torch.no_grad(),
+        ):
+            _run_packed(encoder, data)
+        x, layout, bias = captured[0]
+        assert bias is not None and bias.per_pair is not None
+
+        csr = data["pair_score"]
+        stored: dict[tuple[int, int], float] = {}
+        crow, col, values = csr.crow_indices(), csr.col_indices(), csr.values()
+        for row in range(csr.size(0)):
+            for entry in range(int(crow[row]), int(crow[row + 1])):
+                stored[(row, int(col[entry]))] = float(values[entry])
+        num_heads = projection.weight.size(0)
+        cu_seqlens = layout.cu_seqlens.tolist()
+        hand_biases: list[torch.Tensor] = []
+        for sequence in range(len(cu_seqlens) - 1):
+            start, end = cu_seqlens[sequence], cu_seqlens[sequence + 1]
+            nodes = layout.node_index[start:end].tolist()
+            hand = torch.zeros(num_heads, end - start, end - start)
+            for row, row_node in enumerate(nodes):
+                for column, column_node in enumerate(nodes):
+                    value = stored.get((row_node, column_node), 0.0)
+                    for head in range(num_heads):
+                        hand[head, row, column] = projection.weight[head, 0] * value
+                        if (row_node, column_node) in stored or row == column:
+                            hand[head, row, column] += nonmissing[head]
+            hand_biases.append(hand.detach())
+            torch.testing.assert_close(
+                bias.per_pair[sequence, :, : end - start, : end - start],
+                hand_biases[-1],
+                rtol=0,
+                atol=1e-6,
+            )
+        self.assertGreater(max(hand.abs().max() for hand in hand_biases), 0.1)
+
+        layer = encoder._encoder_layers[0]
+        sequences = [
+            x[cu_seqlens[i] : cu_seqlens[i + 1]] for i in range(len(cu_seqlens) - 1)
+        ]
+        with torch.no_grad():
+            expected = _reference_layer_outputs(
+                layer, sequences, [], pair_biases=hand_biases
+            )
+            actual = layer.forward_packed(x, layout, bias=bias)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=2e-5)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")

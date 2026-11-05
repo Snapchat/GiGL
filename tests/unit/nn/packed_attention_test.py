@@ -256,12 +256,82 @@ class PackedAttentionTest(TestCase):
         torch.testing.assert_close(output, torch.zeros_like(output), rtol=0, atol=0)
 
     def test_empty_bias_matches_no_bias(self) -> None:
-        _, layout, query, key, value, _, _ = self._bias_inputs()
+        lengths, layout, query, key, value, per_key, per_pair = self._bias_inputs()
         without = packed_attention(query, key, value, layout, False, bias=None)
         empty = packed_attention(
             query, key, value, layout, False, bias=PackedAttentionBias()
         )
+        reference = reference_packed_attention(query, key, value, layout.cu_seqlens)
         torch.testing.assert_close(empty, without, rtol=0, atol=0)
+        torch.testing.assert_close(empty, reference, rtol=0, atol=1e-5)
+        # Both calls take the same path on CPU, so also check that the
+        # comparison can fail: any non-empty bias changes the output.
+        for bias in (
+            PackedAttentionBias(per_key=per_key),
+            PackedAttentionBias(per_pair=per_pair),
+        ):
+            changed = packed_attention(query, key, value, layout, False, bias=bias)
+            self.assertGreater((changed - without).abs().max(), 1e-3)
+
+    def test_padded_packed_attention_with_a_per_pair_bias_matches_reference(
+        self,
+    ) -> None:
+        num_heads, head_dim = 2, 4
+        lengths = torch.tensor([5, 1, 7, 3])
+        num_tokens = int(lengths.sum())
+        layout = pack_sequences(lengths, 8)
+        generator = torch.Generator().manual_seed(0)
+        for query_is_first_token in (False, True):
+            num_queries = lengths.numel()
+            if not query_is_first_token:
+                num_queries = num_tokens
+            query, key, value = (
+                torch.randn(
+                    rows, num_heads, head_dim, generator=generator, dtype=torch.float64
+                ).requires_grad_()
+                for rows in (num_queries, num_tokens, num_tokens)
+            )
+            per_pair = torch.randn(
+                lengths.numel(),
+                num_heads,
+                8,
+                8,
+                generator=generator,
+                dtype=torch.float64,
+            ).requires_grad_()
+            grad_output = torch.randn(
+                num_queries,
+                num_heads,
+                head_dim,
+                generator=generator,
+                dtype=torch.float64,
+            )
+            with self.subTest(first_token=query_is_first_token):
+                actual = _padded_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout,
+                    query_is_first_token,
+                    PackedAttentionBias(per_pair=per_pair),
+                )
+                expected = reference_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout.cu_seqlens,
+                    bias=per_pair,
+                    query_is_first_token=query_is_first_token,
+                )
+                torch.testing.assert_close(actual, expected, rtol=0, atol=1e-10)
+                inputs = (query, key, value, per_pair)
+                for actual_grad, expected_grad in zip(
+                    torch.autograd.grad(actual, inputs, grad_output),
+                    torch.autograd.grad(expected, inputs, grad_output),
+                ):
+                    torch.testing.assert_close(
+                        actual_grad, expected_grad, rtol=0, atol=1e-10
+                    )
 
     def test_packed_attention_matches_reference_on_cpu(self) -> None:
         num_heads, head_dim = 2, 4
@@ -312,6 +382,64 @@ class PackedAttentionTest(TestCase):
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedAttentionCudaTest(TestCase):
+    def test_padded_grid_backend_with_a_per_pair_bias_matches_reference(self) -> None:
+        device = torch.device("cuda")
+        num_heads, head_dim = 2, 16
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        num_tokens = int(lengths.sum())
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        generator = torch.Generator().manual_seed(0)
+        for query_is_first_token in (False, True):
+            num_queries = lengths.numel()
+            if not query_is_first_token:
+                num_queries = num_tokens
+            query, key, value = (
+                torch.randn(rows, num_heads, head_dim, generator=generator)
+                .to(device)
+                .requires_grad_()
+                for rows in (num_queries, num_tokens, num_tokens)
+            )
+            per_pair = (
+                torch.randn(
+                    lengths.numel(),
+                    num_heads,
+                    _MAX_SEQ_LEN,
+                    _MAX_SEQ_LEN,
+                    generator=generator,
+                )
+                .to(device)
+                .requires_grad_()
+            )
+            grad_output = torch.randn(
+                num_queries, num_heads, head_dim, generator=generator
+            ).to(device)
+            with self.subTest(first_token=query_is_first_token):
+                actual = _padded_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout,
+                    query_is_first_token,
+                    PackedAttentionBias(per_pair=per_pair),
+                )
+                expected = reference_packed_attention(
+                    query,
+                    key,
+                    value,
+                    layout.cu_seqlens,
+                    bias=per_pair,
+                    query_is_first_token=query_is_first_token,
+                )
+                torch.testing.assert_close(actual, expected, rtol=0, atol=1e-4)
+                inputs = (query, key, value, per_pair)
+                for actual_grad, expected_grad in zip(
+                    torch.autograd.grad(actual, inputs, grad_output),
+                    torch.autograd.grad(expected, inputs, grad_output),
+                ):
+                    torch.testing.assert_close(
+                        actual_grad, expected_grad, rtol=0, atol=1e-4
+                    )
+
     def test_varlen_attention_matches_padded_packed_attention(self) -> None:
         device = torch.device("cuda")
         num_sequences, num_heads, head_dim = 6, 2, 64
