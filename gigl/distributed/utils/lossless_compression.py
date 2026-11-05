@@ -162,7 +162,10 @@ def compress_lossless_columns(
         rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
         for start in range(0, num_rows, rows_per_chunk):
             chunk = features[start : start + rows_per_chunk][:, moved_positions]
-            packed[start : start + chunk.shape[0], offset:] = region.encode(chunk)
+            # The stats the codec was built from already prove every value fits, so skip the encode-time check.
+            packed[start : start + chunk.shape[0], offset:] = region.encode(
+                chunk, validate=False
+            )
     remaining_positions: list[int] = []
     for position in range(num_raw_columns):
         if position not in moved_positions:
@@ -204,7 +207,8 @@ def compress_loaded_features(
     Every type with a raw feature matrix on any rank is a candidate. Columns that preprocessing already quantized are
     not in the raw matrix and stay as they are.
 
-    Logs on each rank the seconds spent scanning the statistics, merging them across ranks, encoding, and in total.
+    Logs on each rank the seconds spent scanning the statistics, merging them across ranks, encoding, and in total, and
+    the number of torch threads those steps ran with.
 
     Peak host memory is the input tensors of all compressed types, plus their remaining raw columns, plus the packed
     sidecars, until the caller releases the inputs.
@@ -283,7 +287,8 @@ def compress_loaded_features(
         f"Lossless feature compression took {end_time - start_time:.2f}s on this rank: "
         f"stats scan {scan_done_time - start_time:.2f}s, "
         f"cross-rank merge {merge_done_time - scan_done_time:.2f}s, "
-        f"encode {end_time - merge_done_time:.2f}s"
+        f"encode {end_time - merge_done_time:.2f}s, "
+        f"torch threads {torch.get_num_threads()}"
     )
 
     keyed = not is_homogeneous
