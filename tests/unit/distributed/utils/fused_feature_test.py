@@ -105,16 +105,16 @@ def _lookup_on_partition(
         return per_type if is_heterogeneous else per_type[None]
 
     # Every type but the raw-only "story" has two label columns.
-    label_stores = {
-        t: Feature(
+    label_stores: dict[Optional[str], Feature] = {}
+    for t in types:
+        if t == "story":
+            continue
+        label_stores[t] = Feature(
             _labels(t)[_local_ids(rank, owner)],
             id2index=id2idx(_local_ids(rank, owner)),
             with_gpu=False,
             dtype=torch.int64,
         )
-        for t in types
-        if t != "story"
-    }
     pb = hetero_or_homo({t: owner for t in types})
     separate_raw = _CountingDistFeature(
         2, rank, hetero_or_homo(raw_stores), pb, False, router

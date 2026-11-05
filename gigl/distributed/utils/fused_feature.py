@@ -29,7 +29,7 @@ _LABEL_DTYPE: Final = torch.int64
 
 
 class FusedFeatureStore:
-    """A raw float feature store, a packed sidecar and/or node labels, served to other partitions as one ``uint8`` row per entity.
+    """A raw float store, a packed sidecar and/or node labels, served to other partitions as one ``uint8`` row per entity.
 
     A served row holds the label columns (``int64``) as bytes, then the raw float columns as bytes, then the sidecar
     columns, then zero padding up to a multiple of the widest dtype's size (the raw dtype, or 8 bytes with labels).
@@ -152,7 +152,7 @@ class FusedFeatureStore:
         Optional[UInt8[torch.Tensor, "num_ids packed_dim"]],
         Optional[Int64[torch.Tensor, "num_ids label_dim"]],
     ]:
-        """Raw float rows, packed sidecar rows and label rows of ids that are local to this store.
+        """Returns the raw float, packed sidecar and label rows of ids that are local to this store.
 
         The raw rows have zero columns without a raw store. The sidecar and label rows are ``None`` without those
         stores.
@@ -202,7 +202,7 @@ class FusedFeatureStore:
         UInt8[torch.Tensor, "num_rows packed_dim"],
         Int64[torch.Tensor, "num_rows label_dim"],
     ]:
-        """Views of served byte rows as the raw float matrix, the packed sidecar rows and the label rows, without copying.
+        """Views served byte rows as the raw float matrix, the sidecar rows and the label rows, without copying.
 
         The views have zero columns for a missing store.
         """
@@ -343,7 +343,7 @@ class FusedDistFeature(DistFeature):
         Optional[UInt8[torch.Tensor, "num_ids packed_dim"]],
         Optional[Int64[torch.Tensor, "num_ids label_dim"]],
     ]:
-        """Puts the local rows and the received byte rows of each remote partition into the raw, sidecar and label outputs.
+        """Puts the local rows and the received byte rows into the raw, sidecar and label outputs.
 
         The sidecar and label outputs are ``None``, and cost nothing, if the local rows have none.
         """
@@ -452,14 +452,11 @@ def build_fused_dist_feature(
         raw_by_type = raw_features or {}
         packed_by_type = packed_features or {}
         labels_by_type = labels or {}
-        local_feature = {
-            key: FusedFeatureStore(
+        local_feature = {}
+        for key in raw_by_type.keys() | packed_by_type.keys() | labels_by_type.keys():
+            local_feature[key] = FusedFeatureStore(
                 raw_by_type.get(key), packed_by_type.get(key), labels_by_type.get(key)
             )
-            for key in raw_by_type.keys()
-            | packed_by_type.keys()
-            | labels_by_type.keys()
-        }
         if not local_feature:
             return None
     return FusedDistFeature(

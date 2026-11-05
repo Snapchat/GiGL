@@ -111,7 +111,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         Every node or edge type that has features, whether a raw float store, a packed ``uint8`` sidecar, or both, is
         fetched through one ``FusedDistFeature`` per entity kind, with one request per partition per type. Node labels
-        ride in the same request as the node features. They are stored in GLT's ``dist_node_feature`` and ``dist_edge_feature`` attributes.
+        ride in the same request as the node features. The lookups are stored in GLT's ``dist_node_feature`` and
+        ``dist_edge_feature`` attributes.
 
         ``GLTDistNeighborSampler`` has no GiGL-owned state; we only add
         ``_sampling_error_sent`` so ``_send_adapter`` can forward at most one
@@ -131,8 +132,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         self.dist_node_feature: Optional[FusedDistFeature] = None
         self.dist_edge_feature: Optional[FusedDistFeature] = None
-        # GLT built its own label DistFeature, which this class never uses: labels travel in the fused node lookup.
-        # Its RPC callee stays registered, the same on every rank.
+        # GLT built its own label DistFeature that this class never uses, since labels travel in the fused node lookup.
+        # Its RPC callee stays registered so callee ids match on every rank.
         self.dist_node_labels = None
         if data is not None:
             node_features = None
