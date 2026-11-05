@@ -63,6 +63,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
 
 ### Fixed
 
