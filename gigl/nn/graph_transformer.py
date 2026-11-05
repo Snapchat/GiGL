@@ -32,9 +32,9 @@ from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
-    _lookup_pairwise_relation_indices,
     concat_tensors,
     get_node_type_offsets,
+    lookup_pairwise_relation_indices,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
     validate_reserved_anchor_feature_usage,
@@ -2289,7 +2289,7 @@ class GraphTransformerEncoder(nn.Module):
             .flatten()
             .sort()
         )
-        relation_edges = _lookup_pairwise_relation_indices(
+        relation_edges = lookup_pairwise_relation_indices(
             edge_index_dict=edge_index_dict,
             node_index_sequences=node_index,
             valid_mask=valid_mask,

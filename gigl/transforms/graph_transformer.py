@@ -64,7 +64,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
-from jaxtyping import Bool, Float, Int64
+from jaxtyping import Bool, Float, Int, Int64
 from torch import Tensor
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
@@ -565,7 +565,7 @@ def tensors_to_graph_transformer_input(
         # Build the PPR sequence from the "ppr" edges only. When
         # include_sampled_edges is on, the batch also carries the original
         # relation edge types; those feed the relation-message channel via
-        # _lookup_pairwise_relation_indices and must not leak into the sequence.
+        # lookup_pairwise_relation_indices and must not leak into the sequence.
         #
         # Gather just the "ppr" edges and remap their endpoints with the SAME
         # node_type_offsets used for homo_x, so the indices line up with
@@ -707,7 +707,7 @@ def tensors_to_graph_transformer_input(
             device=device,
         )
     )
-    pairwise_relation_indices = _lookup_pairwise_relation_indices(
+    pairwise_relation_indices = lookup_pairwise_relation_indices(
         edge_index_dict=edge_index_dict,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
@@ -810,7 +810,7 @@ def _validate_ppr_sequence_input(
 ) -> None:
     # The batch may also contain original relation edge types when
     # include_sampled_edges is on (they feed the relation-message channel via
-    # _lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
+    # lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
     ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
     if not ppr_edge_types:
         raise ValueError(
@@ -1659,19 +1659,19 @@ def _lookup_pairwise_relative_features(
     return features, pairwise_nonmissing_indices
 
 
-def _lookup_pairwise_relation_indices(
+def lookup_pairwise_relation_indices(
     edge_index_dict: dict[EdgeType, Tensor],
-    node_index_sequences: Tensor,
-    valid_mask: Tensor,
+    node_index_sequences: Int[Tensor, "batch seq"],
+    valid_mask: Bool[Tensor, "batch seq"],
     relation_edge_types: Optional[list[GiGLEdgeType]],
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
-    expanded_token_mask: Optional[Tensor] = None,
+    expanded_token_mask: Optional[Int[Tensor, "batch seq"]] = None,
     relation_channel_masks: Optional[dict[EdgeType, int]] = None,
-    frontier_batch_node_keys: Optional[Tensor] = None,
+    frontier_batch_node_keys: Optional[Int[Tensor, "num_frontier_keys"]] = None,
     sampling_direction: Literal["in", "out"] = "out",
-) -> Optional[Tensor]:
+) -> Optional[Int64[Tensor, "num_relation_edges 4"]]:
     """Build sparse relation coordinates for valid token pairs.
 
     For a directed edge ``source -> target``, attention uses ``query=target`` and
@@ -1690,6 +1690,24 @@ def _lookup_pairwise_relation_indices(
     channels allowed to fetch it, so the edge is kept only when the owner was
     pushed in one of those channels. PPR sequences pass these; k-hop passes
     ``None``.
+
+    Args:
+        edge_index_dict: Edge index tensors keyed by edge type tuple.
+        node_index_sequences: Node ids of each sequence token.
+        valid_mask: True for real (non-padding) tokens.
+        relation_edge_types: Edge types that define the relation ids, in order.
+        node_type_offsets: Offset of each node type in the homogeneous node id
+            space.
+        num_nodes: Total number of nodes in the homogeneous node id space.
+        device: Device for the returned tensor.
+        expanded_token_mask: Optional per-token bitmask of the PPR channels that
+            pushed each token's node.
+        relation_channel_masks: Optional map from edge type to the allowed PPR
+            channel bitmask.
+        frontier_batch_node_keys: Optional sorted ``batch_idx * num_nodes +
+            node_idx`` keys of the anchor frontier.
+        sampling_direction: Whether sampled edges point ``"out"`` from or ``"in"``
+            to the expanded node.
 
     Returns:
         ``[N, 4]`` unique ``(batch, query, key, relation)`` rows sorted by
