@@ -17,6 +17,10 @@ inputs:
   timeout:
     description: "Specified as duration i.e. '2h15m5s' is two hours, fifteen minutes, and five seconds"
     default: "3h"
+  python_version:
+    description: "Python major.minor, e.g. 3.13. Runs the command in that minor's builder image, read from gigl/dep_vars.env. Empty uses the minor in .python-version."
+    required: false
+    default: ""
 
 
 runs:
@@ -29,10 +33,12 @@ runs:
         SERVICE_ACCOUNT: ${{ inputs.service_account }}
         MACHINE_TYPE: ${{ inputs.machine_type }}
         TIMEOUT: ${{ inputs.timeout }}
+        PYTHON_VERSION: ${{ inputs.python_version }}
       run: |
+        BUILDER_IMAGE="$("${GITHUB_ACTION_PATH}/builder_image.sh" "${PYTHON_VERSION}")"
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions=_CMD="${CMD}" \
+          --substitutions="_CMD=${CMD},_BUILDER_IMAGE=${BUILDER_IMAGE}" \
           --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
           --project="${PROJECT}" \
           --machine-type="${MACHINE_TYPE}" \
