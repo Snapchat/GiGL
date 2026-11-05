@@ -64,7 +64,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
-from jaxtyping import Bool, Float, Int64
+from jaxtyping import Bool, Float, Float32, Int, Int64
 from torch import Tensor
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
@@ -90,7 +90,7 @@ PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
 PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"
 
 
-def _validate_reserved_anchor_feature_usage(
+def validate_reserved_anchor_feature_usage(
     pairwise_bias_attr_names: list[str],
     anchor_bias_attr_names: list[str],
     anchor_input_attr_names: list[str],
@@ -104,6 +104,15 @@ def _validate_reserved_anchor_feature_usage(
     ``sequence_construction_method='ppr'``. Shared by
     ``heterodata_to_graph_transformer_input`` and ``GraphTransformerEncoder`` so
     the rules stay defined in one place.
+
+    Args:
+        pairwise_bias_attr_names: Names requested as pairwise attention biases.
+        anchor_bias_attr_names: Names requested as anchor-relative scalar biases.
+        anchor_input_attr_names: Names requested as anchor-relative token inputs.
+        sequence_construction_method: Sequence construction method in use.
+
+    Raises:
+        ValueError: If a reserved PPR feature is placed where it is not allowed.
     """
     # Neither reserved PPR feature may be used as a pairwise attention bias;
     # both are anchor-relative (produced per (anchor, neighbor) edge).
@@ -438,7 +447,7 @@ def tensors_to_graph_transformer_input(
     anchor_input_attr_names = anchor_based_input_attr_names or []
     pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
 
-    _validate_reserved_anchor_feature_usage(
+    validate_reserved_anchor_feature_usage(
         pairwise_bias_attr_names=pairwise_bias_attr_names,
         anchor_bias_attr_names=anchor_bias_attr_names,
         anchor_input_attr_names=anchor_input_attr_names,
@@ -556,7 +565,7 @@ def tensors_to_graph_transformer_input(
         # Build the PPR sequence from the "ppr" edges only. When
         # include_sampled_edges is on, the batch also carries the original
         # relation edge types; those feed the relation-message channel via
-        # _lookup_pairwise_relation_indices and must not leak into the sequence.
+        # lookup_pairwise_relation_indices and must not leak into the sequence.
         #
         # Gather just the "ppr" edges and remap their endpoints with the SAME
         # node_type_offsets used for homo_x, so the indices line up with
@@ -662,13 +671,13 @@ def tensors_to_graph_transformer_input(
             if attr_name not in {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         }
     )
-    anchor_based_matrices = _get_sparse_feature_matrices(
+    anchor_based_matrices = get_sparse_feature_matrices(
         graph_attr_dict=graph_attr_dict,
         attr_names=anchor_matrix_attr_names,
         missing_attr_error_prefix="Anchor-based attribute",
     )
 
-    pairwise_pe_matrices = _get_sparse_feature_matrices(
+    pairwise_pe_matrices = get_sparse_feature_matrices(
         graph_attr_dict=graph_attr_dict,
         attr_names=pairwise_bias_attr_names,
         missing_attr_error_prefix="Pairwise PE attribute",
@@ -698,7 +707,7 @@ def tensors_to_graph_transformer_input(
             device=device,
         )
     )
-    pairwise_relation_indices = _lookup_pairwise_relation_indices(
+    pairwise_relation_indices = lookup_pairwise_relation_indices(
         edge_index_dict=edge_index_dict,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
@@ -801,7 +810,7 @@ def _validate_ppr_sequence_input(
 ) -> None:
     # The batch may also contain original relation edge types when
     # include_sampled_edges is on (they feed the relation-message channel via
-    # _lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
+    # lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
     ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
     if not ppr_edge_types:
         raise ValueError(
@@ -816,11 +825,24 @@ def _validate_ppr_sequence_input(
             )
 
 
-def _get_sparse_feature_matrices(
+def get_sparse_feature_matrices(
     graph_attr_dict: dict[str, Tensor],
     attr_names: Optional[list[str]],
     missing_attr_error_prefix: str,
 ) -> list[Tensor]:
+    """Collects the sparse feature matrices for the requested attribute names.
+
+    Args:
+        graph_attr_dict: Sparse matrices keyed by attribute name.
+        attr_names: Names to collect, in order; ``None`` collects nothing.
+        missing_attr_error_prefix: Prefix of the error raised for a missing name.
+
+    Returns:
+        The matrices in the order of ``attr_names``.
+
+    Raises:
+        ValueError: If a requested name is not in ``graph_attr_dict``.
+    """
     matrices: list[Tensor] = []
     for attr_name in attr_names or []:
         if attr_name not in graph_attr_dict:
@@ -1512,7 +1534,7 @@ def _lookup_anchor_relative_features(
     anchor_for_entry = anchor_indices[valid_batch_idx]
 
     for attr_idx, pe_matrix in enumerate(csr_matrices):
-        pe_values = _lookup_csr_values(
+        pe_values = lookup_csr_values(
             csr_matrix=pe_matrix,
             row_indices=anchor_for_entry,
             col_indices=valid_node_idx,
@@ -1650,19 +1672,19 @@ def _lookup_pairwise_relative_features(
     return features, pairwise_nonmissing_indices
 
 
-def _lookup_pairwise_relation_indices(
+def lookup_pairwise_relation_indices(
     edge_index_dict: dict[EdgeType, Tensor],
-    node_index_sequences: Tensor,
-    valid_mask: Tensor,
+    node_index_sequences: Int[Tensor, "batch seq"],
+    valid_mask: Bool[Tensor, "batch seq"],
     relation_edge_types: Optional[list[GiGLEdgeType]],
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
-    expanded_token_mask: Optional[Tensor] = None,
+    expanded_token_mask: Optional[Int[Tensor, "batch seq"]] = None,
     relation_channel_masks: Optional[dict[EdgeType, int]] = None,
-    frontier_batch_node_keys: Optional[Tensor] = None,
+    frontier_batch_node_keys: Optional[Int[Tensor, "num_frontier_keys"]] = None,
     sampling_direction: Literal["in", "out"] = "out",
-) -> Optional[Tensor]:
+) -> Optional[Int64[Tensor, "num_relation_edges 4"]]:
     """Build sparse relation coordinates for valid token pairs.
 
     For a directed edge ``source -> target``, attention uses ``query=target`` and
@@ -1681,6 +1703,24 @@ def _lookup_pairwise_relation_indices(
     channels allowed to fetch it, so the edge is kept only when the owner was
     pushed in one of those channels. PPR sequences pass these; k-hop passes
     ``None``.
+
+    Args:
+        edge_index_dict: Edge index tensors keyed by edge type tuple.
+        node_index_sequences: Node ids of each sequence token.
+        valid_mask: True for real (non-padding) tokens.
+        relation_edge_types: Edge types that define the relation ids, in order.
+        node_type_offsets: Offset of each node type in the homogeneous node id
+            space.
+        num_nodes: Total number of nodes in the homogeneous node id space.
+        device: Device for the returned tensor.
+        expanded_token_mask: Optional per-token bitmask of the PPR channels that
+            pushed each token's node.
+        relation_channel_masks: Optional map from edge type to the allowed PPR
+            channel bitmask.
+        frontier_batch_node_keys: Optional sorted ``batch_idx * num_nodes +
+            node_idx`` keys of the anchor frontier.
+        sampling_direction: Whether sampled edges point ``"out"`` from or ``"in"``
+            to the expanded node.
 
     Returns:
         ``[N, 4]`` unique ``(batch, query, key, relation)`` rows sorted by
@@ -2031,12 +2071,12 @@ def _get_k_hop_neighbors_sparse(
     return _binarize_sparse_tensor(sparse_tensor=reachable, device=device)
 
 
-def _lookup_csr_values(
+def lookup_csr_values(
     csr_matrix: Tensor,
-    row_indices: Tensor,
-    col_indices: Tensor,
+    row_indices: Int[Tensor, "num_lookups"],
+    col_indices: Int[Tensor, "num_lookups"],
     default_value: float = 0.0,
-) -> Tensor:
+) -> Float32[Tensor, "num_lookups"]:
     """
     Look up values in a CSR sparse matrix for given (row, col) pairs.
 
