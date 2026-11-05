@@ -146,33 +146,33 @@ def derive_edge_lossless_codecs(
     edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
         serialized_graph_metadata, weight_edge_feat_name
     )
-    quantization_by_type = (
-        {}
-        if edge_quantization_metadata is None
-        else (
-            {
-                graph_metadata_pb_wrapper.homogeneous_edge_type: edge_quantization_metadata
-            }
-            if isinstance(edge_quantization_metadata, FeatureQuantizationMetadata)
-            else edge_quantization_metadata
-        )
-    )
+    quantization_by_type: dict[EdgeType, FeatureQuantizationMetadata] = {}
+    if isinstance(edge_quantization_metadata, FeatureQuantizationMetadata):
+        homogeneous_edge_type = graph_metadata_pb_wrapper.homogeneous_edge_type
+        quantization_by_type[homogeneous_edge_type] = edge_quantization_metadata
+    elif edge_quantization_metadata is not None:
+        quantization_by_type = dict(edge_quantization_metadata)
+
     codecs: dict[EdgeType, FeatureCodec] = {}
-    for (
-        edge_type,
-        condensed,
-    ) in graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map.items():
-        weight_name = (
-            weight_edge_feat_name
-            if isinstance(weight_edge_feat_name, str)
-            else (weight_edge_feat_name or {}).get(edge_type)
+    edge_type_to_condensed = (
+        graph_metadata_pb_wrapper.edge_type_to_condensed_edge_type_map
+    )
+    for edge_type, condensed in edge_type_to_condensed.items():
+        weight_name: Optional[str] = None
+        if isinstance(weight_edge_feat_name, str):
+            weight_name = weight_edge_feat_name
+        elif weight_edge_feat_name is not None:
+            weight_name = weight_edge_feat_name.get(edge_type)
+        edge_keys: list[str] = []
+        for key in keys[condensed]:
+            if key != weight_name:
+                edge_keys.append(key)
+        if not edge_keys:
+            continue
+        codecs[edge_type] = exclude_quantized_columns(
+            codec_from_feature_schema(schemas[condensed], edge_keys),
+            quantization_by_type.get(edge_type),
         )
-        edge_keys = [key for key in keys[condensed] if key != weight_name]
-        if edge_keys:
-            codecs[edge_type] = exclude_quantized_columns(
-                codec_from_feature_schema(schemas[condensed], edge_keys),
-                quantization_by_type.get(edge_type),
-            )
     if not codecs:
         return None
     if graph_metadata_pb_wrapper.is_heterogeneous:

@@ -164,10 +164,10 @@ class DeriveNodeLosslessCodecsTest(TestCase):
 
         self.assertEqual(unweighted[_USER_TO_STORY].num_columns, 2)
         self.assertEqual(weighted[_USER_TO_STORY].num_columns, 1)
-        self.assertEqual(
-            {e: c for e, c in weighted.items() if e != _USER_TO_STORY},
-            {e: c for e, c in unweighted.items() if e != _USER_TO_STORY},
-        )
+        self.assertEqual(set(weighted), set(unweighted))
+        for edge_type in unweighted:
+            if edge_type != _USER_TO_STORY:
+                self.assertEqual(weighted[edge_type], unweighted[edge_type])
 
     def test_graph_without_node_features_gets_no_codec(self) -> None:
         config = _config(TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO)

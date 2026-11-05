@@ -1619,11 +1619,10 @@ def _with_logical_feature_info(
         if feature_info is not None and not isinstance(feature_info, FeatureInfo):
             logical_info.update(feature_info)
         for entity_type in packed_features:
-            entity_metadata = (
-                metadata
-                if isinstance(metadata, FeatureQuantizationMetadata)
-                else metadata[entity_type]
-            )
+            if isinstance(metadata, FeatureQuantizationMetadata):
+                entity_metadata = metadata
+            else:
+                entity_metadata = metadata[entity_type]
             logical_info[entity_type] = FeatureInfo(
                 dim=entity_metadata.feature_dim, dtype=torch.float32
             )
