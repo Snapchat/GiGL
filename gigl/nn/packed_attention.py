@@ -635,6 +635,9 @@ def packed_attention(
     ``dropout_p > 0`` runs the padded SDPA path on the GPU. Off CUDA, the padded
     SDPA path always runs.
 
+    Every sequence must contain at least one token (``lengths >= 1``). An empty
+    sequence gives wrong output on the padded path and is not supported.
+
     Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda or dropout_p > 0:
