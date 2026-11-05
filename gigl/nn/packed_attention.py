@@ -471,6 +471,9 @@ def packed_attention(
     The varlen kernel takes no bias: on CUDA, a ``per_key`` or ``per_pair`` bias
     raises ``NotImplementedError``.
 
+    Every sequence must contain at least one token (``lengths >= 1``). An empty
+    sequence gives wrong output on the padded path and is not supported.
+
     Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda:
