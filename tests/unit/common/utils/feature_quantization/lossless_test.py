@@ -15,6 +15,7 @@ from tests.test_assets.test_case import TestCase
 # id block has an out-of-vocabulary id of -1, like a vocabulary feature.
 #   columns 0-4 dense | 5-7 ids in [-1, 70] | 8-9 dense | 10-13 ids in [-1, 210]
 #   | 14-16 ids in [-1, 1247] | 17 dense | 18-19 ids in [-1, 265771] | 20-21 ids in [0, 300]
+#   | 22-30 one-hot (0 or 1)
 _FEATURES: list[tuple[str, int, Optional[tuple[int, int]]]] = [
     ("dense_a", 5, None),
     ("small_ids", 3, (-1, 70)),
@@ -24,6 +25,7 @@ _FEATURES: list[tuple[str, int, Optional[tuple[int, int]]]] = [
     ("dense_c", 1, None),
     ("wide_ids", 2, (-1, 265771)),
     ("unsigned_ids", 2, (0, 300)),
+    ("one_hot", 9, (0, 1)),
 ]
 _NUM_COLUMNS = sum(width for _, width, _ in _FEATURES)
 _EXPECTED_KINDS = (
@@ -35,6 +37,7 @@ _EXPECTED_KINDS = (
     + ["float32"]
     + ["int32"] * 2
     + ["int16"] * 2
+    + ["bit"] * 9
 )
 
 
@@ -80,8 +83,13 @@ class FeatureCodecTest(TestCase):
 
     def test_narrowest_kind_is_chosen_per_column_and_rows_shrink(self) -> None:
         self.assertEqual(list(self.codec.column_dtypes), _EXPECTED_KINDS)
-        # 8 float32 + 2 int32 = 40 B, then 5 int16 = 10 B, then 7 one-byte columns, padded to 4.
+        # 8 float32 + 2 int32 = 40 B, then 5 int16 = 10 B, then 7 one-byte columns, then 9 bits in
+        # 2 bytes, padded to 4.
         self.assertEqual(self.codec.row_bytes, 60)
+        self.assertEqual(kind_holding_domain(0, 1), "bit")
+        self.assertEqual(kind_holding_domain(0, 0), "bit")
+        self.assertEqual(kind_holding_domain(-1, 1), "int8")
+        self.assertEqual(kind_holding_domain(0, 200), "uint8")
         self.assertLess(self.codec.row_bytes, 4 * _NUM_COLUMNS)
 
     def test_round_trip_is_bit_exact_including_extremes_and_non_finite_dense(
@@ -130,6 +138,31 @@ class FeatureCodecTest(TestCase):
         self.assertNotEqual(interleaved.stride(1), 1)
         self.assertTrue(_same_bits(self.codec.decode(interleaved), self.features[:10]))
 
+    def test_bit_columns_pack_eight_per_byte_least_significant_bit_first(self) -> None:
+        for num_bit_columns in (1, 7, 8, 9, 17):
+            codec = FeatureCodec(("float32", "int16") + ("bit",) * num_bit_columns)
+            generator = torch.Generator().manual_seed(num_bit_columns)
+            bits = torch.randint(0, 2, (50, num_bit_columns), generator=generator)
+            features = torch.cat([torch.randn(50, 2), bits.float()], dim=1)
+            features[:, 1] = torch.randint(-300, 300, (50,), generator=generator)
+            packed = codec.encode(features)
+            num_bit_bytes = (num_bit_columns + 7) // 8
+            self.assertEqual(codec.row_bytes, (4 + 2 + num_bit_bytes + 3) // 4 * 4)
+            self.assertTrue(_same_bits(codec.decode(packed), features))
+            # The bit group sits after the 4-byte and 2-byte groups.
+            bit_bytes = packed[:, 6 : 6 + num_bit_bytes]
+            for column in range(num_bit_columns):
+                stored = (bit_bytes[:, column // 8] >> (column % 8)) & 1
+                self.assertTrue(torch.equal(stored.long(), bits[:, column]))
+            # Padding bits of the last byte stay zero.
+            if num_bit_columns % 8:
+                self.assertTrue(
+                    torch.equal(
+                        bit_bytes[:, -1] >> (num_bit_columns % 8),
+                        torch.zeros(50, dtype=torch.uint8),
+                    )
+                )
+
     def test_empty_batch_round_trips(self) -> None:
         empty = self.features[:0]
         decoded = self.codec.decode(self.codec.encode(empty))
@@ -170,6 +203,11 @@ class FeatureCodecTest(TestCase):
         features[0, 6] = 1.5  # not an integer
         with self.assertRaises(ValueError):
             self.codec.encode(features)
+        for bad_bit in (0.5, 2.0, -1.0, float("nan")):
+            features = self.features.clone()
+            features[0, 25] = bad_bit  # a one-hot column
+            with self.assertRaises(ValueError):
+                self.codec.encode(features)
         with self.assertRaises(ValueError):
             self.codec.encode(self.features[:, :-1])
         with self.assertRaises(ValueError):
@@ -184,6 +222,10 @@ class FeatureCodecTest(TestCase):
         codec = FeatureCodec(("int32",))
         packed = codec.encode(torch.tensor([[16777217.0]], dtype=torch.float64))
         self.assertEqual(int(packed.view(torch.int32)), 16777217)
+        with self.assertRaises(ValueError):
+            FeatureCodec(("bit",)).encode(
+                torch.tensor([[1.0 + 2.0**-40]], dtype=torch.float64)
+            )
         # Neither a float64 fraction nor an out-of-range value may be rounded into validity.
         with self.assertRaises(ValueError):
             FeatureCodec(("int8",)).encode(

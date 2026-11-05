@@ -172,20 +172,21 @@ class GraphTypesTyest(TestCase):
     def test_feature_quantization_metadata_lossless_region_layout(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=4,
-            feature_dim=7,
+            feature_dim=8,
             quantized_feature_indices=(0, 1, 2),
-            lossless_feature_indices=(4, 6),
-            lossless_column_kinds=("int16", "int8"),
+            lossless_feature_indices=(4, 6, 7),
+            lossless_column_kinds=("int16", "int8", "bit"),
         )
-        # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 bytes padded to 4.
+        # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 + 1 bytes (the
+        # bit column takes one byte).
         self.assertEqual(metadata.quantized_packed_dim, 2)
         self.assertEqual(metadata.lossless_byte_offset, 4)
         self.assertEqual(metadata.packed_feature_dim, 8)
-        self.assertEqual(metadata.packed_feature_indices, (0, 1, 2, 4, 6))
+        self.assertEqual(metadata.packed_feature_indices, (0, 1, 2, 4, 6, 7))
         self.assertEqual(metadata.raw_feature_indices, (3, 5))
         index_tensors = metadata.scatter_index_tensors(torch.device("cpu"))
         torch.testing.assert_close(
-            index_tensors.quantized, torch.tensor([0, 1, 2, 4, 6], dtype=torch.long)
+            index_tensors.quantized, torch.tensor([0, 1, 2, 4, 6, 7], dtype=torch.long)
         )
 
     def test_feature_quantization_metadata_lossless_only_has_no_quantized_region(
