@@ -32,21 +32,22 @@ from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
-    _get_sparse_feature_matrices,
-    _lookup_csr_values,
-    _lookup_pairwise_relation_indices,
-    _lookup_pairwise_relative_features,
-    _validate_ppr_sequence_input,
-    _validate_reserved_anchor_feature_usage,
     build_ppr_sequence_grids,
     concat_tensors,
     get_node_type_offsets,
+    get_sparse_feature_matrices,
+    lookup_csr_values,
+    lookup_pairwise_relation_indices,
+    lookup_pairwise_relative_features,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
+    validate_ppr_sequence_input,
+    validate_reserved_anchor_feature_usage,
 )
 from gigl.transforms.sequence_layout import (
     PackedLayout,
     PackedRelationEdges,
+    RelationSegment,
     pack_sequences,
 )
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
@@ -54,7 +55,11 @@ from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layou
 logger = Logger()
 
 # The dtypes the CUDA varlen attention kernel supports.
-_PACKED_KERNEL_DTYPES: Final = (torch.float16, torch.bfloat16, torch.float32)
+_PACKED_KERNEL_DTYPES: Final[tuple[torch.dtype, ...]] = (
+    torch.float16,
+    torch.bfloat16,
+    torch.float32,
+)
 
 
 def _get_node_type_positional_encodings(
@@ -255,7 +260,7 @@ class FeedForwardNetwork(nn.Module):
 
 def _get_relation_segments_from_bounds(
     bounds: Sequence[int],
-) -> tuple[tuple[int, int, int], ...]:
+) -> tuple[RelationSegment, ...]:
     """Returns a ``(relation, start, end)`` segment for every relation.
 
     ``bounds[r]`` to ``bounds[r + 1]`` is relation ``r``'s edge range. A relation
@@ -265,23 +270,23 @@ def _get_relation_segments_from_bounds(
     if bounds[-1] == 0:
         return ()
     return tuple(
-        (relation, bounds[relation], bounds[relation + 1])
+        RelationSegment(relation, bounds[relation], bounds[relation + 1])
         for relation in range(len(bounds) - 1)
     )
 
 
 def _get_relation_segments(
-    relation_indices: Tensor,
-) -> tuple[tuple[int, int, int], ...]:
+    relation_indices: Int64[Tensor, "num_edges"],
+) -> tuple[RelationSegment, ...]:
     """Returns the ``(relation, start, end)`` runs of equal consecutive relations.
 
     Costs one host read.
     """
     relations, counts = torch.unique_consecutive(relation_indices, return_counts=True)
-    segments: list[tuple[int, int, int]] = []
+    segments: list[RelationSegment] = []
     start = 0
     for relation, count in torch.stack([relations, counts]).t().tolist():
-        segments.append((relation, start, start + count))
+        segments.append(RelationSegment(relation, start, start + count))
         start += count
     return tuple(segments)
 
@@ -753,10 +758,10 @@ class GraphTransformerEncoderLayer(nn.Module):
 
     def _relation_attention_scores(
         self,
-        selected_query: Tensor,
-        selected_key: Tensor,
-        segments: Sequence[tuple[int, int, int]],
-    ) -> Tensor:
+        selected_query: Float[Tensor, "num_edges num_heads head_dim"],
+        selected_key: Float[Tensor, "num_edges num_heads head_dim"],
+        segments: Sequence[RelationSegment],
+    ) -> Float[Tensor, "num_edges num_heads"]:
         """The per-head relation score of each edge, ``(num_edges, num_heads)``.
 
         Args:
@@ -765,23 +770,30 @@ class GraphTransformerEncoderLayer(nn.Module):
             selected_key: ``(num_edges, num_heads, head_dim)`` key of each edge's
                 source, in the same order.
             segments: ``(relation, start, end)`` edge range of every relation.
+
+        Returns:
+            ``(num_edges, num_heads)`` score of each edge.
         """
-        return torch.cat(
-            [
+        scores: list[Tensor] = []
+        for relation, start, end in segments:
+            scores.append(
                 self._compute_relation_attention_scores(
                     selected_query[start:end], selected_key[start:end], relation
                 )
-                for relation, start, end in segments
-            ]
-        )
+            )
+        return torch.cat(scores)
 
     def _accumulate_relation_attention_scores(
         self,
-        grid: Tensor,
-        selected_query: Tensor,
-        selected_key: Tensor,
-        grid_index: tuple[Tensor, Tensor, Tensor],
-        segments: Sequence[tuple[int, int, int]],
+        grid: Float[Tensor, "batch num_heads query_len key_len"],
+        selected_query: Float[Tensor, "num_edges num_heads head_dim"],
+        selected_key: Float[Tensor, "num_edges num_heads head_dim"],
+        grid_index: tuple[
+            Int64[Tensor, "num_edges"],
+            Int64[Tensor, "num_edges"],
+            Int64[Tensor, "num_edges"],
+        ],
+        segments: Sequence[RelationSegment],
     ) -> None:
         """Adds each edge's per-head relation score into ``grid`` in place.
 
@@ -1007,25 +1019,6 @@ class GraphTransformerEncoderLayer(nn.Module):
             is_causal=False,
         )
 
-    def _build_relation_attention_bias(
-        self,
-        query: Tensor,
-        key: Tensor,
-        pairwise_relation_indices: Tensor,
-    ) -> Optional[Tensor]:
-        if pairwise_relation_indices.numel() == 0:
-            return None
-
-        batch_size, _, query_len, _ = query.shape
-        key_len = key.size(2)
-        empty_bias = query.new_zeros((batch_size, self._num_heads, query_len, key_len))
-        return self._add_relation_attention_bias(
-            attn_bias=empty_bias,
-            query=query,
-            key=key,
-            pairwise_relation_indices=pairwise_relation_indices,
-        )
-
     def _add_relation_attention_bias(
         self,
         attn_bias: Optional[Tensor],
@@ -1201,7 +1194,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         edge_queries: Optional[Tensor],
         edge_keys: Optional[Tensor],
         relation_indices: Tensor,
-        relation_segments: Sequence[tuple[int, int, int]],
+        relation_segments: Sequence[RelationSegment],
         target_rows: Tensor,
         num_target_rows: int,
     ) -> Tensor:
@@ -1687,7 +1680,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names
         anchor_input_attr_names = anchor_based_input_attr_names
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names
-        _validate_reserved_anchor_feature_usage(
+        validate_reserved_anchor_feature_usage(
             pairwise_bias_attr_names=pairwise_bias_attr_names,
             anchor_bias_attr_names=anchor_bias_attr_names,
             anchor_input_attr_names=anchor_input_attr_names,
@@ -2352,7 +2345,7 @@ class GraphTransformerEncoder(nn.Module):
             The layout, with ``relation_edges`` set when a relation attention or
             message mode is on.
         """
-        _validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
+        validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
         token_attr_names = set(self._anchor_based_attention_bias_attr_names) | set(
             self._anchor_based_input_attr_names
         )
@@ -2411,7 +2404,7 @@ class GraphTransformerEncoder(nn.Module):
         distance of a k-hop layout, and ``ppr_weight`` and
         ``ppr_relation_features`` of a PPR layout. Any other attribute is a sparse
         CSR matrix on the batch, indexed by (anchor, token node). It is looked up
-        with ``_lookup_csr_values``, which reads the longest row's length back
+        with ``lookup_csr_values``, which reads the longest row's length back
         from the device and has data-dependent shapes.
 
         Args:
@@ -2449,7 +2442,7 @@ class GraphTransformerEncoder(nn.Module):
             matrices = dict(
                 zip(
                     sparse_attr_names,
-                    _get_sparse_feature_matrices(
+                    get_sparse_feature_matrices(
                         graph_attr_dict=graph_attr_dict,
                         attr_names=sparse_attr_names,
                         missing_attr_error_prefix="Anchor-based attribute",
@@ -2461,7 +2454,7 @@ class GraphTransformerEncoder(nn.Module):
             if name in layout.token_attrs:
                 values = layout.token_attrs[name].float()
             else:
-                values = _lookup_csr_values(
+                values = lookup_csr_values(
                     csr_matrix=matrices[name],
                     row_indices=anchor_node_index[layout.sequence_id],
                     col_indices=layout.node_index,
@@ -2545,7 +2538,7 @@ class GraphTransformerEncoder(nn.Module):
         pairwise_projection = self._pairwise_pe_attention_bias_projection
         if pairwise_projection is not None:
             names = self._pairwise_attention_bias_attr_names
-            matrices = _get_sparse_feature_matrices(
+            matrices = get_sparse_feature_matrices(
                 graph_attr_dict={
                     name: getattr(data, name) for name in names if name in data
                 },
@@ -2553,7 +2546,7 @@ class GraphTransformerEncoder(nn.Module):
                 missing_attr_error_prefix="Pairwise attention bias attribute",
             )
             node_grid, valid_mask = self._layout_grids(layout)
-            features, nonmissing_indices = _lookup_pairwise_relative_features(
+            features, nonmissing_indices = lookup_pairwise_relative_features(
                 node_index_sequences=node_grid,
                 valid_mask=valid_mask,
                 csr_matrices=matrices,
@@ -2770,7 +2763,7 @@ class GraphTransformerEncoder(nn.Module):
         # lookup returns a tensor.
         relation_edges = cast(
             Tensor,
-            _lookup_pairwise_relation_indices(
+            lookup_pairwise_relation_indices(
                 edge_index_dict=edge_index_dict,
                 node_index_sequences=node_index,
                 valid_mask=valid_mask,
