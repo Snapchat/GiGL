@@ -6,6 +6,13 @@ on:
       pr_number:
         description: 'PR to run the workflow on'
         required: true
+      commit_sha:
+        description: |
+          The exact commit SHA to build (must be the current head of the PR you reviewed).
+          Every build job is pinned to this SHA and aborts if the PR head has moved off it,
+          which closes the dispatch->checkout race. Paste the full SHA of the commit you
+          actually reviewed (not blindly the latest tip).
+        required: true
 
 env:
   DOCKER_BUILDKIT: 1
@@ -22,6 +29,10 @@ jobs:
   comment-workflow-started:
 
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
     - name: Comment on PR
       uses: snapchat/gigl/.github/actions/comment-on-pr@main
@@ -39,14 +50,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -67,14 +83,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -95,14 +116,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -122,14 +148,19 @@ jobs:
       # Needed for gcloud auth: https://github.com/google-github-actions/auth
       contents: 'read'
       id-token: 'write'
+      # Needed by `gh pr checkout` (in checkout-pr-branch) to resolve the PR via the API.
+      pull-requests: 'read'
     steps:
     - name: Checkout PR Branch
       uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
+        sha: ${{ inputs.commit_sha }}
+    # Use the pinned remote ref for setup, NOT the local `./.github/actions/...` path, which
+    # would be read from the (untrusted) PR checkout.
     - name: Setup Machine for building Docker images
-      uses: ./.github/actions/setup-python-tools
+      uses: snapchat/gigl/.github/actions/setup-python-tools@main
       with:
         setup_gcloud: "true"
         try_cleaning_disk_space: "true"
@@ -154,20 +185,117 @@ jobs:
       - build-dataflow-base-image
       - build-builder-image
     runs-on: ubuntu-24.04
+    # This job holds a write token, so it must never execute PR-authored code. The PR checkout
+    # below is treated as DATA only; the update script comes from the workflow's own commit.
+    permissions:
+      contents: write # the push step writes back to the PR branch
+      pull-requests: write
+      issues: write
     steps:
-    - name: Commit and Push Base Images
-      uses: snapchat/gigl/.github/actions/run-command-on-pr@main
+    # GITHUB_TOKEN cannot push to a fork, so fork PRs skip writeback entirely. (Read-only use of
+    # the token for `gh`; nothing is checked out or executed yet.)
+    - name: Detect fork PR
+      id: fork-check
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+      run: |
+        if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+          echo "::error::Invalid PR number: '${PR_NUMBER}'."
+          exit 1
+        fi
+        is_cross_repository="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json isCrossRepository --jq '.isCrossRepository')"
+        if [ "$is_cross_repository" != "true" ] && [ "$is_cross_repository" != "false" ]; then
+          echo "::error::Could not determine whether PR ${PR_NUMBER} is from a fork: '${is_cross_repository}'."
+          exit 1
+        fi
+        echo "is_fork=${is_cross_repository}" >> "$GITHUB_OUTPUT"
+    - name: Comment that writeback was skipped (fork PR)
+      if: ${{ steps.fork-check.outputs.is_fork == 'true' }}
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ inputs.pr_number }}
+        message: |
+          Built and pushed new images, but this PR is from a fork, so the image refs were NOT written back to the PR branch.
+          * CUDA base image: `${{ env.GIGL_BASE_CUDA_IMAGE }}`
+          * CPU base image: `${{ env.GIGL_BASE_CPU_IMAGE }}`
+          * Dataflow base image: `${{ env.GIGL_BASE_DATAFLOW_IMAGE }}`
+          * Builder image: `${{ env.GIGL_BUILDER_IMAGE }}`
+
+          Please update `gigl/dep_vars.env` and `.github/cloud_builder/run_command_on_active_checkout.yaml` with these image names yourself.
+    # Check out the PR at the reviewed SHA (verified by the action). Treated as data: nothing from
+    # this checkout is executed. The action checks out with persist-credentials: false.
+    - name: Check out PR at the reviewed commit
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' }}
+      uses: snapchat/gigl/.github/actions/checkout-pr-branch@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ inputs.pr_number }}
-        should_leave_progress_comments: "false"
-        command: bash .github/scripts/update_docker_image_refs.sh
-    - name: Commit and Push Dep Vars
-      uses: snapchat/gigl/.github/actions/commit-and-push@main
+        sha: ${{ inputs.commit_sha }}
+    # Refuse PRs that track `.trusted`, so the trusted checkout below cannot be redirected
+    # (e.g. via a symlink) into PR-controlled content.
+    - name: Refuse PRs that track the trusted checkout path
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' }}
+      run: |
+        if [ -n "$(git -c core.hooksPath=/dev/null -c core.fsmonitor=false ls-files -- .trusted)" ]; then
+          echo "::error::The PR tracks a path named .trusted, which this workflow reserves. Refusing to continue."
+          exit 1
+        fi
+    # The workflow file's own commit (not PR-authored). Must come AFTER the PR checkout, because
+    # actions/checkout cleans its target directory. It is untracked, so `git add --update` ignores it.
+    - name: Check out trusted scripts
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        commit_message: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-    - uses: snapchat/gigl/.github/actions/comment-on-pr@main
+        ref: ${{ github.sha }}
+        path: .trusted
+        persist-credentials: false
+    - name: Update image refs (trusted script, PR checkout as data)
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' }}
+      run: bash .trusted/.github/scripts/update_docker_image_refs.sh
+    # No token in this step's environment. Hooks and fsmonitor are disabled on every git call so
+    # nothing planted in .git can run.
+    - name: Commit image refs
+      id: commit
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' }}
+      env:
+        COMMIT_MESSAGE: "[AUTOMATED] Update dep.vars, and other relevant files with new image names"
+      run: |
+        git_safe=(git -c core.hooksPath=/dev/null -c core.fsmonitor=false
+          -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com")
+        # Stage only modifications/deletions of tracked files; new untracked files (including
+        # .trusted) are ignored.
+        "${git_safe[@]}" add --update
+        unexpected="$("${git_safe[@]}" diff --cached --name-only | grep -v -x -e 'gigl/dep_vars.env' -e '.github/cloud_builder/run_command_on_active_checkout.yaml' || true)"
+        if [ -n "$unexpected" ]; then
+          echo "::error::Unexpected files changed; refusing to commit: ${unexpected}"
+          exit 1
+        fi
+        if "${git_safe[@]}" diff --cached --quiet; then
+          echo "No changes to commit."
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        "${git_safe[@]}" commit -m "$COMMIT_MESSAGE"
+        echo "has_changes=true" >> "$GITHUB_OUTPUT"
+    # The ONLY step that sees the write token.
+    - name: Push image refs
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' && steps.commit.outputs.has_changes == 'true' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # The credential helper reads the token from this step's env, so the token is not in
+        # argv or on disk. The single quotes keep `${GITHUB_TOKEN}` literal until git runs the
+        # helper. The empty helper entry clears any inherited helper first.
+        git \
+          -c core.hooksPath=/dev/null \
+          -c core.fsmonitor=false \
+          -c credential.helper= \
+          -c 'credential.helper=!f() { echo username=x-access-token; echo "password=${GITHUB_TOKEN}"; }; f' \
+          push
+    - name: Comment that image refs were written back
+      if: ${{ steps.fork-check.outputs.is_fork == 'false' && steps.commit.outputs.has_changes == 'true' }}
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
       with:
         pr_number: ${{ inputs.pr_number }}
         message: |
