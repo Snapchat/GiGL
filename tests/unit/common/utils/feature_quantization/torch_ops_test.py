@@ -289,12 +289,12 @@ class TorchFeatureQuantizationOpsTest(TestCase):
     def test_dequantize_torch_tensor_handles_lossless_only_batched_and_empty_rows(
         self,
     ) -> None:
-        codec = FeatureCodec(("uint8_bias1", "int16"))
-        ids = torch.tensor([[-1.0, -300.0], [254.0, 300.0]])
+        codec = FeatureCodec(("uint8_bias1", "int16", "bit"))
+        ids = torch.tensor([[-1.0, -300.0, 1.0], [254.0, 300.0, 0.0]])
         metadata = FeatureQuantizationMetadata(
             bits=None,
-            feature_dim=2,
-            lossless_feature_indices=(0, 1),
+            feature_dim=3,
+            lossless_feature_indices=(0, 1, 2),
             lossless_column_kinds=codec.column_dtypes,
         )
         packed = codec.encode(ids)
@@ -305,7 +305,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
         # Leading batch dimensions are preserved.
         torch.testing.assert_close(
             dequantize_torch_tensor(packed.reshape(1, 2, -1), metadata=metadata),
-            ids.reshape(1, 2, 2),
+            ids.reshape(1, 2, 3),
             atol=0,
             rtol=0,
         )

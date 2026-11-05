@@ -9,16 +9,13 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
+from gigl.common.utils.feature_quantization.lossless import ColumnStats
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.utils.lossless_compression import (
-    compress_lossless_columns,
-    lossless_column_stats,
-)
+from gigl.distributed.utils.lossless_compression import compress_lossless_columns
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
@@ -66,15 +63,12 @@ def _id_features(
 
 
 def _compress(
-    features: Optional[torch.Tensor],
-    declared: FeatureCodec,
+    features: torch.Tensor,
     quantized: Optional[torch.Tensor] = None,
     metadata: Optional[FeatureQuantizationMetadata] = None,
 ):
-    stats = lossless_column_stats(features, metadata, declared)
-    return compress_lossless_columns(
-        features, quantized, metadata, declared, stats, "test"
-    )
+    stats = ColumnStats.from_features(features)
+    return compress_lossless_columns(features, quantized, metadata, stats, "test")
 
 
 def _ring_edges() -> torch.Tensor:
@@ -236,12 +230,9 @@ class LosslessCompressionLoaderTest(TestCase):
                 clip_max=3.0,
             )
         )
-        declared = FeatureCodec(
-            ("float32", "int8", "float32", "float32", "int16", "float32")
-        )
 
         raw, packed, metadata = _compress(
-            features[:, [1, 2, 4, 5]], declared, quantized, quantized_metadata
+            features[:, [1, 2, 4, 5]], quantized, quantized_metadata
         )
 
         assert raw is not None and packed is not None and metadata is not None
@@ -261,7 +252,7 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_node_features=FeaturePartitionData(
                     feats=raw, ids=torch.arange(_NUM_NODES)
                 ),
-                partitioned_node_quantized_features=FeaturePartitionData(
+                partitioned_node_packed_features=FeaturePartitionData(
                     feats=packed, ids=torch.arange(_NUM_NODES)
                 ),
                 partitioned_edge_features=None,
@@ -278,15 +269,14 @@ class LosslessCompressionLoaderTest(TestCase):
         expected[:, [0, 3]] = dequantize_torch_tensor(quantized, quantized_metadata)
         mp.spawn(fn=_assert_node_batches_equal_expected, args=(dataset, expected))
 
-    def test_heterogeneous_loader_compresses_only_the_declared_node_type(self) -> None:
+    def test_heterogeneous_loader_compresses_only_the_node_type_with_integral_columns(
+        self,
+    ) -> None:
         expected = {
             _USER: _id_features(5, {2: (-1, 70), 3: (0, 1247)}, 5, seed=1),
             _STORY: _id_features(5, {}, 3, seed=2),
         }
-        raw, packed, metadata = _compress(
-            expected[_USER],
-            FeatureCodec(("float32", "float32", "int8", "int16", "float32")),
-        )
+        raw, packed, metadata = _compress(expected[_USER])
         assert raw is not None and packed is not None and metadata is not None
         dataset = DistDataset(
             rank=0,
@@ -316,7 +306,7 @@ class LosslessCompressionLoaderTest(TestCase):
                         feats=expected[_STORY], ids=torch.arange(5)
                     ),
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     _USER: FeaturePartitionData(feats=packed, ids=torch.arange(5))
                 },
                 partitioned_edge_features=None,
@@ -334,8 +324,7 @@ class LosslessCompressionLoaderTest(TestCase):
         features = _id_features(
             _NUM_NODES, {0: (-1, 70), 1: (0, 5000), 2: (-1, 200)}, 3, seed=5
         )
-        declared = FeatureCodec(("int8", "int16", "uint8_bias1"))
-        raw, packed, metadata = _compress(features, declared)
+        raw, packed, metadata = _compress(features)
         assert raw is None and packed is not None and metadata is not None
         dataset = DistDataset(
             rank=0,
@@ -351,7 +340,7 @@ class LosslessCompressionLoaderTest(TestCase):
                     edge_index=_ring_edges(), edge_ids=None
                 ),
                 partitioned_node_features=None,
-                partitioned_node_quantized_features=FeaturePartitionData(
+                partitioned_node_packed_features=FeaturePartitionData(
                     feats=packed, ids=torch.arange(_NUM_NODES)
                 ),
                 partitioned_edge_features=None,
@@ -371,9 +360,7 @@ class LosslessCompressionLoaderTest(TestCase):
         story_features = _id_features(
             5, {0: (0, 100), 1: (0, 100), 2: (0, 100)}, 3, seed=7
         )
-        raw, packed, story_metadata = _compress(
-            story_features, FeatureCodec(("int8", "int8", "int8"))
-        )
+        raw, packed, story_metadata = _compress(story_features)
         assert raw is None and packed is not None and story_metadata is not None
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
         story_to_user = EdgeType(_STORY, Relation("to"), _USER)
@@ -403,7 +390,7 @@ class LosslessCompressionLoaderTest(TestCase):
                         feats=user_features, ids=torch.arange(5)
                     )
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     _STORY: FeaturePartitionData(feats=packed, ids=torch.arange(5))
                 },
                 partitioned_edge_features=None,
@@ -426,9 +413,7 @@ class LosslessCompressionLoaderTest(TestCase):
 
     def test_incoming_edge_loader_returns_compressed_edge_features(self) -> None:
         edge_features = _id_features(5, {0: (-1, 70), 2: (0, 1247)}, 3, seed=3)
-        raw, packed, metadata = _compress(
-            edge_features, FeatureCodec(("int8", "float32", "int16"))
-        )
+        raw, packed, metadata = _compress(edge_features)
         assert raw is not None and packed is not None and metadata is not None
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
         dataset = DistDataset(
@@ -450,7 +435,7 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_edge_features={
                     _USER_TO_STORY: FeaturePartitionData(feats=raw, ids=torch.arange(5))
                 },
-                partitioned_edge_quantized_features={
+                partitioned_edge_packed_features={
                     _USER_TO_STORY: FeaturePartitionData(
                         feats=packed, ids=torch.arange(5)
                     )
@@ -468,12 +453,8 @@ class LosslessCompressionLoaderTest(TestCase):
     def test_ablp_loader_returns_compressed_node_and_edge_features(self) -> None:
         node_features = _id_features(3, {0: (-1, 70), 2: (0, 1247)}, 4, seed=4)
         edge_features = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-        node_raw, node_packed, node_metadata = _compress(
-            node_features, FeatureCodec(("int8", "float32", "int16", "float32"))
-        )
-        edge_raw, edge_packed, edge_metadata = _compress(
-            edge_features, FeatureCodec(("int8", "int8"))
-        )
+        node_raw, node_packed, node_metadata = _compress(node_features)
+        edge_raw, edge_packed, edge_metadata = _compress(edge_features)
         assert (
             node_raw is not None
             and node_packed is not None
@@ -485,11 +466,11 @@ class LosslessCompressionLoaderTest(TestCase):
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
             node_features=node_raw,
-            node_quantized_features=node_packed,
+            node_packed_features=node_packed,
             node_labels=None,
             edge_index=torch.tensor([[0, 1], [1, 0]]),
             edge_features=None,
-            edge_quantized_features=edge_packed,
+            edge_packed_features=edge_packed,
             positive_label=torch.tensor([[0], [1]]),
             negative_label=torch.tensor([[0], [2]]),
         )
@@ -499,10 +480,10 @@ class LosslessCompressionLoaderTest(TestCase):
             dict[NodeType, torch.Tensor], loaded_graph_tensors.node_features
         )
         keyed_node_packed = cast(
-            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_quantized_features
+            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_packed_features
         )
         keyed_edge_packed = cast(
-            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_quantized_features
+            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_packed_features
         )
         dataset = DistDataset(
             rank=0,
@@ -529,13 +510,13 @@ class LosslessCompressionLoaderTest(TestCase):
                         ids=torch.arange(3),
                     )
                 },
-                partitioned_node_quantized_features={
+                partitioned_node_packed_features={
                     DEFAULT_HOMOGENEOUS_NODE_TYPE: FeaturePartitionData(
                         feats=keyed_node_packed[DEFAULT_HOMOGENEOUS_NODE_TYPE],
                         ids=torch.arange(3),
                     )
                 },
-                partitioned_edge_quantized_features={
+                partitioned_edge_packed_features={
                     DEFAULT_HOMOGENEOUS_EDGE_TYPE: FeaturePartitionData(
                         feats=keyed_edge_packed[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
                         ids=torch.arange(2),
@@ -558,7 +539,7 @@ class LosslessCompressionLoaderTest(TestCase):
 
 
 class BuildDatasetLosslessCompressionTest(TestCase):
-    """``build_dataset`` compresses declared columns of real partitioned data after checking them on every rank."""
+    """``build_dataset`` infers the kind of every node feature column from the real partitioned data on every rank."""
 
     def _build(self, info, **kwargs) -> DistDataset:
         return run_distributed_dataset(
@@ -569,7 +550,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             **kwargs,
         )
 
-    def test_homogeneous_node_features_declared_as_ids_are_compressed_and_decode_exactly(
+    def test_homogeneous_binary_node_features_are_stored_as_bits_and_decode_exactly(
         self,
     ) -> None:
         info = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
@@ -577,17 +558,18 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         assert isinstance(reference.node_feature_info, FeatureInfo)
         dim = reference.node_feature_info.dim
 
-        dataset = self._build(info, node_lossless_codecs=FeatureCodec(("int8",) * dim))
+        dataset = self._build(info, compress_node_features=True)
 
         metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)
         self.assertEqual(metadata.lossless_feature_indices, tuple(range(dim)))
         self.assertIsNone(dataset.node_features)
-        packed = dataset.node_quantized_features
+        packed = dataset.node_packed_features
         assert isinstance(packed, Feature)
         packed.lazy_init_with_ipc_handle()
-        # One byte per binary column, padded to a multiple of four.
-        self.assertEqual(packed.feature_tensor.shape[1], (dim + 3) // 4 * 4)
+        # One bit per binary column, padded to a multiple of four bytes.
+        self.assertEqual(metadata.lossless_column_kinds, ("bit",) * dim)
+        self.assertEqual(packed.feature_tensor.shape[1], ((dim + 7) // 8 + 3) // 4 * 4)
         self.assertTrue(
             torch.equal(
                 dequantize_torch_tensor(packed.feature_tensor, metadata),
@@ -595,27 +577,21 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             )
         )
 
-    def test_heterogeneous_node_features_fall_back_per_node_type(
+    def test_heterogeneous_node_types_get_kinds_from_their_own_data(
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         reference = self._build(info)
         # author features are 0/1 (334 columns) and paper features are small counts (4231 columns);
-        # term features (50 columns) are real valued, so declaring them as ids must leave them alone.
-        node_codecs = {
-            _AUTHOR: FeatureCodec(("int8",) * 334),
-            _PAPER: FeatureCodec(("uint8",) * 4231),
-            _TERM: FeatureCodec(("int8",) * 50),
-        }
-
-        dataset = self._build(info, node_lossless_codecs=node_codecs)
+        # term features (50 columns) are real valued, so they stay float32.
+        dataset = self._build(info, compress_node_features=True)
 
         node_metadata = cast(
             dict[NodeType, FeatureQuantizationMetadata],
             dataset.node_quantization_metadata,
         )
         self.assertEqual(set(node_metadata), {_AUTHOR, _PAPER})
-        node_store = cast(dict[NodeType, Feature], dataset.node_quantized_features)
+        node_store = cast(dict[NodeType, Feature], dataset.node_packed_features)
         for node_type in (_AUTHOR, _PAPER):
             node_store[node_type].lazy_init_with_ipc_handle()
             self.assertTrue(
@@ -636,45 +612,39 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             {_AUTHOR: 334, _PAPER: 4231},
         )
 
-    def test_heterogeneous_edge_features_declared_as_ids_are_compressed_and_decode_exactly(
+    def test_heterogeneous_edge_features_are_compressed_and_decode_exactly(
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         reference = self._build(info)
-        edge_feature_info = cast(
-            dict[EdgeType, FeatureInfo], reference.edge_feature_info
-        )
-        edge_codecs = {
-            _AUTHOR_TO_PAPER: FeatureCodec(
-                ("uint8",) * edge_feature_info[_AUTHOR_TO_PAPER].dim
-            )
-        }
 
-        dataset = self._build(info, edge_lossless_codecs=edge_codecs)
+        dataset = self._build(info, compress_edge_features=True)
 
         edge_metadata = cast(
             dict[EdgeType, FeatureQuantizationMetadata],
             dataset.edge_quantization_metadata,
         )
-        self.assertEqual(set(edge_metadata), {_AUTHOR_TO_PAPER})
-        edge_store = cast(dict[EdgeType, Feature], dataset.edge_quantized_features)
-        edge_store[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        self.assertIn(_AUTHOR_TO_PAPER, edge_metadata)
+        edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
         reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
-        reference_edges[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
-        self.assertTrue(
-            torch.equal(
-                dequantize_torch_tensor(
-                    edge_store[_AUTHOR_TO_PAPER].feature_tensor,
-                    edge_metadata[_AUTHOR_TO_PAPER],
-                ),
-                reference_edges[_AUTHOR_TO_PAPER].feature_tensor,
+        for edge_type in edge_metadata:
+            edge_store[edge_type].lazy_init_with_ipc_handle()
+            reference_edges[edge_type].lazy_init_with_ipc_handle()
+            self.assertTrue(
+                torch.equal(
+                    dequantize_torch_tensor(
+                        edge_store[edge_type].feature_tensor, edge_metadata[edge_type]
+                    ),
+                    reference_edges[edge_type].feature_tensor,
+                )
             )
-        )
         # The dataset still describes every edge type's logical float32 features.
         self.assertEqual(dataset.edge_feature_info, reference.edge_feature_info)
-        # Edge types that were not declared keep their raw features.
+        # Edge types with no integral column keep their raw features.
         dataset_edges = cast(dict[EdgeType, Feature], dataset.edge_features)
-        self.assertEqual(set(dataset_edges), set(reference_edges) - {_AUTHOR_TO_PAPER})
+        for edge_type in reference_edges:
+            if edge_type not in edge_metadata:
+                self.assertIn(edge_type, dataset_edges)
 
     def test_edge_compression_excludes_the_sampling_weight_feature(self) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
@@ -683,17 +653,16 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         reference = self._build(info, weight_edge_feat_name=weights)
 
         dataset = self._build(
-            info,
-            weight_edge_feat_name=weights,
-            edge_lossless_codecs={_AUTHOR_TO_PAPER: FeatureCodec(("uint8",) * 4)},
+            info, weight_edge_feat_name=weights, compress_edge_features=True
         )
 
         edge_metadata = cast(
             dict[EdgeType, FeatureQuantizationMetadata],
             dataset.edge_quantization_metadata,
         )
+        # Four columns, so the weight column was removed before the statistics were taken.
         self.assertEqual(edge_metadata[_AUTHOR_TO_PAPER].feature_dim, 4)
-        edge_store = cast(dict[EdgeType, Feature], dataset.edge_quantized_features)
+        edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
         edge_store[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
         reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
         reference_edges[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()

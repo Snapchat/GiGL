@@ -12,14 +12,13 @@ from graphlearn_torch.distributed import (
 )
 from parameterized import parameterized
 
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
+from gigl.common.utils.feature_quantization.lossless import ColumnStats, FeatureCodec
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.lossless_compression import (
     compress_loaded_features,
     compress_lossless_columns,
-    lossless_column_stats,
 )
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
@@ -39,15 +38,12 @@ def _features(num_columns: int, kinds: dict[int, tuple[int, int]]) -> torch.Tens
 
 
 def _compress(
-    features: Optional[torch.Tensor],
-    declared: FeatureCodec,
+    features: torch.Tensor,
     quantized: Optional[torch.Tensor] = None,
     metadata: Optional[FeatureQuantizationMetadata] = None,
 ):
-    stats = lossless_column_stats(features, metadata, declared)
-    return compress_lossless_columns(
-        features, quantized, metadata, declared, stats, "user"
-    )
+    stats = ColumnStats.from_features(features)
+    return compress_lossless_columns(features, quantized, metadata, stats, "user")
 
 
 def _reconstruct(
@@ -66,17 +62,14 @@ def _reconstruct(
 
 
 class CompressLosslessColumnsTest(TestCase):
-    def test_declared_columns_move_into_the_sidecar_and_round_trip_exactly(
+    def test_integral_columns_move_into_the_sidecar_and_round_trip_exactly(
         self,
     ) -> None:
         features = _features(
             6, {1: (-1, 70), 2: (-1, 200), 3: (-1, 1000), 5: (0, 300000)}
         )
-        declared = FeatureCodec(
-            ("float32", "int8", "uint8_bias1", "int16", "float32", "int32")
-        )
 
-        raw, packed, metadata = _compress(features, declared)
+        raw, packed, metadata = _compress(features)
 
         assert packed is not None and metadata is not None and raw is not None
         self.assertEqual(metadata.lossless_feature_indices, (1, 2, 3, 5))
@@ -112,13 +105,8 @@ class CompressLosslessColumnsTest(TestCase):
             )
         )
         raw_before = logical[:, [1, 2, 4, 5]]
-        declared = FeatureCodec(
-            ("float32", "int8", "float32", "float32", "int16", "float32")
-        )
 
-        raw, packed, metadata = _compress(
-            raw_before, declared, quantized, quantized_metadata
-        )
+        raw, packed, metadata = _compress(raw_before, quantized, quantized_metadata)
 
         assert raw is not None and packed is not None and metadata is not None
         self.assertEqual(metadata.quantized_feature_indices, (0, 3))
@@ -132,25 +120,32 @@ class CompressLosslessColumnsTest(TestCase):
         # Quantized columns come back at their quantized values, lossless ones exactly.
         self.assertTrue(torch.equal(before[:, [1, 4]], logical[:, [1, 4]]))
 
-    def test_unfit_columns_stay_raw_and_are_reported_by_logical_column(self) -> None:
+    def test_non_integral_columns_stay_raw(self) -> None:
         features = _features(6, {i: (0, 100) for i in range(1, 5)})
         features[7, 4] = 2.5  # not an id
-        declared = FeatureCodec(("float32",) + ("int8",) * 4 + ("float32",))
 
-        with self.assertLogs("root", level="WARNING") as logs:
-            raw, packed, metadata = _compress(features, declared)
+        raw, packed, metadata = _compress(features)
 
         assert raw is not None and packed is not None and metadata is not None
         self.assertEqual(metadata.lossless_feature_indices, (1, 2, 3))
         self.assertEqual(metadata.raw_feature_indices, (0, 4, 5))
         self.assertTrue(torch.equal(_reconstruct(raw, packed, metadata), features))
-        # Column 4 is the third declared column, but is reported as the logical column 4 of "user".
-        self.assertIn("Columns [4] of user", logs.output[0])
 
-    def test_everything_declared_leaves_no_raw_matrix(self) -> None:
+    def test_one_hot_and_id_columns_get_their_narrowest_kind(self) -> None:
+        features = _features(4, {0: (0, 1), 1: (0, 1), 2: (0, 70000), 3: (-5, 5)})
+        features[5, 3] = -0.0  # a -0.0 would decode as +0.0 in an integer kind
+
+        raw, packed, metadata = _compress(features)
+
+        assert raw is not None and packed is not None and metadata is not None
+        self.assertEqual(metadata.lossless_feature_indices, (0, 1, 2))
+        self.assertEqual(metadata.lossless_column_kinds, ("bit", "bit", "int32"))
+        self.assertTrue(torch.equal(_reconstruct(raw, packed, metadata), features))
+
+    def test_all_columns_integral_leaves_no_raw_matrix(self) -> None:
         features = _features(4, {i: (0, 100) for i in range(4)})
 
-        raw, packed, metadata = _compress(features, FeatureCodec(("int8",) * 4))
+        raw, packed, metadata = _compress(features)
 
         assert packed is not None and metadata is not None
         self.assertIsNone(raw)
@@ -159,25 +154,35 @@ class CompressLosslessColumnsTest(TestCase):
 
     @parameterized.expand(
         [
-            ("nothing_declared", ("float32", "float32")),
-            ("would_not_shrink", ("int32", "float32")),
+            ("nothing_integral", {}),
+            ("would_not_shrink", {0: (0, 100000)}),
         ]
     )
     def test_inputs_are_returned_untouched_when_compression_does_not_help(
-        self, _: str, kinds: tuple[str, ...]
+        self, _: str, kinds: dict[int, tuple[int, int]]
     ) -> None:
-        features = _features(2, {0: (0, 100000)})
+        features = _features(2, kinds)
 
-        raw, packed, metadata = _compress(features, FeatureCodec(kinds))
+        raw, packed, metadata = _compress(features)
 
         self.assertIs(raw, features)
         self.assertIsNone(packed)
         self.assertIsNone(metadata)
 
-    def test_invalid_declarations_are_rejected(self) -> None:
+    def test_a_second_lossless_region_or_a_wrong_width_is_rejected(self) -> None:
         features = _features(3, {})
+        existing = FeatureQuantizationMetadata(
+            bits=8,
+            feature_dim=3,
+            lossless_feature_indices=(0,),
+            lossless_column_kinds=("int8",),
+        )
         with self.assertRaises(ValueError):
-            _compress(features, FeatureCodec(("int8", "int8")))  # wrong width
+            _compress(
+                features[:, 1:],
+                FeatureCodec(("int8",)).encode(features[:, :1]),
+                existing,
+            )
         quantized_metadata = FeatureQuantizationMetadata(
             bits=2,
             feature_dim=3,
@@ -187,8 +192,7 @@ class CompressLosslessColumnsTest(TestCase):
         )
         with self.assertRaises(ValueError):
             _compress(
-                features[:, 1:],
-                FeatureCodec(("int8", "float32", "float32")),  # column 0 is quantized
+                features,
                 torch.zeros(_NUM_ROWS, 1, dtype=torch.uint8),
                 quantized_metadata,
             )
@@ -197,11 +201,10 @@ class CompressLosslessColumnsTest(TestCase):
         self,
     ) -> None:
         features = _features(5, {i: (0, 100) for i in range(5)})
-        declared = FeatureCodec(("int8",) * 5)
-        stats = lossless_column_stats(features, None, declared)
+        stats = ColumnStats.from_features(features)
 
         raw, packed, metadata = compress_lossless_columns(
-            None, None, None, declared, stats, "user"
+            None, None, None, stats, "user"
         )
 
         assert packed is not None and metadata is not None
@@ -209,29 +212,8 @@ class CompressLosslessColumnsTest(TestCase):
         self.assertEqual(packed.shape, (0, metadata.packed_feature_dim))
         self.assertEqual(
             metadata,
-            compress_lossless_columns(features, None, None, declared, stats, "user")[2],
+            compress_lossless_columns(features, None, None, stats, "user")[2],
         )
-
-    def test_columns_declared_lossy_or_already_compressed_are_rejected(self) -> None:
-        features = _features(5, {0: (0, 100)})
-        with self.assertRaises(ValueError):
-            _compress(
-                features,
-                FeatureCodec(("bfloat16", "float32", "float32", "float32", "float32")),
-            )
-        existing = FeatureQuantizationMetadata(
-            bits=8,
-            feature_dim=5,
-            lossless_feature_indices=(0,),
-            lossless_column_kinds=("int8",),
-        )
-        with self.assertRaises(ValueError):
-            _compress(
-                features[:, 1:],
-                FeatureCodec(("float32", "int8", "int8", "int8", "int8")),
-                FeatureCodec(("int8",)).encode(features[:, :1]),
-                existing,
-            )
 
 
 def _compress_on_rank(
@@ -246,7 +228,6 @@ def _compress_on_rank(
         features=shards[rank],
         quantized_features=None,
         metadata=None,
-        declared=FeatureCodec(("int8",) * 6),
         is_homogeneous=True,
         default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
     )
@@ -266,7 +247,7 @@ class CompressLoadedFeaturesAcrossRanksTest(TestCase):
         self,
     ) -> None:
         shard = _features(6, {i: (0, 100) for i in range(5)})
-        shard[2, 3] = 200.0  # does not fit int8, and only this rank sees it
+        shard[2, 3] = 2.5  # not integral, and only this rank sees it
         output = mp.Manager().dict()
 
         mp.spawn(
@@ -277,7 +258,7 @@ class CompressLoadedFeaturesAcrossRanksTest(TestCase):
 
         (metadata0, raw0, packed0), (metadata1, raw1, packed1) = output[0], output[1]
         self.assertEqual(metadata0, metadata1)
-        # Column 3 holds an unfit value and column 5 real values, so both stay raw on every rank.
+        # Column 3 holds a fraction and column 5 real values, so both stay raw on every rank.
         self.assertEqual(metadata0.lossless_feature_indices, (0, 1, 2, 4))
         self.assertEqual(raw0, (_NUM_ROWS, 2))
         self.assertEqual(packed0, (_NUM_ROWS, metadata0.packed_feature_dim))

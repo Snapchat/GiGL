@@ -25,19 +25,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
 - Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
-  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`). `FeatureQuantizationMetadata` describes it after the
-  n-bit quantized columns and `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it
-  without further changes by @kmontemayor2-sc
-- Add opt-in lossless compression of categorical id node feature columns: `build_dataset(node_lossless_codecs=...)` (or
-  `compress_node_features: "True"` in the trainer/inferencer args, with `derive_node_lossless_codecs` declaring the
-  codecs from the feature schema's `int_domain`) stores the columns as narrow integers in the packed feature sidecar, so
-  sampling, RPC and the host-to-device copy move fewer bytes. Declared columns are checked against the data on every
-  rank, and columns that do not fit stay float32 by @kmontemayor2-sc
-- Add opt-in lossless compression of categorical id edge feature columns, like the node one:
-  `build_dataset(edge_lossless_codecs=...)` or `compress_edge_features: "True"` in the trainer/inferencer args, with
-  `derive_edge_lossless_codecs` declaring the codecs from the feature schema. The sampling-weight feature is never
-  compressed. `build_storage_dataset` takes `edge_lossless_codecs` and raises if `compress_edge_features` is set without
-  it by @kmontemayor2-sc
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`), including a 1-bit kind for 0/1 columns such as
+  one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
+  @kmontemayor2-sc
+- Add lossless compression of node feature columns, on by default. Every column that holds only whole numbers on all
+  ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer kind that
+  holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy move
+  fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical float32
+  batches. It applies to `build_dataset(compress_node_features=...)` (default `False` there), to the task-config arg
+  `compress_node_features` (default `"True"`; set `"False"` in the trainer/inferencer args to opt out) and to Graph
+  Store storage nodes (`build_storage_dataset` compresses unless the trainer or inferencer args set `"False"`) by
+  @kmontemayor2-sc
+- Add lossless compression of main edge feature columns, like the node one and on by default. Every column that holds
+  only whole numbers on all ranks is stored in the packed feature sidecar as the narrowest integer kind that holds its
+  values, and other columns stay float32, so loaders return bit-identical float32 batches. The sampling-weight feature
+  is never compressed. It applies to `build_dataset(compress_edge_features=...)` (default `False` there), to the
+  task-config arg `compress_edge_features` (default `"True"`; set `"False"` in the trainer/inferencer args to opt out)
+  and to Graph Store storage nodes (`build_storage_dataset` compresses unless the trainer or inferencer args set
+  `"False"`) by @kmontemayor2-sc
 
 ### Changed
 
@@ -74,6 +80,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
 
 ### Fixed
 

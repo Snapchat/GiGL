@@ -3,7 +3,6 @@ from typing import MutableMapping, Optional, Type, Union
 import torch.distributed as dist
 
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
@@ -11,7 +10,7 @@ from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import (
@@ -56,12 +55,8 @@ def run_distributed_dataset(
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None,
-    edge_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
-    ] = None,
+    compress_node_features: bool = False,
+    compress_edge_features: bool = False,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
@@ -75,7 +70,7 @@ def run_distributed_dataset(
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
-        node_lossless_codecs, edge_lossless_codecs, weight_edge_feat_name: Passed into `build_dataset`
+        compress_node_features, compress_edge_features, weight_edge_feat_name: Passed into `build_dataset`
     """
     try:
         distributed_context: Optional[DistributedContext] = None
@@ -109,8 +104,8 @@ def run_distributed_dataset(
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
             partitioner_class=partitioner_class,
             splitter=splitter,
-            node_lossless_codecs=node_lossless_codecs,
-            edge_lossless_codecs=edge_lossless_codecs,
+            compress_node_features=compress_node_features,
+            compress_edge_features=compress_edge_features,
             weight_edge_feat_name=weight_edge_feat_name,
         )
     finally:

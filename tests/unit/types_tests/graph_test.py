@@ -86,13 +86,13 @@ class GraphTypesTyest(TestCase):
         with self.assertRaises(ValueError):
             to_homogeneous(input_value)
 
-    def test_feature_quantization_metadata_counts_quantized_features(self) -> None:
+    def test_feature_quantization_metadata_counts_packed_features(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=2, feature_dim=6, quantized_feature_indices=(1, 3, 4)
         )
         self.assertEqual(metadata.quantized_feature_dim, 3)
 
-    def test_feature_quantization_metadata_defaults_to_no_quantized_features(
+    def test_feature_quantization_metadata_defaults_to_no_packed_features(
         self,
     ) -> None:
         metadata = FeatureQuantizationMetadata(bits=8, feature_dim=3)
@@ -172,20 +172,21 @@ class GraphTypesTyest(TestCase):
     def test_feature_quantization_metadata_lossless_region_layout(self) -> None:
         metadata = FeatureQuantizationMetadata(
             bits=4,
-            feature_dim=7,
+            feature_dim=8,
             quantized_feature_indices=(0, 1, 2),
-            lossless_feature_indices=(4, 6),
-            lossless_column_kinds=("int16", "int8"),
+            lossless_feature_indices=(4, 6, 7),
+            lossless_column_kinds=("int16", "int8", "bit"),
         )
-        # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 bytes padded to 4.
+        # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 + 1 bytes (the
+        # bit column takes one byte).
         self.assertEqual(metadata.quantized_packed_dim, 2)
         self.assertEqual(metadata.lossless_byte_offset, 4)
         self.assertEqual(metadata.packed_feature_dim, 8)
-        self.assertEqual(metadata.packed_feature_indices, (0, 1, 2, 4, 6))
+        self.assertEqual(metadata.packed_feature_indices, (0, 1, 2, 4, 6, 7))
         self.assertEqual(metadata.raw_feature_indices, (3, 5))
         index_tensors = metadata.scatter_index_tensors(torch.device("cpu"))
         torch.testing.assert_close(
-            index_tensors.quantized, torch.tensor([0, 1, 2, 4, 6], dtype=torch.long)
+            index_tensors.quantized, torch.tensor([0, 1, 2, 4, 6, 7], dtype=torch.long)
         )
 
     def test_feature_quantization_metadata_lossless_only_has_no_quantized_region(
@@ -485,7 +486,7 @@ class GraphTypesTyest(TestCase):
         torch.testing.assert_close(edge_weights[DEFAULT_HOMOGENEOUS_EDGE_TYPE], weights)
 
     def test_treat_labels_as_edges_converts_quantized_node_features(self) -> None:
-        quantized_features = torch.tensor([[1], [2], [3]], dtype=torch.uint8)
+        packed_features = torch.tensor([[1], [2], [3]], dtype=torch.uint8)
         graph_tensors = LoadedGraphTensors(
             node_ids=torch.tensor([0, 1, 2]),
             node_features=None,
@@ -494,18 +495,18 @@ class GraphTypesTyest(TestCase):
             edge_features=None,
             positive_label=torch.tensor([[0], [2]]),
             negative_label=None,
-            node_quantized_features=quantized_features,
+            node_packed_features=packed_features,
         )
 
         graph_tensors.treat_labels_as_edges(edge_dir="out")
 
-        heterogeneous_quantized_features = cast(
-            dict[NodeType, torch.Tensor], graph_tensors.node_quantized_features
+        heterogeneous_packed_features = cast(
+            dict[NodeType, torch.Tensor], graph_tensors.node_packed_features
         )
-        self.assertIsInstance(heterogeneous_quantized_features, dict)
+        self.assertIsInstance(heterogeneous_packed_features, dict)
         torch.testing.assert_close(
-            heterogeneous_quantized_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
-            quantized_features,
+            heterogeneous_packed_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+            packed_features,
         )
 
     def test_select_label_edge_types(self):

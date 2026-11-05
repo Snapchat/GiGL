@@ -103,10 +103,10 @@ class PartitionOutput:
 
     # Quantized node features on current rank. These are packed uint8 features
     # aligned by node id and dequantized/scattered in the sampler collate path.
-    partitioned_node_quantized_features: Optional[
+    partitioned_node_packed_features: Optional[
         Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
     ] = None
-    partitioned_edge_quantized_features: Optional[
+    partitioned_edge_packed_features: Optional[
         Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
     ] = None
 
@@ -301,10 +301,10 @@ class LoadedGraphTensors:
     # Unpartitioned Edge Weights (per-edge sampling weights, one scalar per edge)
     edge_weights: Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]] = None
     # Unpartitioned packed uint8 node features.
-    node_quantized_features: Optional[
+    node_packed_features: Optional[
         Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     ] = None
-    edge_quantized_features: Optional[
+    edge_packed_features: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
     ] = None
 
@@ -405,12 +405,8 @@ class LoadedGraphTensors:
 
         self.node_ids = to_heterogeneous_node(self.node_ids)
         self.node_features = to_heterogeneous_node(self.node_features)
-        self.node_quantized_features = to_heterogeneous_node(
-            self.node_quantized_features
-        )
-        self.edge_quantized_features = to_heterogeneous_edge(
-            self.edge_quantized_features
-        )
+        self.node_packed_features = to_heterogeneous_node(self.node_packed_features)
+        self.edge_packed_features = to_heterogeneous_edge(self.edge_packed_features)
         self.edge_index = edge_index_with_labels
         self.edge_features = to_heterogeneous_edge(self.edge_features)
         self.edge_weights = to_heterogeneous_edge(self.edge_weights)
