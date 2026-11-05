@@ -63,18 +63,8 @@ def _features(num_rows: int, seed: int) -> torch.Tensor:
     return features
 
 
-def _declared(dense_dtype: str = "float32") -> FeatureCodec:
-    """Declares the narrowest kind that holds each id block's domain, and ``dense_dtype`` for the rest."""
-    kinds: list[str] = []
-    for _, width, domain in _FEATURES:
-        kind = dense_dtype if domain is None else kind_holding_domain(*domain)
-        assert kind is not None
-        kinds += [kind] * width
-    return FeatureCodec(tuple(kinds))
-
-
-def _fit(features: torch.Tensor, dense_dtype: str = "float32") -> FeatureCodec:
-    return _declared(dense_dtype).fitted_to(ColumnStats.from_features(features))
+def _fit(features: torch.Tensor) -> FeatureCodec:
+    return FeatureCodec.from_stats(ColumnStats.from_features(features))
 
 
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -176,52 +166,80 @@ class FeatureCodecTest(TestCase):
 
     @parameterized.expand(
         [
-            ("fractional", 6, 1.5),
-            ("nan", 6, float("nan")),
-            ("above_storage_range", 6, 200.0),
-            ("below_storage_range", 11, -2.0),
+            ("fractional", 6, 1.5, "float32"),
+            ("nan", 6, float("nan"), "float32"),
+            ("infinite", 6, float("inf"), "float32"),
+            ("beyond_int32", 6, 2.0**40, "float32"),
+            ("widens_to_uint8_bias1", 6, 200.0, "uint8_bias1"),
+            ("widens_to_int16", 11, -2.0, "int16"),
         ]
     )
-    def test_column_that_does_not_fit_stays_float32(
-        self, _: str, column: int, bad_value: float
+    def test_column_kind_follows_the_values_it_holds(
+        self, _: str, column: int, bad_value: float, expected_kind: str
     ) -> None:
         features = _features(50, seed=2)
         features[7, column] = bad_value
         codec = _fit(features)
         expected = list(_EXPECTED_KINDS)
-        expected[column] = "float32"
+        expected[column] = expected_kind
         self.assertEqual(list(codec.column_dtypes), expected)
         self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
 
-    def test_feature_without_domain_stays_dense_even_if_integral(self) -> None:
+    def test_integral_columns_are_packed_without_any_declaration(self) -> None:
         features = _features(50, seed=3)
-        features[:, 0] = 3.0  # dense_a looks like an id but declares no domain
-        self.assertEqual(_fit(features).column_dtypes[0], "float32")
+        features[:, 0] = 3.0  # a "dense" column that happens to hold one whole number
+        self.assertEqual(_fit(features).column_dtypes[0], "int8")
 
     def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
         first, second = _features(50, seed=5), _features(50, seed=6)
         second[3, 6] = 1000.0  # does not fit int8
-        declared = _declared()
-        merged = declared.fitted_to(
+        merged = FeatureCodec.from_stats(
             ColumnStats.merge(
                 [ColumnStats.from_features(first), ColumnStats.from_features(second)]
             )
         )
-        alone = declared.fitted_to(ColumnStats.from_features(first))
-        self.assertEqual(merged.column_dtypes[6], "float32")
+        alone = _fit(first)
+        self.assertEqual(merged.column_dtypes[6], "int16")
         self.assertEqual(alone.column_dtypes[6], "int8")
         for features in (first, second):
             self.assertTrue(
                 _same_bits(merged.decode(merged.encode(features)), features)
             )
 
+    def test_negative_zero_keeps_a_column_float32_so_decoding_is_bit_exact(
+        self,
+    ) -> None:
+        features = torch.tensor([[0.0, 1.0, 5.0], [0.0, 0.0, 2.0], [0.0, 1.0, 3.0]])
+        other_rank = torch.tensor([[-0.0, 1.0, 4.0]])
+        merged = FeatureCodec.from_stats(
+            ColumnStats.merge(
+                [
+                    ColumnStats.from_features(features),
+                    ColumnStats.from_features(other_rank),
+                ]
+            )
+        )
+        # Column 0 holds a -0.0 only on the other rank; every rank must still keep it float32.
+        self.assertEqual(merged.column_dtypes, ("float32", "bit", "int8"))
+        for part in (features, other_rank):
+            self.assertTrue(_same_bits(merged.decode(merged.encode(part)), part))
+
+    def test_float64_columns_are_checked_in_float64(self) -> None:
+        # 2**24 + 1 is a whole number only in float64; as float32 it would round to 2**24.
+        ids = torch.tensor(
+            [[16777217.0, 1.0], [-3.0, 1.0 + 2.0**-40]], dtype=torch.float64
+        )
+        stats = ColumnStats.from_features(ids)
+        self.assertEqual(stats.integral.tolist(), [True, False])
+        self.assertEqual(
+            FeatureCodec.from_stats(stats).column_dtypes, ("int32", "float32")
+        )
+
     def test_hand_written_spec_packs_without_any_schema(self) -> None:
         codec = FeatureCodec(("float32", "int8", "uint8", "int16", "uint8_bias1"))
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
         )
-        fitted = codec.fitted_to(ColumnStats.from_features(features))
-        self.assertEqual(fitted, codec)
         self.assertEqual(
             codec.row_bytes, 12
         )  # 9 bytes of columns, padded to a multiple of 4
@@ -230,7 +248,8 @@ class FeatureCodecTest(TestCase):
     def test_bfloat16_dense_columns_round_to_bfloat16_and_ids_stay_exact(
         self,
     ) -> None:
-        codec = _fit(self.features, dense_dtype="bfloat16")
+        kinds = ["bfloat16" if kind == "float32" else kind for kind in _EXPECTED_KINDS]
+        codec = FeatureCodec(tuple(kinds))
         decoded = codec.decode(codec.encode(self.features))
         dense = [c for c, kind in enumerate(codec.column_dtypes) if kind == "bfloat16"]
         ids = [c for c in range(_NUM_COLUMNS) if c not in dense]
@@ -241,7 +260,7 @@ class FeatureCodecTest(TestCase):
             torch.equal(torch.nan_to_num(decoded[:, dense]), torch.nan_to_num(expected))
         )
         self.assertTrue(torch.equal(decoded[:, ids], self.features[:, ids]))
-        self.assertLess(codec.row_bytes, _fit(self.features).row_bytes)
+        self.assertLess(codec.row_bytes, self.codec.row_bytes)
 
     def test_encode_and_decode_refuse_inputs_the_codec_cannot_represent(self) -> None:
         features = self.features.clone()
@@ -291,10 +310,6 @@ class FeatureCodecTest(TestCase):
         self.assertTrue(
             _same_bits(restored.decode(self.codec.encode(self.features)), self.features)
         )
-
-    def test_codec_with_a_different_width_than_the_data_is_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            _declared().fitted_to(ColumnStats.from_features(self.features[:, :-1]))
 
     @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     def test_decode_on_cuda_matches_cpu_decode(self) -> None:

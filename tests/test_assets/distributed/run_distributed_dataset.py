@@ -3,7 +3,6 @@ from typing import MutableMapping, Optional, Type, Union
 import torch.distributed as dist
 
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
@@ -11,7 +10,6 @@ from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import (
@@ -56,9 +54,7 @@ def run_distributed_dataset(
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None,
+    compress_node_features: bool = False,
 ) -> DistDataset:
     """
     Runs DistDataset Load() __init__ and load() functions provided a mocked dataset info
@@ -71,7 +67,7 @@ def run_distributed_dataset(
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
-        node_lossless_codecs: Passed into `build_dataset`
+        compress_node_features: Passed into `build_dataset`
     """
     try:
         distributed_context: Optional[DistributedContext] = None
@@ -105,7 +101,7 @@ def run_distributed_dataset(
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
             partitioner_class=partitioner_class,
             splitter=splitter,
-            node_lossless_codecs=node_lossless_codecs,
+            compress_node_features=compress_node_features,
         )
     finally:
         if dist.is_initialized():

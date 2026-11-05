@@ -28,7 +28,6 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
@@ -40,12 +39,11 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
-from gigl.distributed.utils.lossless_codecs import derive_node_lossless_codecs
 from gigl.distributed.utils.lossless_compression import compress_loaded_features
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
-from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
@@ -73,9 +71,7 @@ def _load_and_build_partitioned_dataset(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None,
+    compress_node_features: bool = False,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -103,7 +99,7 @@ def _load_and_build_partitioned_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        node_lossless_codecs: See ``build_dataset``.
+        compress_node_features: See ``build_dataset``.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -135,7 +131,7 @@ def _load_and_build_partitioned_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         weight_edge_feat_name=weight_edge_feat_name,
     )
-    if node_lossless_codecs is not None:
+    if compress_node_features:
         (
             loaded_graph_tensors.node_features,
             loaded_graph_tensors.node_quantized_features,
@@ -144,7 +140,6 @@ def _load_and_build_partitioned_dataset(
             features=loaded_graph_tensors.node_features,
             quantized_features=loaded_graph_tensors.node_quantized_features,
             metadata=node_quantization_metadata,
-            declared=node_lossless_codecs,
             is_homogeneous=isinstance(
                 serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
             ),
@@ -298,9 +293,7 @@ def _build_dataset_process(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None,
+    compress_node_features: bool = False,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -384,7 +377,7 @@ def _build_dataset_process(
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
         weight_edge_feat_name=weight_edge_feat_name,
         retain_edge_ids=retain_edge_ids,
-        node_lossless_codecs=node_lossless_codecs,
+        compress_node_features=compress_node_features,
     )
 
     output_dict["dataset"] = output_dataset
@@ -412,9 +405,7 @@ def build_dataset(
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None,
+    compress_node_features: bool = False,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -458,10 +449,11 @@ def build_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        node_lossless_codecs (Optional[Union[FeatureCodec, dict[NodeType, FeatureCodec]]]): Opt-in lossless
-            compression of node feature columns: one codec for a homogeneous graph, a dict with one codec per node
-            type to compress otherwise. Batches are unchanged because loaders decode back to float32. Disabled by
-            default. Use ``derive_node_lossless_codecs`` to build it from the feature schemas.
+        compress_node_features (bool): Losslessly compress node feature columns. Every column that is integral on all
+            ranks (for example one-hot columns and categorical ids) is stored as the narrowest integer kind that holds
+            its values, and other columns stay float32. The kinds are inferred from the data, columns that
+            preprocessing already quantized are left alone, and batches are unchanged because loaders decode back to
+            float32. Disabled by default here; ``build_dataset_from_task_config_uri`` enables it by default.
             See :mod:`gigl.common.utils.feature_quantization.lossless` for the storage kinds and an example.
 
     Returns:
@@ -559,7 +551,7 @@ def build_dataset(
             _ssl_positive_label_percentage,
             weight_edge_feat_name,
             retain_edge_ids,
-            node_lossless_codecs,
+            compress_node_features,
         ),
     )
 
@@ -606,8 +598,9 @@ def build_dataset_from_task_config_uri(
       Set to False only when sampling with ``with_edge=False``.
       Set this to False for graphs without edge features. GiGL loaders already sample them
       with ``with_edge=False``. The default is True only for backwards compatibility.
-    - compress_node_features (bool): Losslessly compress categorical id node feature columns declared with an
-      ``int_domain`` in the feature schema (see ``node_lossless_codecs`` of ``build_dataset``), defaulting to False.
+    - compress_node_features (bool): Losslessly compress node feature columns that hold only whole numbers (one-hot
+      columns, categorical ids), inferred from the data (see ``compress_node_features`` of ``build_dataset``),
+      defaulting to True. Set to "False" to keep every column as float32.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -724,18 +717,10 @@ def build_dataset_from_task_config_uri(
         tfrecord_uri_pattern=_tfrecord_uri_pattern,
     )
 
-    node_lossless_codecs: Optional[
-        Union[FeatureCodec, dict[NodeType, FeatureCodec]]
-    ] = None
-    should_compress_node_features = str_to_bool(
-        args.get("compress_node_features", "False")
+    compress_node_features = str_to_bool(args.get("compress_node_features", "True"))
+    logger.info(
+        f"Inferred 'compress_node_features' argument as : {compress_node_features} from argument path {args_path}. To override, please provide 'compress_node_features' flag."
     )
-    if should_compress_node_features:
-        node_lossless_codecs = derive_node_lossless_codecs(
-            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            serialized_graph_metadata,
-        )
 
     # Need to do this "backwards" so the parent class can be defined first.
     # Otherwise, the type checker complains that:
@@ -754,7 +739,7 @@ def build_dataset_from_task_config_uri(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,
-        node_lossless_codecs=node_lossless_codecs,
+        compress_node_features=compress_node_features,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 

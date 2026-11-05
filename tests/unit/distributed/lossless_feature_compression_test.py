@@ -9,16 +9,13 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
-from gigl.common.utils.feature_quantization.lossless import FeatureCodec
+from gigl.common.utils.feature_quantization.lossless import ColumnStats
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.utils.lossless_compression import (
-    compress_lossless_columns,
-    lossless_column_stats,
-)
+from gigl.distributed.utils.lossless_compression import compress_lossless_columns
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
@@ -66,15 +63,12 @@ def _id_features(
 
 
 def _compress(
-    features: Optional[torch.Tensor],
-    declared: FeatureCodec,
+    features: torch.Tensor,
     quantized: Optional[torch.Tensor] = None,
     metadata: Optional[FeatureQuantizationMetadata] = None,
 ):
-    stats = lossless_column_stats(features, metadata, declared)
-    return compress_lossless_columns(
-        features, quantized, metadata, declared, stats, "test"
-    )
+    stats = ColumnStats.from_features(features)
+    return compress_lossless_columns(features, quantized, metadata, stats, "test")
 
 
 def _ring_edges() -> torch.Tensor:
@@ -214,12 +208,9 @@ class LosslessCompressionLoaderTest(TestCase):
                 clip_max=3.0,
             )
         )
-        declared = FeatureCodec(
-            ("float32", "int8", "float32", "float32", "int16", "float32")
-        )
 
         raw, packed, metadata = _compress(
-            features[:, [1, 2, 4, 5]], declared, quantized, quantized_metadata
+            features[:, [1, 2, 4, 5]], quantized, quantized_metadata
         )
 
         assert raw is not None and packed is not None and metadata is not None
@@ -256,15 +247,14 @@ class LosslessCompressionLoaderTest(TestCase):
         expected[:, [0, 3]] = dequantize_torch_tensor(quantized, quantized_metadata)
         mp.spawn(fn=_assert_node_batches_equal_expected, args=(dataset, expected))
 
-    def test_heterogeneous_loader_compresses_only_the_declared_node_type(self) -> None:
+    def test_heterogeneous_loader_compresses_only_the_node_type_with_integral_columns(
+        self,
+    ) -> None:
         expected = {
             _USER: _id_features(5, {2: (-1, 70), 3: (0, 1247)}, 5, seed=1),
             _STORY: _id_features(5, {}, 3, seed=2),
         }
-        raw, packed, metadata = _compress(
-            expected[_USER],
-            FeatureCodec(("float32", "float32", "int8", "int16", "float32")),
-        )
+        raw, packed, metadata = _compress(expected[_USER])
         assert raw is not None and packed is not None and metadata is not None
         dataset = DistDataset(
             rank=0,
@@ -312,8 +302,7 @@ class LosslessCompressionLoaderTest(TestCase):
         features = _id_features(
             _NUM_NODES, {0: (-1, 70), 1: (0, 5000), 2: (-1, 200)}, 3, seed=5
         )
-        declared = FeatureCodec(("int8", "int16", "uint8_bias1"))
-        raw, packed, metadata = _compress(features, declared)
+        raw, packed, metadata = _compress(features)
         assert raw is None and packed is not None and metadata is not None
         dataset = DistDataset(
             rank=0,
@@ -349,9 +338,7 @@ class LosslessCompressionLoaderTest(TestCase):
         story_features = _id_features(
             5, {0: (0, 100), 1: (0, 100), 2: (0, 100)}, 3, seed=7
         )
-        raw, packed, story_metadata = _compress(
-            story_features, FeatureCodec(("int8", "int8", "int8"))
-        )
+        raw, packed, story_metadata = _compress(story_features)
         assert raw is None and packed is not None and story_metadata is not None
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
         story_to_user = EdgeType(_STORY, Relation("to"), _USER)
@@ -405,12 +392,8 @@ class LosslessCompressionLoaderTest(TestCase):
     def test_ablp_loader_returns_compressed_node_and_edge_features(self) -> None:
         node_features = _id_features(3, {0: (-1, 70), 2: (0, 1247)}, 4, seed=4)
         edge_features = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-        node_raw, node_packed, node_metadata = _compress(
-            node_features, FeatureCodec(("int8", "float32", "int16", "float32"))
-        )
-        edge_raw, edge_packed, edge_metadata = _compress(
-            edge_features, FeatureCodec(("int8", "int8"))
-        )
+        node_raw, node_packed, node_metadata = _compress(node_features)
+        edge_raw, edge_packed, edge_metadata = _compress(edge_features)
         assert (
             node_raw is not None
             and node_packed is not None
@@ -495,7 +478,7 @@ class LosslessCompressionLoaderTest(TestCase):
 
 
 class BuildDatasetLosslessCompressionTest(TestCase):
-    """``build_dataset`` compresses declared columns of real partitioned data after checking them on every rank."""
+    """``build_dataset`` infers the kind of every node feature column from the real partitioned data on every rank."""
 
     def _build(self, info, **kwargs) -> DistDataset:
         return run_distributed_dataset(
@@ -506,7 +489,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             **kwargs,
         )
 
-    def test_homogeneous_node_features_declared_as_ids_are_compressed_and_decode_exactly(
+    def test_homogeneous_binary_node_features_are_stored_as_bits_and_decode_exactly(
         self,
     ) -> None:
         info = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
@@ -514,7 +497,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         assert isinstance(reference.node_feature_info, FeatureInfo)
         dim = reference.node_feature_info.dim
 
-        dataset = self._build(info, node_lossless_codecs=FeatureCodec(("int8",) * dim))
+        dataset = self._build(info, compress_node_features=True)
 
         metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)
@@ -523,8 +506,9 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         packed = dataset.node_quantized_features
         assert isinstance(packed, Feature)
         packed.lazy_init_with_ipc_handle()
-        # One byte per binary column, padded to a multiple of four.
-        self.assertEqual(packed.feature_tensor.shape[1], (dim + 3) // 4 * 4)
+        # One bit per binary column, padded to a multiple of four bytes.
+        self.assertEqual(metadata.lossless_column_kinds, ("bit",) * dim)
+        self.assertEqual(packed.feature_tensor.shape[1], ((dim + 7) // 8 + 3) // 4 * 4)
         self.assertTrue(
             torch.equal(
                 dequantize_torch_tensor(packed.feature_tensor, metadata),
@@ -532,20 +516,14 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             )
         )
 
-    def test_heterogeneous_node_features_fall_back_per_node_type(
+    def test_heterogeneous_node_types_get_kinds_from_their_own_data(
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         reference = self._build(info)
         # author features are 0/1 (334 columns) and paper features are small counts (4231 columns);
-        # term features (50 columns) are real valued, so declaring them as ids must leave them alone.
-        node_codecs = {
-            _AUTHOR: FeatureCodec(("int8",) * 334),
-            _PAPER: FeatureCodec(("uint8",) * 4231),
-            _TERM: FeatureCodec(("int8",) * 50),
-        }
-
-        dataset = self._build(info, node_lossless_codecs=node_codecs)
+        # term features (50 columns) are real valued, so they stay float32.
+        dataset = self._build(info, compress_node_features=True)
 
         node_metadata = cast(
             dict[NodeType, FeatureQuantizationMetadata],
