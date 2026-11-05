@@ -746,11 +746,11 @@ def build_dataset_from_task_config_uri(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None
-    should_compress_node_features = bool(
-        strtobool(args.get("compress_node_features", "False"))
+    should_compress_node_features = str_to_bool(
+        args.get("compress_node_features", "False")
     )
-    strict_lossless_compression = bool(
-        strtobool(args.get("compress_features_strict", "False"))
+    strict_lossless_compression = str_to_bool(
+        args.get("compress_features_strict", "False")
     )
     if strict_lossless_compression and not should_compress_node_features:
         raise ValueError(
