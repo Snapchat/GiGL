@@ -121,13 +121,6 @@ from torch import Tensor
 
 from gigl.transforms.sequence_layout import PackedLayout
 
-# The kernel returns its philox seed and offset on the CPU when dropout is off,
-# but its meta registration returns them as CUDA tensors. ``torch.compile`` then
-# treats them as CUDA buffers and can reuse their storage for another small int64
-# buffer, such as the sequence-start index of a one-sequence batch, so a kernel
-# writes through a host pointer. These ops hide the kernel's seed and offset: they
-# return only the output and logsumexp, and the backward supplies its own.
-
 
 def _kernel_bias_view(
     attn_bias: Tensor, num_query_tokens: int, num_key_tokens: int
@@ -163,6 +156,12 @@ def _kernel_bias_view(
     return attn_bias.as_strided(size, stride)
 
 
+# The kernel returns its philox seed and offset on the CPU when dropout is off,
+# but its meta registration returns them as CUDA tensors. ``torch.compile`` then
+# treats them as CUDA buffers and can reuse their storage for another small int64
+# buffer, such as the sequence-start index of a one-sequence batch, so a kernel
+# writes through a host pointer. These ops hide the kernel's seed and offset: they
+# return only the output and logsumexp, and the backward supplies its own.
 @torch.library.custom_op("gigl::varlen_attention", mutates_args=())
 def _varlen_attention_op(
     query: Tensor,
@@ -308,7 +307,9 @@ def _setup_varlen_attention_context(ctx, inputs, output) -> None:
         _,
         attn_bias,
     ) = inputs
-    if attn_bias is not None and attn_bias.requires_grad:
+    if attn_bias is not None and any(
+        tensor.requires_grad for tensor in (query, key, value, attn_bias)
+    ):
         raise ValueError(
             "The varlen kernel has no backward with a bias; use the padded path."
         )
@@ -437,7 +438,8 @@ def _varlen_attention(
     ``attn_bias[i, :, query position, key position]``. It must have the query
     dtype, a last-dim stride of 1, and other strides that are multiples of 8. The
     kernel has no backward for a bias with ``cu_seqlens``, so a bias is
-    inference only: nothing may require grad, or the call raises.
+    inference only: with a bias, none of ``query``, ``key``, ``value`` or the bias
+    may require grad, or the call raises.
 
     This calls the private ``aten._efficient_attention_forward`` op, wrapped in
     ``gigl::varlen_attention``, because torch
@@ -634,6 +636,9 @@ def packed_attention(
 
     ``dropout_p > 0`` runs the padded SDPA path on the GPU. Off CUDA, the padded
     SDPA path always runs.
+
+    Every sequence must contain at least one token (``lengths >= 1``). An empty
+    sequence gives wrong output on the padded path and is not supported.
 
     Args and returns are as in ``_padded_packed_attention``.
     """

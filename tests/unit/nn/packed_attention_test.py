@@ -25,6 +25,31 @@ _MAX_SEQ_LEN = 24
 
 
 class PackedAttentionTest(TestCase):
+    def test_varlen_attention_with_a_bias_raises_when_an_input_requires_grad(
+        self,
+    ) -> None:
+        cu_seqlens = torch.tensor([0, 5, 6, 12], dtype=torch.int32, device="meta")
+        attn_bias = torch.empty(3, 2, 8, 8, device="meta")
+        for name in ("query", "key", "value"):
+            with self.subTest(requires_grad=name):
+                tensors = {
+                    tensor_name: torch.empty(
+                        12, 2, 64, device="meta", requires_grad=tensor_name == name
+                    )
+                    for tensor_name in ("query", "key", "value")
+                }
+                with self.assertRaises(ValueError):
+                    _varlen_attention(
+                        tensors["query"],
+                        tensors["key"],
+                        tensors["value"],
+                        cu_seqlens,
+                        cu_seqlens,
+                        6,
+                        6,
+                        attn_bias,
+                    )
+
     def test_varlen_attention_traces_and_backpropagates_on_meta_tensors(self) -> None:
         cu_seqlens = torch.tensor([0, 5, 6, 12], dtype=torch.int32, device="meta")
         query, key, value = (
