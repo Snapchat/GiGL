@@ -45,10 +45,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer kind that
   holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy move
   fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical float32
-  batches. It applies to `build_dataset(compress_node_features=...)` (default `False` there), to the task-config arg
-  `compress_node_features` (default `"True"`; set `"False"` in the trainer/inferencer args to opt out) and to Graph
-  Store storage nodes (`build_storage_dataset` compresses unless the trainer or inferencer args set `"False"`) by
-  @kmontemayor2-sc
+  batches. `build_dataset`, `build_dataset_from_task_config_uri` and Graph Store storage nodes (`build_storage_dataset`)
+  all read the `GIGL_FEATURE_COMPRESSION` environment variable: unset or `auto` compresses, `off` keeps every column
+  float32, and any other value raises by @kmontemayor2-sc
 
 ### Changed
 

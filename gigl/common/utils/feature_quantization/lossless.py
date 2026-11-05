@@ -164,8 +164,9 @@ class ColumnStats:
         stats = cls.empty(features.shape[1])
         minimum, maximum = stats.minimum, stats.maximum
         integral, has_negative_zero = stats.integral, stats.has_negative_zero
-        for start in range(0, features.shape[0], _CHUNK_ROWS):
-            chunk = features[start : start + _CHUNK_ROWS]
+        rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
+        for start in range(0, features.shape[0], rows_per_chunk):
+            chunk = features[start : start + rows_per_chunk]
             chunk_min, chunk_max = torch.aminmax(chunk, dim=0)
             minimum = torch.minimum(minimum, chunk_min.to(torch.float64))
             maximum = torch.maximum(maximum, chunk_max.to(torch.float64))

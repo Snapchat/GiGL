@@ -21,17 +21,23 @@ Compression is lossless and bit-exact: a column holding a non-integral value, a 
 ``-0.0`` stays float32.
 """
 
+import os
 import time
 from collections import Counter
 from dataclasses import replace
-from typing import Hashable, Mapping, Optional, TypeVar, Union
+from enum import Enum
+from typing import Final, Hashable, Mapping, Optional, TypeVar, Union
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
 from jaxtyping import Float, UInt8
 
 from gigl.common.logger import Logger
-from gigl.common.utils.feature_quantization.lossless import ColumnStats, FeatureCodec
+from gigl.common.utils.feature_quantization.lossless import (
+    ColumnStats,
+    FeatureCodec,
+    chunk_rows,
+)
 from gigl.types.graph import FeatureQuantizationMetadata
 
 logger = Logger()
@@ -39,7 +45,36 @@ logger = Logger()
 _Key = TypeVar("_Key", bound=Hashable)
 
 _UNCOMPRESSED_KIND = "float32"
-_ENCODE_CHUNK_ROWS = 1 << 16
+
+FEATURE_COMPRESSION_ENV: Final[str] = "GIGL_FEATURE_COMPRESSION"
+
+
+class FeatureCompression(str, Enum):
+    """How node and edge features are compressed when a dataset is built."""
+
+    OFF = "off"
+    # Infer the storage kind of every column from the data and compress the ones that shrink.
+    AUTO = "auto"
+
+
+def resolve_feature_compression() -> FeatureCompression:
+    """Returns the mode named by the ``GIGL_FEATURE_COMPRESSION`` environment variable.
+
+    An unset or empty variable means ``AUTO``. The value is case-insensitive.
+
+    Raises:
+        ValueError: If the variable holds a value that is not a ``FeatureCompression`` mode.
+    """
+    raw_value = os.environ.get(FEATURE_COMPRESSION_ENV, "")
+    if not raw_value:
+        return FeatureCompression.AUTO
+    try:
+        return FeatureCompression(raw_value.lower())
+    except ValueError:
+        valid_values = [mode.value for mode in FeatureCompression]
+        raise ValueError(
+            f"{FEATURE_COMPRESSION_ENV}={raw_value!r} is not one of {valid_values}"
+        ) from None
 
 
 def compress_lossless_columns(
@@ -124,8 +159,9 @@ def compress_lossless_columns(
         packed[:, : quantized_features.shape[1]] = quantized_features
     if features is not None:
         offset = new_metadata.lossless_byte_offset
-        for start in range(0, num_rows, _ENCODE_CHUNK_ROWS):
-            chunk = features[start : start + _ENCODE_CHUNK_ROWS][:, moved_positions]
+        rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
+        for start in range(0, num_rows, rows_per_chunk):
+            chunk = features[start : start + rows_per_chunk][:, moved_positions]
             packed[start : start + chunk.shape[0], offset:] = region.encode(chunk)
     remaining_positions: list[int] = []
     for position in range(num_raw_columns):

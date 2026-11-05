@@ -54,7 +54,6 @@ def run_distributed_dataset(
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
-    compress_node_features: bool = False,
 ) -> DistDataset:
     """
     Runs DistDataset Load() __init__ and load() functions provided a mocked dataset info
@@ -67,7 +66,6 @@ def run_distributed_dataset(
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
-        compress_node_features: Passed into `build_dataset`
     """
     try:
         distributed_context: Optional[DistributedContext] = None
@@ -101,7 +99,6 @@ def run_distributed_dataset(
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
             partitioner_class=partitioner_class,
             splitter=splitter,
-            compress_node_features=compress_node_features,
         )
     finally:
         if dist.is_initialized():
