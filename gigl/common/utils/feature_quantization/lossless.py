@@ -138,7 +138,6 @@ class FeatureCodec:
             raise ValueError(
                 f"Expected features of shape [N, {self.num_columns}], got {tuple(features.shape)}"
             )
-        features = features.to(torch.float32)
         out = torch.zeros(
             features.shape[0], self.row_bytes, dtype=torch.uint8, device=features.device
         )
@@ -149,7 +148,10 @@ class FeatureCodec:
                     group.columns, dtype=torch.long, device=chunk.device
                 )
                 values = chunk.index_select(1, index)
-                if group.kind not in _DENSE_KINDS:
+                if group.kind in _DENSE_KINDS:
+                    values = values.to(torch.float32)
+                else:
+                    # Check before any narrowing cast so float64 ids are not rounded into range.
                     self._check_ids(values, group)
                     if group.bias:
                         values = values + group.bias

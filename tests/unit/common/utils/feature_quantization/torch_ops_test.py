@@ -286,7 +286,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             rtol=0,
         )
 
-    def test_dequantize_torch_tensor_decodes_lossless_only_rows(self) -> None:
+    def test_dequantize_torch_tensor_handles_lossless_only_batched_and_empty_rows(
+        self,
+    ) -> None:
         codec = FeatureCodec(("uint8_bias1", "int16"))
         ids = torch.tensor([[-1.0, -300.0], [254.0, 300.0]])
         metadata = FeatureQuantizationMetadata(
@@ -295,33 +297,17 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             lossless_feature_indices=(0, 1),
             lossless_column_kinds=codec.column_dtypes,
         )
+        packed = codec.encode(ids)
 
-        decoded = dequantize_torch_tensor(codec.encode(ids), metadata=metadata)
-
-        torch.testing.assert_close(decoded, ids, atol=0, rtol=0)
-
-    def test_dequantize_torch_tensor_decodes_batched_leading_dimensions(self) -> None:
-        codec = FeatureCodec(("int8", "int16"))
-        ids = torch.tensor([[[-1.0, 5.0], [7.0, -9.0]]])
-        metadata = FeatureQuantizationMetadata(
-            bits=None,
-            feature_dim=2,
-            lossless_feature_indices=(0, 1),
-            lossless_column_kinds=codec.column_dtypes,
+        torch.testing.assert_close(
+            dequantize_torch_tensor(packed, metadata=metadata), ids, atol=0, rtol=0
         )
-        packed = codec.encode(ids.reshape(-1, 2)).reshape(1, 2, -1)
-
-        decoded = dequantize_torch_tensor(packed, metadata=metadata)
-
-        torch.testing.assert_close(decoded, ids, atol=0, rtol=0)
-
-    def test_dequantize_torch_tensor_rejects_a_row_of_the_wrong_width(self) -> None:
-        codec = FeatureCodec(("int8",))
-        metadata = FeatureQuantizationMetadata(
-            bits=None,
-            feature_dim=1,
-            lossless_feature_indices=(0,),
-            lossless_column_kinds=codec.column_dtypes,
+        # Leading batch dimensions are preserved.
+        torch.testing.assert_close(
+            dequantize_torch_tensor(packed.reshape(1, 2, -1), metadata=metadata),
+            ids.reshape(1, 2, 2),
+            atol=0,
+            rtol=0,
         )
         with self.assertRaises(ValueError):
             dequantize_torch_tensor(
@@ -329,14 +315,9 @@ class TorchFeatureQuantizationOpsTest(TestCase):
                 metadata=metadata,
             )
 
-    def test_dequantize_torch_tensor_of_metadata_without_packed_columns_is_empty(
-        self,
-    ) -> None:
-        metadata = FeatureQuantizationMetadata(bits=None, feature_dim=3)
-
+        no_packed_columns = FeatureQuantizationMetadata(bits=None, feature_dim=3)
         decoded = dequantize_torch_tensor(
-            torch.zeros(4, 0, dtype=torch.uint8), metadata=metadata
+            torch.zeros(4, 0, dtype=torch.uint8), metadata=no_packed_columns
         )
-
         self.assertEqual(decoded.shape, (4, 0))
         self.assertEqual(decoded.dtype, torch.float32)
