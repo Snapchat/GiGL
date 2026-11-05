@@ -1,14 +1,17 @@
 import pickle
 import unittest
 from typing import Optional
+from unittest import mock
 
 import torch
 from absl.testing import absltest
 from parameterized import parameterized
 
+from gigl.common.utils.feature_quantization import lossless
 from gigl.common.utils.feature_quantization.lossless import (
     ColumnStats,
     FeatureCodec,
+    chunk_rows,
     kind_holding_domain,
 )
 from tests.test_assets.test_case import TestCase
@@ -97,6 +100,16 @@ class FeatureCodecTest(TestCase):
         decoded = self.codec.decode(packed)
         self.assertEqual(decoded.dtype, torch.float32)
         self.assertTrue(_same_bits(decoded, self.features))
+
+    def test_chunks_target_a_byte_size_and_encoding_is_chunk_independent(self) -> None:
+        # 8 MiB of float32 is 4096 rows of 512 columns; a row wider than a chunk still gets one row.
+        self.assertEqual(chunk_rows(512, 4), 4096)
+        self.assertEqual(chunk_rows(1 << 30, 4), 1)
+        whole = self.codec.encode(self.features)
+        with mock.patch.object(lossless, "_CHUNK_BYTES", 7 * 4 * _NUM_COLUMNS):
+            self.assertEqual(chunk_rows(_NUM_COLUMNS, 4), 7)
+            chunked = self.codec.encode(self.features)
+        self.assertTrue(torch.equal(chunked, whole))
 
     def test_round_trip_covers_domain_edges(self) -> None:
         features = _features(8, seed=1)
