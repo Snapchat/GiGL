@@ -21,7 +21,7 @@ class GcsUtilsTest(TestCase):
         gcs_utils.delete_files_in_bucket_dir(self._scratch_gcs_path)
 
     def test_join_path(self):
-        self.assertEquals(
+        self.assertEqual(
             GcsUri.join("gs://bucket_name", "path", "file.txt"),
             GcsUri("gs://bucket_name/path/file.txt"),
         )

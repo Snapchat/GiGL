@@ -7,4 +7,4 @@ class ItertoolsTest(TestCase):
         input_list = [1, 2, 3, 4, 5]
         output = batch(list_of_items=input_list, chunk_size=2)
         expected_output = [[1, 2], [3, 4], [5]]
-        self.assertEquals(output, expected_output)
+        self.assertEqual(output, expected_output)

@@ -150,7 +150,7 @@ install_gigl_lib_deps() {
         # https://docs.astral.sh/uv/reference/cli/#uv-sync
         uv sync ${extra_deps_clause[@]} --group dev --locked ${flag_use_inexact_match} --no-install-package gigl-core
     else
-        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
+        uv sync ${extra_deps_clause[@]} --group gigl-core-build-backend --group glt-build-backend --locked ${flag_use_inexact_match} --no-install-package gigl-core
     fi
     uv pip install --no-build-isolation ./gigl-core/
 

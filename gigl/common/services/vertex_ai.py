@@ -86,6 +86,13 @@ LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours
+_QUEUE_POLL_INTERVAL_S: Final[float] = 15.0
+_QUEUED_JOB_STATES: Final[frozenset[aiplatform.gapic.JobState]] = frozenset(
+    {
+        aiplatform.gapic.JobState.JOB_STATE_QUEUED,
+        aiplatform.gapic.JobState.JOB_STATE_PENDING,
+    }
+)
 
 
 @dataclass
@@ -127,6 +134,13 @@ class VertexAiJobConfig:
             billing / cost attribution).
         timeout_s: Optional job timeout in seconds. Falls back to
             ``DEFAULT_CUSTOM_JOB_TIMEOUT_S`` when ``None``.
+            Vertex AI applies this to run time only, not to time spent
+            waiting for capacity.
+        queue_timeout_s: Optional bound, in seconds, on how long the job may
+            sit in ``JOB_STATE_QUEUED`` or ``JOB_STATE_PENDING`` before it is
+            cancelled client-side and a ``RuntimeError`` is raised.
+            ``None`` — the default — waits for Vertex AI to resolve the job,
+            which can take about 96 minutes when a region has no capacity.
         enable_web_access: Enables interactive shell access to workers via
             the Vertex AI web console.
         scheduling_strategy: Optional
@@ -150,6 +164,7 @@ class VertexAiJobConfig:
     boot_disk_size_gb: int = 100
     labels: Optional[dict[str, str]] = None
     timeout_s: Optional[int] = None
+    queue_timeout_s: Optional[float] = None
     enable_web_access: bool = True
     scheduling_strategy: Optional[aiplatform.gapic.Scheduling.Strategy] = None
     reservation_affinity: Optional[ReservationAffinity] = None
@@ -363,6 +378,8 @@ class VertexAIService:
         logger.info(
             f"See job logs at: https://console.cloud.google.com/agent-platform/locations/{self._location}/training/{job.name}?project={self._project}"
         )
+        if job_config.queue_timeout_s is not None:
+            _wait_for_job_to_leave_queue(job, job_config.queue_timeout_s)
         job.wait_for_completion()
         return job
 
@@ -483,6 +500,46 @@ class VertexAIService:
                 f"Vertex AI run {run.name} timed out after {timeout} seconds. Canceled the run. "
                 f"Please check the Vertex AI page {run_link} to trace down the error."
             )
+
+
+def _wait_for_job_to_leave_queue(
+    job: aiplatform.CustomJob,
+    queue_timeout_s: float,
+    poll_interval_s: float = _QUEUE_POLL_INTERVAL_S,
+) -> None:
+    """Block until ``job`` leaves the Vertex AI queue, or cancel it at the deadline.
+
+    Vertex AI's ``scheduling.timeout`` caps run time only.
+    A job that cannot get capacity sits in ``JOB_STATE_QUEUED`` or ``JOB_STATE_PENDING``
+    until Vertex AI fails it with "Resources are insufficient in region", which has
+    taken about 96 minutes in us-central1.
+    This gives the caller a client-side bound on that wait.
+
+    Args:
+        job: The submitted job. Its resource must already exist.
+        queue_timeout_s: Seconds the job may stay queued before it is cancelled.
+        poll_interval_s: Seconds between state reads. Each read is a network call.
+
+    Raises:
+        RuntimeError: If the job is still queued at the deadline. The job is cancelled first.
+    """
+    deadline = time.time() + queue_timeout_s
+    while True:
+        state = job.state
+        if state not in _QUEUED_JOB_STATES:
+            return
+        if time.time() >= deadline:
+            logger.warning(
+                f"Vertex AI job {job.resource_name} is still {state.name} after "
+                f"{queue_timeout_s} seconds. Cancelling it."
+            )
+            job.cancel()
+            raise RuntimeError(
+                f"Vertex AI job {job.resource_name} was still queued after {queue_timeout_s} "
+                f"seconds and was cancelled. The region likely has no capacity for the "
+                f"requested machine types."
+            )
+        time.sleep(poll_interval_s)
 
 
 def _create_machine_spec(job_config: VertexAiJobConfig) -> MachineSpec:

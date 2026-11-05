@@ -13,6 +13,14 @@ If you don't have cloud assets already setup i.e. a GCP project. See [guide](../
 
 ## Resource Config Breakdown
 
+### Choosing machine types
+
+The machine types in GiGL's own CI configs under `deployment/configs/` (for example `e2e_cicd_resource_config.yaml` and
+`e2e_glt_gs_resource_config.yaml`) are chosen for availability in the CI region, not for speed. CPU-only pools use E2
+shapes and the legacy pipelines train on CPU, because N1 and N2 pools and T4 GPUs in `us-central1` were often out of
+capacity. In practice, pick more performant types for your own workloads: N2 or C3 with local SSD for samplers and
+storage pools, and A100 or L4 GPUs for training and inference.
+
 ## Example: Full Template for Resource Config
 
 <details>
