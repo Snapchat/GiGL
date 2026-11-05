@@ -70,12 +70,8 @@ def _declared(dense_dtype: str = "float32") -> FeatureCodec:
     return FeatureCodec(tuple(kinds))
 
 
-def _fit(
-    features: torch.Tensor, dense_dtype: str = "float32", strict: bool = False
-) -> FeatureCodec:
-    return _declared(dense_dtype).fitted_to(
-        ColumnStats.from_features(features), strict=strict
-    )
+def _fit(features: torch.Tensor, dense_dtype: str = "float32") -> FeatureCodec:
+    return _declared(dense_dtype).fitted_to(ColumnStats.from_features(features))
 
 
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -164,12 +160,6 @@ class FeatureCodecTest(TestCase):
         features[:, 0] = 3.0  # dense_a looks like an id but declares no domain
         self.assertEqual(_fit(features).column_dtypes[0], "float32")
 
-    def test_strict_mode_raises_for_a_column_that_does_not_fit(self) -> None:
-        features = _features(50, seed=4)
-        features[7, 6] = 1.5
-        with self.assertRaises(ValueError):
-            _fit(features, strict=True)
-
     def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
         first, second = _features(50, seed=5), _features(50, seed=6)
         second[3, 6] = 1000.0  # does not fit int8
@@ -182,7 +172,6 @@ class FeatureCodecTest(TestCase):
         alone = declared.fitted_to(ColumnStats.from_features(first))
         self.assertEqual(merged.column_dtypes[6], "float32")
         self.assertEqual(alone.column_dtypes[6], "int8")
-        # Both partitions round-trip through the merged codec.
         for features in (first, second):
             self.assertTrue(
                 _same_bits(merged.decode(merged.encode(features)), features)
@@ -193,7 +182,7 @@ class FeatureCodecTest(TestCase):
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
         )
-        fitted = codec.fitted_to(ColumnStats.from_features(features), strict=True)
+        fitted = codec.fitted_to(ColumnStats.from_features(features))
         self.assertEqual(fitted, codec)
         self.assertEqual(
             codec.row_bytes, 12

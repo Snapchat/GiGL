@@ -14,8 +14,8 @@ multiple of four bytes so that row strides stay aligned for any row subset.
 
 Which columns are stored as narrow integers is declared by the caller (see ``gigl.distributed.utils.lossless_codecs``
 for deriving a declaration from a feature schema) and then checked against the data (``ColumnStats``,
-``FeatureCodec.fitted_to``): a column whose values do not fit its declared range, or that is not integral, stays float32
-unless the caller asks for strict mode. A fitted codec is therefore lossless for the data it was fitted to, except that
+``FeatureCodec.fitted_to``): a column whose values do not fit its declared range, or that is not integral, stays float32.
+A fitted codec is therefore lossless for the data it was fitted to, except that
 real-valued columns may optionally be rounded to bfloat16.
 """
 
@@ -25,10 +25,6 @@ from typing import Final, Iterable, Optional, Sequence
 
 import torch
 from jaxtyping import Bool, Float, Float32, Shaped, UInt8
-
-from gigl.common.logger import Logger
-
-logger = Logger()
 
 # kind -> (storage dtype, bias, inclusive range of representable column values).
 # float32 cannot represent 2**31 - 1, so the int32 upper bound is the largest float32 below 2**31.
@@ -169,42 +165,27 @@ class FeatureCodec:
         if unknown:
             raise ValueError(f"Unknown column kinds {sorted(unknown)}")
 
-    def fitted_to(self, stats: ColumnStats, strict: bool = False) -> "FeatureCodec":
+    def fitted_to(self, stats: ColumnStats) -> "FeatureCodec":
         """Returns this codec with every integer column the data does not fit demoted to float32.
 
         A column fits if all its values in ``stats`` are whole numbers inside the integer kind's
-        range. Demoted columns are logged, so a wrong declaration costs memory, not correctness.
+        range, so a wrong declaration costs memory, not correctness. Compare with this codec to find the
+        demoted columns.
 
         Args:
             stats: Statistics of the data that will be packed, merged over every partition.
-            strict: Raise instead of demoting.
 
         Raises:
-            ValueError: If the width differs from the data's, or (when ``strict``) a column does
-                not fit.
+            ValueError: If the width differs from the data's.
         """
         if stats.minimum.numel() != self.num_columns:
             raise ValueError(
                 f"Codec has {self.num_columns} columns but the data has {stats.minimum.numel()}"
             )
         kinds = list(self.column_dtypes)
-        unfit = [
-            column
-            for column, kind in enumerate(kinds)
-            if kind not in _DENSE_KINDS and not stats.holds(column, kind)
-        ]
-        if unfit and strict:
-            raise ValueError(
-                f"Columns {unfit} are declared as integer ids but their data does not fit "
-                "the declared storage kind (or is not integral)"
-            )
-        if unfit:
-            logger.warning(
-                f"Columns {unfit} are declared as integer ids but their data does not fit the "
-                "declared storage kind (or is not integral); storing them as float32"
-            )
-        for column in unfit:
-            kinds[column] = "float32"
+        for column, kind in enumerate(kinds):
+            if kind not in _DENSE_KINDS and not stats.holds(column, kind):
+                kinds[column] = "float32"
         return FeatureCodec(tuple(kinds))
 
     @property

@@ -76,7 +76,6 @@ def _load_and_build_partitioned_dataset(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None,
-    strict_lossless_compression: bool = False,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -104,7 +103,7 @@ def _load_and_build_partitioned_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
-        node_lossless_codecs, strict_lossless_compression: See ``build_dataset``.
+        node_lossless_codecs: See ``build_dataset``.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -150,7 +149,6 @@ def _load_and_build_partitioned_dataset(
                 serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
             ),
             default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-            strict=strict_lossless_compression,
         )
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
@@ -303,7 +301,6 @@ def _build_dataset_process(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None,
-    strict_lossless_compression: bool = False,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -388,7 +385,6 @@ def _build_dataset_process(
         weight_edge_feat_name=weight_edge_feat_name,
         retain_edge_ids=retain_edge_ids,
         node_lossless_codecs=node_lossless_codecs,
-        strict_lossless_compression=strict_lossless_compression,
     )
 
     output_dict["dataset"] = output_dataset
@@ -419,7 +415,6 @@ def build_dataset(
     node_lossless_codecs: Optional[
         Union[FeatureCodec, dict[NodeType, FeatureCodec]]
     ] = None,
-    strict_lossless_compression: bool = False,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -464,21 +459,10 @@ def build_dataset(
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
         node_lossless_codecs (Optional[Union[FeatureCodec, dict[NodeType, FeatureCodec]]]): Opt-in lossless
-            compression of node feature columns, stored with the same packed sidecar and loader decode as feature
-            quantization. A ``FeatureCodec`` declares the storage kind of every logical feature column of a node type
-            (one codec for a homogeneous graph, a dict with one codec per node type to compress otherwise):
-            ``"float32"`` leaves the column alone and ``"int8"``/``"uint8"``/``"uint8_bias1"``/``"int16"``/``"int32"``
-            store a categorical id column as that integer type. Columns that
-            preprocessing already quantized must stay ``"float32"``. Sampling, RPC and the host-to-device copy then
-            move the smaller rows and loaders reconstruct float32 ``x`` transparently, so batches are identical to the
-            uncompressed ones (an id column comes back equal to the stored values; a stored ``-0.0`` reads back as ``0.0``).
-            The declaration is checked against the data on every rank; an integer column whose data does not fit
-            (fractional, NaN, out of range) is left as float32 and logged.
-            Use ``derive_node_lossless_codecs`` to declare codecs from the feature schemas. Peak host memory while
-            compressing is the loaded node features plus the remaining raw columns plus the packed rows, until the loaded
-            tensors are released. Disabled by default.
-        strict_lossless_compression (bool): Raise instead of leaving a declared integer column as float32 when its
-            data does not fit.
+            compression of node feature columns: one codec for a homogeneous graph, a dict with one codec per node
+            type to compress otherwise. Batches are unchanged because loaders decode back to float32. Disabled by
+            default. Use ``derive_node_lossless_codecs`` to build it from the feature schemas.
+            See :mod:`gigl.common.utils.feature_quantization.lossless` for the storage kinds and an example.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -576,7 +560,6 @@ def build_dataset(
             weight_edge_feat_name,
             retain_edge_ids,
             node_lossless_codecs,
-            strict_lossless_compression,
         ),
     )
 
@@ -625,8 +608,6 @@ def build_dataset_from_task_config_uri(
       with ``with_edge=False``. The default is True only for backwards compatibility.
     - compress_node_features (bool): Losslessly compress categorical id node feature columns declared with an
       ``int_domain`` in the feature schema (see ``node_lossless_codecs`` of ``build_dataset``), defaulting to False.
-    - compress_features_strict (bool): With ``compress_node_features``, raise instead of leaving a declared id
-      column as float32 when its data does not fit its declared range, defaulting to False.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -749,13 +730,6 @@ def build_dataset_from_task_config_uri(
     should_compress_node_features = str_to_bool(
         args.get("compress_node_features", "False")
     )
-    strict_lossless_compression = str_to_bool(
-        args.get("compress_features_strict", "False")
-    )
-    if strict_lossless_compression and not should_compress_node_features:
-        raise ValueError(
-            "'compress_features_strict' requires 'compress_node_features' to be enabled"
-        )
     if should_compress_node_features:
         node_lossless_codecs = derive_node_lossless_codecs(
             gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
@@ -781,7 +755,6 @@ def build_dataset_from_task_config_uri(
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,
         node_lossless_codecs=node_lossless_codecs,
-        strict_lossless_compression=strict_lossless_compression,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 

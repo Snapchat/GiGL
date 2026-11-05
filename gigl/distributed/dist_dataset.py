@@ -1013,17 +1013,14 @@ class DistDataset(glt.distributed.DistDataset):
         if metadata is None or packed is None:
             return
         if isinstance(packed, Mapping):
-            feature_info: dict[NodeType, FeatureInfo] = (
-                dict(self._node_feature_info)
-                if isinstance(self._node_feature_info, Mapping)
-                else {}
-            )
+            feature_info: dict[NodeType, FeatureInfo] = {}
+            if isinstance(self._node_feature_info, Mapping):
+                feature_info = dict(self._node_feature_info)
             for node_type in packed:
-                node_metadata = (
-                    metadata
-                    if isinstance(metadata, FeatureQuantizationMetadata)
-                    else metadata[node_type]
-                )
+                if isinstance(metadata, FeatureQuantizationMetadata):
+                    node_metadata = metadata
+                else:
+                    node_metadata = metadata[node_type]
                 feature_info[node_type] = FeatureInfo(
                     dim=node_metadata.feature_dim, dtype=torch.float32
                 )

@@ -43,11 +43,10 @@ def _compress(
     declared: FeatureCodec,
     quantized: Optional[torch.Tensor] = None,
     metadata: Optional[FeatureQuantizationMetadata] = None,
-    strict: bool = False,
 ):
     stats = lossless_column_stats(features, metadata, declared)
     return compress_lossless_columns(
-        features, quantized, metadata, declared, stats, strict=strict
+        features, quantized, metadata, declared, stats, "user"
     )
 
 
@@ -133,19 +132,20 @@ class CompressLosslessColumnsTest(TestCase):
         # Quantized columns come back at their quantized values, lossless ones exactly.
         self.assertTrue(torch.equal(before[:, [1, 4]], logical[:, [1, 4]]))
 
-    def test_unfit_columns_stay_raw_and_strict_mode_raises(self) -> None:
-        features = _features(6, {i: (0, 100) for i in range(5)})
+    def test_unfit_columns_stay_raw_and_are_reported_by_logical_column(self) -> None:
+        features = _features(6, {i: (0, 100) for i in range(1, 5)})
         features[7, 4] = 2.5  # not an id
-        declared = FeatureCodec(("int8",) * 5 + ("float32",))
+        declared = FeatureCodec(("float32",) + ("int8",) * 4 + ("float32",))
 
-        raw, packed, metadata = _compress(features, declared)
+        with self.assertLogs("root", level="WARNING") as logs:
+            raw, packed, metadata = _compress(features, declared)
 
         assert raw is not None and packed is not None and metadata is not None
-        self.assertEqual(metadata.lossless_feature_indices, (0, 1, 2, 3))
-        self.assertEqual(metadata.raw_feature_indices, (4, 5))
+        self.assertEqual(metadata.lossless_feature_indices, (1, 2, 3))
+        self.assertEqual(metadata.raw_feature_indices, (0, 4, 5))
         self.assertTrue(torch.equal(_reconstruct(raw, packed, metadata), features))
-        with self.assertRaises(ValueError):
-            _compress(features, declared, strict=True)
+        # Column 4 is the third declared column, but is reported as the logical column 4 of "user".
+        self.assertIn("Columns [4] of user", logs.output[0])
 
     def test_everything_declared_leaves_no_raw_matrix(self) -> None:
         features = _features(4, {i: (0, 100) for i in range(4)})
@@ -201,7 +201,7 @@ class CompressLosslessColumnsTest(TestCase):
         stats = lossless_column_stats(features, None, declared)
 
         raw, packed, metadata = compress_lossless_columns(
-            None, None, None, declared, stats
+            None, None, None, declared, stats, "user"
         )
 
         assert packed is not None and metadata is not None
@@ -209,7 +209,7 @@ class CompressLosslessColumnsTest(TestCase):
         self.assertEqual(packed.shape, (0, metadata.packed_feature_dim))
         self.assertEqual(
             metadata,
-            compress_lossless_columns(features, None, None, declared, stats)[2],
+            compress_lossless_columns(features, None, None, declared, stats, "user")[2],
         )
 
     def test_columns_declared_lossy_or_already_compressed_are_rejected(self) -> None:

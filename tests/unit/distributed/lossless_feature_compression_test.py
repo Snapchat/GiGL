@@ -72,7 +72,9 @@ def _compress(
     metadata: Optional[FeatureQuantizationMetadata] = None,
 ):
     stats = lossless_column_stats(features, metadata, declared)
-    return compress_lossless_columns(features, quantized, metadata, declared, stats)
+    return compress_lossless_columns(
+        features, quantized, metadata, declared, stats, "test"
+    )
 
 
 def _ring_edges() -> torch.Tensor:
@@ -337,7 +339,6 @@ class LosslessCompressionLoaderTest(TestCase):
             )
         )
         self.assertIsNone(dataset.node_features)
-        # The dataset still describes the logical float32 features.
         self.assertEqual(
             dataset.node_feature_info, FeatureInfo(dim=3, dtype=torch.float32)
         )
@@ -571,14 +572,6 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             },
             {_AUTHOR: 334, _PAPER: 4231},
         )
-
-    def test_strict_compression_raises_when_declared_ids_do_not_fit(self) -> None:
-        with self.assertRaises(mp.ProcessRaisedException):
-            self._build(
-                DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-                node_lossless_codecs={_TERM: FeatureCodec(("int8",) * 50)},
-                strict_lossless_compression=True,
-            )
 
 
 if __name__ == "__main__":
