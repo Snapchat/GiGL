@@ -92,8 +92,13 @@ rewrite history or change remote state. Local commits are allowed only for the c
 
 9. Write a PR links doc so the author can open the PR in one click.
    - Write it to the directory given in your invocation, or to `.claude/tmp/pr_descriptions/` (gitignored) by
-     default. Name it `open_links.md`, and add a section to it if it already exists.
-   - Save the description body to `body_<branch-name-with-slashes-as-dashes>.md` in the same directory.
+     default.
+   - Write one doc per request, never one shared doc. Name it `open_links_<name>.md`, where `<name>` is the branch
+     name with slashes as dashes:
+     - Standalone PR: use the PR's branch.
+     - PR stack: use the top branch of the stack. Put one section per PR in the doc, in merge order, and give each
+       section the branch below it as its base.
+   - Save each description body to `body_<branch-name-with-slashes-as-dashes>.md` in the same directory.
    - In each section, list the title, the base branch, the path to the body file, and two links:
      - Title only: `https://github.com/Snapchat/GiGL/compare/<base>...<branch>?expand=1&title=<title>`
      - Title and body: the same link plus `&body=<body>`, with the body's character count. Skip this link if the URL
