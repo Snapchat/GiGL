@@ -32,14 +32,18 @@ from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
-    _lookup_pairwise_relation_indices,
-    _validate_reserved_anchor_feature_usage,
     concat_tensors,
     get_node_type_offsets,
+    lookup_pairwise_relation_indices,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
+    validate_reserved_anchor_feature_usage,
 )
-from gigl.transforms.sequence_layout import PackedLayout, PackedRelationEdges
+from gigl.transforms.sequence_layout import (
+    PackedLayout,
+    PackedRelationEdges,
+    RelationSegment,
+)
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, pack_khop_layout
 
 logger = Logger()
@@ -243,7 +247,7 @@ class FeedForwardNetwork(nn.Module):
 
 def _get_relation_segments_from_bounds(
     bounds: Sequence[int],
-) -> tuple[tuple[int, int, int], ...]:
+) -> tuple[RelationSegment, ...]:
     """Returns a ``(relation, start, end)`` segment for every relation.
 
     ``bounds[r]`` to ``bounds[r + 1]`` is relation ``r``'s edge range. A relation
@@ -253,23 +257,23 @@ def _get_relation_segments_from_bounds(
     if bounds[-1] == 0:
         return ()
     return tuple(
-        (relation, bounds[relation], bounds[relation + 1])
+        RelationSegment(relation, bounds[relation], bounds[relation + 1])
         for relation in range(len(bounds) - 1)
     )
 
 
 def _get_relation_segments(
-    relation_indices: Tensor,
-) -> tuple[tuple[int, int, int], ...]:
+    relation_indices: Int64[Tensor, "num_edges"],
+) -> tuple[RelationSegment, ...]:
     """Returns the ``(relation, start, end)`` runs of equal consecutive relations.
 
     Costs one host read.
     """
     relations, counts = torch.unique_consecutive(relation_indices, return_counts=True)
-    segments: list[tuple[int, int, int]] = []
+    segments: list[RelationSegment] = []
     start = 0
     for relation, count in torch.stack([relations, counts]).t().tolist():
-        segments.append((relation, start, start + count))
+        segments.append(RelationSegment(relation, start, start + count))
         start += count
     return tuple(segments)
 
@@ -1086,7 +1090,7 @@ class GraphTransformerEncoderLayer(nn.Module):
         edge_queries: Optional[Tensor],
         edge_keys: Optional[Tensor],
         relation_indices: Tensor,
-        relation_segments: Sequence[tuple[int, int, int]],
+        relation_segments: Sequence[RelationSegment],
         target_rows: Tensor,
         num_target_rows: int,
     ) -> Tensor:
@@ -1541,7 +1545,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names
         anchor_input_attr_names = anchor_based_input_attr_names
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names
-        _validate_reserved_anchor_feature_usage(
+        validate_reserved_anchor_feature_usage(
             pairwise_bias_attr_names=pairwise_bias_attr_names,
             anchor_bias_attr_names=anchor_bias_attr_names,
             anchor_input_attr_names=anchor_input_attr_names,
@@ -2373,7 +2377,7 @@ class GraphTransformerEncoder(nn.Module):
             .flatten()
             .sort()
         )
-        relation_edges = _lookup_pairwise_relation_indices(
+        relation_edges = lookup_pairwise_relation_indices(
             edge_index_dict=edge_index_dict,
             node_index_sequences=node_index,
             valid_mask=valid_mask,
