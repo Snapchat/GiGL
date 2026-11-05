@@ -747,10 +747,10 @@ class GraphTransformerEncoderLayer(nn.Module):
 
     def _relation_attention_scores(
         self,
-        selected_query: Tensor,
-        selected_key: Tensor,
-        segments: Sequence[tuple[int, int, int]],
-    ) -> Tensor:
+        selected_query: Float[Tensor, "num_edges num_heads head_dim"],
+        selected_key: Float[Tensor, "num_edges num_heads head_dim"],
+        segments: Sequence[RelationSegment],
+    ) -> Float[Tensor, "num_edges num_heads"]:
         """The per-head relation score of each edge, ``(num_edges, num_heads)``.
 
         Args:
@@ -759,15 +759,18 @@ class GraphTransformerEncoderLayer(nn.Module):
             selected_key: ``(num_edges, num_heads, head_dim)`` key of each edge's
                 source, in the same order.
             segments: ``(relation, start, end)`` edge range of every relation.
+
+        Returns:
+            ``(num_edges, num_heads)`` score of each edge.
         """
-        return torch.cat(
-            [
+        scores: list[Tensor] = []
+        for relation, start, end in segments:
+            scores.append(
                 self._compute_relation_attention_scores(
                     selected_query[start:end], selected_key[start:end], relation
                 )
-                for relation, start, end in segments
-            ]
-        )
+            )
+        return torch.cat(scores)
 
     def _accumulate_relation_attention_scores(
         self,
