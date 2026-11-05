@@ -62,7 +62,6 @@ def run_distributed_dataset(
     edge_lossless_codecs: Optional[
         Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
     ] = None,
-    strict_lossless_compression: bool = False,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> DistDataset:
     """
@@ -76,7 +75,7 @@ def run_distributed_dataset(
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
         partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
-        node_lossless_codecs, edge_lossless_codecs, strict_lossless_compression, weight_edge_feat_name: Passed into `build_dataset`
+        node_lossless_codecs, edge_lossless_codecs, weight_edge_feat_name: Passed into `build_dataset`
     """
     try:
         distributed_context: Optional[DistributedContext] = None
@@ -112,7 +111,6 @@ def run_distributed_dataset(
             splitter=splitter,
             node_lossless_codecs=node_lossless_codecs,
             edge_lossless_codecs=edge_lossless_codecs,
-            strict_lossless_compression=strict_lossless_compression,
             weight_edge_feat_name=weight_edge_feat_name,
         )
     finally:

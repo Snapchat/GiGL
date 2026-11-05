@@ -20,6 +20,7 @@ import torch
 from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.lossless import FeatureCodec
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -57,7 +58,6 @@ def build_storage_dataset(
     edge_lossless_codecs: Optional[
         Union[FeatureCodec, dict[EdgeType, FeatureCodec]]
     ] = None,
-    strict_lossless_compression: bool = False,
 ) -> DistDataset:
     """Build a :class:`DistDataset` for a storage node from a task config.
 
@@ -90,16 +90,40 @@ def build_storage_dataset(
         node_lossless_codecs: Optional lossless compression of node feature columns, see
             :func:`~gigl.distributed.dataset_factory.build_dataset`. Clients pick up the compressed layout from the
             quantization metadata the storage server serves, so compute nodes need no configuration.
+            The ``compress_node_features`` task-config argument is not read here; pass the codecs explicitly.
         edge_lossless_codecs: Optional lossless compression of main edge feature columns, see
             :func:`~gigl.distributed.dataset_factory.build_dataset`.
-        strict_lossless_compression: See :func:`~gigl.distributed.dataset_factory.build_dataset`.
+            The ``compress_edge_features`` task-config argument is not read here either.
 
     Returns:
         A partitioned :class:`DistDataset` ready to be served.
+
+    Raises:
+        ValueError: If the task config sets ``compress_node_features`` (or ``compress_edge_features``) but
+            ``node_lossless_codecs`` (or ``edge_lossless_codecs``) is ``None``.
     """
     gbml_config_pb_wrapper = GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
         gbml_config_uri=task_config_uri
     )
+    task_args = [
+        gbml_config_pb_wrapper.trainer_config.trainer_args,
+        gbml_config_pb_wrapper.inferencer_config.inferencer_args,
+    ]
+    for args in task_args:
+        if node_lossless_codecs is None and str_to_bool(
+            args.get("compress_node_features", "False")
+        ):
+            raise ValueError(
+                "'compress_node_features' is set in the task config, but Graph Store does not read it. "
+                "Pass node_lossless_codecs to build_storage_dataset instead."
+            )
+        if edge_lossless_codecs is None and str_to_bool(
+            args.get("compress_edge_features", "False")
+        ):
+            raise ValueError(
+                "'compress_edge_features' is set in the task config, but Graph Store does not read it. "
+                "Pass edge_lossless_codecs to build_storage_dataset instead."
+            )
     serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
         preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
         graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
@@ -115,7 +139,6 @@ def build_storage_dataset(
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         node_lossless_codecs=node_lossless_codecs,
         edge_lossless_codecs=edge_lossless_codecs,
-        strict_lossless_compression=strict_lossless_compression,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
     return dataset

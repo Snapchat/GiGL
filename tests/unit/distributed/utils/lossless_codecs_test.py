@@ -92,6 +92,16 @@ class CodecFromFeatureSchemaTest(TestCase):
             codec_from_feature_schema(schema, ["huge_ids"]), FeatureCodec(("float32",))
         )
 
+    def test_domain_without_both_bounds_is_declared_uncompressed(self) -> None:
+        schema = _schema(("categorical", 1, None), ("min_only", 1, None))
+        schema.schema["categorical"].int_domain.is_categorical = True
+        schema.schema["min_only"].int_domain.min = 0
+
+        self.assertEqual(
+            codec_from_feature_schema(schema, ["categorical", "min_only"]),
+            FeatureCodec(("float32", "float32")),
+        )
+
 
 class DeriveNodeLosslessCodecsTest(TestCase):
     def test_homogeneous_graph_gets_a_single_codec_over_all_logical_columns(

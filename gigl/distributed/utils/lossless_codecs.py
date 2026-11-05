@@ -32,8 +32,9 @@ def codec_from_feature_schema(
     """Declares the storage kind of every column of a matrix described by a feature schema.
 
     The matrix columns are the ``feature_keys`` fields concatenated in that order. A schema feature with an
-    ``int_domain`` is declared as the narrowest integer kind that holds the domain; every other column (a feature
-    without an ``int_domain``, or a domain no integer kind holds) is declared ``float32``, i.e. left uncompressed.
+    ``int_domain`` that sets both ``min`` and ``max`` is declared as the narrowest integer kind that holds the domain;
+    every other column (a feature without such a domain, or a domain no integer kind holds) is declared ``float32``,
+    i.e. left uncompressed.
 
     The result is a declaration, not a guarantee about any data: ``build_dataset`` checks it against the data.
 
@@ -44,10 +45,17 @@ def codec_from_feature_schema(
     feature_index = feature_spec_to_feature_index_map(
         {key: schema.feature_spec[key] for key in feature_keys}
     )
-    kinds = ["float32"] * max((end for _, end in feature_index.values()), default=0)
+    num_columns = 0
+    for _, end in feature_index.values():
+        num_columns = max(num_columns, end)
+    kinds = ["float32"] * num_columns
     for name, (start, end) in feature_index.items():
         feature = schema.schema[name]
-        if feature.HasField("int_domain"):
+        if (
+            feature.HasField("int_domain")
+            and feature.int_domain.HasField("min")
+            and feature.int_domain.HasField("max")
+        ):
             kind = kind_holding_domain(
                 int(feature.int_domain.min), int(feature.int_domain.max)
             )
@@ -87,27 +95,24 @@ def derive_node_lossless_codecs(
     schemas = preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_schema_map
     keys = preprocessed_metadata_pb_wrapper.condensed_node_type_to_feature_keys_map
     node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
-    quantization_by_type = (
-        {}
-        if node_quantization_metadata is None
-        else (
-            {
-                graph_metadata_pb_wrapper.homogeneous_node_type: node_quantization_metadata
-            }
-            if isinstance(node_quantization_metadata, FeatureQuantizationMetadata)
-            else node_quantization_metadata
-        )
+    quantization_by_type: dict[NodeType, FeatureQuantizationMetadata] = {}
+    if isinstance(node_quantization_metadata, FeatureQuantizationMetadata):
+        homogeneous_node_type = graph_metadata_pb_wrapper.homogeneous_node_type
+        quantization_by_type[homogeneous_node_type] = node_quantization_metadata
+    elif node_quantization_metadata is not None:
+        quantization_by_type = dict(node_quantization_metadata)
+
+    codecs: dict[NodeType, FeatureCodec] = {}
+    node_type_to_condensed = (
+        graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map
     )
-    codecs = {
-        node_type: exclude_quantized_columns(
+    for node_type, condensed in node_type_to_condensed.items():
+        if not keys[condensed]:
+            continue
+        codecs[node_type] = exclude_quantized_columns(
             codec_from_feature_schema(schemas[condensed], keys[condensed]),
             quantization_by_type.get(node_type),
         )
-        for node_type, condensed in (
-            graph_metadata_pb_wrapper.node_type_to_condensed_node_type_map.items()
-        )
-        if keys[condensed]
-    }
     if not codecs:
         return None
     if graph_metadata_pb_wrapper.is_heterogeneous:

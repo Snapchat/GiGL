@@ -245,11 +245,16 @@ def remove_sampling_weight_from_edge_quantization_metadata(
             else quantized_feature_index
             for quantized_feature_index in metadata.quantized_feature_indices
         )
+        adjusted_lossless_feature_indices_list: list[int] = []
+        for lossless_feature_index in metadata.lossless_feature_indices:
+            if lossless_feature_index > weight_logical_index:
+                adjusted_lossless_feature_indices_list.append(
+                    lossless_feature_index - 1
+                )
+            else:
+                adjusted_lossless_feature_indices_list.append(lossless_feature_index)
         adjusted_lossless_feature_indices = tuple(
-            lossless_feature_index - 1
-            if lossless_feature_index > weight_logical_index
-            else lossless_feature_index
-            for lossless_feature_index in metadata.lossless_feature_indices
+            adjusted_lossless_feature_indices_list
         )
         adjusted_metadata[edge_type] = replace(
             metadata,

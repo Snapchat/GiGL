@@ -1,9 +1,15 @@
 """Build-time lossless compression of feature columns into the packed feature sidecar.
 
 Feature quantization already stores selected columns of a node or edge type as packed ``uint8`` rows next to the raw
-float matrix, with a ``FeatureQuantizationMetadata`` describing them, and every later stage (partitioning, GLT
-storage, sampling, graph-store metadata fetching, loader decode) is generic over that pair. This module adds columns
-to the same sidecar: categorical id columns stored as narrow integers (``FeatureCodec``), chosen when the dataset is
+float matrix, with a ``FeatureQuantizationMetadata`` describing them. Every later stage is generic over that pair:
+
+- partitioning
+- GLT storage
+- sampling
+- graph-store metadata fetching
+- loader decode
+
+This module adds columns to the same sidecar: categorical id columns stored as narrow integers (``FeatureCodec``), chosen when the dataset is
 built instead of in the preprocessor, so existing preprocessed data needs no rerun.
 
 ``compress_lossless_columns`` is the pure tensor operation; ``compress_loaded_features`` applies it to the tensors of
@@ -27,7 +33,6 @@ logger = Logger()
 
 _Key = TypeVar("_Key", bound=Hashable)
 
-# Declared kind of a column that is not compressed.
 _UNCOMPRESSED_KIND = "float32"
 _ENCODE_CHUNK_ROWS = 1 << 16
 
@@ -54,19 +59,21 @@ def _candidate_columns(
             column: position
             for position, column in enumerate(metadata.raw_feature_indices)
         }
-    candidates = [
-        column
-        for column, kind in enumerate(declared.column_dtypes)
-        if kind != _UNCOMPRESSED_KIND
-    ]
-    lossy = [
-        column for column in candidates if declared.column_dtypes[column] == "bfloat16"
-    ]
+    candidates: list[int] = []
+    lossy: list[int] = []
+    already_packed: list[int] = []
+    for column, kind in enumerate(declared.column_dtypes):
+        if kind == _UNCOMPRESSED_KIND:
+            continue
+        candidates.append(column)
+        if kind == "bfloat16":
+            lossy.append(column)
+        if column not in logical_to_raw:
+            already_packed.append(column)
     if lossy:
         raise ValueError(
             f"Columns {lossy} are declared bfloat16, which is lossy; lossless compression supports only integer kinds"
         )
-    already_packed = [column for column in candidates if column not in logical_to_raw]
     if already_packed:
         raise ValueError(
             f"Columns {already_packed} are already stored quantized and cannot also be compressed losslessly"
@@ -118,7 +125,7 @@ def compress_lossless_columns(
     metadata: Optional[FeatureQuantizationMetadata],
     declared: FeatureCodec,
     stats: Optional[ColumnStats],
-    strict: bool = False,
+    name: str,
 ) -> tuple[
     Optional[Float[torch.Tensor, "rows _remaining_dim"]],
     Optional[UInt8[torch.Tensor, "rows _new_packed_dim"]],
@@ -127,7 +134,7 @@ def compress_lossless_columns(
     """Moves the declared columns of one node or edge type from the raw float matrix into the packed sidecar.
 
     A declared column is only moved if ``stats`` (the statistics of the data, merged over all partitions) show it fits
-    its storage kind; the others stay in the raw matrix and are logged, or raise if ``strict``. Nothing is changed if
+    its storage kind; the others stay in the raw matrix and are logged. Nothing is changed if
     no column is moved or moving them would not make rows smaller.
 
     Peak host memory is the input raw matrix, plus the remaining raw columns, plus the packed sidecar; the encode works in
@@ -140,7 +147,7 @@ def compress_lossless_columns(
         metadata: Quantization metadata describing ``quantized_features``, if any.
         declared: Storage kind of every logical column; ``float32`` leaves a column alone.
         stats: ``lossless_column_stats`` of the data, merged over partitions.
-        strict: Raise instead of leaving a column that does not fit in the raw matrix.
+        name: Name of the node or edge type, for log messages.
 
     Returns:
         The remaining raw matrix (``None`` if empty), the new sidecar and the metadata describing it.
@@ -149,14 +156,25 @@ def compress_lossless_columns(
     _check_width(features, logical_to_raw)
     if not candidates or stats is None:
         return features, quantized_features, metadata
-    fitted = FeatureCodec(
+    candidate_codec = FeatureCodec(
         tuple(declared.column_dtypes[column] for column in candidates)
-    ).fitted_to(stats, strict=strict)
-    moved = [
-        (column, kind)
-        for column, kind in zip(candidates, fitted.column_dtypes)
-        if kind != _UNCOMPRESSED_KIND
-    ]
+    )
+    fitted = candidate_codec.fitted_to(stats)
+    unfit_columns: list[int] = []
+    for column, declared_kind, fitted_kind in zip(
+        candidates, candidate_codec.column_dtypes, fitted.column_dtypes
+    ):
+        if fitted_kind != declared_kind:
+            unfit_columns.append(column)
+    if unfit_columns:
+        logger.warning(
+            f"Columns {unfit_columns} of {name} are declared as integer ids but their data does not fit the declared "
+            "storage kind (or is not integral); storing them as float32"
+        )
+    moved: list[tuple[int, str]] = []
+    for column, kind in zip(candidates, fitted.column_dtypes):
+        if kind != _UNCOMPRESSED_KIND:
+            moved.append((column, kind))
     if not moved:
         return features, quantized_features, metadata
     region = FeatureCodec(tuple(kind for _, kind in moved))
@@ -192,16 +210,13 @@ def compress_lossless_columns(
             chunk = features[start : start + _ENCODE_CHUNK_ROWS][:, moved_positions]
             packed[start : start + chunk.shape[0], offset:] = region.encode(chunk)
     moved_set = set(moved_columns)
-    remaining_positions = [
-        position
-        for column, position in logical_to_raw.items()
-        if column not in moved_set
-    ]
-    remaining = (
-        features[:, remaining_positions]
-        if features is not None and remaining_positions
-        else None
-    )
+    remaining_positions: list[int] = []
+    for column, position in logical_to_raw.items():
+        if column not in moved_set:
+            remaining_positions.append(position)
+    remaining: Optional[torch.Tensor] = None
+    if features is not None and remaining_positions:
+        remaining = features[:, remaining_positions]
     return remaining, packed, new_metadata
 
 
@@ -214,7 +229,6 @@ def compress_loaded_features(
     declared: Union[FeatureCodec, Mapping[_Key, FeatureCodec]],
     is_homogeneous: bool,
     default_key: _Key,
-    strict: bool = False,
 ) -> tuple[
     Optional[Union[torch.Tensor, dict[_Key, torch.Tensor]]],
     Optional[Union[torch.Tensor, dict[_Key, torch.Tensor]]],
@@ -238,7 +252,6 @@ def compress_loaded_features(
         declared: A codec for a homogeneous graph; a mapping with a codec for each type to compress otherwise.
         is_homogeneous: Whether the graph is homogeneous, which decides the form of ``declared`` and ``metadata``.
         default_key: Key the homogeneous graph's single type uses when tensors are keyed.
-        strict: Raise instead of leaving a column that does not fit in the raw matrix.
 
     Returns:
         ``features``, ``quantized_features`` and ``metadata`` after compression, in the same form as the inputs
@@ -282,11 +295,10 @@ def compress_loaded_features(
             ),
         )
     gathered = list(all_gather(local_report).values())
-    missing = [
-        key
-        for key in declared_by_type
-        if not any(rank_report[key][0] for rank_report in gathered)
-    ]
+    missing: list[_Key] = []
+    for key in declared_by_type:
+        if not any(rank_report[key][0] for rank_report in gathered):
+            missing.append(key)
     if missing:
         raise ValueError(
             f"No features to compress for {sorted(map(str, missing))} on any rank"
@@ -297,18 +309,16 @@ def compress_loaded_features(
     new_metadata = dict(metadata_by_type)
     for key, codec in declared_by_type.items():
         merged_stats = [rank_report[key][1] for rank_report in gathered]
-        merged = (
-            ColumnStats.merge(merged_stats)
-            if any(stats is not None for stats in merged_stats)
-            else None
-        )
+        merged: Optional[ColumnStats] = None
+        if any(stats is not None for stats in merged_stats):
+            merged = ColumnStats.merge(merged_stats)
         remaining, packed, updated = compress_lossless_columns(
             features_by_type.get(key),
             quantized_by_type.get(key),
             metadata_by_type.get(key),
             codec,
             merged,
-            strict=strict,
+            str(key),
         )
         for tensors, value in ((new_features, remaining), (new_quantized, packed)):
             if value is None:
@@ -320,10 +330,10 @@ def compress_loaded_features(
         else:
             new_metadata[key] = updated
 
-    keyed = not is_homogeneous or any(
-        not isinstance(original, torch.Tensor) and original is not None
-        for original in (features, quantized_features)
-    )
+    keyed = not is_homogeneous
+    for original in (features, quantized_features):
+        if original is not None and not isinstance(original, torch.Tensor):
+            keyed = True
 
     def restore(
         tensors: dict[_Key, torch.Tensor],

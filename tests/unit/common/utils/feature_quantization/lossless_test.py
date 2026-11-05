@@ -70,12 +70,8 @@ def _declared(dense_dtype: str = "float32") -> FeatureCodec:
     return FeatureCodec(tuple(kinds))
 
 
-def _fit(
-    features: torch.Tensor, dense_dtype: str = "float32", strict: bool = False
-) -> FeatureCodec:
-    return _declared(dense_dtype).fitted_to(
-        ColumnStats.from_features(features), strict=strict
-    )
+def _fit(features: torch.Tensor, dense_dtype: str = "float32") -> FeatureCodec:
+    return _declared(dense_dtype).fitted_to(ColumnStats.from_features(features))
 
 
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -117,7 +113,9 @@ class FeatureCodecTest(TestCase):
         codec = _fit(features)
         self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
 
-    def test_gathered_subset_of_rows_decodes_to_the_same_rows(self) -> None:
+    def test_decode_handles_gathered_strided_misaligned_and_column_strided_rows(
+        self,
+    ) -> None:
         packed = self.codec.encode(self.features)
         index = torch.tensor([999, 0, 17, 17, 500, 3])
         self.assertTrue(
@@ -126,14 +124,17 @@ class FeatureCodecTest(TestCase):
         # A strided view of the packed matrix (every other row) is not contiguous.
         self.assertTrue(_same_bits(self.codec.decode(packed[::2]), self.features[::2]))
 
-    def test_decode_handles_a_misaligned_byte_offset_on_cpu(self) -> None:
-        packed = self.codec.encode(self.features[:10])
         # Rows that start one byte into a larger buffer cannot be reinterpreted in place.
-        buffer = torch.zeros(packed.numel() + 1, dtype=torch.uint8)
-        buffer[1:] = packed.flatten()
+        buffer = torch.zeros(10 * self.codec.row_bytes + 1, dtype=torch.uint8)
+        buffer[1:] = packed[:10].flatten()
         shifted = buffer[1:].view(10, self.codec.row_bytes)
         self.assertTrue(shifted.storage_offset() % 4 != 0)
         self.assertTrue(_same_bits(self.codec.decode(shifted), self.features[:10]))
+
+        # Every packed byte of a row pair interleaved into one wider tensor: columns are not contiguous.
+        interleaved = torch.stack([packed[:10], packed[:10]], dim=-1)[:, :, 0]
+        self.assertNotEqual(interleaved.stride(1), 1)
+        self.assertTrue(_same_bits(self.codec.decode(interleaved), self.features[:10]))
 
     def test_empty_batch_round_trips(self) -> None:
         empty = self.features[:0]
@@ -164,12 +165,6 @@ class FeatureCodecTest(TestCase):
         features[:, 0] = 3.0  # dense_a looks like an id but declares no domain
         self.assertEqual(_fit(features).column_dtypes[0], "float32")
 
-    def test_strict_mode_raises_for_a_column_that_does_not_fit(self) -> None:
-        features = _features(50, seed=4)
-        features[7, 6] = 1.5
-        with self.assertRaises(ValueError):
-            _fit(features, strict=True)
-
     def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
         first, second = _features(50, seed=5), _features(50, seed=6)
         second[3, 6] = 1000.0  # does not fit int8
@@ -182,7 +177,6 @@ class FeatureCodecTest(TestCase):
         alone = declared.fitted_to(ColumnStats.from_features(first))
         self.assertEqual(merged.column_dtypes[6], "float32")
         self.assertEqual(alone.column_dtypes[6], "int8")
-        # Both partitions round-trip through the merged codec.
         for features in (first, second):
             self.assertTrue(
                 _same_bits(merged.decode(merged.encode(features)), features)
@@ -193,7 +187,7 @@ class FeatureCodecTest(TestCase):
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
         )
-        fitted = codec.fitted_to(ColumnStats.from_features(features), strict=True)
+        fitted = codec.fitted_to(ColumnStats.from_features(features))
         self.assertEqual(fitted, codec)
         self.assertEqual(
             codec.row_bytes, 12
@@ -216,15 +210,17 @@ class FeatureCodecTest(TestCase):
         self.assertTrue(torch.equal(decoded[:, ids], self.features[:, ids]))
         self.assertLess(codec.row_bytes, _fit(self.features).row_bytes)
 
-    def test_encode_refuses_values_the_codec_cannot_represent(self) -> None:
+    def test_encode_and_decode_refuse_inputs_the_codec_cannot_represent(self) -> None:
         features = self.features.clone()
         features[0, 6] = 300.0  # codec was fitted with int8 for this column
         with self.assertRaises(ValueError):
             self.codec.encode(features)
+        features = self.features.clone()
+        features[0, 6] = 1.5  # not an integer
+        with self.assertRaises(ValueError):
+            self.codec.encode(features)
         with self.assertRaises(ValueError):
             self.codec.encode(self.features[:, :-1])
-
-    def test_decode_refuses_rows_of_the_wrong_shape_or_dtype(self) -> None:
         with self.assertRaises(ValueError):
             self.codec.decode(
                 torch.zeros(3, self.codec.row_bytes + 4, dtype=torch.uint8)
@@ -232,19 +228,27 @@ class FeatureCodecTest(TestCase):
         with self.assertRaises(ValueError):
             self.codec.decode(torch.zeros(3, self.codec.row_bytes))
 
+    def test_encode_checks_float64_ids_before_casting_to_float32(self) -> None:
+        # 2**24 + 1 is a valid int32 id that float32 cannot hold; the stored id must not be rounded.
+        codec = FeatureCodec(("int32",))
+        packed = codec.encode(torch.tensor([[16777217.0]], dtype=torch.float64))
+        self.assertEqual(int(packed.view(torch.int32)), 16777217)
+        # Neither a float64 fraction nor an out-of-range value may be rounded into validity.
+        with self.assertRaises(ValueError):
+            FeatureCodec(("int8",)).encode(
+                torch.tensor([[1.0 + 2.0**-40]], dtype=torch.float64)
+            )
+        with self.assertRaises(ValueError):
+            FeatureCodec(("int8",)).encode(
+                torch.tensor([[127.0 + 2.0**-40]], dtype=torch.float64)
+            )
+
     def test_codec_survives_pickle(self) -> None:
         restored = pickle.loads(pickle.dumps(self.codec))
         self.assertEqual(restored, self.codec)
         self.assertTrue(
             _same_bits(restored.decode(self.codec.encode(self.features)), self.features)
         )
-
-    def test_decode_handles_a_column_strided_view(self) -> None:
-        packed = self.codec.encode(self.features[:10])
-        # Every packed byte of a row pair interleaved into one wider tensor: columns are not contiguous.
-        interleaved = torch.stack([packed, packed], dim=-1)[:, :, 0]
-        self.assertNotEqual(interleaved.stride(1), 1)
-        self.assertTrue(_same_bits(self.codec.decode(interleaved), self.features[:10]))
 
     def test_codec_with_a_different_width_than_the_data_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
