@@ -50,7 +50,6 @@ def build_and_push_cpu_image(
         image_name=image_name,
         dockerfile_path=dockerfile_path,
         context_path=CONTEXT_PATH,
-        multi_arch=False,
     )
 
 
@@ -70,7 +69,6 @@ def build_and_push_cuda_image(
         image_name=image_name,
         dockerfile_path=dockerfile_path,
         context_path=CONTEXT_PATH,
-        multi_arch=False,
     )
 
 
@@ -92,7 +90,6 @@ def build_and_push_dataflow_image(
         image_name=image_name,
         dockerfile_path=dockerfile_path,
         context_path=CONTEXT_PATH,
-        multi_arch=True,
     )
 
 
@@ -114,7 +111,6 @@ def build_and_push_dev_workbench_image(
         image_name=image_name,
         dockerfile_path=dockerfile_path,
         context_path=CONTEXT_PATH,
-        multi_arch=False,
     )
 
 

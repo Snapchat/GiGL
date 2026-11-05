@@ -54,12 +54,15 @@ check_if_valid_env:
 	@command -v docker >/dev/null 2>&1 || { echo >&2 "docker is required but it's not installed.  Aborting."; exit 1; }
 	@command -v gsutil >/dev/null 2>&1 || { echo >&2 "gsutil is required but it's not installed.  Aborting."; exit 1; }
 
+# The Scala toolchain only serves the legacy Scala components; set SKIP_SCALA=1 to skip downloading it.
+SKIP_SCALA?=0
+
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./gigl-core/requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
-	bash ./requirements/install_scala_deps.sh
+	@if [ "$(SKIP_SCALA)" = "1" ]; then echo "SKIP_SCALA=1: skipping Scala deps"; else bash ./requirements/install_scala_deps.sh; fi
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -75,6 +78,7 @@ install_deps:
 # installation scripts
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
+	uv run python tests/config_tests/glt_patches_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
@@ -190,7 +194,8 @@ check_lint_cpp:
 fix_lint_cpp:
 	$(MAKE) -C gigl-core fix_lint_cpp
 
-lint_test: check_format assert_yaml_configs_parse check_lint_cpp
+# precondition_tests runs here so a bumped GLT pin or an edited patch fails the lint job in CI.
+lint_test: precondition_tests check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
@@ -302,12 +307,18 @@ run_hom_cora_snc_e2e_test:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
 
+# Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
+run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
+run_glt_e2e_tests: run_all_e2e_tests
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path
