@@ -132,6 +132,28 @@ def _assert_heterogeneous_batches_equal_expected(
     shutdown_rpc()
 
 
+def _assert_incoming_edge_batches_equal_expected(
+    _: int, dataset: DistDataset, expected_edge_features: torch.Tensor
+) -> None:
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[1],
+        input_nodes=(_STORY, torch.arange(5)),
+        batch_size=5,
+        pin_memory_device=torch.device("cpu"),
+    )
+    batch = next(iter(loader))
+    assert isinstance(batch, HeteroData)
+    # Edge i joins user i to story i, so a sampled edge ends at the story whose features it carries.
+    destinations = batch[_STORY].node[batch[_USER_TO_STORY].edge_index[1]]
+    assert destinations.numel() == 5
+    assert_tensor_equality(
+        batch[_USER_TO_STORY].edge_attr, expected_edge_features[destinations]
+    )
+    shutdown_rpc()
+
+
 def _assert_unsampled_compressed_type_is_a_full_width_placeholder(
     _: int, dataset: DistDataset, expected_user_features: torch.Tensor, story_dim: int
 ) -> None:
@@ -396,6 +418,45 @@ class LosslessCompressionLoaderTest(TestCase):
             args=(dataset, user_features, 3),
         )
 
+    def test_incoming_edge_loader_returns_compressed_edge_features(self) -> None:
+        edge_features = _id_features(5, {0: (-1, 70), 2: (0, 1247)}, 3, seed=3)
+        raw, packed, metadata = _compress(edge_features)
+        assert raw is not None and packed is not None and metadata is not None
+        edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="in",
+            edge_quantization_metadata={_USER_TO_STORY: metadata},
+        )
+        dataset.build(
+            partition_output=PartitionOutput(
+                node_partition_book={_USER: torch.zeros(5), _STORY: torch.zeros(5)},
+                edge_partition_book={_USER_TO_STORY: torch.zeros(5)},
+                partitioned_edge_index={
+                    _USER_TO_STORY: GraphPartitionData(
+                        edge_index=edge_index, edge_ids=None
+                    )
+                },
+                partitioned_node_features=None,
+                partitioned_edge_features={
+                    _USER_TO_STORY: FeaturePartitionData(feats=raw, ids=torch.arange(5))
+                },
+                partitioned_edge_packed_features={
+                    _USER_TO_STORY: FeaturePartitionData(
+                        feats=packed, ids=torch.arange(5)
+                    )
+                },
+                partitioned_positive_labels=None,
+                partitioned_negative_labels=None,
+                partitioned_node_labels=None,
+            )
+        )
+        mp.spawn(
+            fn=_assert_incoming_edge_batches_equal_expected,
+            args=(dataset, edge_features),
+        )
+
     def test_ablp_loader_returns_compressed_node_and_edge_features(self) -> None:
         node_features = _id_features(3, {0: (-1, 70), 2: (0, 1247)}, 4, seed=4)
         edge_features = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
@@ -491,6 +552,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         self,
         info,
         feature_compression: FeatureCompression,
+        weight_edge_feat_name: Optional[dict[EdgeType, str]] = None,
         should_load_tensors_in_parallel: bool = True,
     ) -> DistDataset:
         with mock.patch.dict(
@@ -502,6 +564,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
                 mocked_dataset_info=info,
                 should_load_tensors_in_parallel=should_load_tensors_in_parallel,
                 _port=gigl.distributed.utils.get_free_port(),
+                weight_edge_feat_name=weight_edge_feat_name,
             )
 
     @parameterized.expand(
@@ -581,6 +644,102 @@ class BuildDatasetLosslessCompressionTest(TestCase):
                 for node_type in node_metadata
             },
             {_AUTHOR: 334, _PAPER: 4231},
+        )
+
+    @parameterized.expand(
+        [
+            param("parallel_load", should_load_tensors_in_parallel=True),
+            param("sequential_load", should_load_tensors_in_parallel=False),
+        ]
+    )
+    def test_heterogeneous_edge_features_are_compressed_and_decode_exactly(
+        self, _, should_load_tensors_in_parallel: bool
+    ) -> None:
+        info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
+        reference = self._build(
+            info,
+            FeatureCompression.OFF,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
+        # Compression is off, so every edge type keeps a float32 matrix.
+        self.assertIsNone(reference.edge_quantization_metadata)
+        for reference_edge_store in cast(
+            dict[EdgeType, Feature], reference.edge_features
+        ).values():
+            reference_edge_store.lazy_init_with_ipc_handle()
+            self.assertEqual(reference_edge_store.feature_tensor.dtype, torch.float32)
+
+        dataset = self._build(
+            info,
+            FeatureCompression.AUTO,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
+
+        edge_metadata = cast(
+            dict[EdgeType, FeatureQuantizationMetadata],
+            dataset.edge_quantization_metadata,
+        )
+        self.assertIn(_AUTHOR_TO_PAPER, edge_metadata)
+        edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
+        reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
+        for edge_type in edge_metadata:
+            edge_store[edge_type].lazy_init_with_ipc_handle()
+            reference_edges[edge_type].lazy_init_with_ipc_handle()
+            self.assertTrue(
+                torch.equal(
+                    dequantize_torch_tensor(
+                        edge_store[edge_type].feature_tensor, edge_metadata[edge_type]
+                    ),
+                    reference_edges[edge_type].feature_tensor,
+                )
+            )
+        # The dataset still describes every edge type's logical float32 features.
+        self.assertEqual(dataset.edge_feature_info, reference.edge_feature_info)
+        # Edge types with no integral column keep their raw features.
+        dataset_edges = cast(dict[EdgeType, Feature], dataset.edge_features)
+        for edge_type in reference_edges:
+            if edge_type not in edge_metadata:
+                self.assertIn(edge_type, dataset_edges)
+
+    def test_edge_compression_excludes_the_sampling_weight_feature(self) -> None:
+        info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
+        # Feature f0 of author-to-paper edges is the sampling weight; f1..f4 are small counts.
+        weights = {_AUTHOR_TO_PAPER: "f0"}
+        reference = self._build(
+            info, FeatureCompression.OFF, weight_edge_feat_name=weights
+        )
+
+        dataset = self._build(
+            info, FeatureCompression.AUTO, weight_edge_feat_name=weights
+        )
+
+        edge_metadata = cast(
+            dict[EdgeType, FeatureQuantizationMetadata],
+            dataset.edge_quantization_metadata,
+        )
+        # Four columns, so the weight column was removed before the statistics were taken.
+        self.assertEqual(edge_metadata[_AUTHOR_TO_PAPER].feature_dim, 4)
+        edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
+        edge_store[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
+        reference_edges[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        self.assertTrue(
+            torch.equal(
+                dequantize_torch_tensor(
+                    edge_store[_AUTHOR_TO_PAPER].feature_tensor,
+                    edge_metadata[_AUTHOR_TO_PAPER],
+                ),
+                reference_edges[_AUTHOR_TO_PAPER].feature_tensor,
+            )
+        )
+        self.assertEqual(dataset.edge_feature_info, reference.edge_feature_info)
+        self.assertTrue(dataset.has_edge_weights)
+        weights_of = cast(dict[EdgeType, torch.Tensor], dataset.edge_weights)
+        reference_weights = cast(dict[EdgeType, torch.Tensor], reference.edge_weights)
+        self.assertTrue(
+            torch.equal(
+                weights_of[_AUTHOR_TO_PAPER], reference_weights[_AUTHOR_TO_PAPER]
+            )
         )
 
 

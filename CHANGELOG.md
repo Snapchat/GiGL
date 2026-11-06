@@ -48,9 +48,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   batches. `build_dataset`, `build_dataset_from_task_config_uri` and Graph Store storage nodes (`build_storage_dataset`)
   all read the `GIGL_FEATURE_COMPRESSION` environment variable: unset or `auto` compresses, `off` keeps every column
   float32, and any other value raises by @kmontemayor2-sc
+- Add lossless compression of main edge feature columns, like the node one and on by default. Every column that holds
+  only whole numbers on all ranks is stored in the packed feature sidecar as the narrowest integer kind that holds its
+  values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
+  `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
+  @kmontemayor2-sc
 
 ### Changed
 
+- `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
+  packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
