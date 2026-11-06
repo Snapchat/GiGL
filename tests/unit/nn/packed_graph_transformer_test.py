@@ -53,7 +53,8 @@ def _random_batch(
 ) -> HeteroData:
     """A random batch with duplicate edges, self loops and shared neighbours.
 
-    Carries the ``hop_distance`` attribute the padded backend reads.
+    Carries the ``hop_distance`` attribute the padded backend reads and
+    ``hop_times_two``, a second sparse attribute with every hop value doubled.
     """
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
@@ -77,7 +78,12 @@ def _random_batch(
                 torch.randint(0, 50, (40,), generator=generator),
             ]
         )
-    return AddHeteroHopDistanceEncoding(h_max=h_max, sampling_direction=direction)(data)
+    data = AddHeteroHopDistanceEncoding(h_max=h_max, sampling_direction=direction)(data)
+    hop = data[_HOP]
+    data["hop_times_two"] = torch.sparse_csr_tensor(
+        hop.crow_indices(), hop.col_indices(), hop.values() * 2, size=hop.shape
+    )
+    return data
 
 
 def _oversized_layout_batch() -> HeteroData:
@@ -324,6 +330,30 @@ class PackedPathTest(TestCase):
                 readout_mode=_NEIGHBOR_READOUT,
                 num_layers=0,
             ),
+            param(
+                "anchor_bias",
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+            param(
+                "two_anchor_biases",
+                anchor_based_attention_bias_attr_names=[_HOP, "hop_times_two"],
+            ),
+            param(
+                "anchor_bias_neighbor_readout",
+                anchor_based_attention_bias_attr_names=[_HOP],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
+            param(
+                "two_continuous_inputs",
+                anchor_based_input_attr_names=[_HOP, "hop_times_two"],
+                anchor_based_input_embedding_dict=None,
+            ),
+            param(
+                "relation_message_with_neighbor_readout",
+                relation_message_mode="edge_type_attention",
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
+            param("head_dim_10", hid_dim=20, num_heads=2),
         ]
     )
     def test_matches_padded_path(
@@ -432,6 +462,24 @@ class PackedPathTest(TestCase):
                 prioritize_hop_order=True,
                 max_seq_len=10,
             ),
+            param(
+                "anchor_bias",
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+            param(
+                "two_anchor_biases",
+                anchor_based_attention_bias_attr_names=[_HOP, "hop_times_two"],
+            ),
+            param(
+                "anchor_bias_neighbor_readout",
+                anchor_based_attention_bias_attr_names=[_HOP],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
+            param(
+                "two_continuous_inputs",
+                anchor_based_input_attr_names=[_HOP, "hop_times_two"],
+                anchor_based_input_embedding_dict=None,
+            ),
         ]
     )
     def test_training_gradients_match_padded_path(
@@ -467,6 +515,15 @@ class PackedPathTest(TestCase):
         with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
             encoder(data, anchor_node_type=_USER)
 
+    def test_packed_path_raises_when_an_anchor_attribute_is_missing(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(anchor_based_attention_bias_attr_names=[_HOP])
+        )
+        encoder._anchor_based_attention_bias_attr_names = ["absent"]
+        with self.assertRaisesRegex(ValueError, "absent"):
+            _run_packed(encoder, data)
+
     def test_fallback_batch_without_the_hop_distance_attribute_raises(self) -> None:
         data = _oversized_layout_batch()
         encoder = _materialized_encoder(data, _encoder_kwargs())
@@ -482,6 +539,22 @@ class PackedPathTest(TestCase):
             ),
         )
         self.assertEqual(_run_packed(encoder, data).shape, (1, 8))
+
+    def test_fallback_batch_without_the_hop_distance_bias_attribute_raises(
+        self,
+    ) -> None:
+        data = _oversized_layout_batch()
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                anchor_based_input_attr_names=None,
+                anchor_based_input_embedding_dict=None,
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+        )
+        del data[_HOP]
+        with self.assertRaisesRegex(ValueError, "AddHeteroHopDistanceEncoding"):
+            _run_packed(encoder, data)
 
     def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
         # A transform with a smaller h_max stores different hops than the layout
@@ -541,8 +614,18 @@ class PackedPathTest(TestCase):
                 relation_message_mode="edge_type_attention",
             ),
             param("relation_attention", relation_attention_mode="edge_type_bilinear"),
-            param("anchor_bias", anchor_based_attention_bias_attr_names=[_HOP]),
-            param("head_dim_not_multiple_of_8", num_heads=4),
+            param(
+                "anchor_bias",
+                anchor_based_attention_bias_attr_names=[_HOP],
+                supported=True,
+            ),
+            param(
+                "two_anchor_biases",
+                anchor_based_attention_bias_attr_names=[_HOP, "hop_times_two"],
+                supported=True,
+            ),
+            param("head_dim_4", num_heads=4, supported=True),
+            param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
             param("attention_dropout", attention_dropout_rate=0.1),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
@@ -550,6 +633,7 @@ class PackedPathTest(TestCase):
                 "other_token_input",
                 anchor_based_input_attr_names=["other"],
                 anchor_based_input_embedding_dict=None,
+                supported=True,
             ),
             param(
                 "ppr",
@@ -951,6 +1035,16 @@ class PackedPathCudaTest(TestCase):
             param("one_anchor", anchors=[3], max_seq_len=256),
             param("two_anchors", anchors=[3, 40], max_seq_len=256),
             param("neighbor_readout", readout_mode=_NEIGHBOR_READOUT),
+            param(
+                "csr_input",
+                anchor_based_input_attr_names=["hop_times_two"],
+                anchor_based_input_embedding_dict=None,
+            ),
+            param("head_dim_10", hid_dim=20),
+            param(
+                "anchor_bias",
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
@@ -965,9 +1059,13 @@ class PackedPathCudaTest(TestCase):
         anchor_node_ids = None
         if anchors is not None:
             anchor_node_ids = torch.tensor(anchors)
-        kwargs = _encoder_kwargs(
-            hid_dim=128, hop_distance=hop_distance, dropout_rate=0.0, **overrides
-        )
+        encoder_overrides: dict[str, Any] = {
+            "hid_dim": 128,
+            "hop_distance": hop_distance,
+            "dropout_rate": 0.0,
+            **overrides,
+        }
+        kwargs = _encoder_kwargs(**encoder_overrides)
         cpu_encoder = _materialized_encoder(data, kwargs).train()
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
         self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
