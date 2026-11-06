@@ -12,8 +12,10 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch.testing import assert_close
 
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+)
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.utils.lossless_compression import FEATURE_COMPRESSION_ENV
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (

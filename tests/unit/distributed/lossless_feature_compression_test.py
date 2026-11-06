@@ -13,16 +13,16 @@ from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
 from gigl.common.utils.feature_quantization.lossless import ColumnStats
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+    FeatureCompression,
+    compress_lossless_columns,
+)
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
-from gigl.distributed.utils.lossless_compression import (
-    FEATURE_COMPRESSION_ENV,
-    FeatureCompression,
-    compress_lossless_columns,
-)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,

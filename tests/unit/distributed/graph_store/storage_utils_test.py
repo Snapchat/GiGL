@@ -4,8 +4,10 @@ from unittest import mock
 import torch
 from absl.testing import absltest
 
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+)
 from gigl.distributed.graph_store.storage_utils import build_storage_dataset
-from gigl.distributed.utils.lossless_compression import FEATURE_COMPRESSION_ENV
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,

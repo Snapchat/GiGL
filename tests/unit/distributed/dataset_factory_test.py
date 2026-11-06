@@ -6,8 +6,10 @@ import torch
 from absl.testing import absltest
 from parameterized import param, parameterized
 
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+)
 from gigl.distributed.dataset_factory import build_dataset_from_task_config_uri
-from gigl.distributed.utils.lossless_compression import FEATURE_COMPRESSION_ENV
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
