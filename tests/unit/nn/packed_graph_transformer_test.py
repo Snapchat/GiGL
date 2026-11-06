@@ -18,11 +18,15 @@ import gigl.nn.graph_transformer
 from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
-    PackedRelationEdges,
 )
+from gigl.nn.packed_attention import PackedAttentionBias
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
-from gigl.transforms.sequence_layout import PackedLayout
+from gigl.transforms.sequence_layout import (
+    PackedLayout,
+    PackedRelationEdges,
+    pack_sequences,
+)
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
 from tests.test_assets.test_case import TestCase
 
@@ -231,6 +235,36 @@ def _assert_training_gradients_match(
 
 
 class PackedPathTest(TestCase):
+    def test_anchor_only_readout_shape_does_not_depend_on_layer_count(self) -> None:
+        # Every sequence has length 1 on an edgeless batch.
+        data = HeteroData()
+        data[_USER].x = torch.randn(20, 8)
+        data[_USER].batch_size = 12
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.empty(2, 0, dtype=torch.long)
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        for num_layers in (0, 2):
+            with self.subTest(num_layers=num_layers):
+                encoder = _materialized_encoder(
+                    data, _encoder_kwargs(num_layers=num_layers)
+                )
+                # The spy checks the contract between the layer loop and the
+                # readout: with anchor_only, _run_packed_layers returns one
+                # [hid_dim] row per anchor, with or without layers.
+                layer_outputs: list[torch.Tensor] = []
+                run_layers = encoder._run_packed_layers
+
+                def record(*args: Any) -> torch.Tensor:
+                    layer_outputs.append(run_layers(*args))
+                    return layer_outputs[-1]
+
+                with (
+                    mock.patch.object(encoder, "_run_packed_layers", record),
+                    torch.no_grad(),
+                ):
+                    output = _run_packed(encoder, data)
+                self.assertEqual([o.shape for o in layer_outputs], [(12, 16)])
+                self.assertEqual(output.shape, (12, 8))
+
     @parameterized.expand(
         [
             param("one_layer", num_layers=1),
@@ -581,7 +615,7 @@ class PackedPathTest(TestCase):
         layer = GraphTransformerEncoderLayer(
             model_dim=16, num_heads=2, feedforward_dim=32, attention_dropout_rate=0.1
         )
-        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = pack_sequences(torch.tensor([2]), 2)
         layer.eval().forward_packed(torch.randn(2, 16), packed)
         with self.assertRaises(ValueError):
             layer.train().forward_packed(torch.randn(2, 16), packed)
@@ -633,21 +667,21 @@ class PackedPathTest(TestCase):
         encoder = _materialized_encoder(
             _random_batch(0), _encoder_kwargs(readout_mode=readout_mode)
         )
-        real_khop_layout = gigl.nn.graph_transformer.khop_layout
+        real_pack_khop_layout = gigl.nn.graph_transformer.pack_khop_layout
         fall_back = {"now": False}
 
-        def khop_layout_or_too_large(*args: Any, **kwargs: Any) -> Any:
+        def pack_khop_layout_or_too_large(*args: Any, **kwargs: Any) -> Any:
             if fall_back["now"]:
                 raise KhopLayoutTooLargeError("too many candidates")
-            return real_khop_layout(*args, **kwargs)
+            return real_pack_khop_layout(*args, **kwargs)
 
         graph_counts = []
         with (
             mock.patch.object(encoder, "_use_packed_backend", return_value=True),
             mock.patch.object(
                 gigl.nn.graph_transformer,
-                "khop_layout",
-                side_effect=khop_layout_or_too_large,
+                "pack_khop_layout",
+                side_effect=pack_khop_layout_or_too_large,
             ),
         ):
             compiled = torch.compile(encoder, backend="eager")
@@ -858,14 +892,15 @@ class PackedRelationMessageTest(TestCase):
                 self,
                 layer: GraphTransformerEncoderLayer,
                 x: torch.Tensor,
-                packed: PackedLayout,
+                layout: PackedLayout,
                 first_token_output: bool,
                 relation_edges: PackedRelationEdges | None,
+                bias: PackedAttentionBias | None = None,
             ) -> torch.Tensor:
                 def run(x: torch.Tensor) -> torch.Tensor:
                     self.layer_calls += 1
                     return super(CheckpointedEncoder, self)._run_packed_layer(
-                        layer, x, packed, first_token_output, relation_edges
+                        layer, x, layout, first_token_output, relation_edges, bias
                     )
 
                 return checkpoint(run, x, use_reentrant=False)
@@ -888,7 +923,7 @@ class PackedRelationMessageTest(TestCase):
             relation_message_mode="edge_type_attention",
             num_relations=2,
         )
-        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = pack_sequences(torch.tensor([2]), 2)
         with self.assertRaises(ValueError):
             layer.eval().forward_packed(torch.randn(2, 16), packed)
 
@@ -900,7 +935,7 @@ class PackedRelationMessageTest(TestCase):
             relation_attention_mode="edge_type_bilinear",
             num_relations=2,
         )
-        packed = PackedLayout(torch.tensor([0, 2], dtype=torch.int32), 2)
+        packed = pack_sequences(torch.tensor([2]), 2)
         with self.assertRaises(ValueError):
             layer.eval().forward_packed(torch.randn(2, 16), packed)
 

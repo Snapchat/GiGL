@@ -30,7 +30,7 @@ Data flow of a packed forward::
     padded grid [num_sequences, max_seq_len, ...]      lengths [num_sequences]
         |                                                   |
         |      pack_sequences(lengths, max_seq_len)  <------+
-        |          -> flat_index, PackedLayout(cu_seqlens, max_seq_len)
+        |          -> PackedLayout(cu_seqlens, max_seq_len, flat_index, ...)
         |  grid.flatten()[flat_index]
         v
     packed buffer [num_tokens, dim]
@@ -47,6 +47,9 @@ Data flow of a packed forward::
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
   - ``head_dim`` must be a multiple of 8 for the aligned kernels.
+  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it; the
+    varlen kernel takes none of it yet, so on CUDA a bias raises
+    ``NotImplementedError``.
   - Attention dropout is not supported; the kernel's varlen dropout has not been
     tested against the padded path.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
@@ -54,8 +57,8 @@ Constraints:
 Example:
     >>> from gigl.transforms.sequence_layout import pack_sequences
     >>> lengths = torch.tensor([3, 1, 2])
-    >>> flat_index, layout = pack_sequences(lengths, max_seq_len=3)
-    >>> flat_index.tolist()
+    >>> layout = pack_sequences(lengths, max_seq_len=3)
+    >>> layout.flat_index.tolist()
     [0, 1, 2, 3, 6, 7]
     >>> num_tokens = int(lengths.sum())
     >>> query = key = value = torch.randn(num_tokens, 2, 8)
@@ -94,11 +97,11 @@ Results:
       The model stopped being the bottleneck; sampling was.
 """
 
-from typing import Callable, cast
+from typing import Callable, NamedTuple, Optional, cast
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Float, Int32
+from jaxtyping import Bool, Float, Int32
 from torch import Tensor
 from torch_geometric.utils import to_dense_batch
 
@@ -336,18 +339,75 @@ def _varlen_attention(
     )[0]
 
 
+class PackedAttentionBias(NamedTuple):
+    """Additive attention-score bias for ``packed_attention``.
+
+    Both fields are optional and added to the scaled scores before the softmax.
+
+    Attributes:
+        per_key: One bias per key token and head. Every query in a sequence sees
+            the same value for a given key.
+        per_pair: One bias per sequence, head, query position and key position,
+            on the padded ``[max_seq_len, max_seq_len]`` grid.
+    """
+
+    per_key: Optional[Float[Tensor, "num_tokens num_heads"]] = None
+    per_pair: Optional[
+        Float[Tensor, "num_sequences num_heads max_seq_len max_seq_len"]
+    ] = None
+
+
+def _dense_attention_bias(
+    layout: PackedLayout,
+    bias: Optional[PackedAttentionBias],
+    valid: Bool[Tensor, "num_sequences max_seq_len"],
+    dtype: torch.dtype,
+) -> Tensor:
+    """Builds the additive score bias on the padded grid.
+
+    Starts from the padding mask, ``finfo.min / 2`` on invalid keys, shaped
+    ``[num_sequences, 1, 1, max_seq_len]``. Adds ``bias.per_key`` scattered onto
+    the grid as ``[num_sequences, num_heads, 1, max_seq_len]`` and
+    ``bias.per_pair`` as ``[num_sequences, num_heads, max_seq_len, max_seq_len]``,
+    each only when present. The result broadcasts against the scores; a dense
+    grid is only built when ``per_pair`` is present.
+    """
+    attn_bias = torch.zeros(valid.shape, dtype=dtype, device=valid.device)
+    attn_bias = attn_bias.masked_fill(~valid, torch.finfo(dtype).min / 2.0)
+    attn_bias = attn_bias.view(valid.size(0), 1, 1, valid.size(1))
+    if bias is None:
+        return attn_bias
+    if bias.per_key is not None:
+        num_sequences, max_seq_len = valid.shape
+        num_heads = bias.per_key.size(1)
+        per_key_grid = torch.zeros(
+            num_sequences * max_seq_len,
+            num_heads,
+            dtype=dtype,
+            device=valid.device,
+        ).index_copy(0, layout.flat_index, bias.per_key.to(dtype))
+        attn_bias = attn_bias + per_key_grid.view(
+            num_sequences, max_seq_len, num_heads
+        ).permute(0, 2, 1).unsqueeze(2)
+    if bias.per_pair is not None:
+        attn_bias = attn_bias + bias.per_pair.to(dtype)
+    return attn_bias
+
+
 def _padded_packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
     value: Float[Tensor, "num_tokens num_heads head_dim"],
     layout: PackedLayout,
     query_is_first_token: bool,
+    bias: Optional[PackedAttentionBias] = None,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Runs packed attention on any device by padding, as the CPU path and the test reference.
 
     Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
     with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    and unpacks the outputs. ``_varlen_attention`` is checked against this.
+    adds ``bias`` when given, and unpacks the outputs. ``_varlen_attention`` is
+    checked against this.
 
     Args:
         query: Packed queries, or one query per sequence when
@@ -355,6 +415,7 @@ def _padded_packed_attention(
         layout: Layout from ``pack_sequences``.
         query_is_first_token: ``query`` holds one query per sequence, the
             sequence's first token.
+        bias: Optional additive score bias.
 
     Returns:
         Attention output shaped like ``query``.
@@ -380,13 +441,11 @@ def _padded_packed_attention(
     query_grid, key_grid, value_grid = (
         grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
     )
-    attn_bias = torch.zeros(mask.shape, dtype=query.dtype, device=query.device)
-    attn_bias = attn_bias.masked_fill(~mask, torch.finfo(query.dtype).min / 2.0)
     output = F.scaled_dot_product_attention(
         query_grid,
         key_grid,
         value_grid,
-        attn_mask=attn_bias.view(num_sequences, 1, 1, -1),
+        attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype),
     )
     output = output.transpose(1, 2)[mask]
     if query_is_first_token:
@@ -400,12 +459,17 @@ def packed_attention(
     value: Float[Tensor, "num_tokens num_heads head_dim"],
     layout: PackedLayout,
     query_is_first_token: bool,
+    bias: Optional[PackedAttentionBias] = None,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
 
     Uses the CUDA varlen kernel on GPU and padded SDPA elsewhere. With
     ``query_is_first_token``, only each sequence's first token is queried, which
-    is all the anchor readout of the last layer needs.
+    is all the anchor readout of the last layer needs. An empty
+    ``PackedAttentionBias`` behaves like ``bias=None``.
+
+    The varlen kernel takes no bias: on CUDA, a ``per_key`` or ``per_pair`` bias
+    raises ``NotImplementedError``.
 
     Every sequence must contain at least one token (``lengths >= 1``). An empty
     sequence gives wrong output on the padded path and is not supported.
@@ -413,7 +477,17 @@ def packed_attention(
     Args and returns are as in ``_padded_packed_attention``.
     """
     if not query.is_cuda:
-        return _padded_packed_attention(query, key, value, layout, query_is_first_token)
+        return _padded_packed_attention(
+            query, key, value, layout, query_is_first_token, bias
+        )
+    if bias is not None and bias.per_pair is not None:
+        raise NotImplementedError(
+            "A per_pair bias is not supported on the CUDA varlen path."
+        )
+    if bias is not None and bias.per_key is not None:
+        raise NotImplementedError(
+            "A per_key bias is not supported on the CUDA varlen path."
+        )
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
             layout.cu_seqlens.size(0), dtype=torch.int32, device=query.device
