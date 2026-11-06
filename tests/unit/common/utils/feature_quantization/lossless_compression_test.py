@@ -15,16 +15,16 @@ from graphlearn_torch.distributed import (
 from parameterized import parameterized
 
 from gigl.common.utils.feature_quantization.lossless import ColumnStats, FeatureCodec
-from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
-from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
-from gigl.distributed.utils import get_free_port
-from gigl.distributed.utils.lossless_compression import (
+from gigl.common.utils.feature_quantization.lossless_compression import (
     FEATURE_COMPRESSION_ENV,
     FeatureCompression,
     compress_loaded_features,
     compress_lossless_columns,
     resolve_feature_compression,
 )
+from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
+from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
+from gigl.distributed.utils import get_free_port
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, FeatureQuantizationMetadata
 from tests.test_assets.test_case import TestCase
 

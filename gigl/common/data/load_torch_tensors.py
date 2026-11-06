@@ -14,6 +14,11 @@ from gigl.common.data.dataloaders import (
     TFRecordDataLoader,
 )
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FeatureCompression,
+    compress_loaded_features,
+    resolve_feature_compression,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -554,9 +559,6 @@ def _read_and_compress_features(
     )
     if not should_compress or error_dict:
         return features, packed_features, metadata
-    # Imported here because importing ``gigl.distributed`` at module load would import this module again.
-    from gigl.distributed.utils.lossless_compression import compress_loaded_features
-
     features, packed_features, metadata = compress_loaded_features(
         features=features,
         quantized_features=packed_features,
@@ -588,9 +590,9 @@ def load_torch_tensors_from_tf_record(
 
     If RPC is initialized, node and edge feature columns are losslessly compressed, each right after its own loading
     process joins, unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
-    (see :mod:`gigl.distributed.utils.lossless_compression`). When loading in parallel, node compression runs while
-    the edge loading process is still reading. The sampling-weight edge feature is removed from the edge features
-    before they are compressed, so it is never compressed.
+    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, node
+    compression runs while the edge loading process is still reading. The sampling-weight edge feature is removed
+    from the edge features before they are compressed, so it is never compressed.
 
     With compression on and RPC initialized, every rank must call this function, with the same
     ``should_load_tensors_in_parallel``, because compression joins a collective RPC ``all_gather``.
@@ -618,12 +620,6 @@ def load_torch_tensors_from_tf_record(
     _validate_weight_edge_feature_name(
         edge_entity_info=serialized_graph_metadata.edge_entity_info,
         weight_edge_feat_name=weight_edge_feat_name,
-    )
-
-    # Imported here because importing ``gigl.distributed`` at module load would import this module again.
-    from gigl.distributed.utils.lossless_compression import (
-        FeatureCompression,
-        resolve_feature_compression,
     )
 
     should_compress = (
