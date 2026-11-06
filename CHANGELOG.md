@@ -36,9 +36,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
+- Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`), including a 1-bit kind for 0/1 columns such as
+  one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
+  @kmontemayor2-sc
+- Add lossless compression of node feature columns, on by default. Every column that holds only whole numbers on all
+  ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer kind that
+  holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy move
+  fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical float32
+  batches. `build_dataset`, `build_dataset_from_task_config_uri` and Graph Store storage nodes (`build_storage_dataset`)
+  all read the `GIGL_FEATURE_COMPRESSION` environment variable: unset or `auto` compresses, `off` keeps every column
+  float32, and any other value raises by @kmontemayor2-sc
+- Add lossless compression of main edge feature columns, like the node one and on by default. Every column that holds
+  only whole numbers on all ranks is stored in the packed feature sidecar as the narrowest integer kind that holds its
+  values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
+  `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
+  @kmontemayor2-sc
 
 ### Changed
 
+- `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
+  packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
@@ -70,6 +89,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
 
 ### Fixed
 

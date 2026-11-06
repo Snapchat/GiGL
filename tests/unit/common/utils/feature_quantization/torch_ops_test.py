@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
 from gigl.types.graph import FeatureQuantizationMetadata
@@ -18,6 +19,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             pos_mean=1.75,
         )
 
+        assert metadata.bits is not None
         packed = quantize_ndarray(features, bits=metadata.bits)
         actual = dequantize_torch_tensor(torch.from_numpy(packed), metadata=metadata)
 
@@ -37,6 +39,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_max=clip_max,
         )
 
+        assert metadata.bits is not None
         packed = quantize_ndarray(
             features, bits=metadata.bits, clip_min=clip_min, clip_max=clip_max
         )
@@ -243,3 +246,78 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             dequantize_torch_tensor(
                 torch.tensor([[15]], dtype=torch.uint8), metadata=metadata
             )
+
+    def test_dequantize_torch_tensor_decodes_quantized_then_lossless_columns(
+        self,
+    ) -> None:
+        # Logical columns 0 and 2 are 2-bit quantized, columns 1 and 4 are ids stored losslessly.
+        quantized_features = np.array([[0.0, 3.0], [2.0, 1.0]], dtype=np.float32)
+        ids = torch.tensor([[-1.0, 40000.0], [127.0, -7.0]])
+        codec = FeatureCodec(("int8", "int32"))
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=5,
+            quantized_feature_indices=(0, 2),
+            clip_min=0.0,
+            clip_max=3.0,
+            lossless_feature_indices=(1, 4),
+            lossless_column_kinds=codec.column_dtypes,
+        )
+        quantized = torch.from_numpy(
+            quantize_ndarray(quantized_features, bits=2, clip_min=0.0, clip_max=3.0)
+        )
+        packed = torch.cat(
+            [
+                torch.nn.functional.pad(
+                    quantized, (0, metadata.lossless_byte_offset - quantized.shape[1])
+                ),
+                codec.encode(ids),
+            ],
+            dim=1,
+        )
+
+        decoded = dequantize_torch_tensor(packed, metadata=metadata)
+
+        self.assertEqual(packed.shape[1], metadata.packed_feature_dim)
+        torch.testing.assert_close(
+            decoded,
+            torch.cat([torch.from_numpy(quantized_features), ids], dim=1),
+            atol=0,
+            rtol=0,
+        )
+
+    def test_dequantize_torch_tensor_handles_lossless_only_batched_and_empty_rows(
+        self,
+    ) -> None:
+        codec = FeatureCodec(("uint8_bias1", "int16", "bit"))
+        ids = torch.tensor([[-1.0, -300.0, 1.0], [254.0, 300.0, 0.0]])
+        metadata = FeatureQuantizationMetadata(
+            bits=None,
+            feature_dim=3,
+            lossless_feature_indices=(0, 1, 2),
+            lossless_column_kinds=codec.column_dtypes,
+        )
+        packed = codec.encode(ids)
+
+        torch.testing.assert_close(
+            dequantize_torch_tensor(packed, metadata=metadata), ids, atol=0, rtol=0
+        )
+        # Leading batch dimensions are preserved.
+        torch.testing.assert_close(
+            dequantize_torch_tensor(packed.reshape(1, 2, -1), metadata=metadata),
+            ids.reshape(1, 2, 3),
+            atol=0,
+            rtol=0,
+        )
+        with self.assertRaises(ValueError):
+            dequantize_torch_tensor(
+                torch.zeros(2, metadata.packed_feature_dim + 4, dtype=torch.uint8),
+                metadata=metadata,
+            )
+
+        no_packed_columns = FeatureQuantizationMetadata(bits=None, feature_dim=3)
+        decoded = dequantize_torch_tensor(
+            torch.zeros(4, 0, dtype=torch.uint8), metadata=no_packed_columns
+        )
+        self.assertEqual(decoded.shape, (4, 0))
+        self.assertEqual(decoded.dtype, torch.float32)

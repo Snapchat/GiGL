@@ -81,10 +81,10 @@ class DistDataset(glt.distributed.DistDataset):
         node_feature_partition: Optional[
             Union[Feature, dict[NodeType, Feature]]
         ] = None,
-        node_quantized_feature_partition: Optional[
+        node_packed_feature_partition: Optional[
             Union[Feature, dict[NodeType, Feature]]
         ] = None,
-        edge_quantized_feature_partition: Optional[
+        edge_packed_feature_partition: Optional[
             Union[Feature, dict[EdgeType, Feature]]
         ] = None,
         edge_feature_partition: Optional[
@@ -143,7 +143,7 @@ class DistDataset(glt.distributed.DistDataset):
         The below arguments are only expected to be provided when re-serializing an instance of the DistDataset class after build() has been called
             graph_partition (Optional[Union[Graph, dict[EdgeType, Graph]]]): Partitioned Graph Data
             node_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned Node Feature Data
-            node_quantized_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned packed uint8 node feature data
+            node_packed_feature_partition (Optional[Union[Feature, dict[NodeType, Feature]]]): Partitioned packed uint8 node feature data
             edge_feature_partition (Optional[Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]): Partitioned Edge Feature Data
             node_labels (Optional[Union[Feature, dict[NodeType, Feature]]]): The labels of each node on the current machine
             node_partition_book (Optional[Union[PartitionBook, dict[NodeType, PartitionBook]]]): Node Partition Book
@@ -198,9 +198,9 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_feature_info = node_feature_info
         self._edge_feature_info = edge_feature_info
 
-        self._node_quantized_features = node_quantized_feature_partition
+        self._node_packed_features = node_packed_feature_partition
         self._node_quantization_metadata = node_quantization_metadata
-        self._edge_quantized_features = edge_quantized_feature_partition
+        self._edge_packed_features = edge_packed_feature_partition
         self._edge_quantization_metadata = edge_quantization_metadata
 
         self._degree_tensor: Optional[
@@ -262,17 +262,17 @@ class DistDataset(glt.distributed.DistDataset):
         self._node_features = new_node_features
 
     @property
-    def node_quantized_features(
+    def node_packed_features(
         self,
     ) -> Optional[Union[Feature, dict[NodeType, Feature]]]:
-        return self._node_quantized_features
+        return self._node_packed_features
 
-    @node_quantized_features.setter
-    def node_quantized_features(
+    @node_packed_features.setter
+    def node_packed_features(
         self,
-        new_node_quantized_features: Optional[Union[Feature, dict[NodeType, Feature]]],
+        new_node_packed_features: Optional[Union[Feature, dict[NodeType, Feature]]],
     ):
-        self._node_quantized_features = new_node_quantized_features
+        self._node_packed_features = new_node_packed_features
 
     @property
     def edge_features(self) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
@@ -290,11 +290,11 @@ class DistDataset(glt.distributed.DistDataset):
         self._edge_features = new_edge_features
 
     @property
-    def edge_quantized_features(
+    def edge_packed_features(
         self,
     ) -> Optional[Union[Feature, dict[EdgeType, Feature]]]:
         """Packed uint8 main-edge feature sidecar."""
-        return self._edge_quantized_features
+        return self._edge_packed_features
 
     @property
     def node_pb(
@@ -697,7 +697,7 @@ class DistDataset(glt.distributed.DistDataset):
                 or a single partition (homogeneous).
             node_partition_book: Node partition book(s), used to size each topology when the
                 memory-lean build applies.
-            edge_features_registered: Whether any edge features or quantized edge features were
+            edge_features_registered: Whether any edge features or packed edge features were
                 partitioned. They need explicit edge IDs rather than the compact build's
                 partition-local COO positions, so their presence forces GLT's build.
             retain_edge_ids: Whether to retain implicit edge IDs for sampling.
@@ -945,10 +945,10 @@ class DistDataset(glt.distributed.DistDataset):
             )
             logger.info("Initialized node features for homogeneous graph to dataset")
 
-    def _initialize_node_quantized_features(
+    def _initialize_node_packed_features(
         self,
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        partitioned_node_quantized_features: Optional[
+        partitioned_node_packed_features: Optional[
             Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]
         ],
     ) -> None:
@@ -956,18 +956,13 @@ class DistDataset(glt.distributed.DistDataset):
         Initializes packed uint8 node features in a separate feature store.
         """
 
-        node_quantized_features, node_quantized_feature_id_to_index = (
-            _prepare_feature_data(
-                partition_book=node_partition_book,
-                partitioned_data=partitioned_node_quantized_features,
-            )
+        node_packed_features, node_packed_feature_id_to_index = _prepare_feature_data(
+            partition_book=node_partition_book,
+            partitioned_data=partitioned_node_packed_features,
         )
 
-        if (
-            node_quantized_features is None
-            or node_quantized_feature_id_to_index is None
-        ):
-            logger.info("Found no node quantized features to initialize")
+        if node_packed_features is None or node_packed_feature_id_to_index is None:
+            logger.info("Found no node packed features to initialize")
             return
 
         # GLT only exposes init_node_features for the standard node feature
@@ -975,31 +970,40 @@ class DistDataset(glt.distributed.DistDataset):
         # this sidecar Feature store directly, mirroring GLT's construction:
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/data/dataset.py#L236
 
-        if isinstance(node_quantized_features, Mapping):
-            assert isinstance(node_quantized_feature_id_to_index, Mapping)
-            self._node_quantized_features = {
+        if isinstance(node_packed_features, Mapping):
+            assert isinstance(node_packed_feature_id_to_index, Mapping)
+            self._node_packed_features = {
                 node_type: Feature(
                     feature_tensor=features_per_node_type,
-                    id2index=node_quantized_feature_id_to_index[node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+                    id2index=node_packed_feature_id_to_index[node_type],  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
                     with_gpu=False,
                     dtype=torch.uint8,
                 )
-                for node_type, features_per_node_type in node_quantized_features.items()
+                for node_type, features_per_node_type in node_packed_features.items()
             }
             logger.info(
-                f"Initialized node quantized features for heterogeneous graph to dataset with node types: {node_quantized_features.keys()}"
+                f"Initialized node packed features for heterogeneous graph to dataset with node types: {node_packed_features.keys()}"
             )
         else:
-            assert not isinstance(node_quantized_feature_id_to_index, Mapping)
-            self._node_quantized_features = Feature(
-                feature_tensor=node_quantized_features,
-                id2index=node_quantized_feature_id_to_index,
+            assert not isinstance(node_packed_feature_id_to_index, Mapping)
+            self._node_packed_features = Feature(
+                feature_tensor=node_packed_features,
+                id2index=node_packed_feature_id_to_index,
                 with_gpu=False,
                 dtype=torch.uint8,
             )
             logger.info(
-                "Initialized node quantized features for homogeneous graph to dataset"
+                "Initialized node packed features for homogeneous graph to dataset"
             )
+        self._describe_packed_node_features_as_logical()
+
+    def _describe_packed_node_features_as_logical(self) -> None:
+        """Makes ``node_feature_info`` report the logical width of node types that have packed columns."""
+        self._node_feature_info = _with_logical_feature_info(
+            self._node_feature_info,
+            self._node_packed_features,
+            self._node_quantization_metadata,
+        )
 
     def _initialize_node_labels(
         self,
@@ -1084,41 +1088,46 @@ class DistDataset(glt.distributed.DistDataset):
             )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
-    def _initialize_edge_quantized_features(
+    def _initialize_edge_packed_features(
         self,
         edge_partition_book: Union[PartitionBook, dict[EdgeType, PartitionBook]],
-        partitioned_edge_quantized_features: Optional[
+        partitioned_edge_packed_features: Optional[
             Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]
         ],
     ) -> None:
         """Initialize packed uint8 main-edge feature storage."""
         features, id_to_index = _prepare_feature_data(
             partition_book=edge_partition_book,
-            partitioned_data=partitioned_edge_quantized_features,
+            partitioned_data=partitioned_edge_packed_features,
         )
         if features is None or id_to_index is None:
-            logger.info("Found no packed quantized edge features to initialize")
+            logger.info("Found no packed edge features to initialize")
             return
         if isinstance(features, dict):
             assert isinstance(id_to_index, dict)
-            edge_quantized_features: dict[EdgeType, Feature] = {}
+            edge_packed_features: dict[EdgeType, Feature] = {}
             for edge_type, features_per_edge_type in features.items():
                 assert isinstance(edge_type, EdgeType)
-                edge_quantized_features[edge_type] = Feature(
+                edge_packed_features[edge_type] = Feature(
                     feature_tensor=features_per_edge_type,
                     id2index=id_to_index[edge_type],
                     with_gpu=False,
                     dtype=torch.uint8,
                 )
-            self._edge_quantized_features = edge_quantized_features
+            self._edge_packed_features = edge_packed_features
         else:
             assert not isinstance(id_to_index, Mapping)
-            self._edge_quantized_features = Feature(
+            self._edge_packed_features = Feature(
                 feature_tensor=features,
                 id2index=id_to_index,
                 with_gpu=False,
                 dtype=torch.uint8,
             )
+        self._edge_feature_info = _with_logical_feature_info(
+            self._edge_feature_info,
+            self._edge_packed_features,
+            self._edge_quantization_metadata,
+        )
 
     def build(
         self,
@@ -1210,7 +1219,7 @@ class DistDataset(glt.distributed.DistDataset):
             node_partition_book=partition_output.node_partition_book,
             edge_features_registered=(
                 partition_output.partitioned_edge_features is not None
-                or partition_output.partitioned_edge_quantized_features is not None
+                or partition_output.partitioned_edge_packed_features is not None
             ),
             retain_edge_ids=retain_edge_ids,
         )
@@ -1224,11 +1233,11 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output.partitioned_node_features = None
         gc.collect()
 
-        self._initialize_node_quantized_features(
+        self._initialize_node_packed_features(
             node_partition_book=partition_output.node_partition_book,
-            partitioned_node_quantized_features=partition_output.partitioned_node_quantized_features,
+            partitioned_node_packed_features=partition_output.partitioned_node_packed_features,
         )
-        partition_output.partitioned_node_quantized_features = None
+        partition_output.partitioned_node_packed_features = None
         gc.collect()
 
         self._initialize_node_labels(
@@ -1245,11 +1254,11 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output.partitioned_edge_features = None
         gc.collect()
 
-        self._initialize_edge_quantized_features(
+        self._initialize_edge_packed_features(
             edge_partition_book=partition_output.edge_partition_book,
-            partitioned_edge_quantized_features=partition_output.partitioned_edge_quantized_features,
+            partitioned_edge_packed_features=partition_output.partitioned_edge_packed_features,
         )
-        partition_output.partitioned_edge_quantized_features = None
+        partition_output.partitioned_edge_packed_features = None
         gc.collect()
 
         self._node_partition_book = partition_output.node_partition_book
@@ -1349,8 +1358,8 @@ class DistDataset(glt.distributed.DistDataset):
             self._edge_dir,
             self._graph,
             self._node_features,
-            self._node_quantized_features,
-            self._edge_quantized_features,
+            self._node_packed_features,
+            self._edge_packed_features,
             self._edge_features,
             self._node_labels,
             self._node_partition_book,
@@ -1574,6 +1583,47 @@ def _prepare_feature_data(
         return features_per_entity_type, id_to_index_per_entity_type
     else:
         return None, None
+
+
+def _with_logical_feature_info(
+    feature_info: Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]],
+    packed_features: Optional[Union[Feature, dict[_EntityType, Feature]]],
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata, dict[_EntityType, FeatureQuantizationMetadata]
+        ]
+    ],
+) -> Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]]:
+    """Reports the logical float32 width of every entity type that has packed columns.
+
+    The raw float store only holds the columns that are not packed, but loaders and models see (and placeholders for
+    unsampled types must have) the full logical feature width.
+
+    Args:
+        feature_info: Feature info derived from the raw float store.
+        packed_features: Packed sidecar store(s) of the dataset.
+        metadata: Quantization metadata describing the packed columns; a single value applies to every type.
+
+    Returns:
+        ``feature_info`` with the entries of packed types replaced by their logical width.
+    """
+    if metadata is None or packed_features is None:
+        return feature_info
+    if isinstance(packed_features, Mapping):
+        logical_info: dict[_EntityType, FeatureInfo] = {}
+        if feature_info is not None and not isinstance(feature_info, FeatureInfo):
+            logical_info.update(feature_info)
+        for entity_type in packed_features:
+            if isinstance(metadata, FeatureQuantizationMetadata):
+                entity_metadata = metadata
+            else:
+                entity_metadata = metadata[entity_type]
+            logical_info[entity_type] = FeatureInfo(
+                dim=entity_metadata.feature_dim, dtype=torch.float32
+            )
+        return logical_info
+    assert isinstance(metadata, FeatureQuantizationMetadata)
+    return FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
 
 
 ## Pickling Registration

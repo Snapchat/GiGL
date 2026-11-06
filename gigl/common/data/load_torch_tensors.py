@@ -1,7 +1,16 @@
 import time
 import traceback
 from dataclasses import dataclass, replace
-from typing import MutableMapping, Optional, Union, cast
+from typing import (
+    Generic,
+    Mapping,
+    MutableMapping,
+    NamedTuple,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import torch
 import torch.multiprocessing as mp
@@ -14,6 +23,11 @@ from gigl.common.data.dataloaders import (
     TFRecordDataLoader,
 )
 from gigl.common.logger import Logger
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FeatureCompression,
+    compress_loaded_features,
+    resolve_feature_compression,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -245,10 +259,22 @@ def remove_sampling_weight_from_edge_quantization_metadata(
             else quantized_feature_index
             for quantized_feature_index in metadata.quantized_feature_indices
         )
+        adjusted_lossless_feature_indices_list: list[int] = []
+        for lossless_feature_index in metadata.lossless_feature_indices:
+            if lossless_feature_index > weight_logical_index:
+                adjusted_lossless_feature_indices_list.append(
+                    lossless_feature_index - 1
+                )
+            else:
+                adjusted_lossless_feature_indices_list.append(lossless_feature_index)
+        adjusted_lossless_feature_indices = tuple(
+            adjusted_lossless_feature_indices_list
+        )
         adjusted_metadata[edge_type] = replace(
             metadata,
             feature_dim=metadata.feature_dim - 1,
             quantized_feature_indices=adjusted_quantized_feature_indices,
+            lossless_feature_indices=adjusted_lossless_feature_indices,
         )
 
     if is_homogeneous:
@@ -319,7 +345,7 @@ def _data_loading_process(
 
         ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
-        quantized_features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        packed_features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
@@ -340,7 +366,7 @@ def _data_loading_process(
             )
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
-            entity_quantized_features = loaded_entity.quantized_features
+            entity_packed_features = loaded_entity.packed_features
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
@@ -356,14 +382,14 @@ def _data_loading_process(
                     f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
-            if entity_quantized_features is not None:
-                quantized_features[graph_type] = entity_quantized_features
+            if entity_packed_features is not None:
+                packed_features[graph_type] = entity_packed_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} quantized features of shape {entity_quantized_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} packed features of shape {entity_packed_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} packed features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
@@ -444,11 +470,11 @@ def _data_loading_process(
             share_memory(features)
             # We convert the features back to homogeneous from the default heterogeneous setup if our provided input was homogeneous
 
-        if quantized_features:
+        if packed_features:
             logger.info(
-                f"Rank {rank} is attempting to share {entity_type} quantized feature memory for tfrecord directories: {all_tf_record_uris}"
+                f"Rank {rank} is attempting to share {entity_type} packed feature memory for tfrecord directories: {all_tf_record_uris}"
             )
-            share_memory(quantized_features)
+            share_memory(packed_features)
 
         if labels:
             logger.info(
@@ -469,11 +495,11 @@ def _data_loading_process(
             output_dict[_FEATURE_FMT.format(entity=entity_type)] = (
                 list(features.values())[0] if is_input_homogeneous else features
             )
-        if quantized_features:
+        if packed_features:
             output_dict[_PACKED_FEATURE_FMT.format(entity=entity_type)] = (
-                list(quantized_features.values())[0]
+                list(packed_features.values())[0]
                 if is_input_homogeneous
-                else quantized_features
+                else packed_features
             )
         if labels:
             output_dict[_LABEL_FMT.format(entity=entity_type)] = (
@@ -492,6 +518,78 @@ def _data_loading_process(
         error_dict[entity_type] = traceback.format_exc()
 
 
+# Node features are keyed by NodeType and edge features by EdgeType. A constrained TypeVar keeps that key type
+# through the helper: ``dict`` is invariant in its key, so a dict keyed by NodeType is not a dict keyed by
+# ``Union[NodeType, EdgeType]``.
+_EntityKey = TypeVar("_EntityKey", NodeType, EdgeType)
+
+
+class _EntityFeatures(NamedTuple, Generic[_EntityKey]):
+    """Raw features, packed features and quantization metadata of one entity type."""
+
+    features: Optional[Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]]
+    packed_features: Optional[Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]]
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata,
+            dict[_EntityKey, FeatureQuantizationMetadata],
+        ]
+    ]
+
+
+def _read_and_compress_features(
+    output_dict: Mapping[str, Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]],
+    error_dict: Mapping[str, str],
+    entity_type: str,
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata,
+            dict[_EntityKey, FeatureQuantizationMetadata],
+        ]
+    ],
+    should_compress: bool,
+    is_homogeneous: bool,
+    default_key: _EntityKey,
+) -> _EntityFeatures[_EntityKey]:
+    """Reads the raw and packed features of one entity type once its loading process has joined.
+
+    Compresses them with ``compress_loaded_features`` if ``should_compress`` is set and this entity type's own
+    loading process did not fail.
+
+    If this entity type's load failed, compression is skipped so the caller raises the stored load error once all
+    loading processes have joined. The other ranks wait until the RPC timeout either way, as at the load barrier.
+
+    Args:
+        output_dict: Outputs of the loading process of ``entity_type``.
+        error_dict: Tracebacks of the loading processes that failed, keyed by entity type.
+        entity_type: Entity type whose features are read.
+        metadata: Quantization metadata describing the packed features.
+        should_compress: Whether to compress the features.
+        is_homogeneous: Whether the graph is homogeneous, which decides the form of ``metadata``.
+        default_key: Key the homogeneous graph's single node or edge type uses when tensors are keyed.
+
+    Returns:
+        The raw features, packed features and metadata, after compression if it ran.
+    """
+    features = output_dict.get(_FEATURE_FMT.format(entity=entity_type), None)
+    packed_features = output_dict.get(
+        _PACKED_FEATURE_FMT.format(entity=entity_type), None
+    )
+    # A failed load wrote no output, so compressing would raise a second, confusing error instead of the stored
+    # load error that the caller raises after all joins. Only this entity's failure is checked: another entity's
+    # process can fail at any time while this one compresses.
+    if not should_compress or entity_type in error_dict:
+        return _EntityFeatures(features, packed_features, metadata)
+    features, packed_features, metadata = compress_loaded_features(
+        features=features,
+        quantized_features=packed_features,
+        metadata=metadata,
+        is_homogeneous=is_homogeneous,
+        default_key=default_key,
+    )
+    return _EntityFeatures(features, packed_features, metadata)
+
+
 def load_torch_tensors_from_tf_record(
     tf_record_dataloader: TFRecordDataLoader,
     serialized_graph_metadata: SerializedGraphMetadata,
@@ -508,6 +606,16 @@ def load_torch_tensors_from_tf_record(
     there is a tradeoff that needs to be made between parallel and sequential tensor loading, which is why we don't parallelize across node and edge types. We enable
     the `should_load_tensors_in_parallel` to allow some customization for loading strategies based on the input data.
 
+    If RPC is initialized, node and edge feature columns are losslessly compressed, each right after its own loading
+    process joins, unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
+    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, node
+    compression runs while the edge loading process is still reading. The sampling-weight edge feature is removed
+    from the edge features before they are compressed, so it is never compressed.
+
+    With compression on and RPC initialized, every rank must call this function, with the same
+    ``should_load_tensors_in_parallel``, because compression joins a collective RPC ``all_gather``.
+    Without RPC, features are returned uncompressed.
+
     Args:
         tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
         serialized_graph_metadata (SerializedGraphMetadata): Serialized graph metadata contained serialized information for loading tfrecords across node and edge types
@@ -520,11 +628,31 @@ def load_torch_tensors_from_tf_record(
             ``LoadedGraphTensors.edge_weights``. Supply a single string for homogeneous graphs or a per-edge-type
             dict for heterogeneous graphs.
     Returns:
-        loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors
+        loaded_graph_tensors (LoadedGraphTensors): Unpartitioned Graph Tensors, with the quantization metadata that
+            describes their packed features.
+    Raises:
+        ValueError: If a loading process failed, or if ``GIGL_FEATURE_COMPRESSION`` holds an unknown value while RPC
+            is initialized.
     """
 
     _validate_weight_edge_feature_name(
         edge_entity_info=serialized_graph_metadata.edge_entity_info,
+        weight_edge_feat_name=weight_edge_feat_name,
+    )
+
+    should_compress = (
+        rpc_is_initialized()
+        and resolve_feature_compression() == FeatureCompression.AUTO
+    )
+    node_is_homogeneous = isinstance(
+        serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+    )
+    edge_is_homogeneous = isinstance(
+        serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo
+    )
+    node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
+    edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+        serialized_graph_metadata=serialized_graph_metadata,
         weight_edge_feat_name=weight_edge_feat_name,
     )
 
@@ -616,7 +744,31 @@ def load_torch_tensors_from_tf_record(
             negative_label_data_loading_process.start()
 
         node_data_loading_process.join()
+        # We do this because in practice nodes get loaded quicker, and we can get a head start on the compression
+        # while the edge loading process is still reading.
+        node_features, node_packed_features, node_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=node_output_dict,
+                error_dict=error_dict,
+                entity_type=_NODE_KEY,
+                metadata=node_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=node_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            )
+        )
         edge_data_loading_process.join()
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
+        )
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.join()
         if serialized_graph_metadata.negative_label_entity_info is not None:
@@ -630,8 +782,30 @@ def load_torch_tensors_from_tf_record(
         # compared with first launching node loading and then launching edge loading.
         edge_data_loading_process.start()
         edge_data_loading_process.join()
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
+        )
         node_data_loading_process.start()
         node_data_loading_process.join()
+        node_features, node_packed_features, node_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=node_output_dict,
+                error_dict=error_dict,
+                entity_type=_NODE_KEY,
+                metadata=node_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=node_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
+            )
+        )
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.start()
             positive_label_data_loading_process.join()
@@ -649,17 +823,9 @@ def load_torch_tensors_from_tf_record(
         )
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
-    node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
-    node_quantized_features = node_output_dict.get(
-        _PACKED_FEATURE_FMT.format(entity=_NODE_KEY), None
-    )
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
-    edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
-    edge_quantized_features = edge_output_dict.get(
-        _PACKED_FEATURE_FMT.format(entity=_EDGE_KEY), None
-    )
     edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
 
     positive_labels = edge_output_dict.get(
@@ -683,12 +849,14 @@ def load_torch_tensors_from_tf_record(
     return LoadedGraphTensors(
         node_ids=node_ids,
         node_features=node_features,
-        node_quantized_features=node_quantized_features,
+        node_packed_features=node_packed_features,
         node_labels=node_labels,
         edge_index=edge_index,
         edge_features=edge_features,
-        edge_quantized_features=edge_quantized_features,
+        edge_packed_features=edge_packed_features,
         positive_label=positive_labels,
         negative_label=negative_labels,
         edge_weights=edge_weights,
+        node_quantization_metadata=node_quantization_metadata,
+        edge_quantization_metadata=edge_quantization_metadata,
     )

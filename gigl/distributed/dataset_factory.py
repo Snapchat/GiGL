@@ -24,7 +24,6 @@ from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
-    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -122,6 +121,8 @@ def _load_and_build_partitioned_dataset(
         weight_edge_feat_name=weight_edge_feat_name,
     )
 
+    node_quantization_metadata = loaded_graph_tensors.node_quantization_metadata
+    edge_quantization_metadata = loaded_graph_tensors.edge_quantization_metadata
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
         if (
@@ -189,9 +190,9 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
-    if loaded_graph_tensors.node_quantized_features is not None:
-        partitioner.register_node_quantized_features(
-            node_quantized_features=loaded_graph_tensors.node_quantized_features
+    if loaded_graph_tensors.node_packed_features is not None:
+        partitioner.register_node_packed_features(
+            node_packed_features=loaded_graph_tensors.node_packed_features
         )
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
@@ -203,9 +204,9 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
         )
-    if loaded_graph_tensors.edge_quantized_features is not None:
-        partitioner.register_edge_quantized_features(
-            edge_quantized_features=loaded_graph_tensors.edge_quantized_features
+    if loaded_graph_tensors.edge_packed_features is not None:
+        partitioner.register_edge_packed_features(
+            edge_packed_features=loaded_graph_tensors.edge_packed_features
         )
     if loaded_graph_tensors.positive_label is not None:
         partitioner.register_labels(
@@ -222,10 +223,10 @@ def _load_and_build_partitioned_dataset(
     del (
         loaded_graph_tensors.node_ids,
         loaded_graph_tensors.node_features,
-        loaded_graph_tensors.node_quantized_features,
+        loaded_graph_tensors.node_packed_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
-        loaded_graph_tensors.edge_quantized_features,
+        loaded_graph_tensors.edge_packed_features,
         loaded_graph_tensors.edge_weights,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,
@@ -240,11 +241,8 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         world_size=world_size,
         edge_dir=edge_dir,
-        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
-        edge_quantization_metadata=remove_sampling_weight_from_edge_quantization_metadata(
-            serialized_graph_metadata=serialized_graph_metadata,
-            weight_edge_feat_name=weight_edge_feat_name,
-        ),
+        node_quantization_metadata=node_quantization_metadata,
+        edge_quantization_metadata=edge_quantization_metadata,
     )
 
     dataset.build(
@@ -426,6 +424,14 @@ def build_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
+
+    Node and edge feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
+    ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
+    one-hot columns and categorical ids) is stored as the narrowest integer kind that holds its values, and other
+    columns stay float32. The kinds are inferred from the data, columns that preprocessing already quantized are left
+    alone, and batches are unchanged because loaders decode back to float32. Any other value raises ``ValueError``.
+    The sampling-weight edge feature is not compressed: it is removed from the edge features before they are.
+    See :mod:`gigl.common.utils.feature_quantization.lossless` for the storage kinds and an example.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
