@@ -2,16 +2,19 @@
 Tests for heterodata_to_graph_transformer_input transform.
 """
 
-from typing import Literal, cast
+from typing import Any, Literal, Optional, cast
 
 import torch
 import torch.nn as nn
 from absl.testing import absltest
+from parameterized import parameterized
 from torch_geometric.data import HeteroData
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
+from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_ppr_edges,
+    _get_anchor_hop_distance_matrix,
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
     tensors_to_graph_transformer_input,
@@ -287,6 +290,223 @@ class TestGetKHopNeighborsSparse(TestCase):
         mask_indices = reachable.indices()
         nodes_reached = mask_indices[1].tolist()
         self.assertEqual(nodes_reached, [0])
+
+
+class TestGetAnchorHopDistanceMatrix(TestCase):
+    """Tests for _get_anchor_hop_distance_matrix against the hop transform."""
+
+    @parameterized.expand(
+        [
+            (sampling_direction, hop_distance)
+            for sampling_direction in ("in", "out")
+            for hop_distance in (1, 2, 3)
+        ]
+    )
+    def test_matches_transform_on_anchor_rows(
+        self, sampling_direction: str, hop_distance: int
+    ) -> None:
+        generator = torch.Generator().manual_seed(0)
+        num_nodes = 30
+        edge_index = torch.randint(0, num_nodes, (2, 80), generator=generator)
+        # Self-loops and duplicate edges.
+        edge_index = torch.cat(
+            [edge_index, torch.tensor([[3, 5], [3, 5]]), edge_index[:, :10]], dim=1
+        )
+        anchors = torch.tensor([0, 7, 19])
+
+        data = HeteroData()
+        data["user"].x = torch.zeros(num_nodes, 1)
+        data["user", "to", "user"].edge_index = edge_index
+        transformed = AddHeteroHopDistanceEncoding(
+            h_max=hop_distance,
+            is_undirected=False,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
+        )(data)
+        expected = transformed["hop_distance"].to_dense()[anchors]
+
+        walk_edge_index = edge_index
+        if sampling_direction == "in":
+            walk_edge_index = edge_index.flip(0)
+        actual = _get_anchor_hop_distance_matrix(
+            anchor_indices=anchors,
+            edge_index=walk_edge_index,
+            num_nodes=num_nodes,
+            hop_distance=hop_distance,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(actual.layout, torch.sparse_csr)
+        self.assertEqual(actual.dtype, transformed["hop_distance"].dtype)
+        torch.testing.assert_close(actual.to_dense()[anchors], expected, rtol=0, atol=0)
+
+    def test_duplicate_anchors_do_not_add_values(self) -> None:
+        edge_index = torch.tensor([[4, 4, 9, 2], [2, 9, 2, 4]])
+        duplicated = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([4, 4, 9]),
+            edge_index=edge_index,
+            num_nodes=12,
+            hop_distance=2,
+            device=torch.device("cpu"),
+        )
+        unique = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([4, 9]),
+            edge_index=edge_index,
+            num_nodes=12,
+            hop_distance=2,
+            device=torch.device("cpu"),
+        )
+        torch.testing.assert_close(
+            duplicated.to_dense(), unique.to_dense(), rtol=0, atol=0
+        )
+
+    def test_rows_of_non_anchors_are_empty(self) -> None:
+        edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]])
+        matrix = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([1]),
+            edge_index=edge_index,
+            num_nodes=4,
+            hop_distance=3,
+            device=torch.device("cpu"),
+        )
+        row_counts = matrix.crow_indices().diff()
+        self.assertEqual(row_counts.tolist(), [0, 3, 0, 0])
+
+    def test_zero_hops_and_edgeless_graph_are_empty(self) -> None:
+        edge_index = torch.tensor([[0, 1], [1, 2]])
+        zero_hops = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([0]),
+            edge_index=edge_index,
+            num_nodes=3,
+            hop_distance=0,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(zero_hops._nnz(), 0)
+        edgeless = _get_anchor_hop_distance_matrix(
+            anchor_indices=torch.tensor([0]),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=3,
+            hop_distance=2,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(edgeless._nnz(), 0)
+
+
+def _assert_nested_equal(actual: Any, expected: Any) -> None:
+    """Asserts that two nested tuples/dicts/tensors/None values are exactly equal."""
+    if type(actual) is not type(expected):
+        raise AssertionError(f"Type {type(actual)} != {type(expected)}")
+    if isinstance(expected, torch.Tensor):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    elif isinstance(expected, dict):
+        if actual.keys() != expected.keys():
+            raise AssertionError(f"Keys {actual.keys()} != {expected.keys()}")
+        for key in expected:
+            _assert_nested_equal(actual[key], expected[key])
+    elif isinstance(expected, tuple):
+        if len(actual) != len(expected):
+            raise AssertionError(f"Length {len(actual)} != {len(expected)}")
+        for actual_item, expected_item in zip(actual, expected):
+            _assert_nested_equal(actual_item, expected_item)
+    elif actual != expected:
+        raise AssertionError(f"{actual!r} != {expected!r}")
+
+
+class TestMissingHopDistanceAttribute(TestCase):
+    """The padded builder computes a missing anchor-relative ``hop_distance``."""
+
+    @parameterized.expand(
+        [
+            (sampling_direction, prioritize_hop_order, role)
+            for sampling_direction in ("in", "out")
+            for prioritize_hop_order in (False, True)
+            for role in (
+                "anchor_based_input_attr_names",
+                "anchor_based_attention_bias_attr_names",
+            )
+        ]
+    )
+    def test_missing_hop_distance_matches_transform(
+        self, sampling_direction: str, prioritize_hop_order: bool, role: str
+    ) -> None:
+        torch.manual_seed(0)
+        data = create_larger_hetero_data(num_users=12, num_items=8)
+        with_attribute = AddHeteroHopDistanceEncoding(
+            h_max=2,
+            is_undirected=False,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
+        )(data.clone())
+        without_attribute = data.clone()
+        self.assertFalse(hasattr(without_attribute, "hop_distance"))
+        input_attr_names: Optional[list[str]] = None
+        bias_attr_names: Optional[list[str]] = None
+        if role == "anchor_based_input_attr_names":
+            input_attr_names = ["hop_distance"]
+        else:
+            bias_attr_names = ["hop_distance"]
+        expected = heterodata_to_graph_transformer_input(
+            data=with_attribute,
+            batch_size=4,
+            max_seq_len=5,
+            anchor_node_type=NodeType("user"),
+            hop_distance=2,
+            anchor_based_input_attr_names=input_attr_names,
+            anchor_based_attention_bias_attr_names=bias_attr_names,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
+            prioritize_hop_order=prioritize_hop_order,
+        )
+        actual = heterodata_to_graph_transformer_input(
+            data=without_attribute,
+            batch_size=4,
+            max_seq_len=5,
+            anchor_node_type=NodeType("user"),
+            hop_distance=2,
+            anchor_based_input_attr_names=input_attr_names,
+            anchor_based_attention_bias_attr_names=bias_attr_names,
+            sampling_direction=cast(Literal["in", "out"], sampling_direction),
+            prioritize_hop_order=prioritize_hop_order,
+        )
+        _assert_nested_equal(actual, expected)
+        self.assertFalse(hasattr(without_attribute, "hop_distance"))
+
+    def test_supplied_hop_distance_is_used_unchanged(self) -> None:
+        data = create_directed_chain_data()
+        data = AddHeteroHopDistanceEncoding(h_max=1)(data)
+        _, _, aux = heterodata_to_graph_transformer_input(
+            data=data,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            hop_distance=2,
+            anchor_based_attention_bias_attr_names=["hop_distance"],
+        )
+        anchor_bias = aux["anchor_bias"]
+        assert anchor_bias is not None
+        self.assertEqual(anchor_bias[0, :, 0].tolist(), [0.0, 1.0, 0.0])
+
+    def test_missing_pairwise_hop_distance_still_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            heterodata_to_graph_transformer_input(
+                data=create_directed_chain_data(),
+                batch_size=1,
+                max_seq_len=3,
+                anchor_node_type="user",
+                pairwise_attention_bias_attr_names=["hop_distance"],
+            )
+
+    def test_caller_attribute_dict_is_not_mutated(self) -> None:
+        data = create_directed_chain_data()
+        graph_attr_dict: dict[str, torch.Tensor] = {}
+        tensors_to_graph_transformer_input(
+            x_dict={"user": data["user"].x},
+            edge_index_dict={
+                ("user", "to", "user"): data["user", "to", "user"].edge_index
+            },
+            graph_attr_dict=graph_attr_dict,
+            batch_size=1,
+            max_seq_len=3,
+            anchor_node_type="user",
+            anchor_based_input_attr_names=["hop_distance"],
+        )
+        self.assertNotIn("hop_distance", graph_attr_dict)
 
 
 class TestHeteroToGraphTransformerInput(TestCase):
