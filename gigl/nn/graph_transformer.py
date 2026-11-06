@@ -20,6 +20,7 @@ import torch.nn.functional as F
 import torch_geometric.data.hetero_data
 from jaxtyping import Bool, Float, Int64
 from torch import Tensor
+from torch_geometric.utils import softmax
 
 from gigl.common.logger import Logger
 from gigl.nn.packed_attention import packed_attention
@@ -31,11 +32,11 @@ from gigl.transforms.graph_transformer import (
     PPR_WEIGHT_FEATURE_NAME,
     SequenceAuxiliaryData,
     TokenInputData,
-    _validate_reserved_anchor_feature_usage,
     concat_tensors,
     get_node_type_offsets,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
+    validate_reserved_anchor_feature_usage,
 )
 from gigl.transforms.sequence_layout import PackedLayout, pack_sequences
 from gigl.transforms.static_khop import KhopLayoutTooLargeError, khop_layout
@@ -1165,7 +1166,9 @@ class GraphTransformerEncoder(nn.Module):
             embedding per anchor. ``"anchor_neighbor_attention"`` preserves the
             existing behavior by adding the encoded anchor token to an
             attention-weighted neighbor aggregation. ``"anchor_only"`` returns
-            only the encoded anchor token.
+            only the encoded anchor token. Both run on the packed backend, but
+            ``"anchor_only"`` lets the last layer skip the neighbor tokens, so it
+            is cheaper there.
         dropout_rate: Dropout probability for feed-forward layers.
         attention_dropout_rate: Dropout probability for attention weights.
         should_l2_normalize_embedding_layer_output: Whether to L2 normalize
@@ -1268,7 +1271,6 @@ class GraphTransformerEncoder(nn.Module):
         ``[tokens, hid_dim]`` buffer and a varlen attention kernel, so no FLOPs go
         to padding) when the config meets all of these:
           - ``sequence_construction_method="khop"``
-          - ``readout_mode="anchor_only"``
           - ``relation_attention_mode`` and ``relation_message_mode`` are ``"none"``
           - no attention biases
           - ``"hop_distance"`` is the only anchor-based input, if any
@@ -1456,7 +1458,7 @@ class GraphTransformerEncoder(nn.Module):
         anchor_bias_attr_names = anchor_based_attention_bias_attr_names
         anchor_input_attr_names = anchor_based_input_attr_names
         pairwise_bias_attr_names = pairwise_attention_bias_attr_names
-        _validate_reserved_anchor_feature_usage(
+        validate_reserved_anchor_feature_usage(
             pairwise_bias_attr_names=pairwise_bias_attr_names,
             anchor_bias_attr_names=anchor_bias_attr_names,
             anchor_input_attr_names=anchor_input_attr_names,
@@ -1642,8 +1644,6 @@ class GraphTransformerEncoder(nn.Module):
         unsupported_reasons: list[str] = []
         if self._sequence_construction_method != "khop":
             unsupported_reasons.append("sequence_construction_method is not 'khop'")
-        if self._readout_mode != "anchor_only":
-            unsupported_reasons.append("readout_mode is not 'anchor_only'")
         if self._relation_attention_mode != "none":
             unsupported_reasons.append("relation_attention_mode is not 'none'")
         if self._relation_message_mode != "none":
@@ -2014,12 +2014,14 @@ class GraphTransformerEncoder(nn.Module):
         ``cu_seqlens_q=arange(num_sequences + 1)`` (``[0, 1, 2]``) with one query
         per sequence, while keys and values still cover all 7 tokens. Its output
         is ``[num_anchors, hidden]`` and goes straight to the final norm.
+        With ``readout_mode="anchor_neighbor_attention"`` the last layer runs on all
+        tokens instead, and ``_packed_neighbor_readout`` adds each anchor's
+        attention-weighted neighbors to it.
 
         Returns:
-            ``[num_anchor_nodes, out_dim]`` embeddings after the final norm and output
-            projection, or
-            None if the batch's k-hop candidate set is too large to lay out. The
-            caller then runs the padded path.
+            ``[num_anchor_nodes, out_dim]`` embeddings after the final norm, the readout
+            and the output projection, or None if the batch's k-hop candidate set is
+            too large to lay out. The caller then runs the padded path.
         """
         node_type_offsets = get_node_type_offsets(projected_x_dict)
         node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
@@ -2066,6 +2068,9 @@ class GraphTransformerEncoder(nn.Module):
                 # the constructor created the projection.
                 token_projection = cast(nn.Module, self._token_input_projection)
                 x = x + token_projection(token_hop.unsqueeze(-1).to(x.dtype))
+        # Only the anchor token is read out with ``anchor_only``, so the last layer
+        # can skip the other tokens. The neighbor readout needs all of them.
+        anchor_only = self._readout_mode == "anchor_only"
         for layer_index, encoder_layer in enumerate(self._encoder_layers):
             if isinstance(encoder_layer, torch._dynamo.eval_frame.OptimizedModule):
                 raise ValueError(
@@ -2081,11 +2086,55 @@ class GraphTransformerEncoder(nn.Module):
             x = cast(GraphTransformerEncoderLayer, encoder_layer).forward_packed(
                 x,
                 packed,
-                first_token_output=layer_index == len(self._encoder_layers) - 1,
+                first_token_output=anchor_only
+                and layer_index == len(self._encoder_layers) - 1,
             )
-        if len(self._encoder_layers) == 0:
-            x = x[packed.cu_seqlens[:-1].long()]
-        return self._project_output(self._final_norm(x))
+        if anchor_only:
+            if len(self._encoder_layers) == 0:
+                x = x[packed.cu_seqlens[:-1].long()]
+            embeddings = self._final_norm(x)
+        else:
+            embeddings = self._packed_neighbor_readout(
+                self._final_norm(x), flat_index, packed
+            )
+        return self._project_output(embeddings)
+
+    def _packed_neighbor_readout(
+        self,
+        x: Float[Tensor, "tokens hid_dim"],
+        flat_index: Int64[Tensor, "tokens"],
+        packed: PackedLayout,
+    ) -> Float[Tensor, "sequences hid_dim"]:
+        """Packed version of the ``anchor_neighbor_attention`` readout.
+
+        Each anchor gets itself plus the sum of its neighbors weighted by a softmax
+        over its own sequence. Boolean indexing and the softmax's default node count
+        would read sizes back from the GPU, so the anchor tokens are masked out of
+        the softmax instead of dropped, and the softmax is given ``num_nodes``.
+
+        Args:
+            x: Final-normed token states, the anchor first in each sequence.
+            flat_index: Position of each token in the padded
+                ``[sequences, max_seq_len]`` grid, from ``pack_sequences``.
+            packed: Layout of the sequences in ``x``.
+
+        Returns:
+            One embedding per sequence. A sequence with no neighbors gives its anchor.
+        """
+        if self._readout_attention is None:
+            raise ValueError("Readout attention layer is not initialized.")
+        num_sequences = packed.cu_seqlens.numel() - 1
+        sequence_id = flat_index // self._max_seq_len
+        is_neighbor = flat_index % self._max_seq_len != 0
+        anchor = x[packed.cu_seqlens[:-1].long()]
+        scores = self._readout_attention(
+            torch.cat([anchor[sequence_id], x], dim=-1)
+        ).squeeze(-1)
+        # A finite fill keeps a sequence with only its anchor free of NaN.
+        scores = scores.masked_fill(~is_neighbor, torch.finfo(scores.dtype).min)
+        weights = softmax(scores, index=sequence_id, num_nodes=num_sequences)
+        weights = weights * is_neighbor.to(weights.dtype)
+        return anchor.index_add(0, sequence_id, x * weights.unsqueeze(-1))
 
     def _get_sequence_positional_encoding(
         self,

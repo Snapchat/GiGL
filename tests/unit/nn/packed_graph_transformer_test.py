@@ -31,6 +31,8 @@ _BUYS = EdgeType(_USER, Relation("buys"), _ITEM)
 _BOUGHT_BY = EdgeType(_ITEM, Relation("bought_by"), _USER)
 _HOP = "hop_distance"
 _MAX_SEQ_LEN = 24
+_NEIGHBOR_READOUT = "anchor_neighbor_attention"
+_READOUT_MODES = ["anchor_only", _NEIGHBOR_READOUT]
 
 
 def _random_batch(
@@ -189,6 +191,33 @@ class PackedPathTest(TestCase):
                 max_seq_len=10,
                 sampling_direction="out",
             ),
+            param("neighbor_readout", readout_mode=_NEIGHBOR_READOUT),
+            param(
+                "neighbor_readout_three_hops",
+                hop_distances=(3,),
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
+            param(
+                "neighbor_readout_out_direction",
+                readout_mode=_NEIGHBOR_READOUT,
+                sampling_direction="out",
+            ),
+            param(
+                "neighbor_readout_hop_order",
+                readout_mode=_NEIGHBOR_READOUT,
+                prioritize_hop_order=True,
+                max_seq_len=10,
+            ),
+            param(
+                "neighbor_readout_truncated",
+                readout_mode=_NEIGHBOR_READOUT,
+                max_seq_len=6,
+            ),
+            param(
+                "neighbor_readout_no_layers",
+                readout_mode=_NEIGHBOR_READOUT,
+                num_layers=0,
+            ),
         ]
     )
     def test_matches_padded_path(
@@ -221,9 +250,12 @@ class PackedPathTest(TestCase):
                     atol=1e-6,
                 )
 
-    def test_matches_padded_path_with_explicit_anchors(self) -> None:
+    @parameterized.expand(_READOUT_MODES)
+    def test_matches_padded_path_with_explicit_anchors(self, readout_mode: str) -> None:
         data = _random_batch(0)
-        encoder = _materialized_encoder(data, _encoder_kwargs())
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(readout_mode=readout_mode)
+        )
         # Out of order, with a duplicate.
         anchor_node_ids = torch.tensor([7, 3, 3, 40, 0])
         with torch.no_grad():
@@ -244,12 +276,15 @@ class PackedPathTest(TestCase):
         self.assertEqual(actual.shape, (0, 8))
         torch.testing.assert_close(actual, expected)
 
-    def test_edgeless_batch(self) -> None:
+    @parameterized.expand(_READOUT_MODES)
+    def test_edgeless_batch(self, readout_mode: str) -> None:
         data = HeteroData()
         data[_USER].x = torch.randn(6, 8)
         data[_FOLLOWS.tuple_repr()].edge_index = torch.empty((2, 0), dtype=torch.long)
         data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
-        encoder = _materialized_encoder(data, _encoder_kwargs())
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(readout_mode=readout_mode)
+        )
         with torch.no_grad():
             torch.testing.assert_close(
                 _run_packed(encoder, data),
@@ -258,11 +293,39 @@ class PackedPathTest(TestCase):
                 atol=1e-6,
             )
 
+    @parameterized.expand(_READOUT_MODES)
+    def test_anchors_without_neighbors_match_padded_path(
+        self, readout_mode: str
+    ) -> None:
+        # Nodes 3 and 4 have no edges, so their sequences hold only the anchor.
+        data = HeteroData()
+        data[_USER].x = torch.randn(6, 8)
+        data[_FOLLOWS.tuple_repr()].edge_index = torch.tensor([[1, 2, 2], [0, 0, 1]])
+        data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(readout_mode=readout_mode)
+        )
+        anchor_node_ids = torch.tensor([0, 3, 1, 4])
+        with torch.no_grad():
+            actual = _run_packed(encoder, data, anchor_node_ids=anchor_node_ids)
+            expected = encoder(
+                data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+            )
+        self.assertTrue(actual.isfinite().all())
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+
     @parameterized.expand(
         [
             param("default"),
             param("one_anchor", anchors=[3], max_seq_len=256),
             param("two_anchors", anchors=[3, 40], max_seq_len=256),
+            param("neighbor_readout", readout_mode=_NEIGHBOR_READOUT),
+            param(
+                "neighbor_readout_hop_order",
+                readout_mode=_NEIGHBOR_READOUT,
+                prioritize_hop_order=True,
+                max_seq_len=10,
+            ),
         ]
     )
     def test_training_gradients_match_padded_path(
@@ -353,6 +416,7 @@ class PackedPathTest(TestCase):
             param(
                 "neighbor_readout",
                 readout_mode="anchor_neighbor_attention",
+                supported=True,
             ),
             param("prioritize_hop_order", prioritize_hop_order=True, supported=True),
             param("relation_message", relation_message_mode="edge_type_linear"),
@@ -463,14 +527,26 @@ class PackedPathTest(TestCase):
         [
             param("without_fallback", fall_back_at=(), settled_from=2),
             param("with_fallback", fall_back_at=(3,), settled_from=5),
+            param(
+                "neighbor_readout",
+                fall_back_at=(),
+                settled_from=2,
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
         ]
     )
     def test_whole_encoder_compile_does_not_recompile_across_batches(
-        self, _: str, fall_back_at: tuple[int, ...], settled_from: int
+        self,
+        _: str,
+        fall_back_at: tuple[int, ...],
+        settled_from: int,
+        readout_mode: str = "anchor_only",
     ) -> None:
         torch._dynamo.reset()
         self.addCleanup(torch._dynamo.reset)
-        encoder = _materialized_encoder(_random_batch(0), _encoder_kwargs())
+        encoder = _materialized_encoder(
+            _random_batch(0), _encoder_kwargs(readout_mode=readout_mode)
+        )
         real_khop_layout = gigl.nn.graph_transformer.khop_layout
         fall_back = {"now": False}
 
@@ -513,6 +589,7 @@ class PackedPathCudaTest(TestCase):
             # The backward kernel rejects a length bound above the token count.
             param("one_anchor", anchors=[3], max_seq_len=256),
             param("two_anchors", anchors=[3, 40], max_seq_len=256),
+            param("neighbor_readout", readout_mode=_NEIGHBOR_READOUT),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
@@ -555,14 +632,16 @@ class PackedPathCudaTest(TestCase):
             atol=1e-4,
         )
 
+    @parameterized.expand(_READOUT_MODES)
     def test_whole_encoder_inductor_compile_matches_eager_without_recompiling(
-        self,
+        self, readout_mode: str
     ) -> None:
         torch._dynamo.reset()
         self.addCleanup(torch._dynamo.reset)
         kwargs = _encoder_kwargs(
             hid_dim=128,
             dropout_rate=0.0,
+            readout_mode=readout_mode,
         )
         encoder = _materialized_encoder(_random_batch(0), kwargs).to("cuda")
         compiled = torch.compile(encoder)
@@ -576,14 +655,15 @@ class PackedPathCudaTest(TestCase):
             torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
         self.assertEqual(graph_counts[2:], [graph_counts[2]] * 3, graph_counts)
 
-    def test_cuda_forward_matches_cpu_with_two_host_syncs(self) -> None:
+    @parameterized.expand(_READOUT_MODES)
+    def test_cuda_forward_matches_cpu_with_two_host_syncs(
+        self, readout_mode: str
+    ) -> None:
         device = torch.device("cuda")
         batches = [_random_batch(seed) for seed in range(3)]
         warmup_data = _random_batch(0).to(device)
         cuda_batches = [_random_batch(seed).to(device) for seed in range(3)]
-        kwargs = _encoder_kwargs(
-            hid_dim=128,
-        )
+        kwargs = _encoder_kwargs(hid_dim=128, readout_mode=readout_mode)
         cpu_encoder = _materialized_encoder(batches[0], kwargs)
         cuda_encoder = copy.deepcopy(cpu_encoder).to(device)
         with torch.no_grad():
