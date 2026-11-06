@@ -8,6 +8,7 @@ import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.data import Feature
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
@@ -552,6 +553,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         info,
         feature_compression: FeatureCompression,
         weight_edge_feat_name: Optional[dict[EdgeType, str]] = None,
+        should_load_tensors_in_parallel: bool = True,
     ) -> DistDataset:
         with mock.patch.dict(
             os.environ, {FEATURE_COMPRESSION_ENV: feature_compression.value}
@@ -560,19 +562,37 @@ class BuildDatasetLosslessCompressionTest(TestCase):
                 rank=0,
                 world_size=1,
                 mocked_dataset_info=info,
+                should_load_tensors_in_parallel=should_load_tensors_in_parallel,
                 _port=gigl.distributed.utils.get_free_port(),
                 weight_edge_feat_name=weight_edge_feat_name,
             )
 
+    @parameterized.expand(
+        [
+            param("parallel_load", should_load_tensors_in_parallel=True),
+            param("sequential_load", should_load_tensors_in_parallel=False),
+        ]
+    )
     def test_homogeneous_binary_node_features_are_stored_as_bits_and_decode_exactly(
-        self,
+        self, _, should_load_tensors_in_parallel: bool
     ) -> None:
         info = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
-        reference = self._build(info, feature_compression=FeatureCompression.OFF)
+        reference = self._build(
+            info,
+            feature_compression=FeatureCompression.OFF,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
         assert isinstance(reference.node_feature_info, FeatureInfo)
         dim = reference.node_feature_info.dim
+        # Compression is off, so the node features stay a float32 matrix.
+        self.assertIsNone(reference.node_quantization_metadata)
+        self.assertEqual(_unpacked_rows(reference, None).dtype, torch.float32)
 
-        dataset = self._build(info, feature_compression=FeatureCompression.AUTO)
+        dataset = self._build(
+            info,
+            feature_compression=FeatureCompression.AUTO,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
 
         metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)
@@ -626,13 +646,34 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             {_AUTHOR: 334, _PAPER: 4231},
         )
 
+    @parameterized.expand(
+        [
+            param("parallel_load", should_load_tensors_in_parallel=True),
+            param("sequential_load", should_load_tensors_in_parallel=False),
+        ]
+    )
     def test_heterogeneous_edge_features_are_compressed_and_decode_exactly(
-        self,
+        self, _, should_load_tensors_in_parallel: bool
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        reference = self._build(info, FeatureCompression.OFF)
+        reference = self._build(
+            info,
+            FeatureCompression.OFF,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
+        # Compression is off, so every edge type keeps a float32 matrix.
+        self.assertIsNone(reference.edge_quantization_metadata)
+        for reference_edge_store in cast(
+            dict[EdgeType, Feature], reference.edge_features
+        ).values():
+            reference_edge_store.lazy_init_with_ipc_handle()
+            self.assertEqual(reference_edge_store.feature_tensor.dtype, torch.float32)
 
-        dataset = self._build(info, FeatureCompression.AUTO)
+        dataset = self._build(
+            info,
+            FeatureCompression.AUTO,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
 
         edge_metadata = cast(
             dict[EdgeType, FeatureQuantizationMetadata],
