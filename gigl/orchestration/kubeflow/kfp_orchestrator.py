@@ -270,7 +270,7 @@ class KfpOrchestrator:
                     resource_name = futures[future]
                     try:
                         # A run that ended on its own before the cancel landed keeps
-                        # its own outcome; only runs this call cancelled are excused.
+                        # its own outcome, so it is not marked as cancelled.
                         if (
                             VertexAIService.cancel_pipeline_run(resource_name)
                             and future in not_done
@@ -281,7 +281,7 @@ class KfpOrchestrator:
                         cancel_failures[resource_name] = e
                 # Every wait must return before the executor can shut down. The
                 # cancelled waits return once Vertex AI reports the runs as
-                # cancelled; a run whose cancel failed is awaited as before.
+                # cancelled; a run whose cancel failed is awaited until it ends.
                 done, _ = wait(futures, return_when=ALL_COMPLETED)
             failures: dict[str, BaseException] = {}
             for future in done:
