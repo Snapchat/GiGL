@@ -6,6 +6,7 @@ from google.cloud import aiplatform
 from google.cloud.aiplatform_v1.types import job_state
 
 from gigl.common.services.vertex_ai import (
+    PipelineRunStoppedError,
     VertexAIService,
     _wait_for_job_to_leave_queue,
 )
@@ -24,6 +25,7 @@ class _FakeCustomJob:
     def __init__(self, states: list[JobState]) -> None:
         self._states = list(states)
         self.cancel_calls = 0
+        self.cancel_error: Optional[Exception] = None
         self.resource_name = "projects/p/locations/us-central1/customJobs/1"
         self.location = "us-central1"
 
@@ -35,6 +37,8 @@ class _FakeCustomJob:
 
     def cancel(self) -> None:
         self.cancel_calls += 1
+        if self.cancel_error is not None:
+            raise self.cancel_error
 
 
 class WaitForJobToLeaveQueueTest(TestCase):
@@ -87,6 +91,9 @@ class _FakePipelineJob:
         cancel_error: Optional[Exception] = None,
     ) -> None:
         self.resource_name = resource_name
+        self.name = resource_name.rsplit("/", 1)[-1]
+        self.project = "p"
+        self.location = "l"
         self.state = state
         self.cancel_calls = 0
         self.cancel_error = cancel_error
@@ -139,6 +146,20 @@ class CancelPipelineRunTest(TestCase):
         self.assertEqual(run.cancel_calls, 1)
 
 
+class WaitForRunCompletionTest(TestCase):
+    def test_raises_a_stopped_error_with_the_state_of_a_failed_run(self) -> None:
+        run = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/r", PipelineState.PIPELINE_STATE_FAILED
+        )
+        with (
+            patch.object(aiplatform.PipelineJob, "get", return_value=run),
+            self.assertRaises(PipelineRunStoppedError) as raised,
+        ):
+            VertexAIService.wait_for_run_completion(run.resource_name)
+
+        self.assertEqual(raised.exception.state, PipelineState.PIPELINE_STATE_FAILED)
+
+
 class CancelPipelineRunsWithLabelTest(TestCase):
     def test_cancels_only_the_active_labelled_runs(self) -> None:
         running = _FakePipelineJob(
@@ -182,8 +203,37 @@ class CancelPipelineRunsWithLabelTest(TestCase):
             (1, 1, 0),
         )
 
+    def test_a_failed_cancel_does_not_stop_the_other_cancels(self) -> None:
+        broken = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/broken",
+            PipelineState.PIPELINE_STATE_RUNNING,
+            cancel_error=PermissionError("denied"),
+        )
+        running = _FakePipelineJob(
+            "projects/p/locations/l/pipelineJobs/running",
+            PipelineState.PIPELINE_STATE_RUNNING,
+        )
+        runs_by_name = {run.resource_name: run for run in (broken, running)}
 
-class CancelCustomJobsNamedTest(TestCase):
+        with (
+            patch.object(
+                aiplatform.PipelineJob, "list", return_value=[broken, running]
+            ),
+            patch.object(
+                aiplatform.PipelineJob, "get", side_effect=runs_by_name.__getitem__
+            ),
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            VertexAIService.cancel_pipeline_runs_with_label(
+                project="p", location="l", label_key="k", label_value="v"
+            )
+
+        self.assertEqual(running.cancel_calls, 1)
+        (error,) = raised.exception.exceptions
+        self.assertIsInstance(error, PermissionError)
+
+
+class CancelCustomJobsWithNameTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
         init_patcher = patch.object(aiplatform, "init")
@@ -211,10 +261,34 @@ class CancelCustomJobsNamedTest(TestCase):
             return jobs_by_filter[filter]
 
         with patch.object(aiplatform.CustomJob, "list", side_effect=fake_list):
-            cancelled = self.service.cancel_custom_jobs_named(
+            cancelled = self.service.cancel_custom_jobs_with_name(
                 ["gigl_train_x", "gigl_infer_x"]
             )
 
         self.assertEqual(cancelled, [running.resource_name])
         self.assertEqual(running.cancel_calls, 1)
         self.assertEqual(finished.cancel_calls, 0)
+
+    def test_a_failed_lookup_or_cancel_does_not_stop_the_other_cancels(self) -> None:
+        broken = _FakeCustomJob([JobState.JOB_STATE_RUNNING])
+        broken.resource_name = "projects/p/locations/us-central1/customJobs/broken"
+        broken.cancel_error = PermissionError("denied")
+        running = _FakeCustomJob([JobState.JOB_STATE_RUNNING])
+        running.resource_name = "projects/p/locations/us-central1/customJobs/running"
+
+        def fake_list(filter: str, project: str, location: str) -> list[_FakeCustomJob]:
+            if filter == 'display_name="lookup_fails"':
+                raise ConnectionError("list failed")
+            return [broken, running]
+
+        with (
+            patch.object(aiplatform.CustomJob, "list", side_effect=fake_list),
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            self.service.cancel_custom_jobs_with_name(["lookup_fails", "gigl_train_x"])
+
+        self.assertEqual(running.cancel_calls, 1)
+        self.assertEqual(
+            [type(error) for error in raised.exception.exceptions],
+            [ConnectionError, PermissionError],
+        )

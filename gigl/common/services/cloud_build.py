@@ -29,6 +29,9 @@ class CloudBuildService:
 
         Builds that already finished are left alone.
 
+        A failed cancel does not stop the loop.
+        Every matching build gets a cancel request before the errors are raised.
+
         Example:
             >>> CloudBuildService(project="p").cancel_builds_with_tag("gigl-ci-run-123456")
             ['6c1d0e5a-0000-0000-0000-000000000000']
@@ -40,7 +43,9 @@ class CloudBuildService:
             Ids of the builds a cancel was requested for, in listing order.
 
         Raises:
-            google.api_core.exceptions.GoogleAPICallError: If listing or cancelling fails.
+            google.api_core.exceptions.GoogleAPICallError: If the list call fails.
+            ExceptionGroup: If one or more cancels failed.
+                It holds one error for each failed build.
         """
         active_builds = self._client.list_builds(
             request=cloudbuild_v1.ListBuildsRequest(
@@ -49,12 +54,22 @@ class CloudBuildService:
             )
         )
         cancelled: list[str] = []
+        errors: list[Exception] = []
         for build in active_builds:
             logger.info(f"Cancelling Cloud Build {build.id} (tag {tag}).")
-            self._client.cancel_build(
-                request=cloudbuild_v1.CancelBuildRequest(
-                    project_id=self._project, id=build.id
+            try:
+                self._client.cancel_build(
+                    request=cloudbuild_v1.CancelBuildRequest(
+                        project_id=self._project, id=build.id
+                    )
                 )
-            )
+            except Exception as e:
+                logger.warning(f"Could not cancel Cloud Build {build.id}: {e!r}")
+                errors.append(e)
+                continue
             cancelled.append(build.id)
+        if errors:
+            raise ExceptionGroup(
+                f"{len(errors)} Cloud Build cancel(s) failed for tag {tag}", errors
+            )
         return cancelled
