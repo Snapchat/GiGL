@@ -64,7 +64,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
-from jaxtyping import Bool, Float, Int64
+from jaxtyping import Bool, Float, Int, Int64
 from torch import Tensor
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
@@ -565,7 +565,7 @@ def tensors_to_graph_transformer_input(
         # Build the PPR sequence from the "ppr" edges only. When
         # include_sampled_edges is on, the batch also carries the original
         # relation edge types; those feed the relation-message channel via
-        # _lookup_pairwise_relation_indices and must not leak into the sequence.
+        # lookup_pairwise_relation_indices and must not leak into the sequence.
         #
         # Gather just the "ppr" edges and remap their endpoints with the SAME
         # node_type_offsets used for homo_x, so the indices line up with
@@ -707,7 +707,7 @@ def tensors_to_graph_transformer_input(
             device=device,
         )
     )
-    pairwise_relation_indices = _lookup_pairwise_relation_indices(
+    pairwise_relation_indices = lookup_pairwise_relation_indices(
         edge_index_dict=edge_index_dict,
         node_index_sequences=node_index_sequences,
         valid_mask=valid_mask,
@@ -810,7 +810,7 @@ def _validate_ppr_sequence_input(
 ) -> None:
     # The batch may also contain original relation edge types when
     # include_sampled_edges is on (they feed the relation-message channel via
-    # _lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
+    # lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
     ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
     if not ppr_edge_types:
         raise ValueError(
@@ -1659,19 +1659,19 @@ def _lookup_pairwise_relative_features(
     return features, pairwise_nonmissing_indices
 
 
-def _lookup_pairwise_relation_indices(
+def lookup_pairwise_relation_indices(
     edge_index_dict: dict[EdgeType, Tensor],
-    node_index_sequences: Tensor,
-    valid_mask: Tensor,
+    node_index_sequences: Int[Tensor, "batch seq"],
+    valid_mask: Bool[Tensor, "batch seq"],
     relation_edge_types: Optional[list[GiGLEdgeType]],
     node_type_offsets: dict[NodeType, int],
     num_nodes: int,
     device: torch.device,
-    expanded_token_mask: Optional[Tensor] = None,
+    expanded_token_mask: Optional[Int[Tensor, "batch seq"]] = None,
     relation_channel_masks: Optional[dict[EdgeType, int]] = None,
-    frontier_batch_node_keys: Optional[Tensor] = None,
+    frontier_batch_node_keys: Optional[Int[Tensor, "num_frontier_keys"]] = None,
     sampling_direction: Literal["in", "out"] = "out",
-) -> Optional[Tensor]:
+) -> Optional[Int64[Tensor, "num_relation_edges 4"]]:
     """Build sparse relation coordinates for valid token pairs.
 
     For a directed edge ``source -> target``, attention uses ``query=target`` and
@@ -1690,6 +1690,29 @@ def _lookup_pairwise_relation_indices(
     channels allowed to fetch it, so the edge is kept only when the owner was
     pushed in one of those channels. PPR sequences pass these; k-hop passes
     ``None``.
+
+    Args:
+        edge_index_dict: Edge index tensors keyed by edge type tuple.
+        node_index_sequences: Node ids of each sequence token.
+        valid_mask: True for real (non-padding) tokens.
+        relation_edge_types: Edge types that define the relation ids, in order.
+        node_type_offsets: Offset of each node type in the homogeneous node id
+            space.
+        num_nodes: Total number of nodes in the homogeneous node id space.
+        device: Device for the returned tensor.
+        expanded_token_mask: Optional per-token bitmask of the PPR channels that
+            pushed each token's node.
+        relation_channel_masks: Optional map from edge type to the allowed PPR
+            channel bitmask.
+        frontier_batch_node_keys: Optional sorted ``batch_idx * num_nodes +
+            node_idx`` keys of the anchor frontier.
+        sampling_direction: Whether sampled edges point ``"out"`` from or ``"in"``
+            to the expanded node.
+
+    Returns:
+        ``[N, 4]`` unique ``(batch, query, key, relation)`` rows sorted by
+        relation, then ``(batch, query, key)``; ``[0, 4]`` if there are none, and
+        ``None`` without relation edge types.
     """
     if not relation_edge_types:
         return None
@@ -1703,7 +1726,12 @@ def _lookup_pairwise_relation_indices(
     if token_occurrences.batch_indices.numel() == 0:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
 
-    relation_index_parts: list[Tensor] = []
+    # All relation edges go through the matcher together, so the host syncs do not
+    # grow with the number of relations. This holds every relation's intermediates
+    # at once instead of one relation's at a time.
+    source_parts: list[Tensor] = []
+    target_parts: list[Tensor] = []
+    edge_relation_parts: list[Tensor] = []
     for relation_idx, edge_type in enumerate(relation_edge_types):
         edge_type_tuple = edge_type.tuple_repr()
         if edge_type_tuple not in edge_index_dict:
@@ -1718,84 +1746,72 @@ def _lookup_pairwise_relation_indices(
 
         src_offset = int(node_type_offsets[edge_type.src_node_type])
         dst_offset = int(node_type_offsets[edge_type.dst_node_type])
-        source_indices = edge_index[0] + src_offset
-        target_indices = edge_index[1] + dst_offset
-        (
-            relation_batch_indices,
-            relation_query_positions,
-            relation_key_positions,
-        ) = _match_directed_edges_to_token_pairs(
-            source_indices=source_indices,
-            target_indices=target_indices,
-            token_occurrences=token_occurrences,
-            num_nodes=num_nodes,
-            device=device,
-        )
-        if frontier_batch_node_keys is not None:
-            expanded_positions = (
-                relation_query_positions
-                if sampling_direction == "in"
-                else relation_key_positions
+        source_parts.append(edge_index[0] + src_offset)
+        target_parts.append(edge_index[1] + dst_offset)
+        edge_relation_parts.append(
+            torch.full(
+                (edge_index.size(1),), relation_idx, dtype=torch.long, device=device
             )
-            expanded_batch_node_keys = (
-                relation_batch_indices * num_nodes
-                + node_index_sequences[relation_batch_indices, expanded_positions]
-            )
-            in_frontier = _sorted_contains(
-                sorted_values=frontier_batch_node_keys,
-                values=expanded_batch_node_keys,
-            )
-            relation_batch_indices = relation_batch_indices[in_frontier]
-            relation_query_positions = relation_query_positions[in_frontier]
-            relation_key_positions = relation_key_positions[in_frontier]
-        if relation_batch_indices.numel() == 0:
-            continue
-
-        relation_channel_mask = (
-            relation_channel_masks.get(edge_type.tuple_repr())
-            if relation_channel_masks is not None
-            else None
         )
-        if expanded_token_mask is not None:
-            # Keep a relation only when the anchor's own push expanded the OWNER --
-            # the fetched node, which ppr_is_expanded describes. GLT reverses sampled
-            # edges in collation, so the owner is the target (query) position, not
-            # the source/key. For typed PPR the mask is a per-node channel bitmask:
-            # keep the edge only if the anchor pushed the owner in a channel whose
-            # allowlist contains this edge type (relation_channel_mask). Untyped PPR
-            # has no channel mask, so any nonzero (pushed) owner passes.
-            owner_mask = expanded_token_mask[
-                relation_batch_indices, relation_query_positions
-            ]
-            if relation_channel_mask is None:
-                keep = owner_mask != 0
-            else:
-                keep = (owner_mask & relation_channel_mask) != 0
-            relation_batch_indices = relation_batch_indices[keep]
-            relation_query_positions = relation_query_positions[keep]
-            relation_key_positions = relation_key_positions[keep]
-            if relation_batch_indices.numel() == 0:
-                continue
 
-        relation_indices = torch.stack(
-            [
-                relation_batch_indices,
-                relation_query_positions,
-                relation_key_positions,
-                torch.full(
-                    (relation_batch_indices.size(0),),
-                    relation_idx,
-                    dtype=torch.long,
-                    device=device,
-                ),
-            ],
-            dim=1,
-        )
-        relation_index_parts.append(torch.unique(relation_indices, dim=0))
-
-    if not relation_index_parts:
+    if not source_parts:
         return torch.zeros((0, 4), dtype=torch.long, device=device)
-    return torch.cat(relation_index_parts, dim=0)
+    edge_relations = torch.cat(edge_relation_parts)
+    (
+        edge_indices,
+        batch_indices,
+        query_positions,
+        key_positions,
+    ) = _match_directed_edges_to_token_pairs(
+        source_indices=torch.cat(source_parts),
+        target_indices=torch.cat(target_parts),
+        token_occurrences=token_occurrences,
+        num_nodes=num_nodes,
+        device=device,
+    )
+    matched_relations = edge_relations[edge_indices]
+    keep = torch.ones_like(edge_indices, dtype=torch.bool)
+    if frontier_batch_node_keys is not None:
+        expanded_positions = key_positions
+        if sampling_direction == "in":
+            expanded_positions = query_positions
+        keep &= _sorted_contains(
+            sorted_values=frontier_batch_node_keys,
+            values=batch_indices * num_nodes
+            + node_index_sequences[batch_indices, expanded_positions],
+        )
+    if expanded_token_mask is not None:
+        # Keep a relation only when the anchor's own push expanded the OWNER --
+        # the fetched node, which ppr_is_expanded describes. GLT reverses sampled
+        # edges in collation, so the owner is the target (query) position, not
+        # the source/key. For typed PPR the mask is a per-node channel bitmask:
+        # keep the edge only if the anchor pushed the owner in a channel whose
+        # allowlist contains this edge type (relation_channel_mask). Untyped PPR
+        # has no channel mask, so any nonzero (pushed) owner passes.
+        owner_mask = expanded_token_mask[batch_indices, query_positions]
+        # -1 sets every channel bit, so a relation without a channel mask keeps
+        # any pushed owner.
+        channel_masks: list[int] = []
+        for edge_type in relation_edge_types:
+            channel_mask = -1
+            if (
+                relation_channel_masks is not None
+                and edge_type.tuple_repr() in relation_channel_masks
+            ):
+                channel_mask = relation_channel_masks[edge_type.tuple_repr()]
+            channel_masks.append(channel_mask)
+        relation_channel_mask_values = torch.tensor(
+            channel_masks, dtype=torch.long, device=device
+        )
+        keep &= (owner_mask & relation_channel_mask_values[matched_relations]) != 0
+    matches = torch.stack(
+        [matched_relations, batch_indices, query_positions, key_positions],
+        dim=1,
+    )[keep]
+    if matches.size(0) == 0:
+        return torch.zeros((0, 4), dtype=torch.long, device=device)
+    # Unique rows ordered by relation, then (batch, query, key).
+    return torch.unique(matches, dim=0)[:, [1, 2, 3, 0]]
 
 
 def _get_sampled_frontier_batch_node_keys(
@@ -1874,11 +1890,15 @@ def _match_directed_edges_to_token_pairs(
     token_occurrences: _TokenOccurrenceIndex,
     num_nodes: int,
     device: torch.device,
-) -> tuple[Tensor, Tensor, Tensor]:
-    """Map ``source -> target`` graph edges onto valid sequence coordinates."""
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Map ``source -> target`` graph edges onto valid sequence coordinates.
+
+    Returns the matched edge index, batch index, query position and key position,
+    one entry per matched token pair.
+    """
     empty = torch.zeros((0,), dtype=torch.long, device=device)
     if source_indices.numel() == 0 or token_occurrences.batch_indices.numel() == 0:
-        return empty, empty, empty
+        return empty, empty, empty, empty
 
     source_indices = source_indices.to(device=device, dtype=torch.long)
     target_indices = target_indices.to(device=device, dtype=torch.long)
@@ -1896,7 +1916,7 @@ def _match_directed_edges_to_token_pairs(
     target_match_counts = target_upper_bounds - target_lower_bounds
     matched_edge_mask = target_match_counts > 0
     if not matched_edge_mask.any():
-        return empty, empty, empty
+        return empty, empty, empty, empty
 
     matched_edge_indices = torch.nonzero(matched_edge_mask, as_tuple=True)[0]
     matched_target_counts = target_match_counts[matched_edge_indices]
@@ -1904,14 +1924,17 @@ def _match_directed_edges_to_token_pairs(
     repeated_target_edge_indices = torch.repeat_interleave(
         matched_edge_indices,
         matched_target_counts,
+        output_size=total_target_matches,
     )
     repeated_target_lower_bounds = torch.repeat_interleave(
         target_lower_bounds[matched_edge_indices],
         matched_target_counts,
+        output_size=total_target_matches,
     )
     target_group_start_offsets = torch.repeat_interleave(
         torch.cumsum(matched_target_counts, dim=0) - matched_target_counts,
         matched_target_counts,
+        output_size=total_target_matches,
     )
     target_sorted_positions = (
         repeated_target_lower_bounds
@@ -1938,7 +1961,7 @@ def _match_directed_edges_to_token_pairs(
     source_match_counts = source_upper_bounds - source_lower_bounds
     matched_target_mask = source_match_counts > 0
     if not matched_target_mask.any():
-        return empty, empty, empty
+        return empty, empty, empty, empty
 
     matched_target_indices = torch.nonzero(matched_target_mask, as_tuple=True)[0]
     matched_source_counts = source_match_counts[matched_target_indices]
@@ -1946,14 +1969,17 @@ def _match_directed_edges_to_token_pairs(
     repeated_target_indices = torch.repeat_interleave(
         matched_target_indices,
         matched_source_counts,
+        output_size=total_source_matches,
     )
     repeated_source_lower_bounds = torch.repeat_interleave(
         source_lower_bounds[matched_target_indices],
         matched_source_counts,
+        output_size=total_source_matches,
     )
     source_group_start_offsets = torch.repeat_interleave(
         torch.cumsum(matched_source_counts, dim=0) - matched_source_counts,
         matched_source_counts,
+        output_size=total_source_matches,
     )
     source_sorted_positions = (
         repeated_source_lower_bounds
@@ -1965,6 +1991,7 @@ def _match_directed_edges_to_token_pairs(
     ]
 
     return (
+        repeated_target_edge_indices[repeated_target_indices],
         target_batch_indices[repeated_target_indices],
         target_query_positions[repeated_target_indices],
         token_occurrences.positions[source_token_indices],
