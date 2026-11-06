@@ -6,8 +6,9 @@ description: |
   Both identifiers are defined in gigl/src/common/constants/ci.py.
   Each cancelled pipeline's exit task then cancels that pipeline's own child jobs.
   Meant for a step with `if: cancelled()`. Needs gcloud to be authenticated and uv installed already (both come
-  from setup-python-tools); the GiGL environment is not needed. The script and VertexAIService come from the
-  current checkout. A checkout that predates them has no labelled runs to cancel, and this step fails.
+  from setup-python-tools); the GiGL environment is not needed. The script and the services it imports come
+  from the repo copy this action was loaded from (main for `snapchat/gigl/...@main`, the workspace for `./`), not
+  from the PR checkout, so a PR branch that predates this action still gets its labelled runs cancelled.
 inputs:
   project:
     description: "Google Cloud project"
@@ -28,10 +29,13 @@ runs:
         PROJECT: ${{ inputs.project }}
         REGION: ${{ inputs.region }}
         RUN_ID: ${{ inputs.github_run_id }}
-        PYTHONPATH: ${{ github.workspace }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
+        # The runner downloads the whole repo for `owner/repo/path@ref`, and action_path points into it.
+        # For a local `./` action, the same path is in the workspace.
+        REPO_ROOT="$(cd "${ACTION_PATH}/../../.." && pwd)"
         # The `gh-actions` dependency group (pyproject.toml) holds only what this script imports, pinned by
         # uv.lock, so this installs in seconds and skips the project itself.
-        uv run --frozen --only-group gh-actions \
-          python .github/scripts/cancel_ci_gcp_resources.py \
+        PYTHONPATH="${REPO_ROOT}" uv run --project "${REPO_ROOT}" --frozen --only-group gh-actions \
+          python "${REPO_ROOT}/.github/scripts/cancel_ci_gcp_resources.py" \
           --project="${PROJECT}" --region="${REGION}" --github_run_id="${RUN_ID}"

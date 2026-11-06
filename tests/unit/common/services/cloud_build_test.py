@@ -1,3 +1,4 @@
+from typing import Optional
 from unittest.mock import patch
 
 from google.api_core.exceptions import FailedPrecondition
@@ -17,11 +18,20 @@ class _FakeCloudBuildClient:
         self,
         builds: list[cloudbuild_v1.Build],
         failing_build_ids: frozenset[str] = frozenset(),
+        statuses: Optional[dict[str, list[cloudbuild_v1.Build.Status]]] = None,
     ) -> None:
         self._builds = builds
         self._failing_build_ids = failing_build_ids
+        # Status reads per build id, in order; the last one repeats.
+        self._statuses = statuses or {}
+
         self.list_requests: list[cloudbuild_v1.ListBuildsRequest] = []
         self.cancel_requests: list[cloudbuild_v1.CancelBuildRequest] = []
+
+    def get_build(self, request: cloudbuild_v1.GetBuildRequest) -> cloudbuild_v1.Build:
+        statuses = self._statuses[request.id]
+        status = statuses.pop(0) if len(statuses) > 1 else statuses[0]
+        return cloudbuild_v1.Build(id=request.id, status=status)
 
     def list_builds(
         self, request: cloudbuild_v1.ListBuildsRequest
@@ -77,3 +87,30 @@ class CancelBuildsWithTagTest(TestCase):
         self.assertEqual([r.id for r in client.cancel_requests], ["b1", "b2"])
         (error,) = raised.exception.exceptions
         self.assertIsInstance(error, FailedPrecondition)
+
+
+Status = cloudbuild_v1.Build.Status
+
+
+class WaitForBuildsToStopTest(TestCase):
+    def test_returns_once_every_build_stopped(self) -> None:
+        client = _FakeCloudBuildClient(
+            [],
+            statuses={
+                "b1": [Status.WORKING, Status.WORKING, Status.CANCELLED],
+                "b2": [Status.CANCELLED],
+            },
+        )
+
+        with patch("gigl.common.services.cloud_build.time.sleep") as sleep:
+            _service_over(client).wait_for_builds_to_stop(["b1", "b2"], timeout_s=60)
+
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_raises_when_a_build_never_stops(self) -> None:
+        client = _FakeCloudBuildClient([], statuses={"b1": [Status.WORKING]})
+
+        with self.assertRaises(TimeoutError):
+            _service_over(client).wait_for_builds_to_stop(
+                ["b1"], timeout_s=0.05, poll_interval_s=0.01
+            )
