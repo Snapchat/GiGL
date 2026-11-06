@@ -12,10 +12,13 @@ logger = Logger()
 
 # Dataflow rejects a cancel with FailedPrecondition ("Job has no backend assigned")
 # for the first seconds after a job is submitted. The exit task that cleans up a
-# cancelled pipeline can meet a job that young, so a cancel is retried for about
-# two minutes before the error is raised.
-_CANCEL_ATTEMPTS: Final[int] = 8
+# cancelled pipeline can meet a job that young, so a cancel is retried for
+# _CANCEL_RETRY_BUDGET_SECONDS before the error is raised.
+_CANCEL_RETRY_BUDGET_SECONDS: Final[float] = 120.0
 _CANCEL_RETRY_SECONDS: Final[float] = 15.0
+_CANCEL_ATTEMPTS: Final[int] = int(
+    _CANCEL_RETRY_BUDGET_SECONDS // _CANCEL_RETRY_SECONDS
+)
 
 
 class DataflowService:
@@ -47,6 +50,9 @@ class DataflowService:
 
         A job too new to accept a cancel is retried for about two minutes.
 
+        A failed cancel does not stop the loop.
+        Every matching job gets a cancel request before the errors are raised.
+
         Args:
             name_prefix: Sanitized Dataflow job name prefix.
 
@@ -54,8 +60,9 @@ class DataflowService:
             Ids of the jobs a cancel was requested for.
 
         Raises:
-            google.api_core.exceptions.FailedPrecondition: If a job still refuses
-                the cancel after the last retry.
+            ExceptionGroup: If one or more cancels failed, for example a job that
+                still refuses the cancel after the last retry.
+                It holds one error for each failed job.
         """
         active_jobs = self._jobs_client.list_jobs(
             request=dataflow.ListJobsRequest(
@@ -65,12 +72,23 @@ class DataflowService:
             )
         )
         cancelled: list[str] = []
+        errors: list[Exception] = []
         for job in active_jobs:
             if not job.name.startswith(name_prefix):
                 continue
             logger.info(f"Cancelling Dataflow job {job.id} ({job.name}).")
-            self._request_cancel(job.id)
+            try:
+                self._request_cancel(job.id)
+            except Exception as e:
+                logger.warning(f"Could not cancel Dataflow job {job.id}: {e!r}")
+                errors.append(e)
+                continue
             cancelled.append(job.id)
+        if errors:
+            raise ExceptionGroup(
+                f"{len(errors)} Dataflow job cancel(s) failed for prefix {name_prefix}",
+                errors,
+            )
         return cancelled
 
     def _request_cancel(self, job_id: str) -> None:

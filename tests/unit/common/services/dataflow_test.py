@@ -12,11 +12,19 @@ class _FakeJobsClient:
 
     ``rejections`` is how many update calls fail with FailedPrecondition before one
     is accepted, as Dataflow does for a job that has no backend assigned yet.
+
+    ``always_rejected_job_ids`` are jobs whose update calls always fail.
     """
 
-    def __init__(self, jobs: list[dataflow.Job], rejections: int = 0) -> None:
+    def __init__(
+        self,
+        jobs: list[dataflow.Job],
+        rejections: int = 0,
+        always_rejected_job_ids: frozenset[str] = frozenset(),
+    ) -> None:
         self._jobs = jobs
         self._rejections = rejections
+        self._always_rejected_job_ids = always_rejected_job_ids
         self.list_requests: list[dataflow.ListJobsRequest] = []
         self.update_requests: list[dataflow.UpdateJobRequest] = []
 
@@ -26,6 +34,8 @@ class _FakeJobsClient:
 
     def update_job(self, request: dataflow.UpdateJobRequest) -> dataflow.Job:
         self.update_requests.append(request)
+        if request.job_id in self._always_rejected_job_ids:
+            raise FailedPrecondition("Job has no backend assigned.")
         if self._rejections > 0:
             self._rejections -= 1
             raise FailedPrecondition("Job has no backend assigned.")
@@ -92,8 +102,28 @@ class CancelJobsWithNamePrefixTest(TestCase):
 
         with (
             patch("gigl.common.services.dataflow.time.sleep"),
-            self.assertRaises(FailedPrecondition),
+            self.assertRaises(ExceptionGroup) as raised,
         ):
             _service_over(jobs_client).cancel_jobs_with_name_prefix("gigl-a-")
 
         self.assertEqual(len(jobs_client.update_requests), _CANCEL_ATTEMPTS)
+        (error,) = raised.exception.exceptions
+        self.assertIsInstance(error, FailedPrecondition)
+
+    def test_a_failed_cancel_does_not_stop_the_other_cancels(self) -> None:
+        jobs_client = _FakeJobsClient(
+            [
+                dataflow.Job(id="1", name="gigl-a-x"),
+                dataflow.Job(id="2", name="gigl-a-y"),
+            ],
+            always_rejected_job_ids=frozenset({"1"}),
+        )
+
+        with (
+            patch("gigl.common.services.dataflow.time.sleep"),
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            _service_over(jobs_client).cancel_jobs_with_name_prefix("gigl-a-")
+
+        self.assertEqual(jobs_client.update_requests[-1].job_id, "2")
+        self.assertEqual(len(raised.exception.exceptions), 1)

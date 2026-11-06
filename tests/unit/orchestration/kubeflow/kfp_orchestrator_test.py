@@ -4,15 +4,18 @@ from typing import Callable, Optional
 from unittest.mock import ANY, patch
 
 from absl.testing import absltest
+from google.cloud import aiplatform
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
+from gigl.common.services.vertex_ai import PipelineRunStoppedError
 from gigl.orchestration.kubeflow.kfp_orchestrator import KfpOrchestrator
 from tests.test_assets.test_case import TestCase
 
 logger = Logger()
 
 _SERVICE = "gigl.orchestration.kubeflow.kfp_orchestrator.VertexAIService"
+PipelineState = aiplatform.gapic.PipelineState
 
 
 class _FakeRuns:
@@ -32,21 +35,38 @@ class _FakeRuns:
     def fails(self, name: str, delay_s: float = 0.0) -> None:
         def script() -> None:
             time.sleep(delay_s)
-            raise RuntimeError(f"run {name} failed")
+            raise PipelineRunStoppedError(
+                f"run {name} failed", state=PipelineState.PIPELINE_STATE_FAILED
+            )
+
+        self.scripts[name] = script
+
+    def status_request_fails(self, name: str) -> None:
+        """The waiter raises while the run itself keeps running."""
+
+        def script() -> None:
+            raise ConnectionError(f"status request for {name} failed")
 
         self.scripts[name] = script
 
     def succeeds(self, name: str) -> None:
         self.scripts[name] = lambda: None
 
-    def blocked_until_cancelled(self, name: str) -> None:
+    def blocked_until_cancelled(
+        self,
+        name: str,
+        end_state: PipelineState = PipelineState.PIPELINE_STATE_CANCELLED,
+    ) -> None:
+        """The run waits for a cancel, then stops in ``end_state``."""
         event = threading.Event()
         self.events[name] = event
 
         def script() -> None:
             if not event.wait(timeout=5):
                 raise AssertionError(f"run {name} was never cancelled")
-            raise RuntimeError(f"run {name} stopped with status: CANCELLED")
+            raise PipelineRunStoppedError(
+                f"run {name} stopped with status: {end_state.name}", state=end_state
+            )
 
         self.scripts[name] = script
 
@@ -124,6 +144,31 @@ class WaitForCompletionTest(TestCase):
         self.assertIn("run A failed", message)
         self.assertIn("run B failed", message)
         self.assertNotIn("cancel of B", message)
+
+    def test_fail_fast_cancels_a_run_whose_status_request_failed(self) -> None:
+        self.runs.status_request_fails("A")
+        self.runs.blocked_until_cancelled("B")
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.orchestrator.wait_for_completion(["A", "B"], fail_fast=True)
+
+        self.assertCountEqual(self.runs.cancelled, ["A", "B"])
+        message = str(raised.exception)
+        self.assertIn("status request for A failed", message)
+        self.assertNotIn("CANCELLED", message)
+
+    def test_fail_fast_reports_a_cancelled_run_that_ended_failed(self) -> None:
+        self.runs.fails("A")
+        self.runs.blocked_until_cancelled(
+            "B", end_state=PipelineState.PIPELINE_STATE_FAILED
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            self.orchestrator.wait_for_completion(["A", "B"], fail_fast=True)
+
+        self.assertIn(
+            "run B stopped with status: PIPELINE_STATE_FAILED", str(raised.exception)
+        )
 
     def test_fail_fast_with_the_last_run_failing_cancels_nothing(self) -> None:
         self.runs.succeeds("A")
