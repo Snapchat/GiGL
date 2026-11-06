@@ -50,7 +50,9 @@ Constraints:
     On CUDA the kernel runs when there is no ``per_pair`` bias and no dropout.
     With a ``per_pair`` bias or ``dropout_p > 0``, CUDA runs the padded SDPA
     path on the GPU instead, which costs ``num_sequences * max_seq_len`` rows of
-    attention work rather than only the real tokens.
+    attention work rather than only the real tokens, and holds a dense
+    ``num_sequences x num_heads x query_len x max_seq_len`` bias plus the same-sized
+    scores, rebuilt in every layer.
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
