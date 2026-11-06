@@ -1,7 +1,16 @@
 import time
 import traceback
 from dataclasses import dataclass, replace
-from typing import Mapping, MutableMapping, NamedTuple, Optional, Union, cast
+from typing import (
+    Generic,
+    Mapping,
+    MutableMapping,
+    NamedTuple,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import torch
 import torch.multiprocessing as mp
@@ -509,39 +518,39 @@ def _data_loading_process(
         error_dict[entity_type] = traceback.format_exc()
 
 
-class _EntityFeatures(NamedTuple):
+# Node features are keyed by NodeType and edge features by EdgeType. A constrained TypeVar keeps that key type
+# through the helper: ``dict`` is invariant in its key, so a dict keyed by NodeType is not a dict keyed by
+# ``Union[NodeType, EdgeType]``.
+_EntityKey = TypeVar("_EntityKey", NodeType, EdgeType)
+
+
+class _EntityFeatures(NamedTuple, Generic[_EntityKey]):
     """Raw features, packed features and quantization metadata of one entity type."""
 
-    features: Optional[
-        Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
-    ]
-    packed_features: Optional[
-        Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
-    ]
+    features: Optional[Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]]
+    packed_features: Optional[Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]]
     metadata: Optional[
         Union[
             FeatureQuantizationMetadata,
-            dict[Union[NodeType, EdgeType], FeatureQuantizationMetadata],
+            dict[_EntityKey, FeatureQuantizationMetadata],
         ]
     ]
 
 
 def _read_and_compress_features(
-    output_dict: Mapping[
-        str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
-    ],
+    output_dict: Mapping[str, Union[torch.Tensor, dict[_EntityKey, torch.Tensor]]],
     error_dict: Mapping[str, str],
     entity_type: str,
     metadata: Optional[
         Union[
             FeatureQuantizationMetadata,
-            dict[Union[NodeType, EdgeType], FeatureQuantizationMetadata],
+            dict[_EntityKey, FeatureQuantizationMetadata],
         ]
     ],
     should_compress: bool,
     is_homogeneous: bool,
-    default_key: Union[NodeType, EdgeType],
-) -> _EntityFeatures:
+    default_key: _EntityKey,
+) -> _EntityFeatures[_EntityKey]:
     """Reads the raw and packed features of one entity type once its loading process has joined.
 
     Compresses them with ``compress_loaded_features`` if ``should_compress`` is set and this entity type's own
