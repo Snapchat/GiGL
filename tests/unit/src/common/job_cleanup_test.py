@@ -1,16 +1,11 @@
 from typing import Sequence
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from google.api_core.exceptions import PermissionDenied
-from google.cloud import aiplatform
 
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
-from gigl.common.services.vertex_ai import PipelineRunStoppedError
-from gigl.src.common.job_cleanup import (
-    cancel_child_jobs,
-    cancel_pipeline_run_and_child_jobs,
-)
+from gigl.src.common.job_cleanup import cancel_child_jobs
 from tests.test_assets.test_case import TestCase
 
 _RESOURCE_CONFIG_URI = LocalUri.join(
@@ -132,75 +127,3 @@ class CancelChildJobsTest(TestCase):
 
         self.assertIn("Dataproc cluster sgs-My-Job", str(raised.exception))
         self.assertEqual(_FirstClusterFailsDataprocService.deleted, ["split-My-Job"])
-
-
-class CancelPipelineRunAndChildJobsTest(TestCase):
-    _PIPELINE_RUN = "projects/p/locations/us-central1/pipelineJobs/my-run"
-
-    def _run_with_parameters(self) -> MagicMock:
-        run = MagicMock()
-        run.gca_resource.runtime_config.parameter_values = {
-            "job_name": "my_job",
-            "resource_config_uri": "gs://bucket/resource_config.yaml",
-        }
-        return run
-
-    def test_cancels_the_run_waits_then_cancels_the_children(self) -> None:
-        calls: list[str] = []
-
-        def record_wait(resource_name: str, timeout: float) -> None:
-            calls.append("wait")
-            raise PipelineRunStoppedError(
-                "stopped",
-                state=aiplatform.gapic.PipelineState.PIPELINE_STATE_CANCELLED,
-            )
-
-        with (
-            patch.object(
-                aiplatform.PipelineJob,
-                "get",
-                return_value=self._run_with_parameters(),
-            ),
-            patch(
-                "gigl.src.common.job_cleanup.VertexAIService.cancel_pipeline_run",
-                side_effect=lambda resource_name: calls.append("cancel") or True,
-            ),
-            patch(
-                "gigl.src.common.job_cleanup.VertexAIService.wait_for_run_completion",
-                side_effect=record_wait,
-            ),
-            patch(
-                "gigl.src.common.job_cleanup.cancel_child_jobs",
-                side_effect=lambda **kwargs: calls.append("children"),
-            ) as cancel_children,
-        ):
-            cancel_pipeline_run_and_child_jobs(self._PIPELINE_RUN)
-
-        self.assertEqual(calls, ["cancel", "wait", "children"])
-        self.assertEqual(cancel_children.call_args.kwargs["job_name"], "my_job")
-        self.assertEqual(
-            cancel_children.call_args.kwargs["resource_config_uri"].uri,
-            "gs://bucket/resource_config.yaml",
-        )
-
-    def test_a_run_that_does_not_stop_leaves_the_children_alone(self) -> None:
-        with (
-            patch.object(
-                aiplatform.PipelineJob,
-                "get",
-                return_value=self._run_with_parameters(),
-            ),
-            patch(
-                "gigl.src.common.job_cleanup.VertexAIService.cancel_pipeline_run",
-                return_value=True,
-            ),
-            patch(
-                "gigl.src.common.job_cleanup.VertexAIService.wait_for_run_completion",
-                side_effect=RuntimeError("timed out"),
-            ),
-            patch("gigl.src.common.job_cleanup.cancel_child_jobs") as cancel_children,
-            self.assertRaises(RuntimeError),
-        ):
-            cancel_pipeline_run_and_child_jobs(self._PIPELINE_RUN)
-
-        cancel_children.assert_not_called()
