@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import torch
 from absl.testing import absltest
+from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils.checkpoint import checkpoint
 
 from gigl.nn.packed_attention import (
@@ -24,6 +25,31 @@ _MAX_SEQ_LEN = 24
 
 
 class PackedAttentionTest(TestCase):
+    def test_varlen_attention_with_a_bias_raises_when_an_input_requires_grad(
+        self,
+    ) -> None:
+        cu_seqlens = torch.tensor([0, 5, 6, 12], dtype=torch.int32, device="meta")
+        attn_bias = torch.empty(3, 2, 8, 8, device="meta")
+        for name in ("query", "key", "value"):
+            with self.subTest(requires_grad=name):
+                tensors = {
+                    tensor_name: torch.empty(
+                        12, 2, 64, device="meta", requires_grad=tensor_name == name
+                    )
+                    for tensor_name in ("query", "key", "value")
+                }
+                with self.assertRaises(ValueError):
+                    _varlen_attention(
+                        tensors["query"],
+                        tensors["key"],
+                        tensors["value"],
+                        cu_seqlens,
+                        cu_seqlens,
+                        6,
+                        6,
+                        attn_bias,
+                    )
+
     def test_varlen_attention_traces_and_backpropagates_on_meta_tensors(self) -> None:
         cu_seqlens = torch.tensor([0, 5, 6, 12], dtype=torch.int32, device="meta")
         query, key, value = (
@@ -338,6 +364,7 @@ class PackedAttentionCudaTest(TestCase):
         check_gradients: bool = True,
         with_per_key: bool = True,
         per_pair_query_len: int = 0,
+        max_seq_len: int = _MAX_SEQ_LEN,
     ) -> None:
         """Compares ``packed_attention`` on CUDA to the CPU padded reference.
 
@@ -346,10 +373,10 @@ class PackedAttentionCudaTest(TestCase):
         """
         device = torch.device("cuda")
         num_heads = 2
-        lengths = torch.tensor([5, 1, 24, 3, 12])
+        lengths = torch.tensor([5, 1, 24, 3, 12]).clamp(max=max_seq_len)
         num_tokens = int(lengths.sum())
-        packed = pack_sequences(lengths, _MAX_SEQ_LEN)
-        cuda_packed = pack_sequences(lengths.to(device), _MAX_SEQ_LEN)
+        packed = pack_sequences(lengths, max_seq_len)
+        cuda_packed = pack_sequences(lengths.to(device), max_seq_len)
         generator = torch.Generator().manual_seed(0)
         if query_is_first_token:
             num_queries = lengths.numel()
@@ -367,7 +394,7 @@ class PackedAttentionCudaTest(TestCase):
                     lengths.numel(),
                     num_heads,
                     per_pair_query_len,
-                    _MAX_SEQ_LEN,
+                    max_seq_len,
                     generator=generator,
                 )
             )
@@ -466,6 +493,145 @@ class PackedAttentionCudaTest(TestCase):
                         atol=atol,
                         per_pair_query_len=per_pair_query_len,
                     )
+
+    def test_per_pair_bias_without_gradient_matches_cpu_reference(self) -> None:
+        # 20 is not a multiple of 8, so the kernel's bias is padded to 24 keys.
+        for max_seq_len, with_per_key, (dtype, atol) in itertools.product(
+            (_MAX_SEQ_LEN, 20),
+            (False, True),
+            ((torch.float32, 1e-4), (torch.bfloat16, 1e-1)),
+        ):
+            with (
+                self.subTest(
+                    max_seq_len=max_seq_len, per_key=with_per_key, dtype=dtype
+                ),
+                torch.no_grad(),
+            ):
+                self._assert_matches_cpu_reference(
+                    head_dim=64,
+                    query_is_first_token=False,
+                    dtype=dtype,
+                    atol=atol,
+                    check_gradients=False,
+                    with_per_key=with_per_key,
+                    per_pair_query_len=max_seq_len,
+                    max_seq_len=max_seq_len,
+                )
+
+    def test_per_pair_bias_that_is_a_permuted_view_matches_the_padded_path(
+        self,
+    ) -> None:
+        # The pairwise bias comes from a linear layer over ``[batch, seq, seq,
+        # heads]``, so it reaches the kernel with a last-dim stride above 1.
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        num_tokens = int(lengths.sum())
+        query, key, value = (
+            torch.randn(num_tokens, 2, 64, device=device) for _ in range(3)
+        )
+        per_pair = torch.randn(5, _MAX_SEQ_LEN, _MAX_SEQ_LEN, 2, device=device).permute(
+            0, 3, 1, 2
+        )
+        bias = PackedAttentionBias(per_pair=per_pair)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                packed_attention(query, key, value, layout, False, bias),
+                _padded_packed_attention(query, key, value, layout, False, bias),
+                rtol=0,
+                atol=1e-4,
+            )
+
+    def test_per_pair_bias_with_one_head_and_full_sequences_matches_the_padded_path(
+        self,
+    ) -> None:
+        # With one head and every sequence full, the kernel's strided bias view
+        # reaches past the end of the bias grid.
+        device = torch.device("cuda")
+        for max_seq_len in (_MAX_SEQ_LEN, 20):
+            with self.subTest(max_seq_len=max_seq_len):
+                lengths = torch.full((3,), max_seq_len, device=device)
+                layout = pack_sequences(lengths, max_seq_len)
+                num_tokens = int(lengths.sum())
+                query, key, value = (
+                    torch.randn(num_tokens, 1, 64, device=device) for _ in range(3)
+                )
+                per_pair = torch.randn(3, 1, max_seq_len, max_seq_len, device=device)
+                bias = PackedAttentionBias(per_pair=per_pair)
+                with torch.no_grad():
+                    torch.testing.assert_close(
+                        packed_attention(query, key, value, layout, False, bias),
+                        _padded_packed_attention(
+                            query, key, value, layout, False, bias
+                        ),
+                        rtol=0,
+                        atol=1e-4,
+                    )
+
+    def _dispatched_kernel(
+        self, query_is_first_token: bool, requires_grad: bool
+    ) -> bool:
+        """Returns whether ``packed_attention`` with a per-pair bias ran the varlen kernel."""
+        device = torch.device("cuda")
+        lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        num_tokens = int(lengths.sum())
+        num_queries = num_tokens
+        query_len = _MAX_SEQ_LEN
+        if query_is_first_token:
+            num_queries = lengths.numel()
+            query_len = 1
+        query = torch.randn(num_queries, 2, 64, device=device)
+        key, value = (torch.randn(num_tokens, 2, 64, device=device) for _ in range(2))
+        per_pair = torch.randn(5, 2, query_len, _MAX_SEQ_LEN, device=device)
+        for tensor in (query, key, value, per_pair):
+            tensor.requires_grad_(requires_grad)
+        names: list[str] = []
+
+        class _Recorder(TorchDispatchMode):
+            def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+                names.append(str(func))
+                return func(*args, **(kwargs or {}))
+
+        with _Recorder():
+            packed_attention(
+                query,
+                key,
+                value,
+                layout,
+                query_is_first_token,
+                PackedAttentionBias(per_pair=per_pair),
+            )
+        return any("varlen_attention" in name for name in names)
+
+    def test_per_pair_bias_dispatch(self) -> None:
+        for query_is_first_token, requires_grad, expected_kernel in (
+            # A first-token row 0 is a per-key bias, so it runs the kernel with a gradient.
+            (True, True, True),
+            (True, False, True),
+            (False, False, True),
+            # The kernel has no backward for a bias, so training uses the padded path.
+            (False, True, False),
+        ):
+            with self.subTest(
+                first_token=query_is_first_token, requires_grad=requires_grad
+            ):
+                self.assertEqual(
+                    self._dispatched_kernel(query_is_first_token, requires_grad),
+                    expected_kernel,
+                )
+
+    def test_varlen_attention_raises_when_the_bias_requires_grad(self) -> None:
+        lengths = torch.tensor([3, 2], device="cuda")
+        layout = pack_sequences(lengths, 8)
+        query, key, value = (
+            torch.randn(5, 2, 8, device="cuda", requires_grad=True) for _ in range(3)
+        )
+        attn_bias = torch.randn(2, 2, 8, 8, device="cuda", requires_grad=True)
+        with self.assertRaises(ValueError):
+            _varlen_attention(
+                query, key, value, layout.cu_seqlens, layout.cu_seqlens, 8, 5, attn_bias
+            )
 
     def test_dropout_runs_and_backpropagates_on_cuda(self) -> None:
         device = torch.device("cuda")
