@@ -16,7 +16,7 @@ from kfp.compiler import Compiler
 import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri, Uri
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import VertexAIService
+from gigl.common.services.vertex_ai import PipelineRunStoppedError, VertexAIService
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
 from gigl.env.pipelines_config import get_resource_config
 from gigl.orchestration.kubeflow.kfp_pipeline import ExitTask, generate_pipeline
@@ -42,6 +42,13 @@ DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH = LocalUri.join(
 )
 
 DEFAULT_START_AT_COMPONENT = "config_populator"
+
+
+def _is_cancelled(error: BaseException) -> bool:
+    return (
+        isinstance(error, PipelineRunStoppedError)
+        and error.state == aiplatform.gapic.PipelineState.PIPELINE_STATE_CANCELLED
+    )
 
 
 class KfpOrchestrator:
@@ -207,13 +214,14 @@ class KfpOrchestrator:
             run (Union[aiplatform.PipelineJob, str]): The pipeline job or its resource name.
             fail_fast (bool): If True, the first failed run cancels every run that is still
                 waiting, then this waits for Vertex AI to report those runs as cancelled,
-                which takes a few minutes. If False, every run is awaited.
+                which takes a few minutes. A run whose status request failed also gets a
+                cancel, because it can still be running. If False, every run is awaited.
                 Either way the error names each failed run.
 
         Raises:
             RuntimeError: If any run failed, or a cancel could not be requested. The message
-                names every failed run and every failed cancel with its error. Runs this call
-                cancelled on purpose are not counted as failures.
+                names every failed run and every failed cancel with its error. A run is
+                excused only if this call cancelled it and it then reached CANCELLED.
         """
         resource_names: list[str] = []
         if isinstance(run, str):
@@ -243,17 +251,30 @@ class KfpOrchestrator:
             )
             cancelled_runs: set[str] = set()
             cancel_failures: dict[str, BaseException] = {}
-            if not_done and any(future.exception() is not None for future in done):
-                logger.warning(
-                    f"A pipeline run failed; cancelling the {len(not_done)} still "
-                    f"running: {[futures[f] for f in not_done]}"
-                )
-                for future in not_done:
+            if fail_fast and any(future.exception() is not None for future in done):
+                # A waiter also raises when a status request fails. Its run can still
+                # be running, so it gets a cancel too. Its error still counts.
+                failed_without_stopping = [
+                    future
+                    for future in done
+                    if future.exception() is not None
+                    and not isinstance(future.exception(), PipelineRunStoppedError)
+                ]
+                runs_to_cancel = [*not_done, *failed_without_stopping]
+                if runs_to_cancel:
+                    logger.warning(
+                        f"A pipeline run failed; cancelling the {len(runs_to_cancel)} "
+                        f"that can still be running: {[futures[f] for f in runs_to_cancel]}"
+                    )
+                for future in runs_to_cancel:
                     resource_name = futures[future]
                     try:
                         # A run that ended on its own before the cancel landed keeps
                         # its own outcome; only runs this call cancelled are excused.
-                        if VertexAIService.cancel_pipeline_run(resource_name):
+                        if (
+                            VertexAIService.cancel_pipeline_run(resource_name)
+                            and future in not_done
+                        ):
                             cancelled_runs.add(resource_name)
                     except Exception as e:
                         logger.warning(f"Could not cancel {resource_name}: {e!r}")
@@ -268,7 +289,13 @@ class KfpOrchestrator:
                 error = future.exception()
                 if error is None:
                     logger.info(f"Pipeline run {resource_name} completed successfully.")
-                elif resource_name not in cancelled_runs:
+                elif resource_name in cancelled_runs and _is_cancelled(error):
+                    logger.info(
+                        f"Pipeline run {resource_name} was cancelled by fail fast."
+                    )
+                else:
+                    # A run that got a cancel but then failed, timed out, or lost its
+                    # status request is still a failure.
                     failures[resource_name] = error
 
         if failures or cancel_failures:
