@@ -1,7 +1,7 @@
 import time
 import traceback
 from dataclasses import dataclass, replace
-from typing import Any, Mapping, MutableMapping, Optional, Union, cast
+from typing import Mapping, MutableMapping, NamedTuple, Optional, Union, cast
 
 import torch
 import torch.multiprocessing as mp
@@ -509,32 +509,46 @@ def _data_loading_process(
         error_dict[entity_type] = traceback.format_exc()
 
 
+class _EntityFeatures(NamedTuple):
+    """Raw features, packed features and quantization metadata of one entity type."""
+
+    features: Optional[
+        Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
+    ]
+    packed_features: Optional[
+        Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
+    ]
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata,
+            dict[Union[NodeType, EdgeType], FeatureQuantizationMetadata],
+        ]
+    ]
+
+
 def _read_and_compress_features(
-    output_dict: Mapping[str, Union[torch.Tensor, dict[Any, torch.Tensor]]],
+    output_dict: Mapping[
+        str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
+    ],
     error_dict: Mapping[str, str],
     entity_type: str,
     metadata: Optional[
-        Union[FeatureQuantizationMetadata, dict[Any, FeatureQuantizationMetadata]]
+        Union[
+            FeatureQuantizationMetadata,
+            dict[Union[NodeType, EdgeType], FeatureQuantizationMetadata],
+        ]
     ],
     should_compress: bool,
     is_homogeneous: bool,
     default_key: Union[NodeType, EdgeType],
-    rank: int,
-    start_time: float,
-) -> tuple[
-    Optional[Union[torch.Tensor, dict[Any, torch.Tensor]]],
-    Optional[Union[torch.Tensor, dict[Any, torch.Tensor]]],
-    Optional[
-        Union[FeatureQuantizationMetadata, dict[Any, FeatureQuantizationMetadata]]
-    ],
-]:
+) -> _EntityFeatures:
     """Reads the raw and packed features of one entity type once its loading process has joined.
 
-    Compresses them with ``compress_loaded_features`` if ``should_compress`` is set and no loading process of this
-    rank has failed so far.
+    Compresses them with ``compress_loaded_features`` if ``should_compress`` is set and this entity type's own
+    loading process did not fail.
 
-    A rank whose loading failed skips every compression, so it never pairs one of its RPC ``all_gather`` calls
-    with a different one on the other ranks; it raises the stored error once all loading processes have joined.
+    If this entity type's load failed, compression is skipped so the caller raises the stored load error once all
+    loading processes have joined. The other ranks wait until the RPC timeout either way, as at the load barrier.
 
     Args:
         output_dict: Outputs of the loading process of ``entity_type``.
@@ -544,21 +558,19 @@ def _read_and_compress_features(
         should_compress: Whether to compress the features.
         is_homogeneous: Whether the graph is homogeneous, which decides the form of ``metadata``.
         default_key: Key the homogeneous graph's single node or edge type uses when tensors are keyed.
-        rank: Rank on the current machine, used for logging.
-        start_time: Time the load started, used for logging.
 
     Returns:
         The raw features, packed features and metadata, after compression if it ran.
     """
-    logger.info(
-        f"Rank {rank} {entity_type} loading process joined {time.time() - start_time:.2f} seconds after the load started"
-    )
     features = output_dict.get(_FEATURE_FMT.format(entity=entity_type), None)
     packed_features = output_dict.get(
         _PACKED_FEATURE_FMT.format(entity=entity_type), None
     )
-    if not should_compress or error_dict:
-        return features, packed_features, metadata
+    # A failed load wrote no output, so compressing would raise a second, confusing error instead of the stored
+    # load error that the caller raises after all joins. Only this entity's failure is checked: another entity's
+    # process can fail at any time while this one compresses.
+    if not should_compress or entity_type in error_dict:
+        return _EntityFeatures(features, packed_features, metadata)
     features, packed_features, metadata = compress_loaded_features(
         features=features,
         quantized_features=packed_features,
@@ -566,10 +578,7 @@ def _read_and_compress_features(
         is_homogeneous=is_homogeneous,
         default_key=default_key,
     )
-    logger.info(
-        f"Rank {rank} {entity_type} features compressed {time.time() - start_time:.2f} seconds after the load started"
-    )
-    return features, packed_features, metadata
+    return _EntityFeatures(features, packed_features, metadata)
 
 
 def load_torch_tensors_from_tf_record(
@@ -737,8 +746,6 @@ def load_torch_tensors_from_tf_record(
                 should_compress=should_compress,
                 is_homogeneous=node_is_homogeneous,
                 default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                rank=rank,
-                start_time=start_time,
             )
         )
         edge_data_loading_process.join()
@@ -792,8 +799,6 @@ def load_torch_tensors_from_tf_record(
                 should_compress=should_compress,
                 is_homogeneous=node_is_homogeneous,
                 default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-                rank=rank,
-                start_time=start_time,
             )
         )
         if serialized_graph_metadata.positive_label_entity_info is not None:
