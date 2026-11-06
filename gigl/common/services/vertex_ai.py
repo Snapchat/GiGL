@@ -114,6 +114,25 @@ _QUEUED_JOB_STATES: Final[frozenset[aiplatform.gapic.JobState]] = frozenset(
 )
 
 
+class PipelineRunStoppedError(RuntimeError):
+    """A pipeline run reached FAILED or CANCELLED.
+
+    Raised by :meth:`VertexAIService.wait_for_run_completion`.
+
+    Other errors from that wait, such as a timeout or a failed status request, are
+    not this type.
+    """
+
+    def __init__(self, message: str, state: aiplatform.gapic.PipelineState) -> None:
+        """
+        Args:
+            message: The error message.
+            state: The state the run stopped in.
+        """
+        super().__init__(message)
+        self.state = state
+
+
 @dataclass
 class VertexAiJobConfig:
     """Configuration for a Vertex AI CustomJob worker pool.
@@ -511,6 +530,9 @@ class VertexAIService:
         Runs that already stopped or are stopping are skipped, as in
         :meth:`cancel_pipeline_run`.
 
+        A failed cancel does not stop the loop.
+        Every matching run gets a cancel request before the errors are raised.
+
         Example:
             >>> VertexAIService.cancel_pipeline_runs_with_label(
             ...     project="my-project",
@@ -528,6 +550,10 @@ class VertexAIService:
 
         Returns:
             Resource names of the runs a cancel was requested for.
+
+        Raises:
+            ExceptionGroup: If one or more cancels failed.
+                It holds one error for each failed run.
         """
         runs = aiplatform.PipelineJob.list(
             filter=f'labels.{label_key}="{label_value}"',
@@ -535,18 +561,34 @@ class VertexAIService:
             location=location,
         )
         cancelled: list[str] = []
+        errors: list[Exception] = []
         for run in runs:
-            if VertexAIService.cancel_pipeline_run(run.resource_name):
-                cancelled.append(run.resource_name)
+            try:
+                if VertexAIService.cancel_pipeline_run(run.resource_name):
+                    cancelled.append(run.resource_name)
+            except Exception as e:
+                logger.warning(
+                    f"Could not cancel pipeline run {run.resource_name}: {e!r}"
+                )
+                errors.append(e)
+        if errors:
+            raise ExceptionGroup(
+                f"{len(errors)} pipeline run cancel(s) failed for label "
+                f"{label_key}={label_value}",
+                errors,
+            )
         return cancelled
 
-    def cancel_custom_jobs_named(self, display_names: Sequence[str]) -> list[str]:
+    def cancel_custom_jobs_with_name(self, display_names: Sequence[str]) -> list[str]:
         """Cancel the active CustomJobs with the given display names.
 
         Jobs that are not queued, pending, or running are logged and skipped.
 
+        A failed lookup or cancel does not stop the loop.
+        Every name is tried before the errors are raised.
+
         Example:
-            >>> service.cancel_custom_jobs_named(["gigl_train_my_job"])
+            >>> service.cancel_custom_jobs_with_name(["gigl_train_my_job"])
             ['projects/p/locations/us-central1/customJobs/123']
 
         Args:
@@ -555,18 +597,28 @@ class VertexAIService:
 
         Returns:
             Resource names of the jobs a cancel was requested for.
+
+        Raises:
+            ExceptionGroup: If one or more lookups or cancels failed.
+                It holds one error for each failure.
         """
         cancelled: list[str] = []
+        errors: list[Exception] = []
         for display_name in display_names:
-            # ``list`` is typed on the base resource class; it returns CustomJobs here.
-            jobs = cast(
-                list[aiplatform.CustomJob],
-                aiplatform.CustomJob.list(
-                    filter=f'display_name="{display_name}"',
-                    project=self._project,
-                    location=self._location,
-                ),
-            )
+            try:
+                # ``list`` is typed on the base resource class; it returns CustomJobs here.
+                jobs = cast(
+                    list[aiplatform.CustomJob],
+                    aiplatform.CustomJob.list(
+                        filter=f'display_name="{display_name}"',
+                        project=self._project,
+                        location=self._location,
+                    ),
+                )
+            except Exception as e:
+                logger.warning(f"Could not list custom jobs {display_name}: {e!r}")
+                errors.append(e)
+                continue
             for job in jobs:
                 state = job.state
                 if state not in _CANCELLABLE_JOB_STATES:
@@ -579,8 +631,19 @@ class VertexAIService:
                     f"Cancelling custom job {job.resource_name} ({display_name}, "
                     f"state {state.name})."
                 )
-                job.cancel()
+                try:
+                    job.cancel()
+                except Exception as e:
+                    logger.warning(
+                        f"Could not cancel custom job {job.resource_name}: {e!r}"
+                    )
+                    errors.append(e)
+                    continue
                 cancelled.append(job.resource_name)
+        if errors:
+            raise ExceptionGroup(
+                f"{len(errors)} custom job lookup(s) or cancel(s) failed", errors
+            )
         return cancelled
 
     @staticmethod
@@ -598,6 +661,9 @@ class VertexAIService:
             polling_period_s (int): The time to wait between polling the run status, in seconds. Defaults to 60.
         Returns:
             None
+        Raises:
+            PipelineRunStoppedError: If the run reaches FAILED or CANCELLED.
+            RuntimeError: If the run does not finish before ``timeout``. The run is cancelled first.
         """
         start_time = time.time()
         logger.info(f"Waiting for run to complete: {resource_name}")
@@ -620,8 +686,9 @@ class VertexAIService:
                 run_link = VertexAIService.get_pipeline_run_url(
                     run.project, run.location, run.name
                 )
-                raise RuntimeError(
-                    f"Vertex AI run {run.name} stopped with status: {state.name}. See run at: {run_link}"
+                raise PipelineRunStoppedError(
+                    f"Vertex AI run {run.name} stopped with status: {state.name}. See run at: {run_link}",
+                    state=state,
                 )
             time.sleep(polling_period_s)
 

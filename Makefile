@@ -368,6 +368,13 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
 
+# Cancel a GiGL pipeline run, wait for it to stop, then cancel the Vertex AI, Dataflow,
+# and Dataproc jobs it launched. Also cleans up the children of a run that already stopped.
+# Example:
+# make pipeline_run=projects/my-project/locations/us-central1/pipelineJobs/my-run cancel_pipeline_run
+cancel_pipeline_run:
+	uv run python -m gigl.src.common.job_cleanup --pipeline_run=$(pipeline_run)
+
 
 clean_build_files_py:
 	find . -name "*.pyc" -exec rm -f {} \;
