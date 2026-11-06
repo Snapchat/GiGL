@@ -758,8 +758,6 @@ def load_torch_tensors_from_tf_record(
                 should_compress=should_compress,
                 is_homogeneous=edge_is_homogeneous,
                 default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-                rank=rank,
-                start_time=start_time,
             )
         )
         if serialized_graph_metadata.positive_label_entity_info is not None:
@@ -784,8 +782,6 @@ def load_torch_tensors_from_tf_record(
                 should_compress=should_compress,
                 is_homogeneous=edge_is_homogeneous,
                 default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
-                rank=rank,
-                start_time=start_time,
             )
         )
         node_data_loading_process.start()
