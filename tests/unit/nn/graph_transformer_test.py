@@ -1806,7 +1806,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         with torch.no_grad():
             assert layer._relation_attention_matrices is not None
             layer._relation_attention_matrices[0, 0] = torch.eye(2)
-            relation_bias = layer._build_relation_attention_bias(
+            relation_bias = layer._add_relation_attention_bias(
+                attn_bias=None,
                 query=query,
                 key=key,
                 pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),
@@ -1834,7 +1835,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
             assert layer._relation_attention_matrices is not None
             layer._relation_attention_matrices[0, 0] = torch.eye(2)
             layer._relation_attention_matrices[1, 0] = 2.0 * torch.eye(2)
-            relation_bias = layer._build_relation_attention_bias(
+            relation_bias = layer._add_relation_attention_bias(
+                attn_bias=None,
                 query=query,
                 key=key,
                 pairwise_relation_indices=_pairwise_relation_indices(
@@ -1871,7 +1873,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         with torch.no_grad():
             assert layer._relation_hgt_attention_matrices is not None
             layer._relation_hgt_attention_matrices[0] = 2.0 * torch.eye(2)
-            relation_bias = layer._build_relation_attention_bias(
+            relation_bias = layer._add_relation_attention_bias(
+                attn_bias=None,
                 query=query,
                 key=key,
                 pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),
@@ -1898,7 +1901,8 @@ class TestGraphTransformerEncoderPEModes(TestCase):
         with torch.no_grad():
             assert layer._relation_hgt_attention_priors is not None
             layer._relation_hgt_attention_priors[0] = 3.0
-            relation_bias = layer._build_relation_attention_bias(
+            relation_bias = layer._add_relation_attention_bias(
+                attn_bias=None,
                 query=query,
                 key=key,
                 pairwise_relation_indices=_pairwise_relation_indices([(0, 2, 1, 0)]),

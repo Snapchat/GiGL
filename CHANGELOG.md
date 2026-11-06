@@ -22,16 +22,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
-  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
-  readout, relation modes `none`, no attention biases, `hop_distance` as the only anchor-based input, a head dim
-  divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of `prioritize_hop_order`.
-  Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
-  counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
-  float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
-  `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
-  with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
-  without it. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has
-  `hop_distance` or fewer entries by @kmontemayor2-sc
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences with
+  `hop_distance <= 4`, or `ppr` sequences with `ppr_weight`, `ppr_relation_features` and sinusoidal sequence positions;
+  either readout mode (including the default `anchor_neighbor_attention`, so default-configured encoders now run packed
+  on CUDA), any `relation_attention_mode` and `relation_message_mode`, pairwise attention biases (including the learned
+  non-missing bias), any `attention_dropout_rate`, and either value of `prioritize_hop_order`. PPR sequences come from
+  the same builder as the padded path, so both paths see the same tokens and the same `ppr_is_expanded` relation filter.
+  Pairwise attention biases and relation attention while gradients are recorded, and attention dropout in training mode,
+  run attention on a padded grid on the GPU instead of the varlen kernel (dropout also in the last layer of
+  `anchor_only`), which spends `num_sequences * max_seq_len` rows of attention work and holds a
+  `num_sequences x
+  num_heads x max_seq_len x max_seq_len` bias. Anchor-relative attributes work as token inputs and as
+  a per-key attention bias. An attribute other than `hop_distance` (and `hop_distance` itself with `ppr` sequences), and
+  every pairwise attention bias, is looked up in its sparse CSR matrix, which reads a value back from the device and has
+  data-dependent shapes; the PPR sequence builder also reads values back. Such configs, and every `ppr` config, do not
+  whole-encoder compile and have no fixed host-sync count. Everything else, CPU, CUDA batches with no anchors or in a
+  dtype other than float16, bfloat16 and float32, and batches whose k-hop candidate set is too large keep the padded
+  path; those batches are counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same
+  embeddings and gradients up to float error, except that train-mode `dropout_rate` and `attention_dropout_rate` draws
+  differ (same distribution). With `khop` sequences the packed path derives `hop_distance` from the layout and ignores
+  the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding` with the same sampling direction), but a
+  batch that falls back to the padded path needs the attribute and raises without it; with `ppr` sequences both paths
+  read the batch attribute. The relation message modes `edge_type_linear` and `edge_type_attention` aggregate
+  per-relation messages over the layout's edges with a fixed number of host syncs per forward, independent of the number
+  of relations and layers. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has
+  `hop_distance` or fewer entries A `ppr` batch with no anchors now returns an empty embedding on the padded path
+  instead of raising by @kmontemayor2-sc
 - Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
