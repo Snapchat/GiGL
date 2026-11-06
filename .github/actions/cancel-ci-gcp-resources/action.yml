@@ -8,7 +8,7 @@ description: |
   Meant for a step with `if: cancelled()`. Needs gcloud to be authenticated and uv installed already (both come
   from setup-python-tools); the GiGL environment is not needed. The script and the services it imports come
   from the repo copy this action was loaded from (main for `snapchat/gigl/...@main`, the workspace for `./`), not
-  from the PR checkout, so a PR branch that predates this action still gets its labelled runs cancelled.
+  from the PR checkout, so the labelled runs of a PR branch that does not have the script still get cancelled.
 inputs:
   project:
     description: "Google Cloud project"

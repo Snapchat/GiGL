@@ -51,8 +51,9 @@ def cancel_pipeline_runs_until_quiet(
 ) -> tuple[list[str], list[Exception]]:
     """List and cancel the labelled pipeline runs until a pass finds nothing new.
 
-    Every pass after the first that cancels nothing ends the loop.
-    This catches a run whose submission was in flight during an earlier pass.
+    The loop ends at the first pass after pass one that cancels nothing, or after
+    ``_MAX_DISCOVERY_PASSES`` passes.
+    The extra passes catch a run whose submission was in flight during an earlier pass.
 
     Example:
         >>> cancel_pipeline_runs_until_quiet("my-project", "us-central1", "123456")
