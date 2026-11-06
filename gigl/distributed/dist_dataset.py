@@ -995,6 +995,36 @@ class DistDataset(glt.distributed.DistDataset):
             logger.info(
                 "Initialized node packed features for homogeneous graph to dataset"
             )
+        self._describe_packed_node_features_as_logical()
+
+    def _describe_packed_node_features_as_logical(self) -> None:
+        """Makes ``node_feature_info`` report the logical width of node types that have packed columns.
+
+        The raw float store only holds the columns that are not packed, but loaders and models see (and placeholders
+        for unsampled node types must have) the full logical feature width.
+        """
+        metadata = self._node_quantization_metadata
+        packed = self._node_packed_features
+        if metadata is None or packed is None:
+            return
+        if isinstance(packed, Mapping):
+            feature_info: dict[NodeType, FeatureInfo] = {}
+            if isinstance(self._node_feature_info, Mapping):
+                feature_info = dict(self._node_feature_info)
+            for node_type in packed:
+                if isinstance(metadata, FeatureQuantizationMetadata):
+                    node_metadata = metadata
+                else:
+                    node_metadata = metadata[node_type]
+                feature_info[node_type] = FeatureInfo(
+                    dim=node_metadata.feature_dim, dtype=torch.float32
+                )
+            self._node_feature_info = feature_info
+        else:
+            assert isinstance(metadata, FeatureQuantizationMetadata)
+            self._node_feature_info = FeatureInfo(
+                dim=metadata.feature_dim, dtype=torch.float32
+            )
 
     def _initialize_node_labels(
         self,

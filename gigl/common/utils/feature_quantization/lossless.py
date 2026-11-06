@@ -10,7 +10,7 @@ the consumer's device.
 Storage kinds, one per column. ``encode`` raises on a value its column's kind cannot represent:
 
 * ``float32``: exact real values. Also the kind of a column that preprocessing already quantized.
-* ``bfloat16``: real values, lossy.
+* ``bfloat16``: real values, lossy. ``from_stats`` never picks it.
 * ``int8``: ids in ``[-128, 127]``.
 * ``uint8``: ids in ``[0, 255]``.
 * ``uint8_bias1``: ids in ``[-1, 254]``, stored as ``id + 1``. Fits an out-of-vocabulary id of -1.
@@ -25,10 +25,14 @@ columns are packed eight per byte, column ``j`` of the group in bit ``j % 8`` of
 (least significant bit first), and the last byte is zero-padded. The row is zero-padded to a
 multiple of four bytes so that row strides stay aligned for any row subset.
 
+Which columns are stored as narrow integers is inferred from the data: ``ColumnStats`` scans the columns and
+``FeatureCodec.from_stats`` picks the narrowest kind that holds every value of an integral column. A column that is not
+integral, does not fit any integer kind, or holds a ``-0.0`` stays float32 (``encode`` itself writes ``-0.0`` as ``0``
+in an integer kind). A codec from ``from_stats`` is therefore lossless and bit-exact for the data it was built from.
+
 Example:
-    Declare the codec of a node type with one real-valued column, three id columns and one 0/1
-    column. Column 0 is a float column that preprocessing already quantized, so it stays
-    ``float32``.
+    Build the codec of a node type with one real-valued column, three id columns and one 0/1
+    column by hand. Column 0 stays ``float32``.
 
     >>> import torch
     >>> from gigl.common.utils.feature_quantization.lossless import FeatureCodec
@@ -61,10 +65,10 @@ Example:
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Optional
+from typing import Final, Iterable, Optional
 
 import torch
-from jaxtyping import Float, Float32, Shaped, UInt8
+from jaxtyping import Bool, Float, Float32, Float64, Shaped, UInt8
 
 
 @dataclass(frozen=True)
@@ -105,18 +109,102 @@ _INTEGER_KINDS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
 _CHUNK_BYTES: Final[int] = 8 << 20
 
 
+# Signed integer type of the same width as each float type, to read a float's bit pattern.
+_SIGN_BIT_INTEGER_DTYPES: Final[dict[torch.dtype, torch.dtype]] = {
+    torch.float16: torch.int16,
+    torch.bfloat16: torch.int16,
+    torch.float32: torch.int32,
+    torch.float64: torch.int64,
+}
+
+
 def chunk_rows(num_columns: int, element_size: int) -> int:
     """Rows per chunk so that one chunk of the input is about ``_CHUNK_BYTES``."""
     return max(1, _CHUNK_BYTES // max(1, num_columns * element_size))
 
 
-def kind_holding_domain(low: int, high: int) -> Optional[str]:
-    """The narrowest integer storage kind that holds every integer in ``[low, high]``, if any."""
+def kind_holding_domain(low: float, high: float) -> Optional[str]:
+    """The narrowest integer storage kind that holds every integer in ``[low, high]``, if any.
+
+    Infinite bounds are held by no kind.
+    """
     for kind in _INTEGER_KINDS_NARROWEST_FIRST:
         kind_low, kind_high = _KINDS[kind].value_range
         if kind_low <= low and high <= kind_high:
             return kind
     return None
+
+
+@dataclass(frozen=True)
+class ColumnStats:
+    """Per-column facts about a float ``[N, D]`` matrix that decide which columns can be packed.
+
+    Attributes:
+        minimum: ``[D]`` column minimums in float64, so a float64 input keeps its exact values (NaN if the column
+            holds a NaN).
+        maximum: ``[D]`` column maximums in float64 (NaN if the column holds a NaN).
+        integral: ``[D]`` bool, True where every value is a whole number (False for fractional
+            values and NaN).
+        has_negative_zero: ``[D]`` bool, True where some value is ``-0.0``.
+    """
+
+    minimum: Float64[torch.Tensor, "width"]
+    maximum: Float64[torch.Tensor, "width"]
+    integral: Bool[torch.Tensor, "width"]
+    has_negative_zero: Bool[torch.Tensor, "width"]
+
+    @classmethod
+    def empty(cls, width: int) -> "ColumnStats":
+        """Statistics of zero rows, the identity of ``merge``."""
+        return cls(
+            torch.full((width,), float("inf"), dtype=torch.float64),
+            torch.full((width,), float("-inf"), dtype=torch.float64),
+            torch.ones(width, dtype=torch.bool),
+            torch.zeros(width, dtype=torch.bool),
+        )
+
+    @classmethod
+    def from_features(
+        cls, features: Float[torch.Tensor, "rows features_dim"]
+    ) -> "ColumnStats":
+        """Scans ``features`` in row chunks, in its own dtype, so the scan needs no full-size temporaries."""
+        if features.dim() != 2:
+            raise ValueError(f"Expected a [N, D] matrix, got {tuple(features.shape)}")
+        stats = cls.empty(features.shape[1])
+        minimum, maximum = stats.minimum, stats.maximum
+        integral, has_negative_zero = stats.integral, stats.has_negative_zero
+        rows_per_chunk = chunk_rows(features.shape[1], features.element_size())
+        # -0.0 is the one value whose bit pattern is only the sign bit, which as a signed integer is its minimum.
+        sign_bit_dtype = _SIGN_BIT_INTEGER_DTYPES.get(features.dtype)
+        for start in range(0, features.shape[0], rows_per_chunk):
+            chunk = features[start : start + rows_per_chunk]
+            # Separate amin and amax are several times faster than the fused aminmax.
+            minimum = torch.minimum(minimum, chunk.amin(dim=0).to(torch.float64))
+            maximum = torch.maximum(maximum, chunk.amax(dim=0).to(torch.float64))
+            integral &= (chunk == chunk.floor()).all(dim=0)
+            if sign_bit_dtype is None:
+                has_negative_zero |= ((chunk == 0) & torch.signbit(chunk)).any(dim=0)
+            else:
+                has_negative_zero |= (
+                    chunk.view(sign_bit_dtype) == torch.iinfo(sign_bit_dtype).min
+                ).any(dim=0)
+        return cls(minimum, maximum, integral, has_negative_zero)
+
+    @classmethod
+    def merge(cls, stats: Iterable[Optional["ColumnStats"]]) -> "ColumnStats":
+        """Combines the stats of several partitions (``None`` entries, e.g. empty partitions, are skipped)."""
+        present = [entry for entry in stats if entry is not None]
+        if not present:
+            raise ValueError("Cannot merge zero ColumnStats")
+        merged = present[0]
+        for entry in present[1:]:
+            merged = cls(
+                torch.minimum(merged.minimum, entry.minimum),
+                torch.maximum(merged.maximum, entry.maximum),
+                merged.integral & entry.integral,
+                merged.has_negative_zero | entry.has_negative_zero,
+            )
+        return merged
 
 
 @dataclass(frozen=True)
@@ -151,6 +239,37 @@ class FeatureCodec:
         unknown = set(self.column_dtypes) - set(_KINDS)
         if unknown:
             raise ValueError(f"Unknown column kinds {sorted(unknown)}")
+
+    @classmethod
+    def from_stats(cls, stats: ColumnStats) -> "FeatureCodec":
+        """Picks the narrowest lossless kind of every column from the data's statistics.
+
+        A column that is integral, holds no ``-0.0`` and fits an integer kind gets the narrowest such kind (``bit``
+        for a column of only 0 and 1). Every other column is ``float32``.
+
+        Args:
+            stats: Statistics of the data that will be packed, merged over every partition.
+
+        Example:
+            >>> import torch
+            >>> features = torch.tensor([[0.0, 3.0, 0.5], [1.0, 200.0, 2.0]])
+            >>> FeatureCodec.from_stats(ColumnStats.from_features(features)).column_dtypes
+            ('bit', 'uint8', 'float32')
+        """
+        kinds: list[str] = []
+        for low, high, integral, has_negative_zero in zip(
+            stats.minimum.tolist(),
+            stats.maximum.tolist(),
+            stats.integral.tolist(),
+            stats.has_negative_zero.tolist(),
+        ):
+            kind = None
+            if integral and not has_negative_zero:
+                kind = kind_holding_domain(low, high)
+            if kind is None:
+                kind = "float32"
+            kinds.append(kind)
+        return cls(tuple(kinds))
 
     @property
     def num_columns(self) -> int:
