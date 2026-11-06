@@ -8,6 +8,7 @@ import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.data import Feature
 from graphlearn_torch.distributed import shutdown_rpc
+from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
@@ -486,7 +487,12 @@ class LosslessCompressionLoaderTest(TestCase):
 class BuildDatasetLosslessCompressionTest(TestCase):
     """``build_dataset`` infers the kind of every node feature column from the real partitioned data on every rank."""
 
-    def _build(self, info, feature_compression: FeatureCompression) -> DistDataset:
+    def _build(
+        self,
+        info,
+        feature_compression: FeatureCompression,
+        should_load_tensors_in_parallel: bool = True,
+    ) -> DistDataset:
         with mock.patch.dict(
             os.environ, {FEATURE_COMPRESSION_ENV: feature_compression.value}
         ):
@@ -494,18 +500,36 @@ class BuildDatasetLosslessCompressionTest(TestCase):
                 rank=0,
                 world_size=1,
                 mocked_dataset_info=info,
+                should_load_tensors_in_parallel=should_load_tensors_in_parallel,
                 _port=gigl.distributed.utils.get_free_port(),
             )
 
+    @parameterized.expand(
+        [
+            param("parallel_load", should_load_tensors_in_parallel=True),
+            param("sequential_load", should_load_tensors_in_parallel=False),
+        ]
+    )
     def test_homogeneous_binary_node_features_are_stored_as_bits_and_decode_exactly(
-        self,
+        self, _, should_load_tensors_in_parallel: bool
     ) -> None:
         info = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
-        reference = self._build(info, feature_compression=FeatureCompression.OFF)
+        reference = self._build(
+            info,
+            feature_compression=FeatureCompression.OFF,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
         assert isinstance(reference.node_feature_info, FeatureInfo)
         dim = reference.node_feature_info.dim
+        # Compression is off, so the node features stay a float32 matrix.
+        self.assertIsNone(reference.node_quantization_metadata)
+        self.assertEqual(_unpacked_rows(reference, None).dtype, torch.float32)
 
-        dataset = self._build(info, feature_compression=FeatureCompression.AUTO)
+        dataset = self._build(
+            info,
+            feature_compression=FeatureCompression.AUTO,
+            should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+        )
 
         metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)

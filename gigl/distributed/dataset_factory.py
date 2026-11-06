@@ -19,12 +19,11 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import SerializedTFRecordInfo, TFRecordDataLoader
+from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
-    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -39,18 +38,12 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
-from gigl.distributed.utils.lossless_compression import (
-    FeatureCompression,
-    compress_loaded_features,
-    resolve_feature_compression,
-)
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
 from gigl.src.common.types.graph_data import EdgeType
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataType
-from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -128,25 +121,8 @@ def _load_and_build_partitioned_dataset(
         weight_edge_feat_name=weight_edge_feat_name,
     )
 
-    node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
-    edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
-        serialized_graph_metadata=serialized_graph_metadata,
-        weight_edge_feat_name=weight_edge_feat_name,
-    )
-    if resolve_feature_compression() == FeatureCompression.AUTO:
-        (
-            loaded_graph_tensors.node_features,
-            loaded_graph_tensors.node_packed_features,
-            node_quantization_metadata,
-        ) = compress_loaded_features(
-            features=loaded_graph_tensors.node_features,
-            quantized_features=loaded_graph_tensors.node_packed_features,
-            metadata=node_quantization_metadata,
-            is_homogeneous=isinstance(
-                serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
-            ),
-            default_key=DEFAULT_HOMOGENEOUS_NODE_TYPE,
-        )
+    node_quantization_metadata = loaded_graph_tensors.node_quantization_metadata
+    edge_quantization_metadata = loaded_graph_tensors.edge_quantization_metadata
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
         if (
