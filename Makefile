@@ -5,6 +5,11 @@ DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
+SHORT_GIT_HASH?=$(shell git rev-parse --short HEAD 2>/dev/null || "")
+# Docker image tag. The artifact registry enforces tag immutability, so a date alone can
+# collide when a build is retried or two builds start in the same minute. The short hash
+# makes the tag unique per commit.
+DOCKER_IMAGE_TAG?=${DATE}_${SHORT_GIT_HASH}
 PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
@@ -16,17 +21,17 @@ DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DOCKER_IMAGE_TAG}
 
-# Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
+# Image built and used by `make integration_test`. The tag defaults to ${DOCKER_IMAGE_TAG} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
 # other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
 # the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
-INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
+INTEGRATION_TEST_CPU_IMAGE_TAG?=${DOCKER_IMAGE_TAG}
 INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
