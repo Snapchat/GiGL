@@ -42,8 +42,9 @@ class ThreadRoles:
     like the RPC pool cannot be told apart by name alone.
 
     The reporter from ``make_reporter`` returns, for each role, the CPU seconds and run delay
-    seconds accrued since its previous call (or since the first scan) and the number of threads
-    seen in the scan.
+    seconds accrued since the previous window and the number of threads seen in the scan. Creating
+    the reporter takes a baseline scan, so the first window starts at that point rather than at
+    thread creation.
     """
 
     def __init__(self) -> None:
@@ -126,6 +127,7 @@ class ThreadRoles:
 
     def make_reporter(self) -> Callable[[], dict[str, float]]:
         """Returns a ``SamplingStats`` reporter covering the window since its last call."""
+        self.read_window()
         return self._report
 
     def _report(self) -> dict[str, float]:

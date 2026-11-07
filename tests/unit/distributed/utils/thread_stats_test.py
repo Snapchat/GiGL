@@ -8,6 +8,7 @@ from gigl.distributed.utils.thread_stats import ThreadRoles
 from tests.test_assets.test_case import TestCase
 
 _RPC_POOL_COMM = "pt_thread_pool"
+_TASK = "/proc/self/task"
 
 
 def _name_current_thread(name: str) -> None:
@@ -115,7 +116,7 @@ class ThreadRolesTest(TestCase):
         self.assertGreaterEqual(first["cpu_loop_s"], 0.2)
         self.assertLess(second["cpu_loop_s"], 0.1)
 
-    def test_exited_thread_midread_window_is_skipped(self) -> None:
+    def test_exited_thread_mid_scan_is_skipped(self) -> None:
         roles = ThreadRoles()
         real_listdir = os.listdir
         dead_tid = "4194000"
@@ -129,8 +130,19 @@ class ThreadRolesTest(TestCase):
         with mock.patch("gigl.distributed.utils.thread_stats.os.listdir", listdir):
             window = roles.read_window()
         self.assertIn("cpu_other_s", window)
+        self.assertEqual(window["threads_other"], float(len(real_listdir(_TASK))))
 
-    def test_reporter_swallowsread_window_failures(self) -> None:
+    def test_first_reporter_window_excludes_cpu_before_creation(self) -> None:
         roles = ThreadRoles()
+        roles.set_loop_tid(threading.get_native_id())
+        end = time.perf_counter() + 0.3
+        while time.perf_counter() < end:
+            pass
+        report = roles.make_reporter()()
+        self.assertLess(report["cpu_loop_s"], 0.05)
+
+    def test_reporter_swallows_read_window_failures(self) -> None:
+        roles = ThreadRoles()
+        reporter = roles.make_reporter()
         with mock.patch.object(roles, "read_window", side_effect=ValueError("bad")):
-            self.assertEqual(roles.make_reporter()(), {})
+            self.assertEqual(reporter(), {})
