@@ -59,6 +59,7 @@ def _run_two_partition_loader(
         os.path.join(stderr_dir, f"rank_{rank}.log"), os.O_WRONLY | os.O_CREAT
     )
     os.dup2(stderr_fd, 2)
+    os.close(stderr_fd)
     loader = DistNeighborLoader(
         dataset=dataset,
         # Each rank plays one machine, which is what makes the two data partitions remote

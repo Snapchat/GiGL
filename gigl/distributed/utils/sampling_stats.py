@@ -144,6 +144,9 @@ class SamplingStats:
 
         The returned values are appended to the report as given, not divided by the number of
         batches, so they suit gauges such as queue depths.
+
+        Reporters run while the stats lock is held, and that lock is not reentrant, so a
+        reporter must not call ``add`` (or ``timer``); it must return finalized values instead.
         """
         with self._lock:
             self._reporters.append(reporter)

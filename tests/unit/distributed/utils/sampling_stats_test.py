@@ -111,7 +111,9 @@ class SamplingStatsTest(TestCase):
 class SamplingStatsEnvTest(TestCase):
     def test_unset_zero_and_invalid_values_disable_stats(self) -> None:
         for value in (None, "0", "", "abc", "-5"):
-            env = {} if value is None else {SAMPLING_STATS_EVERY_N_BATCHES_ENV: value}
+            env = {}
+            if value is not None:
+                env = {SAMPLING_STATS_EVERY_N_BATCHES_ENV: value}
             with mock.patch.dict(os.environ, env, clear=True):
                 self.assertEqual(sampling_stats_every_n_batches(), 0, msg=repr(value))
 

@@ -318,12 +318,16 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
         stats = self._stats
-        batch_start = time.perf_counter()
+        batch_start = 0.0
+        if stats is not None:
+            batch_start = time.perf_counter()
         try:
             sampler_output = await async_func(*args, **kwargs)
-            sample_done = time.perf_counter()
-            res = await self._collate_fn(sampler_output)
-            if stats is not None:
+            if stats is None:
+                res = await self._collate_fn(sampler_output)
+            else:
+                sample_done = time.perf_counter()
+                res = await self._collate_fn(sampler_output)
                 stats.add("sample_ms", (sample_done - batch_start) * 1e3)
                 stats.add("collate_ms", (time.perf_counter() - sample_done) * 1e3)
         except Exception:
@@ -601,11 +605,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if etype is not None:
             src_ntype = etype[0] if self.edge_dir == "out" else etype[-1]
         partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
-        node_pb = (
-            self.dist_graph.node_pb[src_ntype]
-            if isinstance(self.dist_graph.node_pb, dict)
-            else self.dist_graph.node_pb
-        )
+        node_pb = self.dist_graph.node_pb
+        if isinstance(node_pb, dict):
+            node_pb = node_pb[src_ntype]
         partition_results: list[PartialNeighborOutput] = []
         remote_orders_list: list[torch.Tensor] = []
         futs: list[torch.futures.Future] = []
