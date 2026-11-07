@@ -53,6 +53,7 @@ from gigl.distributed.utils.sampling_stats import (
     sampling_worker_num_rpc_threads_override,
     sampling_worker_torch_threads_override,
 )
+from gigl.distributed.utils.thread_stats import ThreadRoles
 
 logger = Logger()
 
@@ -128,12 +129,18 @@ def _sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(torch_threads)
 
+        thread_roles: Optional[ThreadRoles] = None
+        if sampling_stats_every_n_batches() > 0:
+            thread_roles = ThreadRoles()
+            thread_roles.snapshot_before_rpc()
         init_rpc(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
             rpc_timeout=worker_options.rpc_timeout,
         )
+        if thread_roles is not None:
+            thread_roles.snapshot_after_rpc()
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
@@ -148,6 +155,12 @@ def _sampling_worker_loop(
             current_device=current_device,
         )
         dist_sampler.start_loop()
+        if thread_roles is not None and dist_sampler._stats is not None:
+            # ``_runner_t`` is GLT's private handle to the asyncio loop thread started above.
+            loop_thread = dist_sampler._runner_t
+            if loop_thread is not None and loop_thread.native_id is not None:
+                thread_roles.set_loop_tid(loop_thread.native_id)
+            dist_sampler._stats.register_reporter(thread_roles.make_reporter())
 
         unshuffled_index_loader: Optional[DataLoader]
         loader: DataLoader

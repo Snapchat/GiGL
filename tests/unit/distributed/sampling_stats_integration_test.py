@@ -101,3 +101,7 @@ class SamplingStatsIntegrationTest(TestCase):
                             peak[key] = max(peak.get(key, 0.0), float(value))
         for key in _SAMPLER_KEYS:
             self.assertGreater(peak.get(key, 0.0), 0.0, msg=key)
+        for key in ("cpu_rpc_pool_s", "cpu_loop_s", "threads_rpc_pool"):
+            self.assertGreater(peak.get(key, 0.0), 0.0, msg=key)
+        self.assertIn("rundelay_rpc_pool_s", peak)
+        self.assertGreaterEqual(peak["rundelay_rpc_pool_s"], 0.0)
