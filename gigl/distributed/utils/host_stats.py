@@ -162,7 +162,10 @@ class HostCounterSampler:
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_s):
-            self._sample()
+            try:
+                self._sample()
+            except Exception:
+                logger.exception("Host counter sample failed")
 
     def _sample(self) -> None:
         now = time.perf_counter()

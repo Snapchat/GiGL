@@ -74,3 +74,16 @@ class HostCounterSamplerTest(TestCase):
             self.assertIn(key, report)
         self.assertGreater(report["mem_available_gb_min"], 0)
         self.assertGreater(report["rss_pids_gb_max"], 0)
+
+    def test_second_reporter_call_is_a_fresh_window(self) -> None:
+        sampler = HostCounterSampler(interval_s=0.05, pids=[os.getpid()])
+        sampler.start()
+        try:
+            time.sleep(0.3)
+            reporter = sampler.make_reporter()
+            first = reporter()
+            second = reporter()
+        finally:
+            sampler.stop()
+        self.assertGreaterEqual(first["host_samples"], 3)
+        self.assertLess(second["host_samples"], first["host_samples"])
