@@ -48,6 +48,7 @@ from gigl.distributed.utils.dist_sampler import (
     join_workers_with_shared_deadline,
 )
 from gigl.distributed.utils.ptrace import allow_any_ptracer
+from gigl.distributed.utils.rpc_agent_stats import RpcAgentSampler
 from gigl.distributed.utils.sampling_stats import (
     sampling_stats_every_n_batches,
     sampling_worker_num_rpc_threads_override,
@@ -94,6 +95,7 @@ def _sampling_worker_loop(
     degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ):
     dist_sampler = None
+    rpc_agent_sampler: Optional[RpcAgentSampler] = None
     try:
         if sampling_stats_every_n_batches() > 0:
             allow_any_ptracer()
@@ -141,6 +143,8 @@ def _sampling_worker_loop(
         )
         if thread_roles is not None:
             thread_roles.snapshot_after_rpc()
+            rpc_agent_sampler = RpcAgentSampler()
+            rpc_agent_sampler.start()
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
@@ -161,6 +165,8 @@ def _sampling_worker_loop(
             if loop_thread is not None and loop_thread.native_id is not None:
                 thread_roles.set_loop_tid(loop_thread.native_id)
             dist_sampler._stats.register_reporter(thread_roles.make_reporter())
+            if rpc_agent_sampler is not None:
+                dist_sampler._stats.register_reporter(rpc_agent_sampler.make_reporter())
 
         unshuffled_index_loader: Optional[DataLoader]
         loader: DataLoader
@@ -228,6 +234,8 @@ def _sampling_worker_loop(
         # its sampler loop and RPC agent instead of leaking them
         if dist_sampler is not None:
             dist_sampler.shutdown_loop()
+        if rpc_agent_sampler is not None:
+            rpc_agent_sampler.stop()
         shutdown_rpc(graceful=False)
 
 
