@@ -56,6 +56,14 @@ class ThreadRolesTest(TestCase):
         roles.snapshot_after_rpc()
         self.assertEqual(roles.classify(thread.tid, "TP_UV_loop"), "tp_uv")
 
+    def test_other_threads_created_across_rpc_init_are_tp_other(self) -> None:
+        roles = ThreadRoles()
+        roles.snapshot_before_rpc()
+        thread = _NamedThread("TP_reactor")
+        self.addCleanup(thread.stop)
+        roles.snapshot_after_rpc()
+        self.assertEqual(roles.classify(thread.tid, "TP_reactor"), "tp_other")
+
     def test_same_named_thread_created_after_init_is_omp(self) -> None:
         roles = ThreadRoles()
         roles.snapshot_before_rpc()
@@ -100,7 +108,7 @@ class ThreadRolesTest(TestCase):
         thread.join()
         self.assertGreaterEqual(window["cpu_loop_s"], 0.1)
         self.assertEqual(window["threads_loop"], 1.0)
-        for role in ("rpc_pool", "tp_uv", "loop", "omp", "other"):
+        for role in ("rpc_pool", "tp_uv", "tp_other", "loop", "omp", "other"):
             self.assertIn(f"cpu_{role}_s", window)
             self.assertIn(f"rundelay_{role}_s", window)
             self.assertIn(f"threads_{role}", window)

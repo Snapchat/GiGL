@@ -9,6 +9,7 @@ Subclasses GLT's DistLoader and handles:
 """
 
 import os
+import socket
 import sys
 import time
 from collections import Counter
@@ -59,7 +60,7 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
-from gigl.distributed.utils.channel import MonitoredShmChannel
+from gigl.distributed.utils.channel import MonitoredShmChannel, SizedShmChannel
 from gigl.distributed.utils.dist_typed_sampler import (
     parse_typed_channel_ratio_groups,
 )
@@ -358,7 +359,7 @@ class BaseDistLoader(DistLoader):
             self._loader_stats = SamplingStats(
                 "GLT_LOADER_STATS",
                 every_n_batches=every_n_batches,
-                scope=f"rank={runtime.rank} local_rank={runtime.local_rank} pid={os.getpid()}",
+                scope=f"rank={runtime.rank} local_rank={runtime.local_rank} pid={os.getpid()} host={socket.gethostname()}",
             )
         self._host_sampler: Optional[HostCounterSampler] = None
 
@@ -588,6 +589,11 @@ class BaseDistLoader(DistLoader):
                 channel_name,
                 worker_options.channel_capacity,
                 worker_options.channel_size,
+            )
+        elif sampling_stats_every_n_batches() > 0:
+            logger.info("Sampling statistics enabled, using SizedShmChannel")
+            channel = SizedShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
             )
         else:
             logger.info(f"{GIGL_ENABLE_PERF_MONITORING} not set, using ShmChannel")
@@ -1197,6 +1203,8 @@ class BaseDistLoader(DistLoader):
             raise StopIteration
         if isinstance(self._channel, ShmChannel):
             stats.add("channel_empty_frac", float(self._channel.empty()))
+        if isinstance(self._channel, SizedShmChannel):
+            stats.add("channel_qsize", float(self._channel.qsize()))
         with stats.timer("recv_wait_ms"):
             msg = self._channel.recv()
         stats.add("msg_mb", tensor_map_bytes(msg) / 2**20)

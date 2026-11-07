@@ -86,6 +86,12 @@ class SamplingStatsTest(TestCase):
         self.assertEqual(fields["gauge_x"], "7.00")
         self.assertLessEqual(float(fields["t_start"]), float(fields["t_end"]))
 
+    def test_reporter_cost_is_reported(self) -> None:
+        stats = SamplingStats("P", every_n_batches=1, scope="s", log_fn=lambda _: None)
+        stats.register_reporter(lambda: (time.sleep(0.01), {})[1])
+        fields = _fields(_window_line(stats))
+        self.assertGreaterEqual(float(fields["reporters_ms"]), 10.0)
+
     def test_last_report_is_none_until_a_window_closes(self) -> None:
         stats = SamplingStats("P", every_n_batches=2, scope="s", log_fn=lambda _: None)
         self.assertIsNone(stats.last_report)

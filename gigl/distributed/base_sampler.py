@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import time
 import traceback
 from collections import defaultdict
@@ -175,7 +176,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             worker_rank = -1
             if context is not None:
                 worker_rank = context.rank
-            scope = f"worker={worker_rank} pid={os.getpid()}"
+            scope = (
+                f"worker={worker_rank} pid={os.getpid()} host={socket.gethostname()}"
+            )
             self._stats = SamplingStats(
                 "GLT_SAMPLING_STATS", every_n_batches=every_n_batches, scope=scope
             )
@@ -603,7 +606,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         orders = torch.arange(srcs.size(0), dtype=torch.long, device=device)
         src_ntype = None
         if etype is not None:
-            src_ntype = etype[0] if self.edge_dir == "out" else etype[-1]
+            if self.edge_dir == "out":
+                src_ntype = etype[0]
+            else:
+                src_ntype = etype[-1]
         partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
         node_pb = self.dist_graph.node_pb
         if isinstance(node_pb, dict):

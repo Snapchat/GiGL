@@ -69,11 +69,11 @@ class HostCounterSamplerTest(TestCase):
             "tcp_loss_probes",
             "loadavg1_mean",
             "mem_available_gb_min",
-            "rss_pids_gb_max",
+            "rss_local_workers_gb_max",
         ):
             self.assertIn(key, report)
         self.assertGreater(report["mem_available_gb_min"], 0)
-        self.assertGreater(report["rss_pids_gb_max"], 0)
+        self.assertGreater(report["rss_local_workers_gb_max"], 0)
 
     def test_second_reporter_call_is_a_fresh_window(self) -> None:
         sampler = HostCounterSampler(interval_s=0.05, pids=[os.getpid()])

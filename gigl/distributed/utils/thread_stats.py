@@ -12,7 +12,7 @@ from gigl.common.logger import Logger
 
 logger = Logger()
 
-_ROLES = ("rpc_pool", "tp_uv", "loop", "omp", "other")
+_ROLES = ("rpc_pool", "tp_uv", "tp_other", "loop", "omp", "other")
 _TASK_DIR = "/proc/self/task"
 _RPC_POOL_COMM = "pt_thread_pool"
 _TP_UV_COMM = "TP_UV_loop"
@@ -37,9 +37,11 @@ def _read(path: str) -> Optional[str]:
 class ThreadRoles:
     """Classifies the process's threads by role and reports per-role CPU and run delay.
 
-    The RPC worker pool is identified by the thread ids that appear while ``init_rpc`` runs:
-    torch's intra-op threads inherit the name of the thread that created them, so threads named
-    like the RPC pool cannot be told apart by name alone.
+    The RPC worker pool is identified by the thread ids that appear while ``init_rpc`` runs and
+    are named like the pool: torch's intra-op threads inherit the name of the thread that created
+    them, so threads named like the RPC pool cannot be told apart by name alone. Other threads
+    created during ``init_rpc`` (TensorPipe reactors and transports, the agent timeout thread,
+    OpenMP teams) are reported as ``tp_other``.
 
     The reporter from ``make_reporter`` returns, for each role, the CPU seconds and run delay
     seconds accrued since the previous window and the number of threads seen in the scan. Creating
@@ -50,6 +52,7 @@ class ThreadRoles:
     def __init__(self) -> None:
         self._tids_before_rpc: set[int] = set()
         self._rpc_pool_tids: set[int] = set()
+        self._tp_other_tids: set[int] = set()
         self._loop_tid: Optional[int] = None
         self._clk_tck = float(os.sysconf("SC_CLK_TCK"))
         self._last_cpu_s: dict[int, float] = {}
@@ -60,27 +63,35 @@ class ThreadRoles:
         self._tids_before_rpc = _list_tids()
 
     def snapshot_after_rpc(self) -> None:
-        """Records the threads created since ``snapshot_before_rpc`` as the RPC pool.
+        """Records the threads created since ``snapshot_before_rpc``.
 
-        TensorPipe I/O threads are created by the same call and are excluded by name.
+        Those named like the RPC pool are the pool; the rest, except TensorPipe's libuv loops
+        which are recognized by name, are ``tp_other``.
         """
         for tid in _list_tids() - self._tids_before_rpc:
             comm = _read(f"{_TASK_DIR}/{tid}/comm")
-            if comm is not None and comm.strip() != _TP_UV_COMM:
+            if comm is None:
+                continue
+            comm = comm.strip()
+            if comm == _RPC_POOL_COMM:
                 self._rpc_pool_tids.add(tid)
+            elif comm != _TP_UV_COMM:
+                self._tp_other_tids.add(tid)
 
     def set_loop_tid(self, tid: int) -> None:
         """Sets the thread id of the sampler's asyncio loop thread."""
         self._loop_tid = tid
 
     def classify(self, tid: int, comm: str) -> str:
-        """Returns the role of a thread: rpc_pool, tp_uv, loop, omp or other."""
+        """Returns the role of a thread: rpc_pool, tp_uv, tp_other, loop, omp or other."""
         if tid in self._rpc_pool_tids:
             return "rpc_pool"
         if comm == _TP_UV_COMM:
             return "tp_uv"
         if tid == self._loop_tid:
             return "loop"
+        if tid in self._tp_other_tids:
+            return "tp_other"
         if comm == _RPC_POOL_COMM:
             return "omp"
         return "other"

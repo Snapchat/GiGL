@@ -209,10 +209,14 @@ class SamplingStats:
             f"{key}={total / batches:.2f}"
             for key, total in sorted(self._values.items())
         )
+        reporters_start = time.perf_counter()
         for reporter in self._reporters:
             fields.extend(
                 f"{key}={value:.2f}" for key, value in sorted(reporter().items())
             )
+        fields.append(
+            f"reporters_ms={(time.perf_counter() - reporters_start) * 1e3:.2f}"
+        )
         return " ".join(fields)
 
 
@@ -286,12 +290,16 @@ def instrument_rpc_callees(stats: SamplingStats) -> None:
     ``_rpc_callee_pool`` in ``graphlearn_torch.distributed.rpc``; each entry's ``call`` runs on
     an RPC worker thread. Wrapping ``call`` on each instance records ``srv_sample_calls``,
     ``srv_sample_ms``, ``srv_sample_seeds`` and ``srv_feat_calls``, ``srv_feat_ms``,
-    ``srv_feat_mb``. A request that carries the client's send time (``time.time()`` as a trailing
-    argument, added by the stats-on sampler and ``FusedDistFeature``) is stripped of it before the
-    original ``call`` runs and also records ``srv_sample_queue_ms`` / ``srv_feat_queue_ms``, the time
-    from the client's send to the start of the callee. Each machine has its own clock, so these
-    values are only meaningful relative to each other within one mesh. Callees already instrumented (a second sampler in the same process) are left
-    alone, so the first sampler's ``stats`` receives the served-request counters.
+    ``srv_feat_mb``. A request that carries the client's send time (``time.time()`` as a
+    trailing argument, added by the stats-on sampler and ``FusedDistFeature``) is stripped of it
+    before the original ``call`` runs and also records ``srv_sample_queue_ms`` /
+    ``srv_feat_queue_ms``, the time from the client's send to the start of the callee. Each
+    machine has its own clock, so these values are only meaningful relative to each other within
+    one mesh. Callees that are already instrumented are left alone, so the served-request
+    counters go to the stats of whichever sampler registered the callee being wrapped.
+
+    An un-instrumented peer that receives a timestamped request fails it, so the stats
+    environment variable must be set alike on every machine.
 
     Args:
         stats: Accumulator to report into.

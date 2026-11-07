@@ -116,7 +116,9 @@ class HostCounterSampler:
 
     Args:
         interval_s: Seconds between samples.
-        pids: Processes whose resident memory is summed into ``rss_pids_gb_max``.
+        pids: Processes whose resident memory is summed into ``rss_local_workers_gb_max``. The
+            loader passes only the sampler workers of the rank that runs the host sampler, so the
+            value excludes other ranks' workers on the same machine.
     """
 
     def __init__(self, interval_s: float = 2.0, pids: Sequence[int] = ()) -> None:
@@ -222,6 +224,6 @@ class HostCounterSampler:
             if self._mem_available_gb:
                 report["mem_available_gb_min"] = min(self._mem_available_gb)
             if self._rss_gb:
-                report["rss_pids_gb_max"] = max(self._rss_gb)
+                report["rss_local_workers_gb_max"] = max(self._rss_gb)
             self._reset_window()
             return report

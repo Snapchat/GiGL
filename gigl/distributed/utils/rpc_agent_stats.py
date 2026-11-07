@@ -73,7 +73,10 @@ class RpcAgentSampler:
             self._gil_wait_us.append(float(metrics["agent.gil_average_wait_time_us"]))
 
     def make_reporter(self) -> Callable[[], dict[str, float]]:
-        """Returns a ``SamplingStats`` reporter summarizing the samples since its last call."""
+        """Returns a ``SamplingStats`` reporter summarizing the samples since its last call.
+
+        A window with no samples yet (shorter than ``interval_s``) reads the agent once on demand.
+        """
         return self._report
 
     def _report(self) -> dict[str, float]:
