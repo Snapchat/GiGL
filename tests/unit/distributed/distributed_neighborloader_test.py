@@ -146,6 +146,10 @@ def _run_distributed_neighbor_loader_with_sampling_stats(
     assert count == expected_data_count
     # Every consumed batch advanced the stats window and each full window was flushed.
     assert loader._loader_stats._batches == expected_data_count % every_n_batches
+    last_report = loader._loader_stats.last_report
+    assert last_report is not None
+    for key in ("recv_wait_ms", "collate_ms", "msg_mb", "channel_empty_frac"):
+        assert f" {key}=" in last_report, f"{key} missing from: {last_report}"
 
     shutdown_rpc()
 

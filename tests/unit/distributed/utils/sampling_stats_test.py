@@ -20,6 +20,12 @@ def _fields(line: str) -> dict[str, str]:
     return dict(re.findall(r"(\S+)=(\S+)", line))
 
 
+def _window_line(stats: SamplingStats) -> str:
+    line = stats.batch_done()
+    assert line is not None
+    return line
+
+
 class SamplingStatsTest(TestCase):
     def test_window_reports_per_batch_means_then_resets(self) -> None:
         lines: list[str] = []
@@ -37,7 +43,7 @@ class SamplingStatsTest(TestCase):
         self.assertEqual(lines, [])
 
         stats.add("rpc_count", 5)
-        line = stats.batch_done()
+        line = _window_line(stats)
         self.assertEqual(lines, [line])
         self.assertTrue(line.startswith("GLT_SAMPLING_STATS worker=3 batches=2 "))
         fields = _fields(line)
@@ -50,9 +56,30 @@ class SamplingStatsTest(TestCase):
         # The next window starts empty: keys from the previous window are gone.
         stats.add("other", 1)
         stats.batch_done()
-        second = stats.batch_done()
+        second = _window_line(stats)
         self.assertNotIn("rpc_count", _fields(second))
         self.assertEqual(_fields(second)["other"], "0.50")
+
+    def test_reporter_values_are_appended_unscaled_at_window_close(self) -> None:
+        lines: list[str] = []
+        stats = SamplingStats("P", every_n_batches=2, scope="s", log_fn=lines.append)
+        stats.register_reporter(lambda: {"gauge_x": 7.0})
+        stats.add("k", 4.0)
+        stats.batch_done()
+        stats.add("k", 2.0)
+        line = _window_line(stats)
+        self.assertEqual(lines, [line])
+        self.assertEqual(stats.last_report, line)
+        fields = _fields(line)
+        self.assertEqual(fields["k"], "3.00")
+        self.assertEqual(fields["gauge_x"], "7.00")
+        self.assertLessEqual(float(fields["t_start"]), float(fields["t_end"]))
+
+    def test_last_report_is_none_until_a_window_closes(self) -> None:
+        stats = SamplingStats("P", every_n_batches=2, scope="s", log_fn=lambda _: None)
+        self.assertIsNone(stats.last_report)
+        stats.batch_done()
+        self.assertIsNone(stats.last_report)
 
     def test_concurrent_adds_are_not_lost(self) -> None:
         stats = SamplingStats("P", every_n_batches=1, scope="s", log_fn=lambda _: None)
@@ -66,7 +93,7 @@ class SamplingStatsTest(TestCase):
             thread.start()
         for thread in threads:
             thread.join()
-        self.assertEqual(_fields(stats.batch_done())["calls"], "8000.00")
+        self.assertEqual(_fields(_window_line(stats))["calls"], "8000.00")
 
     def test_rejects_non_positive_window(self) -> None:
         with self.assertRaises(ValueError):

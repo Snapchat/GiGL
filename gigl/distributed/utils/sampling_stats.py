@@ -16,9 +16,9 @@ from contextlib import contextmanager
 from typing import Callable, Final, Optional
 
 import torch
-from graphlearn_torch.distributed.dist_feature import DistFeature
 
 from gigl.common.logger import Logger
+from gigl.distributed.utils.fused_feature import FusedDistFeature
 from gigl.env.constants import is_env_flag_enabled
 
 logger = Logger()
@@ -58,13 +58,17 @@ def sampling_stats_every_n_batches() -> int:
 def sampling_worker_num_rpc_threads_override() -> Optional[int]:
     """Per-worker RPC thread count from the environment, or ``None`` to keep GLT's default."""
     value = _non_negative_int_from_env(SAMPLING_WORKER_NUM_RPC_THREADS_ENV)
-    return value if value else None
+    if value:
+        return value
+    return None
 
 
 def sampling_worker_torch_threads_override() -> Optional[int]:
     """Per-worker torch intra-op thread count from the environment, or ``None`` for the default."""
     value = _non_negative_int_from_env(SAMPLING_WORKER_TORCH_THREADS_ENV)
-    return value if value else None
+    if value:
+        return value
+    return None
 
 
 def sampling_skip_edge_features() -> bool:
@@ -116,6 +120,10 @@ class SamplingStats:
         self._lock = threading.Lock()
         self._values: dict[str, float] = {}
         self._batches = 0
+        self._reporters: list[Callable[[], dict[str, float]]] = []
+        # The most recent window report, kept so callers (tests, notebooks) can read it back
+        # without capturing logs.
+        self.last_report: Optional[str] = None
         # The reporting thread's CPU clock is only meaningful on that thread, so the first
         # window's baseline is taken at its first ``batch_done`` rather than here.
         self._window_thread_cpu: Optional[float] = None
@@ -123,12 +131,22 @@ class SamplingStats:
 
     def _reset_window_clocks(self) -> None:
         self._window_start = time.perf_counter()
+        self._window_start_epoch = time.time()
         times = os.times()
         self._window_proc_cpu = times.user + times.system
 
     def add(self, key: str, value: float) -> None:
         with self._lock:
             self._values[key] = self._values.get(key, 0.0) + value
+
+    def register_reporter(self, reporter: Callable[[], dict[str, float]]) -> None:
+        """Registers a callback that supplies extra fields at each window close.
+
+        The returned values are appended to the report as given, not divided by the number of
+        batches, so they suit gauges such as queue depths.
+        """
+        with self._lock:
+            self._reporters.append(reporter)
 
     @contextmanager
     def timer(self, key: str) -> Iterator[None]:
@@ -159,6 +177,7 @@ class SamplingStats:
             self._batches = 0
             self._reset_window_clocks()
             self._window_thread_cpu = time.thread_time()
+            self.last_report = line
         self._log_fn(line)
         return line
 
@@ -169,39 +188,48 @@ class SamplingStats:
         proc_cpu_s = times.user + times.system - self._window_proc_cpu
         assert self._window_thread_cpu is not None
         loop_cpu_s = time.thread_time() - self._window_thread_cpu
+        batches_per_s = 0.0
+        if wall_s > 0:
+            batches_per_s = batches / wall_s
         fields = [
             f"{self._prefix} {self._scope} batches={batches}",
             f"wall_s={wall_s:.2f}",
-            f"batches_per_s={batches / wall_s if wall_s > 0 else 0.0:.3f}",
+            f"batches_per_s={batches_per_s:.3f}",
             f"proc_cpu_s={proc_cpu_s:.2f}",
             f"loop_cpu_s={loop_cpu_s:.2f}",
+            f"t_start={self._window_start_epoch:.3f}",
+            f"t_end={time.time():.3f}",
         ]
         fields.extend(
             f"{key}={total / batches:.2f}"
             for key, total in sorted(self._values.items())
         )
+        for reporter in self._reporters:
+            fields.extend(
+                f"{key}={value:.2f}" for key, value in sorted(reporter().items())
+            )
         return " ".join(fields)
 
 
-def instrument_dist_feature(
-    feature: DistFeature, stats: SamplingStats, name: str
+def instrument_fused_dist_feature(
+    feature: FusedDistFeature, stats: SamplingStats, name: str
 ) -> None:
-    """Times a GLT ``DistFeature`` instance's remote issue, RPC wait, local gather, and stitch.
+    """Times a ``FusedDistFeature`` instance's remote issue, RPC wait, local gather, and stitch.
 
-    GLT builds its ``DistFeature`` objects inside ``DistNeighborSampler.__init__`` and registers
-    an RPC callee for each (a collective), so they cannot be swapped for a subclass afterwards.
-    The three methods are wrapped on the instance instead; the wrappers add to ``stats`` under
+    The feature registers an RPC callee when it is built, so it cannot be swapped for a
+    subclass afterwards. Its ``_remote_selecting_get``, ``_local_selecting_get`` and
+    ``_stitch_fused`` are wrapped on the instance instead; the wrappers add to ``stats`` under
     ``<name>_remote_issue_ms``, ``<name>_rpc_wait_ms``, ``<name>_rpc_count``, ``<name>_remote_mb``,
     ``<name>_local_ms`` and ``<name>_stitch_ms``.
 
     Args:
-        feature: The ``DistFeature`` to instrument.
+        feature: The ``FusedDistFeature`` to instrument.
         stats: Accumulator to report into.
         name: Key prefix, e.g. ``nfeat``.
     """
     remote_get = feature._remote_selecting_get
     local_get = feature._local_selecting_get
-    stitch = feature._stitch
+    stitch = feature._stitch_fused
 
     def timed_remote_get(ids: torch.Tensor, input_type=None) -> torch.futures.Future:
         issue_start = time.perf_counter()
@@ -215,9 +243,15 @@ def instrument_dist_feature(
             except Exception:
                 return
             stats.add(f"{name}_rpc_count", len(partials))
+            # Each remote partial is a pair of tensors: the byte rows and their index.
             stats.add(
                 f"{name}_remote_mb",
-                sum(feat.numel() * feat.element_size() for feat, _ in partials) / 2**20,
+                sum(
+                    rows.numel() * rows.element_size()
+                    + index.numel() * index.element_size()
+                    for rows, index in partials
+                )
+                / 2**20,
             )
 
         fut.add_done_callback(on_done)
@@ -227,13 +261,13 @@ def instrument_dist_feature(
         with stats.timer(f"{name}_local_ms"):
             return local_get(ids, input_type)
 
-    def timed_stitch(ids: torch.Tensor, local, remotes) -> torch.Tensor:
+    def timed_stitch(ids, local_rows, local_index, remotes):
         with stats.timer(f"{name}_stitch_ms"):
-            return stitch(ids, local, remotes)
+            return stitch(ids, local_rows, local_index, remotes)
 
     setattr(feature, "_remote_selecting_get", timed_remote_get)
     setattr(feature, "_local_selecting_get", timed_local_get)
-    setattr(feature, "_stitch", timed_stitch)
+    setattr(feature, "_stitch_fused", timed_stitch)
 
 
 _CALLEE_INSTRUMENTED_ATTR: Final[str] = "_gigl_sampling_stats_instrumented"

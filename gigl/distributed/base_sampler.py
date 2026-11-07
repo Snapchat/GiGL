@@ -42,7 +42,7 @@ from gigl.distributed.utils.sampling_errors import (
 )
 from gigl.distributed.utils.sampling_stats import (
     SamplingStats,
-    instrument_dist_feature,
+    instrument_fused_dist_feature,
     instrument_rpc_callees,
     sampling_stats_every_n_batches,
     tensor_map_bytes,
@@ -172,18 +172,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         every_n_batches = sampling_stats_every_n_batches()
         if every_n_batches > 0:
             context = get_context()
-            scope = f"worker={context.rank if context is not None else -1} pid={os.getpid()}"
+            worker_rank = -1
+            if context is not None:
+                worker_rank = context.rank
+            scope = f"worker={worker_rank} pid={os.getpid()}"
             self._stats = SamplingStats(
                 "GLT_SAMPLING_STATS", every_n_batches=every_n_batches, scope=scope
             )
             for name, feature in (
                 ("nfeat", self.dist_node_feature),
                 ("efeat", self.dist_edge_feature),
-                ("nqfeat", self.dist_node_quantized_feature),
-                ("eqfeat", self.dist_edge_quantized_feature),
             ):
                 if feature is not None:
-                    instrument_dist_feature(feature, self._stats, name)
+                    instrument_fused_dist_feature(feature, self._stats, name)
             instrument_rpc_callees(self._stats)
 
     def _prepare_sample_loop_inputs(

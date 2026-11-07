@@ -1177,6 +1177,8 @@ class BaseDistLoader(DistLoader):
             return super().__next__()
         if self._num_recv == self._num_expected:
             raise StopIteration
+        if isinstance(self._channel, ShmChannel):
+            stats.add("channel_empty_frac", float(self._channel.empty()))
         with stats.timer("recv_wait_ms"):
             msg = self._channel.recv()
         stats.add("msg_mb", tensor_map_bytes(msg) / 2**20)
