@@ -235,6 +235,10 @@ class DistSamplingProducer(DistMpSamplingProducer):
         self._sampler_options = sampler_options
         self._degree_tensors = degree_tensors
 
+    def worker_pids(self) -> list[int]:
+        """Process ids of the spawned sampling workers; empty before ``init``."""
+        return [worker.pid for worker in self._workers if worker.pid is not None]
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
         if self.sampling_config.seed is not None:

@@ -76,6 +76,7 @@ def _run_two_partition_loader(
     )
     for _ in loader:
         pass
+    assert len(loader.sampling_worker_pids()) > 0
     shutdown_rpc()
 
 

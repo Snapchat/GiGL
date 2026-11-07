@@ -63,6 +63,7 @@ from gigl.distributed.utils.channel import MonitoredShmChannel
 from gigl.distributed.utils.dist_typed_sampler import (
     parse_typed_channel_ratio_groups,
 )
+from gigl.distributed.utils.host_stats import HostCounterSampler
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -359,6 +360,7 @@ class BaseDistLoader(DistLoader):
                 every_n_batches=every_n_batches,
                 scope=f"rank={runtime.rank} local_rank={runtime.local_rank} pid={os.getpid()}",
             )
+        self._host_sampler: Optional[HostCounterSampler] = None
 
         # --- Mode-specific attributes and connection initialization ---
         if (
@@ -433,6 +435,19 @@ class BaseDistLoader(DistLoader):
                 "for colocated mode or (RemoteDistDataset, RemoteDistSamplingWorkerOptions) "
                 "for graph-store mode."
             )
+
+        # One host sampler per machine; started once the sampling workers exist so their
+        # resident memory can be tracked.
+        if self._loader_stats is not None and runtime.local_rank == 0:
+            self._host_sampler = HostCounterSampler(pids=self.sampling_worker_pids())
+            self._host_sampler.start()
+            self._loader_stats.register_reporter(self._host_sampler.make_reporter())
+
+    def sampling_worker_pids(self) -> list[int]:
+        """Process ids of this loader's local sampling workers; empty in graph-store mode."""
+        if self._is_mp_worker:
+            return self._mp_producer.worker_pids()
+        return []
 
     @staticmethod
     def validate_for_weighted_sampling(
@@ -998,6 +1013,9 @@ class BaseDistLoader(DistLoader):
     def shutdown(self) -> None:
         if self._shutdowned:
             return
+        if self._host_sampler is not None:
+            self._host_sampler.stop()
+            self._host_sampler = None
         if self._is_collocated_worker:
             self._collocated_producer.shutdown()
         elif self._is_mp_worker:
