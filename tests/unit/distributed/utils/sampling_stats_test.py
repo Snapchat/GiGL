@@ -1,14 +1,23 @@
 import os
 import re
 import threading
+import time
+from typing import TypeVar
 from unittest import mock
 
 import torch
+from graphlearn_torch.distributed.dist_feature import (
+    DistFeature,
+    RpcFeatureLookupCallee,
+)
+from graphlearn_torch.distributed.dist_neighbor_sampler import RpcSamplingCallee
 
+from gigl.distributed.utils.fused_feature import FusedDistFeature
 from gigl.distributed.utils.sampling_stats import (
     SAMPLING_STATS_EVERY_N_BATCHES_ENV,
     SAMPLING_WORKER_NUM_RPC_THREADS_ENV,
     SamplingStats,
+    instrument_rpc_callees,
     sampling_stats_every_n_batches,
     sampling_worker_num_rpc_threads_override,
     tensor_map_bytes,
@@ -130,3 +139,71 @@ class SamplingStatsEnvTest(TestCase):
             self.assertEqual(sampling_worker_num_rpc_threads_override(), 4)
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(sampling_worker_num_rpc_threads_override())
+
+
+_CalleeT = TypeVar("_CalleeT")
+
+
+class _FakeSamplingCallee(RpcSamplingCallee):
+    def __init__(self) -> None:
+        pass
+
+    def call(self, ids, num_nbr, etype, *unexpected):
+        assert not unexpected
+        return ids
+
+
+class _FakeFeatureCallee(RpcFeatureLookupCallee):
+    def __init__(self) -> None:
+        pass
+
+    def call(self, ids, input_type, *unexpected):
+        assert not unexpected
+        return torch.zeros(ids.numel(), 4)
+
+
+class InstrumentRpcCalleesQueueTimeTest(TestCase):
+    def _instrumented(self, callee: _CalleeT) -> tuple[SamplingStats, _CalleeT]:
+        stats = SamplingStats(
+            "GLT_SAMPLING_STATS", every_n_batches=1, scope="t", log_fn=lambda _: None
+        )
+        with mock.patch(
+            "graphlearn_torch.distributed.rpc._rpc_callee_pool", {0: callee}
+        ):
+            instrument_rpc_callees(stats)
+        return stats, callee
+
+    def test_sampling_callee_records_queue_time_and_strips_timestamp(self) -> None:
+        stats, callee = self._instrumented(_FakeSamplingCallee())
+        ids = torch.arange(3)
+        result = callee.call(ids, 2, None, time.time() - 0.05)
+        self.assertIs(result, ids)
+        fields = _fields(_window_line(stats))
+        self.assertGreaterEqual(float(fields["srv_sample_queue_ms"]), 40.0)
+
+    def test_sampling_callee_without_timestamp_records_no_queue_time(self) -> None:
+        stats, callee = self._instrumented(_FakeSamplingCallee())
+        callee.call(torch.arange(3), 2, None)
+        self.assertNotIn("srv_sample_queue_ms", _fields(_window_line(stats)))
+
+    def test_feature_callee_records_queue_time(self) -> None:
+        stats, callee = self._instrumented(_FakeFeatureCallee())
+        callee.call(torch.arange(3), None, time.time() - 0.05)
+        fields = _fields(_window_line(stats))
+        self.assertGreaterEqual(float(fields["srv_feat_queue_ms"]), 40.0)
+
+    def test_feature_callee_without_timestamp_records_no_queue_time(self) -> None:
+        stats, callee = self._instrumented(_FakeFeatureCallee())
+        callee.call(torch.arange(3), None)
+        self.assertNotIn("srv_feat_queue_ms", _fields(_window_line(stats)))
+
+
+class FusedDistFeatureRemoteGetTest(TestCase):
+    def test_uninstrumented_remote_get_is_glts(self) -> None:
+        feature = FusedDistFeature.__new__(FusedDistFeature)
+        ids = torch.arange(3)
+        with mock.patch.object(
+            DistFeature, "_remote_selecting_get", return_value="glt"
+        ) as glt_get:
+            self.assertEqual(feature._remote_selecting_get(ids, "user"), "glt")
+        glt_get.assert_called_once_with(ids, "user")

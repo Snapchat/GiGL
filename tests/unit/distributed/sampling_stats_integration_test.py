@@ -105,5 +105,8 @@ class SamplingStatsIntegrationTest(TestCase):
             self.assertGreater(peak.get(key, 0.0), 0.0, msg=key)
         for key in ("rpc_pool_size", "rpc_samples"):
             self.assertGreater(peak.get(key, 0.0), 0.0, msg=key)
+        for key in ("srv_sample_queue_ms", "srv_feat_queue_ms"):
+            self.assertIn(key, peak)
+            self.assertGreaterEqual(peak[key], 0.0, msg=key)
         self.assertIn("rundelay_rpc_pool_s", peak)
         self.assertGreaterEqual(peak["rundelay_rpc_pool_s"], 0.0)

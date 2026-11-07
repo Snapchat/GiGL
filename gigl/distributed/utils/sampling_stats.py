@@ -23,6 +23,8 @@ from gigl.env.constants import is_env_flag_enabled
 
 logger = Logger()
 
+# Stats-on clients append a send timestamp to their RPC requests, so every machine must
+# set this variable alike; a stats-off server receiving that extra argument fails the request.
 SAMPLING_STATS_EVERY_N_BATCHES_ENV: Final[str] = "GIGL_SAMPLING_STATS_EVERY_N_BATCHES"
 
 # Override GLT's per-worker RPC thread count (default ``min(num_partitions, 16)``) and the
@@ -268,6 +270,7 @@ def instrument_fused_dist_feature(
         with stats.timer(f"{name}_stitch_ms"):
             return stitch(ids, local_rows, local_index, remotes)
 
+    setattr(feature, "_send_timestamps", True)
     setattr(feature, "_remote_selecting_get", timed_remote_get)
     setattr(feature, "_local_selecting_get", timed_local_get)
     setattr(feature, "_stitch_fused", timed_stitch)
@@ -283,7 +286,11 @@ def instrument_rpc_callees(stats: SamplingStats) -> None:
     ``_rpc_callee_pool`` in ``graphlearn_torch.distributed.rpc``; each entry's ``call`` runs on
     an RPC worker thread. Wrapping ``call`` on each instance records ``srv_sample_calls``,
     ``srv_sample_ms``, ``srv_sample_seeds`` and ``srv_feat_calls``, ``srv_feat_ms``,
-    ``srv_feat_mb``. Callees already instrumented (a second sampler in the same process) are left
+    ``srv_feat_mb``. A request that carries the client's send time (``time.time()`` as a trailing
+    argument, added by the stats-on sampler and ``FusedDistFeature``) is stripped of it before the
+    original ``call`` runs and also records ``srv_sample_queue_ms`` / ``srv_feat_queue_ms``, the time
+    from the client's send to the start of the callee. Each machine has its own clock, so these
+    values are only meaningful relative to each other within one mesh. Callees already instrumented (a second sampler in the same process) are left
     alone, so the first sampler's ``stats`` receives the served-request counters.
 
     Args:
@@ -298,13 +305,25 @@ def instrument_rpc_callees(stats: SamplingStats) -> None:
             continue
         if isinstance(callee, RpcSamplingCallee):
             prefix = "srv_sample"
+            untimed_arg_count = 3
         elif isinstance(callee, RpcFeatureLookupCallee):
             prefix = "srv_feat"
+            untimed_arg_count = 2
         else:
             continue
         original_call = callee.call
 
-        def timed_call(*args, _original=original_call, _prefix=prefix, **kwargs):
+        def timed_call(
+            *args,
+            _original=original_call,
+            _prefix=prefix,
+            _untimed_arg_count=untimed_arg_count,
+            **kwargs,
+        ):
+            if len(args) > _untimed_arg_count:
+                sent_at = args[-1]
+                args = args[:-1]
+                stats.add(f"{_prefix}_queue_ms", (time.time() - sent_at) * 1e3)
             start = time.perf_counter()
             result = _original(*args, **kwargs)
             stats.add(f"{_prefix}_ms", (time.perf_counter() - start) * 1e3)

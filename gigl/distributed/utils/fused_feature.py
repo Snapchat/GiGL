@@ -10,6 +10,7 @@ rows, the latter ``None`` for a type without a sidecar.
 All stores are CPU stores: GiGL builds every ``Feature`` with ``with_gpu=False``.
 """
 
+import time
 from typing import Optional, Union
 
 import torch
@@ -18,7 +19,11 @@ from graphlearn_torch.distributed.dist_feature import (
     DistFeature,
     RpcFeatureLookupCallee,
 )
-from graphlearn_torch.distributed.rpc import RpcDataPartitionRouter, rpc_register
+from graphlearn_torch.distributed.rpc import (
+    RpcDataPartitionRouter,
+    rpc_register,
+    rpc_request_async,
+)
 from graphlearn_torch.partition import GLTPartitionBook, PartitionBook
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import ensure_device, get_available_device
@@ -222,6 +227,58 @@ class FusedDistFeature(DistFeature):
 
         self.rpc_router = rpc_router
         self.rpc_callee_id = rpc_register(RpcFeatureLookupCallee(self))
+
+    def _remote_selecting_get(
+        self,
+        ids: torch.Tensor,
+        input_type: Optional[Union[NodeType, EdgeType]] = None,
+    ) -> torch.futures.Future:
+        """Fetches the remote rows of ids, as GLT's ``DistFeature`` does.
+
+        When ``_send_timestamps`` is set on the instance (by ``instrument_fused_dist_feature``), each
+        request carries ``time.time()`` as a trailing argument so the serving callee can record how long
+        the request queued. Otherwise this is GLT's own implementation.
+        """
+        if not getattr(self, "_send_timestamps", False):
+            return super()._remote_selecting_get(ids, input_type)
+        assert self.rpc_callee_id is not None, (
+            "Remote feature lookup is disabled in 'local_only' mode."
+        )
+        _, pb = self._get_local_store(input_type)
+        ids = ids.to(pb.device)
+        input_order = torch.arange(ids.size(0), dtype=torch.long)
+        partition_ids = pb[ids].cpu()
+        futs, indexes = [], []
+        for pidx in range(self.num_partitions):
+            if pidx == self.partition_idx:
+                continue
+            remote_mask = partition_ids == pidx
+            remote_ids = torch.masked_select(ids, remote_mask)
+            if remote_ids.shape[0] > 0:
+                to_worker = self.rpc_router.get_to_worker(pidx)
+                futs.append(
+                    rpc_request_async(
+                        to_worker,
+                        self.rpc_callee_id,
+                        args=(remote_ids.cpu(), input_type, time.time()),
+                    )
+                )
+                indexes.append(torch.masked_select(input_order, remote_mask))
+        collect_fut = torch.futures.collect_all(futs)
+        res_fut: torch.futures.Future = torch.futures.Future()
+
+        def on_done(*_: object) -> None:
+            try:
+                result = [
+                    (fut.wait(), indexes[i]) for i, fut in enumerate(collect_fut.wait())
+                ]
+            except Exception as e:
+                res_fut.set_exception(e)
+            else:
+                res_fut.set_result(result)
+
+        collect_fut.add_done_callback(on_done)
+        return res_fut
 
     def async_get(
         self,

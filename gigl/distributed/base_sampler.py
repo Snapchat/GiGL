@@ -633,7 +633,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     rpc_request_async(
                         to_worker,
                         self.rpc_sample_callee_id,
-                        args=(p_ids.cpu(), num_nbr, etype),
+                        args=(p_ids.cpu(), num_nbr, etype, time.time()),
                     )
                 )
         stats.add(
