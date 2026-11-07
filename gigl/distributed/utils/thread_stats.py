@@ -127,10 +127,10 @@ class ThreadRoles:
 
     def make_reporter(self) -> Callable[[], dict[str, float]]:
         """Returns a ``SamplingStats`` reporter covering the window since its last call."""
-        self.read_window()
-        return self._report
+        self._read_window_guarded()
+        return self._read_window_guarded
 
-    def _report(self) -> dict[str, float]:
+    def _read_window_guarded(self) -> dict[str, float]:
         try:
             return self.read_window()
         except Exception:
