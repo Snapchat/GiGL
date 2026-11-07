@@ -47,7 +47,9 @@ from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
+from gigl.distributed.utils.ptrace import allow_any_ptracer
 from gigl.distributed.utils.sampling_stats import (
+    sampling_stats_every_n_batches,
     sampling_worker_num_rpc_threads_override,
     sampling_worker_torch_threads_override,
 )
@@ -92,6 +94,8 @@ def _sampling_worker_loop(
 ):
     dist_sampler = None
     try:
+        if sampling_stats_every_n_batches() > 0:
+            allow_any_ptracer()
         init_worker_group(
             world_size=worker_options.worker_world_size,
             rank=worker_options.worker_ranks[rank],
