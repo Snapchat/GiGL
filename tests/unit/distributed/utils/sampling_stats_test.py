@@ -12,10 +12,12 @@ from graphlearn_torch.distributed.dist_feature import (
 )
 from graphlearn_torch.distributed.dist_neighbor_sampler import RpcSamplingCallee
 
+from gigl.distributed.dist_sampling_producer import sampling_worker_thread_settings
 from gigl.distributed.utils.fused_feature import FusedDistFeature
 from gigl.distributed.utils.sampling_stats import (
     SAMPLING_STATS_EVERY_N_BATCHES_ENV,
     SAMPLING_WORKER_NUM_RPC_THREADS_ENV,
+    SAMPLING_WORKER_TORCH_THREADS_ENV,
     SamplingStats,
     instrument_rpc_callees,
     sampling_stats_every_n_batches,
@@ -207,3 +209,36 @@ class FusedDistFeatureRemoteGetTest(TestCase):
         ) as glt_get:
             self.assertEqual(feature._remote_selecting_get(ids, "user"), "glt")
         glt_get.assert_called_once_with(ids, "user")
+
+
+class SamplingWorkerThreadSettingsTest(TestCase):
+    def test_defaults_without_overrides(self) -> None:
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop(SAMPLING_WORKER_NUM_RPC_THREADS_ENV, None)
+            os.environ.pop(SAMPLING_WORKER_TORCH_THREADS_ENV, None)
+            self.assertEqual(sampling_worker_thread_settings(16), (16, 17))
+
+    def test_rpc_override_moves_default_torch_threads(self) -> None:
+        with mock.patch.dict(
+            os.environ, {SAMPLING_WORKER_NUM_RPC_THREADS_ENV: "3"}, clear=False
+        ):
+            os.environ.pop(SAMPLING_WORKER_TORCH_THREADS_ENV, None)
+            self.assertEqual(sampling_worker_thread_settings(16), (3, 4))
+
+    def test_both_overrides(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                SAMPLING_WORKER_NUM_RPC_THREADS_ENV: "3",
+                SAMPLING_WORKER_TORCH_THREADS_ENV: "2",
+            },
+            clear=False,
+        ):
+            self.assertEqual(sampling_worker_thread_settings(16), (3, 2))
+
+    def test_torch_override_alone(self) -> None:
+        with mock.patch.dict(
+            os.environ, {SAMPLING_WORKER_TORCH_THREADS_ENV: "2"}, clear=False
+        ):
+            os.environ.pop(SAMPLING_WORKER_NUM_RPC_THREADS_ENV, None)
+            self.assertEqual(sampling_worker_thread_settings(16), (16, 2))

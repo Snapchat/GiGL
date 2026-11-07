@@ -80,6 +80,20 @@ def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> Non
         )
 
 
+def sampling_worker_thread_settings(default_num_rpc_threads: int) -> tuple[int, int]:
+    """Returns ``(num_rpc_threads, torch_threads)`` for a sampling worker.
+
+    The environment overrides replace the RPC thread count and the torch intra-op thread
+    count; torch threads default to one more than the RPC threads.
+    """
+    num_rpc_threads = default_num_rpc_threads
+    rpc_threads_override = sampling_worker_num_rpc_threads_override()
+    if rpc_threads_override is not None:
+        num_rpc_threads = rpc_threads_override
+    torch_threads = sampling_worker_torch_threads_override() or (num_rpc_threads + 1)
+    return num_rpc_threads, torch_threads
+
+
 def _sampling_worker_loop(
     rank: int,
     data: DistDataset,
@@ -111,16 +125,16 @@ def _sampling_worker_loop(
             )
 
         if worker_options.num_rpc_threads is None:
-            num_rpc_threads = min(data.num_partitions, 16)
+            default_num_rpc_threads = min(data.num_partitions, 16)
         else:
-            num_rpc_threads = worker_options.num_rpc_threads
-        rpc_threads_override = sampling_worker_num_rpc_threads_override()
-        if rpc_threads_override is not None:
-            num_rpc_threads = rpc_threads_override
-        torch_threads = sampling_worker_torch_threads_override() or (
-            num_rpc_threads + 1
+            default_num_rpc_threads = worker_options.num_rpc_threads
+        num_rpc_threads, torch_threads = sampling_worker_thread_settings(
+            default_num_rpc_threads
         )
-        if rpc_threads_override is not None or torch_threads != num_rpc_threads + 1:
+        if (
+            num_rpc_threads != default_num_rpc_threads
+            or torch_threads != num_rpc_threads + 1
+        ):
             logger.info(
                 f"sampling worker {rank}: num_rpc_threads={num_rpc_threads} "
                 f"torch_num_threads={torch_threads} (environment override)"
