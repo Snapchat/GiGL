@@ -155,7 +155,7 @@ class DistNeighborSampler(BaseDistNeighborSampler):
             num_sampled_nodes.append(srcs.size(0))
 
             for req_num in self.num_neighbors:
-                if req_num == 0:
+                if req_num == 0 or srcs.numel() == 0:
                     break
                 output = await self._sample_one_hop(srcs, req_num, None)
                 if output.nbr.numel() == 0:
