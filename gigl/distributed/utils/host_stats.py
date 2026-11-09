@@ -5,6 +5,8 @@ CPU-bound one. Everything here reads Linux ``/proc`` files; on hosts without the
 fields are simply absent from the report.
 """
 
+import math
+import os
 import threading
 import time
 from collections.abc import Sequence
@@ -16,6 +18,24 @@ logger = Logger()
 
 _MB = 2**20
 _GB = 2**30
+_DEFAULT_NIC_LINE_RATE_GBPS = 50.0
+_LINE_RATE_FRACTION = 0.8
+
+
+def _percentile(values: Sequence[float], q: float) -> float:
+    """Linearly interpolated ``q`` quantile (0..1) of a non-empty sequence."""
+    ordered = sorted(values)
+    position = q * (len(ordered) - 1)
+    low = math.floor(position)
+    high = math.ceil(position)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def _nic_line_rate_mb_s() -> float:
+    gbps = float(
+        os.environ.get("GIGL_SAMPLING_NIC_LINE_RATE_GBPS", _DEFAULT_NIC_LINE_RATE_GBPS)
+    )
+    return gbps * 1e9 / 8 / _MB
 
 
 def _read(path: str) -> Optional[str]:
@@ -119,10 +139,28 @@ class HostCounterSampler:
         pids: Processes whose resident memory is summed into ``rss_local_workers_gb_max``. The
             loader passes only the sampler workers of the rank that runs the host sampler, so the
             value excludes other ranks' workers on the same machine.
+        net_interval_s: Seconds between samples of the fast network sampler, which reads only
+            ``/proc/net/dev`` (via ``net_dev_reader``, ``clock`` for tests) so that sub-second bursts show up in ``*_100ms`` keys. The line
+            rate used for ``*_bins_over_80pct_line`` comes from the
+            ``GIGL_SAMPLING_NIC_LINE_RATE_GBPS`` env var (default 50).
     """
 
-    def __init__(self, interval_s: float = 2.0, pids: Sequence[int] = ()) -> None:
+    def __init__(
+        self,
+        interval_s: float = 2.0,
+        pids: Sequence[int] = (),
+        net_interval_s: float = 0.1,
+        net_dev_reader: Callable[[], Optional[str]] = lambda: _read("/proc/net/dev"),
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
         self._interval_s = interval_s
+        self._net_interval_s = net_interval_s
+        self._net_dev_reader = net_dev_reader
+        self._clock = clock
+        self._line_rate_mb_s = _nic_line_rate_mb_s()
+        self._fast_thread: Optional[threading.Thread] = None
+        self._fast_last: Optional[tuple[int, int]] = None
+        self._fast_last_time = 0.0
         self._pids = list(pids)
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -137,27 +175,39 @@ class HostCounterSampler:
         self._tx_mb_s: list[float] = []
         self._rx_pkt_s: list[float] = []
         self._tx_pkt_s: list[float] = []
+        self._fast_rx_mb_s: list[float] = []
+        self._fast_tx_mb_s: list[float] = []
         self._loadavg: list[float] = []
         self._mem_available_gb: list[float] = []
         self._rss_gb: list[float] = []
         self._samples = 0
 
     def start(self) -> None:
-        net = _read("/proc/net/dev")
+        net = self._net_dev_reader()
         if net is not None:
             logger.info(
                 f"Host counter sampler watching interfaces {_net_dev_interfaces(net)}"
             )
             self._last_net = parse_net_dev(net)
+            self._fast_last = self._last_net[:2]
+            self._fast_last_time = self._clock()
+            self._fast_thread = threading.Thread(
+                target=self._run_fast_net, name="host-net-burst-sampler", daemon=True
+            )
         self._last_time = time.perf_counter()
         self._tcp_baseline = _tcp_counters()
         self._thread = threading.Thread(
             target=self._run, name="host-counter-sampler", daemon=True
         )
         self._thread.start()
+        if self._fast_thread is not None:
+            self._fast_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        if self._fast_thread is not None:
+            self._fast_thread.join()
+            self._fast_thread = None
         if self._thread is not None:
             self._thread.join()
             self._thread = None
@@ -169,9 +219,34 @@ class HostCounterSampler:
             except Exception:
                 logger.exception("Host counter sample failed")
 
+    def _run_fast_net(self) -> None:
+        while not self._stop.wait(self._net_interval_s):
+            try:
+                self._sample_net()
+            except Exception:
+                logger.exception("Host network burst sample failed")
+
+    def _sample_net(self) -> None:
+        now = self._clock()
+        net_text = self._net_dev_reader()
+        if net_text is None:
+            return
+        rx_bytes, tx_bytes, _, _ = parse_net_dev(net_text)
+        with self._lock:
+            elapsed = now - self._fast_last_time
+            if self._fast_last is not None and elapsed > 0:
+                self._fast_rx_mb_s.append(
+                    (rx_bytes - self._fast_last[0]) / elapsed / _MB
+                )
+                self._fast_tx_mb_s.append(
+                    (tx_bytes - self._fast_last[1]) / elapsed / _MB
+                )
+            self._fast_last = (rx_bytes, tx_bytes)
+            self._fast_last_time = now
+
     def _sample(self) -> None:
         now = time.perf_counter()
-        net_text = _read("/proc/net/dev")
+        net_text = self._net_dev_reader()
         load_text = _read("/proc/loadavg")
         mem_available = _mem_available_gb()
         rss = _rss_gb(self._pids)
@@ -210,6 +285,18 @@ class HostCounterSampler:
                 report["net_tx_mb_s_max"] = max(self._tx_mb_s)
                 report["net_rx_pkt_s_mean"] = sum(self._rx_pkt_s) / len(self._rx_pkt_s)
                 report["net_tx_pkt_s_mean"] = sum(self._tx_pkt_s) / len(self._tx_pkt_s)
+            for direction, bins in (
+                ("rx", self._fast_rx_mb_s),
+                ("tx", self._fast_tx_mb_s),
+            ):
+                if not bins:
+                    continue
+                threshold = _LINE_RATE_FRACTION * self._line_rate_mb_s
+                report[f"net_{direction}_mb_s_p99_100ms"] = _percentile(bins, 0.99)
+                report[f"net_{direction}_mb_s_max_100ms"] = max(bins)
+                report[f"net_{direction}_bins_over_80pct_line"] = sum(
+                    1 for rate in bins if rate > threshold
+                ) / len(bins)
             tcp = _tcp_counters()
             for name, key in (
                 ("retrans_segs", "tcp_retrans_segs"),

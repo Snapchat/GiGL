@@ -64,6 +64,7 @@ from gigl.distributed.utils.channel import MonitoredShmChannel, SizedShmChannel
 from gigl.distributed.utils.dist_typed_sampler import (
     parse_typed_channel_ratio_groups,
 )
+from gigl.distributed.utils.flow_stats import FlowStatsSampler
 from gigl.distributed.utils.host_stats import HostCounterSampler
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
@@ -362,6 +363,7 @@ class BaseDistLoader(DistLoader):
                 scope=f"rank={runtime.rank} local_rank={runtime.local_rank} pid={os.getpid()} host={socket.gethostname()}",
             )
         self._host_sampler: Optional[HostCounterSampler] = None
+        self._flow_sampler: Optional[FlowStatsSampler] = None
 
         # --- Mode-specific attributes and connection initialization ---
         if (
@@ -443,6 +445,9 @@ class BaseDistLoader(DistLoader):
             self._host_sampler = HostCounterSampler(pids=self.sampling_worker_pids())
             self._host_sampler.start()
             self._loader_stats.register_reporter(self._host_sampler.make_reporter())
+            self._flow_sampler = FlowStatsSampler()
+            self._flow_sampler.start()
+            self._loader_stats.register_reporter(self._flow_sampler.make_reporter())
 
     def sampling_worker_pids(self) -> list[int]:
         """Process ids of this loader's local sampling workers; empty in graph-store mode."""
@@ -1022,6 +1027,9 @@ class BaseDistLoader(DistLoader):
         if self._host_sampler is not None:
             self._host_sampler.stop()
             self._host_sampler = None
+        if self._flow_sampler is not None:
+            self._flow_sampler.stop()
+            self._flow_sampler = None
         if self._is_collocated_worker:
             self._collocated_producer.shutdown()
         elif self._is_mp_worker:
