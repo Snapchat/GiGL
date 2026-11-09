@@ -365,6 +365,92 @@ class TFRecordDataLoaderTest(TestCase):
         self.assertTrue(is_disk_backed(spilled.features))
         self.assertTrue(is_disk_backed(spilled.labels))
 
+    def _load_with_flaky_reader(
+        self, errors_to_raise: list[tf.errors.OpError], builds: list[int]
+    ) -> torch.Tensor:
+        """Loads the node fixture through a dataset that yields one batch, then raises the next queued error.
+
+        Appends to `builds` once per dataset build, i.e. once per read attempt.
+        """
+        real_build = TFRecordDataLoader._build_dataset_for_uris
+        remaining_errors = list(errors_to_raise)
+
+        class _FlakyDataset:
+            def __init__(self, dataset: tf.data.Dataset, error: Optional[Exception]):
+                self._dataset = dataset
+                self._error = error
+
+            def __iter__(self):
+                for idx, batch in enumerate(self._dataset):
+                    yield batch
+                    if idx == 0 and self._error is not None:
+                        raise self._error
+
+        def flaky_build(*args, **kwargs):
+            builds.append(1)
+            error = remaining_errors.pop(0) if remaining_errors else None
+            return _FlakyDataset(real_build(*args, **kwargs), error)
+
+        info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+            feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
+            feature_keys=[],
+            feature_dim=0,
+            entity_key="node_id",
+            label_keys=[],
+            tfrecord_uri_pattern="100.tfrecord",
+        )
+        with (
+            mock.patch.object(
+                TFRecordDataLoader, "_build_dataset_for_uris", side_effect=flaky_build
+            ),
+            mock.patch("gigl.common.data.dataloaders.time.sleep"),
+        ):
+            loaded = TFRecordDataLoader(rank=0, world_size=1).load_as_torch_tensors(
+                info,
+                tf_dataset_options=TFDatasetOptions(deterministic=True, batch_size=10),
+            )
+        return loaded.ids
+
+    def test_load_retries_transient_dns_error_without_duplicates(self) -> None:
+        dns_error = tf.errors.FailedPreconditionError(
+            None,
+            None,
+            "Error executing an HTTP request: libcurl code 6 meaning "
+            "'Couldn't resolve host name', Could not resolve host: storage.googleapis.com",
+        )
+        builds: list[int] = []
+        ids = self._load_with_flaky_reader([dns_error], builds)
+        assert_close(ids, torch.tensor(range(100)))
+        self.assertEqual(len(builds), 2)
+
+    def test_load_does_not_retry_non_transient_error(self) -> None:
+        builds: list[int] = []
+        with self.assertRaises(tf.errors.DataLossError):
+            self._load_with_flaky_reader(
+                [tf.errors.DataLossError(None, None, "corrupted record")], builds
+            )
+        self.assertEqual(len(builds), 1)
+
+    def test_load_does_not_retry_unrelated_failed_precondition(self) -> None:
+        builds: list[int] = []
+        with self.assertRaises(tf.errors.FailedPreconditionError):
+            self._load_with_flaky_reader(
+                [tf.errors.FailedPreconditionError(None, None, "permission denied")],
+                builds,
+            )
+        self.assertEqual(len(builds), 1)
+
+    def test_load_raises_after_attempt_cap_on_persistent_transient_error(self) -> None:
+        errors = [
+            tf.errors.UnavailableError(None, None, "Could not resolve host: x")
+            for _ in range(10)
+        ]
+        builds: list[int] = []
+        with self.assertRaises(tf.errors.UnavailableError):
+            self._load_with_flaky_reader(errors, builds)
+        self.assertEqual(len(builds), 5)
+
     def test_load_as_torch_tensors_decodes_packed_node_features(self) -> None:
         packed_feature_values = [[1, 2], [254, 255]]
         with tf.io.TFRecordWriter(str(self.data_dir / "packed.tfrecord")) as writer:
