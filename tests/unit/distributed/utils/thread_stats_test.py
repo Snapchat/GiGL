@@ -113,6 +113,42 @@ class ThreadRolesTest(TestCase):
             self.assertIn(f"rundelay_{role}_s", window)
             self.assertIn(f"threads_{role}", window)
 
+    def test_max_thread_cpu_is_the_busiest_thread_of_the_role(self) -> None:
+        roles = ThreadRoles()
+        roles.snapshot_before_rpc()
+        idle_threads = [_NamedThread("TP_UV_loop") for _ in range(3)]
+        self.addCleanup(lambda: [t.stop() for t in idle_threads])
+        busy_started = threading.Event()
+        busy_done = threading.Event()
+        busy_release = threading.Event()
+        busy_tid: list[int] = []
+
+        def spin() -> None:
+            _name_current_thread("TP_UV_loop")
+            busy_tid.append(threading.get_native_id())
+            busy_started.set()
+            deadline = time.perf_counter() + 0.4
+            while time.perf_counter() < deadline:
+                pass
+            busy_done.set()
+            busy_release.wait()
+
+        roles.read_window()
+        busy = threading.Thread(target=spin, daemon=True)
+        busy.start()
+        busy_started.wait()
+        busy_done.wait()
+        window = roles.read_window()
+        busy_release.set()
+        busy.join()
+        self.assertEqual(window["threads_tp_uv"], 4.0)
+        self.assertGreaterEqual(window["cpu_tp_uv_max_thread_s"], 0.2)
+        self.assertLessEqual(window["cpu_tp_uv_max_thread_s"], window["cpu_tp_uv_s"])
+        self.assertAlmostEqual(
+            window["cpu_tp_uv_max_thread_s"], window["cpu_tp_uv_s"], delta=0.05
+        )
+        self.assertIn("rundelay_tp_uv_max_thread_s", window)
+
     def test_second_window_reports_only_new_cpu(self) -> None:
         roles = ThreadRoles()
         roles.set_loop_tid(threading.get_native_id())

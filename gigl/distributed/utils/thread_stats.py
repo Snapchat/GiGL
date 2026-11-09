@@ -112,12 +112,18 @@ class ThreadRoles:
         return int(text.split()[1]) / _NS
 
     def read_window(self) -> dict[str, float]:
-        """Returns per-role CPU, run delay and thread counts since the previous call."""
+        """Returns per-role CPU, run delay and thread counts since the previous call.
+
+        Also returns, per role, the largest CPU and run delay seconds accrued by any single
+        thread of the role (``cpu_<role>_max_thread_s``, ``rundelay_<role>_max_thread_s``).
+        """
         report: dict[str, float] = {}
         for role in _ROLES:
             report[f"cpu_{role}_s"] = 0.0
             report[f"rundelay_{role}_s"] = 0.0
             report[f"threads_{role}"] = 0.0
+            report[f"cpu_{role}_max_thread_s"] = 0.0
+            report[f"rundelay_{role}_max_thread_s"] = 0.0
         for tid in _list_tids():
             comm = _read(f"{_TASK_DIR}/{tid}/comm")
             cpu_s = self._cpu_seconds(tid)
@@ -127,9 +133,15 @@ class ThreadRoles:
             if rundelay_s is None:
                 rundelay_s = 0.0
             role = self.classify(tid, comm.strip())
-            report[f"cpu_{role}_s"] += cpu_s - self._last_cpu_s.get(tid, 0.0)
-            report[f"rundelay_{role}_s"] += rundelay_s - self._last_rundelay_s.get(
-                tid, 0.0
+            thread_cpu_s = cpu_s - self._last_cpu_s.get(tid, 0.0)
+            thread_rundelay_s = rundelay_s - self._last_rundelay_s.get(tid, 0.0)
+            report[f"cpu_{role}_s"] += thread_cpu_s
+            report[f"rundelay_{role}_s"] += thread_rundelay_s
+            report[f"cpu_{role}_max_thread_s"] = max(
+                report[f"cpu_{role}_max_thread_s"], thread_cpu_s
+            )
+            report[f"rundelay_{role}_max_thread_s"] = max(
+                report[f"rundelay_{role}_max_thread_s"], thread_rundelay_s
             )
             report[f"threads_{role}"] += 1.0
             self._last_cpu_s[tid] = cpu_s
