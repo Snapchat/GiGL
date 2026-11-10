@@ -51,6 +51,27 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
     return static_cast<int32_t>(static_cast<uint32_t>(key));
 }
 
+// Reads one node's total out-degree from a resolved degree view. Returns 0 when the
+// node type has no degree data.
+static inline int32_t readTotalDegree(int32_t nodeId, int32_t nodeTypeId, const DegreeView& degreeView) {
+    if (degreeView.numDegrees == 0) {
+        return 0;
+    }
+    TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeId < degreeView.numDegrees,
+                "Node ID ",
+                nodeId,
+                " out of range for degree tensor of ntype_id ",
+                nodeTypeId,
+                " (size=",
+                degreeView.numDegrees,
+                "). This indicates corrupted graph data or a sampler bug.");
+    if (degreeView.degreesInt32 != nullptr) {
+        return degreeView.degreesInt32[nodeId];
+    }
+    return static_cast<int32_t>(std::min<int64_t>(degreeView.degreesInt64[nodeId], INT32_MAX));
+}
+
 PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
                                int32_t seedNodeTypeId,
                                double alpha,
@@ -114,6 +135,28 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
             _edgeTypeToSrcNtypeId[edgeTypeId] = nodeTypeId;
         }
     }
+    // Resolve each degree tensor's dtype and data pointer once so the push loop
+    // reads degrees without per-call tensor dispatch. _degreeTensors keeps the
+    // storage alive.
+    _degreeViews.resize(_degreeTensors.size());
+    for (size_t nodeTypeIndex = 0; nodeTypeIndex < _degreeTensors.size(); ++nodeTypeIndex) {
+        const auto& degreeTensor = _degreeTensors[nodeTypeIndex];
+        if (degreeTensor.numel() == 0) {
+            continue;
+        }
+        _degreeViews[nodeTypeIndex].numDegrees = degreeTensor.size(0);
+        if (degreeTensor.scalar_type() == torch::kInt) {
+            _degreeViews[nodeTypeIndex].degreesInt32 = degreeTensor.data_ptr<int32_t>();
+        } else if (degreeTensor.scalar_type() == torch::kLong) {
+            _degreeViews[nodeTypeIndex].degreesInt64 = degreeTensor.data_ptr<int64_t>();
+        } else {
+            TORCH_CHECK(false,
+                        "Unsupported degree tensor dtype: ",
+                        degreeTensor.scalar_type(),
+                        ". Expected torch.int32 or torch.int64.");
+        }
+    }
+
     // Allocate per-seed, per-node-type state.
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
@@ -414,6 +457,13 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     // c. Accumulate residual for each neighbor and re-enqueue if threshold
                     // exceeded.
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
+                    TORCH_CHECK(dstNodeTypeId < static_cast<int32_t>(_degreeViews.size()),
+                                "nodeTypeId ",
+                                dstNodeTypeId,
+                                " out of range [0, ",
+                                _degreeViews.size(),
+                                "). This indicates a construction bug in the sampler.");
+                    const DegreeView& dstDegreeView = _degreeViews[dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
                         auto residualStateIter =
                             dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
@@ -422,8 +472,9 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                         residualState.residual += residualPerNeighbor;
                         residualState.minHop = std::min(residualState.minHop, neighborHop);
 
-                        double threshold = _requeueThresholdFactor *
-                                           static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
+                        double threshold =
+                            _requeueThresholdFactor *
+                            static_cast<double>(readTotalDegree(neighborNodeId, dstNodeTypeId, dstDegreeView));
 
                         if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
                             residualState.residual >= threshold) {
@@ -1086,40 +1137,6 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     }
 
     return extractedTypedPPRByNodeTypeId;
-}
-
-int32_t PPRForwardPush::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
-    TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeTypeId < static_cast<int32_t>(_degreeTensors.size()),
-                "nodeTypeId ",
-                nodeTypeId,
-                " out of range [0, ",
-                _degreeTensors.size(),
-                "). This indicates a construction bug in the sampler.");
-    const auto& degreeTensor = _degreeTensors[nodeTypeId];
-    if (degreeTensor.numel() == 0) {
-        return 0;
-    }
-    TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeId < static_cast<int32_t>(degreeTensor.size(0)),
-                "Node ID ",
-                nodeId,
-                " out of range for degree tensor of ntype_id ",
-                nodeTypeId,
-                " (size=",
-                degreeTensor.size(0),
-                "). This indicates corrupted graph data or a sampler bug.");
-    if (degreeTensor.scalar_type() == torch::kInt) {
-        return degreeTensor.data_ptr<int32_t>()[nodeId];
-    }
-    if (degreeTensor.scalar_type() == torch::kLong) {
-        return static_cast<int32_t>(std::min<int64_t>(degreeTensor.data_ptr<int64_t>()[nodeId], INT32_MAX));
-    }
-    TORCH_CHECK(false,
-                "Unsupported degree tensor dtype: ",
-                degreeTensor.scalar_type(),
-                ". Expected torch.int32 or torch.int64.");
-    return 0; // unreachable; suppresses compiler warning
 }
 
 } // namespace gigl
