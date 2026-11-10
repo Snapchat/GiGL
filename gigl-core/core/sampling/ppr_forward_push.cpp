@@ -24,6 +24,15 @@ struct NodeScore {
     int32_t nodeId;
     double score;
 };
+
+// Orders by score descending, breaking ties by node id so selection among
+// equal scores does not depend on hash container iteration order.
+bool higherNodeScore(const NodeScore& a, const NodeScore& b) {
+    if (a.score != b.score) {
+        return a.score > b.score;
+    }
+    return a.nodeId < b.nodeId;
+}
 } // namespace
 
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
@@ -337,7 +346,13 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                 continue;
             }
 
-            for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
+            // Pushes within one round read residuals that earlier pushes in the same
+            // round may have updated, so the processing order affects the result.
+            // Sorting by node id makes the order independent of the hash container.
+            std::vector<int32_t> sortedQueuedNodes(srcNodeTypeState.queuedNodes.begin(),
+                                                   srcNodeTypeState.queuedNodes.end());
+            std::sort(sortedQueuedNodes.begin(), sortedQueuedNodes.end());
+            for (int32_t sourceNodeId : sortedQueuedNodes) {
                 auto sourceStateIter = srcNodeTypeState.residualStates.find(sourceNodeId);
                 TORCH_CHECK(sourceStateIter != srcNodeTypeState.residualStates.end(),
                             "PPR push expected residual state for queued node ",
@@ -615,10 +630,8 @@ static std::vector<NodeScore> selectFinalizedPPRPairs(const SeedNodeTypeState& n
             scorePairs.push_back(NodeScore{nodeId, score});
         }
         if (numReturnedPairs < static_cast<int32_t>(scorePairs.size())) {
-            std::nth_element(scorePairs.begin(),
-                             scorePairs.begin() + numReturnedPairs,
-                             scorePairs.end(),
-                             [](const auto& a, const auto& b) { return a.score > b.score; });
+            std::nth_element(
+                scorePairs.begin(), scorePairs.begin() + numReturnedPairs, scorePairs.end(), higherNodeScore);
         }
 
         for (int32_t rankIdx = 0; rankIdx < numReturnedPairs; ++rankIdx) {
@@ -673,10 +686,8 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
         if (residualTopK > 0) {
             if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
-                std::nth_element(residualPairs.begin(),
-                                 residualPairs.begin() + residualTopK,
-                                 residualPairs.end(),
-                                 [](const auto& a, const auto& b) { return a.score > b.score; });
+                std::nth_element(
+                    residualPairs.begin(), residualPairs.begin() + residualTopK, residualPairs.end(), higherNodeScore);
             }
 
             for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
@@ -934,9 +945,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
             // the previous behavior: selected finalized and top-up rows are ordered
             // together by emitted score, so top-up rows may interleave after selection.
             if (selectedPairs.size() > 1) {
-                std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
-                    return a.score > b.score;
-                });
+                std::sort(selectedPairs.begin(), selectedPairs.end(), higherNodeScore);
             }
 
             for (const auto& [nodeId, score] : selectedPairs) {
