@@ -11,8 +11,12 @@ GLT's own helpers (``all_gather``, ``barrier``, ``rpc_is_initialized``, ...) see
 form the TensorPipe ``init_method``.
 
 Environment variables (comma-separated lists, unset means GLT's defaults):
-    GIGL_SAMPLING_RPC_CHANNELS: any of ``basic``, ``mpt_uv``, ``cma``, at least one of ``basic``
-        or ``mpt_uv`` (a channel list without one of those cannot carry CPU tensors across hosts).
+    GIGL_SAMPLING_RPC_CHANNELS: any of ``basic``, ``mpt_uv``, ``cma``; ``basic`` is required.
+        Every valid list therefore shares ``basic``, the CPU channel that carries tensors across
+        hosts, with every other valid list. Order is TensorPipe's channel priority, first is
+        highest. The value must be identical on every node of a job: two processes that pick
+        channels with no common choice abort on the first request. It has no effect in graph-store
+        mode, whose RPC is initialized by GLT's own ``init_rpc``.
     GIGL_SAMPLING_RPC_TRANSPORTS: ``uv`` only.
 """
 
@@ -33,7 +37,7 @@ DEFAULT_CHANNELS: tuple[str, ...] = ("mpt_uv", "basic")
 
 _ALLOWED_TRANSPORTS = frozenset({"uv"})
 _ALLOWED_CHANNELS = frozenset({"basic", "mpt_uv", "cma"})
-_CROSS_HOST_CHANNELS = frozenset({"basic", "mpt_uv"})
+_REQUIRED_CHANNEL = "basic"
 
 
 def _parse_list(env_name: str, allowed: frozenset[str]) -> Optional[tuple[str, ...]]:
@@ -55,9 +59,9 @@ def validate_rpc_backend(
     """Validates a transport and channel selection and returns it as tuples.
 
     Raises:
-        ValueError: If a transport or channel is not allowed, or no channel can carry CPU
-            tensors across hosts (such a list initializes and then aborts the process on the
-            first send).
+        ValueError: If a transport or channel is not allowed, or ``basic`` is missing from the
+            channels (lists that share no channel with a peer abort the process on the first
+            send).
     """
     transports = tuple(transports)
     channels = tuple(channels)
@@ -73,9 +77,10 @@ def validate_rpc_backend(
             raise ValueError(
                 f"Channel {channel!r} is not allowed; allowed: {sorted(_ALLOWED_CHANNELS)}"
             )
-    if not _CROSS_HOST_CHANNELS.intersection(channels):
+    if _REQUIRED_CHANNEL not in channels:
         raise ValueError(
-            f"Channels {list(channels)} need at least one of {sorted(_CROSS_HOST_CHANNELS)}"
+            f"Channels {list(channels)} must include {_REQUIRED_CHANNEL!r} so that every "
+            "process of a job shares at least one channel"
         )
     return transports, channels
 
@@ -113,8 +118,8 @@ def init_rpc_with_options(
         rpc_timeout: RPC timeout in seconds, also used for the bring-up gather and barrier.
         is_dynamic: Whether servers and clients join dynamically.
         _transports: TensorPipe transports; only ``uv`` is accepted.
-        _channels: TensorPipe channels; any of ``basic``, ``mpt_uv``, ``cma`` with at least one
-            of ``basic`` or ``mpt_uv``.
+        _channels: TensorPipe channels in priority order; any of ``basic``, ``mpt_uv``,
+            ``cma``, and ``basic`` is required.
     """
     transports, channels = validate_rpc_backend(_transports, _channels)
     with glt_rpc._rpc_init_lock:

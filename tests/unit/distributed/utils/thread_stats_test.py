@@ -199,7 +199,10 @@ class ThreadRolesTest(TestCase):
         self,
     ) -> None:
         roles = ThreadRoles()
-        num_busy = (os.cpu_count() or 1) * 2
+        num_busy = 4
+        original_affinity = os.sched_getaffinity(0)
+        os.sched_setaffinity(0, {min(original_affinity)})
+        self.addCleanup(os.sched_setaffinity, 0, original_affinity)
         stop = threading.Event()
         sleeper_started = threading.Event()
         sleeper_tid: list[int] = []
@@ -232,7 +235,7 @@ class ThreadRolesTest(TestCase):
             thread.join()
         # The sleeper blocks about every 2 ms, so 1 s yields far more than 20 voluntary switches.
         self.assertGreaterEqual(window["ctxsw_vol_loop"], 20.0)
-        # More spinning threads than cores must be preempted by the scheduler.
+        # More spinning threads than the one allowed core must be preempted by the scheduler.
         self.assertGreater(window["ctxsw_nonvol_other"], 0.0)
         self.assertGreater(window["ctxsw_nonvol_other_max_thread"], 0.0)
         self.assertLessEqual(

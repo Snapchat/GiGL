@@ -281,6 +281,8 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Fail here on a bad channel or transport value instead of inside every spawned worker.
+        sampling_rpc_backend_from_env()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
