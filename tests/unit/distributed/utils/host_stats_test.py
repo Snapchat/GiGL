@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 
 from gigl.distributed.utils.host_stats import (
     HostCounterSampler,
@@ -138,3 +139,86 @@ class BurstBinTest(TestCase):
         # 80% of the default 50 Gbps line is about 4768 MiB/s, so only the burst bin is over.
         self.assertAlmostEqual(report["net_rx_bins_over_80pct_line"], 0.1)
         self.assertEqual(report["net_tx_bins_over_80pct_line"], 0.0)
+
+
+_CPU_STAT_V2 = "usage_usec 5\nnr_periods {periods}\nnr_throttled {throttled}\nthrottled_usec {usec}\n"
+_CPU_STAT_V1 = "nr_periods {periods}\nnr_throttled {throttled}\nthrottled_time {nsec}\n"
+
+
+class CgroupKeysTest(TestCase):
+    def _window(
+        self, files: dict[str, str], after: dict[str, str], allowed: Optional[int]
+    ) -> dict[str, float]:
+        current = dict(files)
+        sampler = HostCounterSampler(
+            interval_s=3600,
+            net_interval_s=3600,
+            cgroup_reader=lambda path: current.get(path),
+            allowed_cpu_count=lambda: allowed,
+        )
+        sampler.start()
+        try:
+            current.update(after)
+            return sampler.make_reporter()()
+        finally:
+            sampler.stop()
+
+    def test_cgroup_v2_reports_window_deltas_and_quota(self) -> None:
+        before = {
+            "/sys/fs/cgroup/cpu.stat": _CPU_STAT_V2.format(
+                periods=100, throttled=10, usec=2_000_000
+            ),
+            "/sys/fs/cgroup/cpu.max": "4600000 100000\n",
+        }
+        after = {
+            "/sys/fs/cgroup/cpu.stat": _CPU_STAT_V2.format(
+                periods=160, throttled=40, usec=5_500_000
+            )
+        }
+        report = self._window(before, after, allowed=46)
+        self.assertEqual(report["cgroup_nr_periods"], 60)
+        self.assertEqual(report["cgroup_nr_throttled"], 30)
+        self.assertAlmostEqual(report["cgroup_throttled_s"], 3.5)
+        self.assertAlmostEqual(report["cgroup_cpu_quota_cpus"], 46)
+        self.assertEqual(report["cpu_allowed_count"], 46)
+
+    def test_unlimited_quota_is_minus_one(self) -> None:
+        files = {
+            "/sys/fs/cgroup/cpu.stat": _CPU_STAT_V2.format(
+                periods=1, throttled=0, usec=0
+            ),
+            "/sys/fs/cgroup/cpu.max": "max 100000\n",
+        }
+        report = self._window(files, {}, allowed=48)
+        self.assertEqual(report["cgroup_cpu_quota_cpus"], -1)
+        self.assertEqual(report["cgroup_nr_throttled"], 0)
+
+    def test_cgroup_v1_fallback_converts_nanoseconds(self) -> None:
+        before = {
+            "/sys/fs/cgroup/cpu/cpu.stat": _CPU_STAT_V1.format(
+                periods=10, throttled=1, nsec=1_000_000_000
+            ),
+            "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "200000\n",
+            "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000\n",
+        }
+        after = {
+            "/sys/fs/cgroup/cpu/cpu.stat": _CPU_STAT_V1.format(
+                periods=30, throttled=6, nsec=3_500_000_000
+            )
+        }
+        report = self._window(before, after, allowed=None)
+        self.assertEqual(report["cgroup_nr_throttled"], 5)
+        self.assertAlmostEqual(report["cgroup_throttled_s"], 2.5)
+        self.assertEqual(report["cgroup_cpu_quota_cpus"], 2)
+        self.assertNotIn("cpu_allowed_count", report)
+
+    def test_missing_files_give_no_cgroup_keys(self) -> None:
+        report = self._window({}, {}, allowed=None)
+        self.assertEqual(
+            [
+                key
+                for key in report
+                if key.startswith("cgroup_") or key == "cpu_allowed_count"
+            ],
+            [],
+        )

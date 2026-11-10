@@ -42,6 +42,7 @@ from gigl.distributed.constants import (
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.utils.cpu_pinning import apply_worker_cpu_pinning
 from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
@@ -114,6 +115,7 @@ def _sampling_worker_loop(
     dist_sampler = None
     rpc_agent_sampler: Optional[RpcAgentSampler] = None
     try:
+        apply_worker_cpu_pinning(rank)
         if sampling_stats_every_n_batches() > 0:
             allow_any_ptracer()
         init_worker_group(

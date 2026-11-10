@@ -127,6 +127,75 @@ def _tcp_counters() -> dict[str, int]:
     return counters
 
 
+def parse_cpu_stat(text: str) -> dict[str, int]:
+    """Parses a cgroup ``cpu.stat`` file (``name value`` per line) into ``{name: value}``."""
+    stats: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[1].lstrip("-").isdigit():
+            stats[fields[0]] = int(fields[1])
+    return stats
+
+
+_CGROUP_V2_DIR = "/sys/fs/cgroup"
+_CGROUP_V1_DIR = "/sys/fs/cgroup/cpu"
+
+
+def _cgroup_throttle_counters(
+    reader: Callable[[str], Optional[str]],
+) -> dict[str, float]:
+    """Cumulative ``{nr_periods, nr_throttled, throttled_s}`` of this cgroup, or ``{}``.
+
+    Reads cgroup v2 ``cpu.stat`` (``throttled_usec``), falling back to cgroup v1 ``cpu.stat``
+    (``throttled_time`` in nanoseconds).
+    """
+    text = reader(f"{_CGROUP_V2_DIR}/cpu.stat")
+    if text is not None:
+        stats = parse_cpu_stat(text)
+        if "nr_throttled" in stats:
+            return {
+                "nr_periods": float(stats.get("nr_periods", 0)),
+                "nr_throttled": float(stats["nr_throttled"]),
+                "throttled_s": stats.get("throttled_usec", 0) / 1e6,
+            }
+    text = reader(f"{_CGROUP_V1_DIR}/cpu.stat")
+    if text is not None:
+        stats = parse_cpu_stat(text)
+        if "nr_throttled" in stats:
+            return {
+                "nr_periods": float(stats.get("nr_periods", 0)),
+                "nr_throttled": float(stats["nr_throttled"]),
+                "throttled_s": stats.get("throttled_time", 0) / 1e9,
+            }
+    return {}
+
+
+def _cgroup_cpu_quota_cpus(reader: Callable[[str], Optional[str]]) -> Optional[float]:
+    """CPU quota of this cgroup as a number of CPUs, ``-1`` when unlimited, ``None`` if unreadable."""
+    text = reader(f"{_CGROUP_V2_DIR}/cpu.max")
+    if text is not None:
+        fields = text.split()
+        if len(fields) == 2:
+            if fields[0] == "max":
+                return -1.0
+            return int(fields[0]) / int(fields[1])
+    quota_text = reader(f"{_CGROUP_V1_DIR}/cpu.cfs_quota_us")
+    period_text = reader(f"{_CGROUP_V1_DIR}/cpu.cfs_period_us")
+    if quota_text is not None and period_text is not None:
+        quota = int(quota_text)
+        if quota < 0:
+            return -1.0
+        return quota / int(period_text)
+    return None
+
+
+def _allowed_cpu_count() -> Optional[int]:
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return None
+
+
 class HostCounterSampler:
     """Samples host network, load and memory counters every ``interval_s`` on a daemon thread.
 
@@ -143,6 +212,9 @@ class HostCounterSampler:
             ``/proc/net/dev`` (via ``net_dev_reader``, ``clock`` for tests) so that sub-second bursts show up in ``*_100ms`` keys. The line
             rate used for ``*_bins_over_80pct_line`` comes from the
             ``GIGL_SAMPLING_NIC_LINE_RATE_GBPS`` env var (default 50).
+        cgroup_reader: Reads a cgroup file by path (``None`` when missing); the source of the
+            ``cgroup_*`` keys. ``allowed_cpu_count`` returns the size of the process CPU
+            affinity mask for ``cpu_allowed_count``.
     """
 
     def __init__(
@@ -152,7 +224,12 @@ class HostCounterSampler:
         net_interval_s: float = 0.1,
         net_dev_reader: Callable[[], Optional[str]] = lambda: _read("/proc/net/dev"),
         clock: Callable[[], float] = time.perf_counter,
+        cgroup_reader: Callable[[str], Optional[str]] = _read,
+        allowed_cpu_count: Callable[[], Optional[int]] = _allowed_cpu_count,
     ) -> None:
+        self._cgroup_reader = cgroup_reader
+        self._allowed_cpu_count = allowed_cpu_count
+        self._cgroup_baseline: dict[str, float] = {}
         self._interval_s = interval_s
         self._net_interval_s = net_interval_s
         self._net_dev_reader = net_dev_reader
@@ -196,6 +273,7 @@ class HostCounterSampler:
             )
         self._last_time = time.perf_counter()
         self._tcp_baseline = _tcp_counters()
+        self._cgroup_baseline = _cgroup_throttle_counters(self._cgroup_reader)
         self._thread = threading.Thread(
             target=self._run, name="host-counter-sampler", daemon=True
         )
@@ -306,6 +384,19 @@ class HostCounterSampler:
                 if name in tcp:
                     report[key] = float(tcp[name] - self._tcp_baseline.get(name, 0))
             self._tcp_baseline = tcp
+            cgroup = _cgroup_throttle_counters(self._cgroup_reader)
+            for name in ("nr_periods", "nr_throttled", "throttled_s"):
+                if name in cgroup:
+                    report[f"cgroup_{name}"] = cgroup[name] - self._cgroup_baseline.get(
+                        name, 0.0
+                    )
+            self._cgroup_baseline = cgroup
+            quota_cpus = _cgroup_cpu_quota_cpus(self._cgroup_reader)
+            if quota_cpus is not None:
+                report["cgroup_cpu_quota_cpus"] = quota_cpus
+            allowed = self._allowed_cpu_count()
+            if allowed is not None:
+                report["cpu_allowed_count"] = float(allowed)
             if self._loadavg:
                 report["loadavg1_mean"] = sum(self._loadavg) / len(self._loadavg)
             if self._mem_available_gb:

@@ -61,6 +61,7 @@ from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.channel import MonitoredShmChannel, SizedShmChannel
+from gigl.distributed.utils.cpu_pinning import apply_cpu_pinning, cpu_pinning_mode
 from gigl.distributed.utils.dist_typed_sampler import (
     parse_typed_channel_ratio_groups,
 )
@@ -346,6 +347,16 @@ class BaseDistLoader(DistLoader):
         self.sampling_config = sampling_config
         self.to_device = device
         self.worker_options = worker_options
+
+        # Pin before any sampling worker or RPC thread exists so they inherit the affinity.
+        if isinstance(worker_options, MpDistSamplingWorkerOptions):
+            apply_cpu_pinning(
+                cpu_pinning_mode(),
+                local_rank=runtime.local_rank,
+                worker_index=None,
+                num_local_ranks=runtime.local_world_size,
+                workers_per_rank=worker_options.num_workers,
+            )
 
         self._is_collocated_worker = False
         self._with_channel = True
