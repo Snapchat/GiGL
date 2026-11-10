@@ -48,7 +48,9 @@ def group_by_partition(
 
     Args:
         ids: 1-D ids to route.
-        partition_ids: 1-D owning partition of each id, with values in ``[0, num_partitions)``.
+        partition_ids: 1-D owning partition of each id, with values in ``[0, num_partitions)``. A negative value
+            raises, whereas GLT's mask routing silently drops such an id. A value of ``num_partitions`` or more is
+            dropped by both.
         num_partitions: Number of partitions.
 
     Returns:
@@ -58,8 +60,9 @@ def group_by_partition(
     partition_ids = partition_ids.to(torch.long)
     perm = torch.argsort(partition_ids, stable=True)
     counts = torch.bincount(partition_ids, minlength=num_partitions).tolist()
-    # RPC sends the whole storage of a tensor, so the ids of each partition get a storage of their own rather
-    # than staying views of the sorted ids.
+    # Torch RPC pickles the whole storage of a view, and TensorPipe only re-copies a storage that is at least
+    # twice the bytes in use. Without a storage of their own, the ids of a partition could put up to twice their
+    # bytes on the wire, e.g. all of the sorted ids when there are two partitions.
     ids_by_partition = []
     for chunk in ids[perm.to(ids.device)].split(counts):
         ids_by_partition.append(chunk.clone())

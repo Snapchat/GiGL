@@ -682,12 +682,12 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 remote_orders_list.append(p_orders)
                 remote_seeds += p_ids.shape[0]
                 to_worker = self.rpc_router.get_to_worker(pidx)
+                # Only a callee wrapped by ``instrument_rpc_callees`` accepts the trailing send time.
+                args = (p_ids.cpu(), num_nbr, etype)
+                if self._stats is not None:
+                    args = (*args, time.time())
                 futs.append(
-                    rpc_request_async(
-                        to_worker,
-                        self.rpc_sample_callee_id,
-                        args=(p_ids.cpu(), num_nbr, etype, time.time()),
-                    )
+                    rpc_request_async(to_worker, self.rpc_sample_callee_id, args=args)
                 )
         stats.add(
             "hop_route_ms", (time.perf_counter() - route_start - local_sample_s) * 1e3

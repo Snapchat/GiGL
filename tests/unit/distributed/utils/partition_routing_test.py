@@ -88,6 +88,17 @@ class GroupByPartitionTest(TestCase):
                 self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
                 self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
 
+    def test_other_id_dtypes_are_kept(self) -> None:
+        partition_ids = torch.tensor([1, 0, 1, 2, 0, 2])
+        for dtype in (torch.int32, torch.int64):
+            ids = torch.tensor([5, 6, 7, 8, 9, 10], dtype=dtype)
+            expected_ids, expected_index = _masked_routing(ids, partition_ids, 3)
+            actual_ids, actual_index = group_by_partition(ids, partition_ids, 3)
+            for pidx in range(3):
+                self.assertEqual(actual_ids[pidx].dtype, dtype)
+                self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
+                self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
+
 
 def _random_routing_inputs(
     seed: int,
