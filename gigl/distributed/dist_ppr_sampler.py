@@ -1,7 +1,8 @@
 import asyncio
+import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union, cast
+from typing import Any, Callable, Optional, Union, cast
 
 import torch
 
@@ -33,6 +34,7 @@ from gigl.distributed.utils.dist_typed_sampler import (
     compute_typed_channel_target_counts,
     parse_typed_channel_ratio_groups,
 )
+from gigl.distributed.utils.sampling_stats import SamplingStats
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_NODE_TYPE, is_label_edge_type
 
 # Trailing "." is an intentional separator.  These constants are used both to
@@ -166,6 +168,36 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
           sampled-edge channel, so their final HeteroData edge orientation follows
           the same ``edge_dir``
           convention as k-hop sampling.
+
+    **Sampling statistics.** With ``GIGL_SAMPLING_STATS_EVERY_N_BATCHES`` set, each batch adds
+    the following per-batch values (reported as means over the window); with it unset, none of
+    them is recorded. The C++ push work (``PPRForwardPush`` construction, ``drain_queue``,
+    ``push_residuals``, extraction) runs on the default executor, so the event-loop thread only
+    awaits it.
+
+    Loop-thread CPU (these count toward the event-loop-bound estimate):
+        - ``induce_ms``: ``inducer.induce_next`` time.
+        - ``ppr_neighbor_fetch_issue_ms``: building the one-hop fetch tasks before the await.
+        - ``hop_route_ms``, ``hop_local_sample_ms``, ``hop_stitch_ms``: the one-hop routing,
+          local sampling and stitching that each neighbor fetch runs on the loop (recorded by
+          the base sampler).
+
+    Awaited wall time (spent off the loop thread; do not sum into loop CPU):
+        - ``ppr_state_init_ms``, ``ppr_drain_ms``, ``ppr_push_ms``, ``ppr_extract_ms``:
+          submit-to-result time of each executor call, including queueing for an executor
+          thread. For typed PPR, ``ppr_push_ms`` is the time to gather one iteration's channel
+          pushes.
+        - ``ppr_neighbor_fetch_wait_ms``: time awaiting a ``_batch_fetch_neighbors`` gather. It
+          also contains the loop-thread hop work above and other coroutines' loop work, so it is
+          an upper bound on pure RPC waiting. Concurrent seed types overlap in wall time, so
+          their sums can exceed the batch time.
+
+    Counts and sizes:
+        - ``ppr_iterations``: push iterations (queue drains that returned work).
+        - ``ppr_neighbor_fetch_count``: one-hop requests issued by neighbor fetches (one per
+          edge type per iteration); ``hop_rpc_count`` counts the remote RPCs they issue.
+        - ``nodes_per_batch`` and ``edges_per_batch``: nodes and edges in the sampled output.
+          Edges are PPR seed-to-neighbor pairs, plus sampled original edges when enabled.
 
     Args:
         alpha: Restart probability (teleport probability back to seed). Higher values
@@ -411,6 +443,35 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
+    def _run_in_executor(
+        self, stats_key: str, func: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Runs ``func`` on the default executor and returns an awaitable for its result.
+
+        With sampling statistics on, the awaitable adds the submit-to-result wall time to
+        ``stats_key``. That time is spent off the event-loop thread (queueing for and running in an
+        executor thread), so it is awaited time, not loop CPU. With statistics off this is a plain
+        ``run_in_executor`` call.
+        """
+        loop = asyncio.get_running_loop()
+        stats = self._stats
+        if stats is None:
+            return loop.run_in_executor(None, func, *args)
+        return self._timed_executor_call(stats, stats_key, loop, func, *args)
+
+    async def _timed_executor_call(
+        self,
+        stats: SamplingStats,
+        stats_key: str,
+        loop: asyncio.AbstractEventLoop,
+        func: Callable[..., Any],
+        *args: Any,
+    ) -> Any:
+        start = time.perf_counter()
+        result = await loop.run_in_executor(None, func, *args)
+        stats.add(stats_key, (time.perf_counter() - start) * 1e3)
+        return result
+
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
@@ -443,6 +504,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 5: (tensor([7]), tensor([0, 3]), tensor([2]), None),
             }
         """
+        stats = self._stats
+        if stats is not None:
+            issue_start = time.perf_counter()
         edge_type_ids: list[int] = []
         sample_tasks = []
         for edge_type_id in nodes_by_edge_type_id:
@@ -466,7 +530,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     etype=rpc_edge_type,
                 )
             )
-        outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
+        if stats is None:
+            outputs: list[NeighborOutput] = await asyncio.gather(*sample_tasks)
+        else:
+            wait_start = time.perf_counter()
+            stats.add("ppr_neighbor_fetch_issue_ms", (wait_start - issue_start) * 1e3)
+            stats.add("ppr_neighbor_fetch_count", len(sample_tasks))
+            outputs = await asyncio.gather(*sample_tasks)
+            stats.add(
+                "ppr_neighbor_fetch_wait_ms", (time.perf_counter() - wait_start) * 1e3
+            )
         return {
             edge_type_id: NeighborFetchTensors(
                 node_ids=nodes_by_edge_type_id[edge_type_id],
@@ -630,10 +703,9 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         """
         if seed_node_type is None:
             seed_node_type = DEFAULT_HOMOGENEOUS_NODE_TYPE
-        loop = asyncio.get_running_loop()
 
-        ppr_state = await loop.run_in_executor(
-            None,
+        ppr_state = await self._run_in_executor(
+            "ppr_state_init_ms",
             PPRForwardPush,
             seed_nodes,
             self._node_type_to_id[seed_node_type],
@@ -657,11 +729,13 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             # ppr_scores_.
             # The pybind wrapper releases the GIL, but a direct call would still
             # occupy this coroutine's event-loop thread until C++ returns.
-            nodes_by_edge_type_id = await loop.run_in_executor(
-                None, ppr_state.drain_queue
+            nodes_by_edge_type_id = await self._run_in_executor(
+                "ppr_drain_ms", ppr_state.drain_queue
             )
             if nodes_by_edge_type_id is None:
                 break
+            if self._stats is not None:
+                self._stats.add("ppr_iterations", 1)
 
             fetch_budget_remaining = (
                 self._max_fetch_iterations is None
@@ -676,14 +750,14 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 # Fetch budget exhausted; push_residuals will use the existing neighbor cache.
                 fetched_by_edge_type_id = {}
 
-            await loop.run_in_executor(
-                None,
+            await self._run_in_executor(
+                "ppr_push_ms",
                 ppr_state.push_residuals,
                 fetched_by_edge_type_id,
             )
 
-        arrays = await loop.run_in_executor(
-            None,
+        arrays = await self._run_in_executor(
+            "ppr_extract_ms",
             self._extract_ppr_state_top_k,
             ppr_state,
         )
@@ -746,15 +820,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 )
             ]
 
-        ppr_states = await loop.run_in_executor(None, build_ppr_states)
+        ppr_states = await self._run_in_executor("ppr_state_init_ms", build_ppr_states)
         fetch_iteration_counts = [0 for _ in ppr_states]
         max_fetch_iterations = (
             self._max_fetch_iterations if self._max_fetch_iterations is not None else -1
         )
 
         while True:
-            queue_drain_result = await loop.run_in_executor(
-                None,
+            queue_drain_result = await self._run_in_executor(
+                "ppr_drain_ms",
                 drain_typed_ppr_channel_queues,
                 ppr_states,
                 fetch_iteration_counts,
@@ -770,6 +844,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
             if not drained_channel_indices:
                 break
+            if self._stats is not None:
+                self._stats.add("ppr_iterations", 1)
 
             fetched_by_channel: list[dict[int, NeighborFetchTensors]] = [
                 {} for _ in ppr_states
@@ -801,10 +877,15 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 )
                 for channel_index in drained_channel_indices
             ]
-            await asyncio.gather(*push_tasks)
+            if self._stats is None:
+                await asyncio.gather(*push_tasks)
+            else:
+                push_start = time.perf_counter()
+                await asyncio.gather(*push_tasks)
+                self._stats.add("ppr_push_ms", (time.perf_counter() - push_start) * 1e3)
 
-        arrays = await loop.run_in_executor(
-            None,
+        arrays = await self._run_in_executor(
+            "ppr_extract_ms",
             self._extract_typed_ppr_state_top_k,
             ppr_states,
             typed_ppr_channel_target_counts,
@@ -1053,7 +1134,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             #   cols_dict[EdgeType]     -> flat local destination indices, one
             #                              per neighbor in the same order as the
             #                              flat_ids passed in neighbor_dict
-            new_nodes_dict, rows_dict, cols_dict = inducer.induce_next(neighbor_dict)
+            if self._stats is None:
+                new_nodes_dict, rows_dict, cols_dict = inducer.induce_next(
+                    neighbor_dict
+                )
+            else:
+                induce_start = time.perf_counter()
+                new_nodes_dict, rows_dict, cols_dict = inducer.induce_next(
+                    neighbor_dict
+                )
+                self._stats.add("induce_ms", (time.perf_counter() - induce_start) * 1e3)
 
             # node_dict = seeds (already in source_dict) + PPR neighbors not
             # previously registered.  merge_dict appends tensors into lists;
@@ -1198,9 +1288,16 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             #   rows: flat local source indices (one per neighbor, expanded).
             #   cols: flat local destination indices for every neighbor, in the
             #         same order as homogeneous_flat_ids.
-            new_nodes, rows, cols = inducer.induce_next(
-                source_nodes, homogeneous_flat_ids, homogeneous_valid_counts
-            )
+            if self._stats is None:
+                new_nodes, rows, cols = inducer.induce_next(
+                    source_nodes, homogeneous_flat_ids, homogeneous_valid_counts
+                )
+            else:
+                induce_start = time.perf_counter()
+                new_nodes, rows, cols = inducer.induce_next(
+                    source_nodes, homogeneous_flat_ids, homogeneous_valid_counts
+                )
+                self._stats.add("induce_ms", (time.perf_counter() - induce_start) * 1e3)
             all_nodes = torch.cat([source_nodes, new_nodes])
 
             ppr_edge_index = torch.stack([rows, cols])
@@ -1223,4 +1320,18 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             )
 
         self.inducer_pool.put(inducer)
+        if self._stats is not None:
+            if isinstance(sample_output, HeteroSamplerOutput):
+                num_nodes = sum(n.numel() for n in sample_output.node.values())
+                num_edges = sum(c.numel() for c in sample_output.col.values())
+                num_edges += sum(
+                    metadata_value.shape[1]
+                    for metadata_key, metadata_value in metadata.items()
+                    if metadata_key.startswith(PPR_EDGE_INDEX_METADATA_KEY)
+                )
+            else:
+                num_nodes = sample_output.node.numel()
+                num_edges = metadata["edge_index"].shape[1]
+            self._stats.add("nodes_per_batch", num_nodes)
+            self._stats.add("edges_per_batch", num_edges)
         return sample_output
