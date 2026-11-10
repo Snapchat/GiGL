@@ -314,12 +314,16 @@ run_hom_cora_snc_e2e_test:
 
 # Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+# CI pipelines clean up their child jobs on exit instead of sending the notification email.
+run_all_e2e_tests: exit_task:=cleanup
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
+# Set E2E_FAIL_FAST=1 to cancel the other pipelines as soon as one fails (the merge queue does).
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
-		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name)) \
+		$(if $(E2E_FAIL_FAST),--fail_fast)
 
 # The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
@@ -330,6 +334,7 @@ run_glt_e2e_tests: run_all_e2e_tests
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
+# Set exit_task=cleanup to compile the CI variant that cancels child jobs on exit instead of emailing.
 compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
@@ -337,6 +342,7 @@ compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docke
 		--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
 		--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG} \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
+		$(if $(exit_task),--exit_task=$(exit_task)) \
 
 _skip_build_deps:
 	@echo "compiled_pipeline_path was provided. Skipping build dependencies i.e. Compiling jars and pushing docker images"
