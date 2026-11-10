@@ -6,9 +6,14 @@ sampling worker it spawns inherits the variable and logs one ``GLT_SAMPLING_STAT
 consumes. Each line reports per-batch means over its window together with the window's wall
 time and CPU time, so throughput and saturation can be read off the line without per-batch
 log spam. Unset or ``0`` keeps every hook on its zero-cost path.
+
+``GIGL_SAMPLING_STATS_TAGS`` holds comma-separated ``key=value`` pairs (for example
+``phase=baseline_a,seed=3``) that are appended to the scope of every line, so lines from
+different runs inside one log can be told apart.
 """
 
 import os
+import re
 import threading
 import time
 from collections.abc import Iterator
@@ -35,6 +40,36 @@ SAMPLING_WORKER_TORCH_THREADS_ENV: Final[str] = "GIGL_SAMPLING_WORKER_TORCH_THRE
 # When set to 1/true, loaders sample without edge ids and skip edge-feature collection even
 # if the dataset has edge features (for models that never read ``edge_attr``).
 SAMPLING_SKIP_EDGE_FEATURES_ENV: Final[str] = "GIGL_SAMPLING_SKIP_EDGE_FEATURES"
+
+# Comma-separated ``key=value`` pairs appended to the scope of every stats line. Keys and
+# values are limited to ``[A-Za-z0-9_.-]`` so the line stays splittable on whitespace and ``=``.
+SAMPLING_STATS_TAGS_ENV: Final[str] = "GIGL_SAMPLING_STATS_TAGS"
+
+_TAG_PAIR: Final = re.compile(r"[A-Za-z0-9_.-]+=[A-Za-z0-9_.-]+")
+
+
+def parse_sampling_stats_tags(raw: str) -> str:
+    """Validates a comma-separated ``key=value`` tag string and returns it space-separated.
+
+    Empty input yields an empty string; invalid input logs a warning and yields an empty string.
+
+    Example:
+        >>> parse_sampling_stats_tags("phase=baseline_a,seed=3")
+        'phase=baseline_a seed=3'
+        >>> parse_sampling_stats_tags("phase=a b")
+        ''
+    """
+    if not raw:
+        return ""
+    pairs = raw.split(",")
+    for pair in pairs:
+        if not _TAG_PAIR.fullmatch(pair):
+            logger.warning(
+                f"{SAMPLING_STATS_TAGS_ENV}={raw!r} is not comma-separated key=value pairs "
+                "of [A-Za-z0-9_.-]; ignoring it"
+            )
+            return ""
+    return " ".join(pairs)
 
 
 def _non_negative_int_from_env(name: str) -> Optional[int]:
@@ -118,6 +153,9 @@ class SamplingStats:
         self._prefix = prefix
         self._every_n_batches = every_n_batches
         self._scope = scope
+        tags = parse_sampling_stats_tags(os.environ.get(SAMPLING_STATS_TAGS_ENV, ""))
+        if tags:
+            self._scope = f"{scope} {tags}"
         self._log_fn = log_fn
         self._lock = threading.Lock()
         self._values: dict[str, float] = {}

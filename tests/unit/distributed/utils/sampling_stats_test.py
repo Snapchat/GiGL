@@ -16,10 +16,12 @@ from gigl.distributed.dist_sampling_producer import sampling_worker_thread_setti
 from gigl.distributed.utils.fused_feature import FusedDistFeature
 from gigl.distributed.utils.sampling_stats import (
     SAMPLING_STATS_EVERY_N_BATCHES_ENV,
+    SAMPLING_STATS_TAGS_ENV,
     SAMPLING_WORKER_NUM_RPC_THREADS_ENV,
     SAMPLING_WORKER_TORCH_THREADS_ENV,
     SamplingStats,
     instrument_rpc_callees,
+    parse_sampling_stats_tags,
     sampling_stats_every_n_batches,
     sampling_worker_num_rpc_threads_override,
     tensor_map_bytes,
@@ -147,6 +149,55 @@ class SamplingStatsEnvTest(TestCase):
             self.assertEqual(sampling_worker_num_rpc_threads_override(), 4)
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(sampling_worker_num_rpc_threads_override())
+
+
+class SamplingStatsTagsTest(TestCase):
+    def test_parser_accepts_valid_pairs(self) -> None:
+        self.assertEqual(
+            parse_sampling_stats_tags("phase=baseline_a,seed=3"),
+            "phase=baseline_a seed=3",
+        )
+        self.assertEqual(parse_sampling_stats_tags(""), "")
+
+    def test_parser_ignores_invalid_input(self) -> None:
+        for raw in (
+            "phase",
+            "phase=a b",
+            "=x",
+            "a=",
+            "a=b,",
+            "a=b,,c=d",
+            "a=b;c=d",
+            "a=b=c",
+        ):
+            self.assertEqual(parse_sampling_stats_tags(raw), "", msg=raw)
+
+    def test_stats_line_carries_the_tags_after_the_scope(self) -> None:
+        with mock.patch.dict(
+            os.environ, {SAMPLING_STATS_TAGS_ENV: "phase=baseline_a,seed=3"}, clear=True
+        ):
+            logged: list[str] = []
+            stats = SamplingStats(
+                "GLT_SAMPLING_STATS", 1, scope="worker=0 pid=7", log_fn=logged.append
+            )
+        stats.add("batch_ms", 5.0)
+        line = _window_line(stats)
+        self.assertEqual(logged, [line])
+        self.assertTrue(
+            line.startswith(
+                "GLT_SAMPLING_STATS worker=0 pid=7 phase=baseline_a seed=3 batches=1 "
+            ),
+            msg=line,
+        )
+        self.assertEqual(_fields(line)["phase"], "baseline_a")
+
+    def test_stats_line_without_valid_tags_is_unchanged(self) -> None:
+        for env in ({}, {SAMPLING_STATS_TAGS_ENV: "not a tag"}):
+            with mock.patch.dict(os.environ, env, clear=True):
+                stats = SamplingStats("GLT_SAMPLING_STATS", 1, scope="worker=0")
+            self.assertTrue(
+                _window_line(stats).startswith("GLT_SAMPLING_STATS worker=0 batches=1 ")
+            )
 
 
 _CalleeT = TypeVar("_CalleeT")
