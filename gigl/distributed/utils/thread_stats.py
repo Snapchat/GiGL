@@ -1,4 +1,4 @@
-"""Per-thread CPU time and scheduler run delay of the current process, grouped by thread role.
+"""Per-thread CPU time, run delay and context switches of the current process, by thread role.
 
 Used by the loader's sampling statistics to tell which kind of thread (RPC pool, TensorPipe I/O,
 the sampler's asyncio loop, torch intra-op workers) is saturating the CPU or waiting for a core.
@@ -24,6 +24,23 @@ def _list_tids() -> set[int]:
         return {int(name) for name in os.listdir(_TASK_DIR)}
     except OSError:
         return set()
+
+
+def _parse_status(text: str) -> Optional[tuple[str, int, int]]:
+    """Returns (name, voluntary, nonvoluntary context switches) from a task ``status`` file."""
+    name = None
+    voluntary = None
+    nonvoluntary = None
+    for line in text.splitlines():
+        if line.startswith("Name:"):
+            name = line.partition(":")[2].strip()
+        elif line.startswith("voluntary_ctxt_switches:"):
+            voluntary = int(line.split()[1])
+        elif line.startswith("nonvoluntary_ctxt_switches:"):
+            nonvoluntary = int(line.split()[1])
+    if name is None or voluntary is None or nonvoluntary is None:
+        return None
+    return name, voluntary, nonvoluntary
 
 
 def _read(path: str) -> Optional[str]:
@@ -57,6 +74,8 @@ class ThreadRoles:
         self._clk_tck = float(os.sysconf("SC_CLK_TCK"))
         self._last_cpu_s: dict[int, float] = {}
         self._last_rundelay_s: dict[int, float] = {}
+        self._last_ctxsw_vol: dict[int, int] = {}
+        self._last_ctxsw_nonvol: dict[int, int] = {}
 
     def snapshot_before_rpc(self) -> None:
         """Records the threads that exist before ``init_rpc``."""
@@ -116,6 +135,10 @@ class ThreadRoles:
 
         Also returns, per role, the largest CPU and run delay seconds accrued by any single
         thread of the role (``cpu_<role>_max_thread_s``, ``rundelay_<role>_max_thread_s``).
+        Voluntary and nonvoluntary context switches of the role's threads are reported as
+        ``ctxsw_vol_<role>`` and ``ctxsw_nonvol_<role>``, with the largest nonvoluntary count of
+        any one thread as ``ctxsw_nonvol_<role>_max_thread``. The thread name and the switch
+        counts come from one read of each thread's ``status`` file.
         """
         report: dict[str, float] = {}
         for role in _ROLES:
@@ -124,15 +147,22 @@ class ThreadRoles:
             report[f"threads_{role}"] = 0.0
             report[f"cpu_{role}_max_thread_s"] = 0.0
             report[f"rundelay_{role}_max_thread_s"] = 0.0
+            report[f"ctxsw_vol_{role}"] = 0.0
+            report[f"ctxsw_nonvol_{role}"] = 0.0
+            report[f"ctxsw_nonvol_{role}_max_thread"] = 0.0
         for tid in _list_tids():
-            comm = _read(f"{_TASK_DIR}/{tid}/comm")
+            status_text = _read(f"{_TASK_DIR}/{tid}/status")
             cpu_s = self._cpu_seconds(tid)
-            if comm is None or cpu_s is None:
+            if status_text is None or cpu_s is None:
                 continue
+            status = _parse_status(status_text)
+            if status is None:
+                continue
+            comm, ctxsw_vol, ctxsw_nonvol = status
             rundelay_s = self._run_delay_seconds(tid)
             if rundelay_s is None:
                 rundelay_s = 0.0
-            role = self.classify(tid, comm.strip())
+            role = self.classify(tid, comm)
             thread_cpu_s = cpu_s - self._last_cpu_s.get(tid, 0.0)
             thread_rundelay_s = rundelay_s - self._last_rundelay_s.get(tid, 0.0)
             report[f"cpu_{role}_s"] += thread_cpu_s
@@ -143,7 +173,16 @@ class ThreadRoles:
             report[f"rundelay_{role}_max_thread_s"] = max(
                 report[f"rundelay_{role}_max_thread_s"], thread_rundelay_s
             )
+            thread_ctxsw_vol = ctxsw_vol - self._last_ctxsw_vol.get(tid, 0)
+            thread_ctxsw_nonvol = ctxsw_nonvol - self._last_ctxsw_nonvol.get(tid, 0)
+            report[f"ctxsw_vol_{role}"] += thread_ctxsw_vol
+            report[f"ctxsw_nonvol_{role}"] += thread_ctxsw_nonvol
+            report[f"ctxsw_nonvol_{role}_max_thread"] = max(
+                report[f"ctxsw_nonvol_{role}_max_thread"], thread_ctxsw_nonvol
+            )
             report[f"threads_{role}"] += 1.0
+            self._last_ctxsw_vol[tid] = ctxsw_vol
+            self._last_ctxsw_nonvol[tid] = ctxsw_nonvol
             self._last_cpu_s[tid] = cpu_s
             self._last_rundelay_s[tid] = rundelay_s
         return report

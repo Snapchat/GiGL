@@ -1,4 +1,5 @@
 import ctypes
+import hashlib
 import os
 import threading
 import time
@@ -193,3 +194,47 @@ class ThreadRolesTest(TestCase):
         reporter = roles.make_reporter()
         with mock.patch.object(roles, "read_window", side_effect=ValueError("bad")):
             self.assertEqual(reporter(), {})
+
+    def test_sleeping_thread_reports_voluntary_switches_and_busy_threads_nonvoluntary(
+        self,
+    ) -> None:
+        roles = ThreadRoles()
+        num_busy = (os.cpu_count() or 1) * 2
+        stop = threading.Event()
+        sleeper_started = threading.Event()
+        sleeper_tid: list[int] = []
+
+        def sleep_repeatedly() -> None:
+            sleeper_tid.append(threading.get_native_id())
+            sleeper_started.set()
+            while not stop.is_set():
+                time.sleep(0.002)
+
+        def spin() -> None:
+            # hashlib releases the GIL, so the threads compete for cores rather than the GIL.
+            buffer = bytes(1 << 20)
+            while not stop.is_set():
+                hashlib.sha256(buffer).digest()
+
+        sleeper = threading.Thread(target=sleep_repeatedly, daemon=True)
+        sleeper.start()
+        sleeper_started.wait()
+        roles.set_loop_tid(sleeper_tid[0])
+        roles.read_window()
+        busy = [threading.Thread(target=spin, daemon=True) for _ in range(num_busy)]
+        for thread in busy:
+            thread.start()
+        time.sleep(1.0)
+        window = roles.read_window()
+        stop.set()
+        sleeper.join()
+        for thread in busy:
+            thread.join()
+        # The sleeper blocks about every 2 ms, so 1 s yields far more than 20 voluntary switches.
+        self.assertGreaterEqual(window["ctxsw_vol_loop"], 20.0)
+        # More spinning threads than cores must be preempted by the scheduler.
+        self.assertGreater(window["ctxsw_nonvol_other"], 0.0)
+        self.assertGreater(window["ctxsw_nonvol_other_max_thread"], 0.0)
+        self.assertLessEqual(
+            window["ctxsw_nonvol_other_max_thread"], window["ctxsw_nonvol_other"]
+        )
