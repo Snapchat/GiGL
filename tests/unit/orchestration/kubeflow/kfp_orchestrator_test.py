@@ -22,7 +22,7 @@ class _FakeRuns:
     """Scripts ``wait_for_run_completion`` and ``cancel_pipeline_run`` per run name.
 
     A run's script is a callable that returns (success) or raises (failure).
-    ``blocked`` runs wait on an event that a cancel of that run sets.
+    Runs from ``blocked_until_cancelled`` wait on an event that a cancel of that run sets.
     """
 
     def __init__(self) -> None:
