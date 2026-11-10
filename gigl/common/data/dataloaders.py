@@ -22,11 +22,15 @@ logger = Logger()
 
 # Bounded retry for transient storage read failures (see `_is_transient_read_error`).
 _MAX_READ_ATTEMPTS = 5
-_READ_RETRY_INITIAL_BACKOFF_SECONDS = 2.0
+_READ_RETRY_INITIAL_BACKOFF_SECONDS = 15.0
 _READ_RETRY_MAX_BACKOFF_SECONDS = 60.0
 _TRANSIENT_READ_ERROR_TYPES = (
     tf.errors.FailedPreconditionError,
     tf.errors.UnavailableError,
+    # TF's GCS filesystem reports a failure it retried internally as
+    # `Aborted: All N retry attempts failed. The last failure: <cause>`; the message check below
+    # keeps only those whose cause is a name-resolution failure.
+    tf.errors.AbortedError,
 )
 _TRANSIENT_READ_ERROR_MESSAGES = (
     "Could not resolve host",
@@ -42,7 +46,10 @@ def _is_transient_read_error(error: BaseException) -> bool:
 
 
 def _read_retry_backoff_seconds(attempt: int) -> float:
-    """Exponential backoff (2s, 4s, ...) capped at 60s, with up to 50% added jitter."""
+    """Exponential backoff (15s, 30s, 60s, 60s) capped at 60s, with up to 50% added jitter.
+
+    With 5 attempts the total wait before giving up is about 2.75 to 4 minutes.
+    """
     backoff = min(
         _READ_RETRY_INITIAL_BACKOFF_SECONDS * 2 ** (attempt - 1),
         _READ_RETRY_MAX_BACKOFF_SECONDS,
@@ -271,6 +278,9 @@ def _assemble_entity_tensor(
         destination.narrow(concat_axis, offset, length).copy_(batch)
         offset += length
         del batch
+    assert offset == total_along_concat_axis, (
+        f"Assembled {offset} entries along axis {concat_axis} but expected {total_along_concat_axis}"
+    )
     return destination
 
 
@@ -545,6 +555,7 @@ class TFRecordDataLoader:
         # invalidates it, so no per-shard retry is possible. Instead retry the whole read: batches
         # are accumulated into locals that are reset on every attempt, so a failed attempt's
         # partial output is discarded and a successful attempt contains each record exactly once.
+        start_time = time.perf_counter()
         for attempt in range(1, _MAX_READ_ATTEMPTS + 1):
             try:
                 dataset = TFRecordDataLoader._build_dataset_for_uris(
@@ -553,7 +564,6 @@ class TFRecordDataLoader:
                     opts=tf_dataset_options,
                 )
 
-                start_time = time.perf_counter()
                 num_entities_processed = 0
                 id_tensors: list[torch.Tensor] = []
                 feature_tensors: list[torch.Tensor] = []
@@ -600,7 +610,7 @@ class TFRecordDataLoader:
                 time.sleep(backoff)
         end = time.perf_counter()
         logger.info(
-            f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
+            f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds (including time spent on failed attempts), {num_entities_processed / (end - start_time):,.2f} records per second"
         )
         start = time.perf_counter()
         # Assemble each entity tensor into its final buffer. With tensor spilling enabled this

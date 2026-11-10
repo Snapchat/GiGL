@@ -13,6 +13,7 @@ from torch.testing import assert_close
 
 from gigl.common import UriFactory
 from gigl.common.data.dataloaders import (
+    LoadedEntityTensors,
     SerializedTFRecordInfo,
     TFDatasetOptions,
     TFRecordDataLoader,
@@ -366,8 +367,11 @@ class TFRecordDataLoaderTest(TestCase):
         self.assertTrue(is_disk_backed(spilled.labels))
 
     def _load_with_flaky_reader(
-        self, errors_to_raise: list[tf.errors.OpError], builds: list[int]
-    ) -> torch.Tensor:
+        self,
+        errors_to_raise: list[tf.errors.OpError],
+        builds: list[int],
+        with_features: bool = False,
+    ) -> LoadedEntityTensors:
         """Loads the node fixture through a dataset that yields one batch, then raises the next queued error.
 
         Appends to `builds` once per dataset build, i.e. once per read attempt.
@@ -394,10 +398,10 @@ class TFRecordDataLoaderTest(TestCase):
         info = SerializedTFRecordInfo(
             tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
             feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
-            feature_keys=[],
-            feature_dim=0,
+            feature_keys=["feature_0", "feature_1"] if with_features else [],
+            feature_dim=2 if with_features else 0,
             entity_key="node_id",
-            label_keys=[],
+            label_keys=["label_0"] if with_features else [],
             tfrecord_uri_pattern="100.tfrecord",
         )
         with (
@@ -410,7 +414,7 @@ class TFRecordDataLoaderTest(TestCase):
                 info,
                 tf_dataset_options=TFDatasetOptions(deterministic=True, batch_size=10),
             )
-        return loaded.ids
+        return loaded
 
     def test_load_retries_transient_dns_error_without_duplicates(self) -> None:
         dns_error = tf.errors.FailedPreconditionError(
@@ -420,9 +424,61 @@ class TFRecordDataLoaderTest(TestCase):
             "'Couldn't resolve host name', Could not resolve host: storage.googleapis.com",
         )
         builds: list[int] = []
-        ids = self._load_with_flaky_reader([dns_error], builds)
+        ids = self._load_with_flaky_reader([dns_error], builds).ids
         assert_close(ids, torch.tensor(range(100)))
         self.assertEqual(len(builds), 2)
+
+    def test_load_retry_with_spilling_and_features_has_no_duplicates_or_zero_rows(
+        self,
+    ) -> None:
+        dns_error = tf.errors.FailedPreconditionError(
+            None, None, "Couldn't resolve host name, Could not resolve host: x"
+        )
+        spill_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(spill_dir.cleanup)
+        builds: list[int] = []
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GIGL_TENSOR_SPILL_DIR": spill_dir.name,
+                "GIGL_TENSOR_SPILL_MIN_BYTES": "1",
+            },
+        ):
+            loaded = self._load_with_flaky_reader(
+                [dns_error, dns_error], builds, with_features=True
+            )
+        assert loaded.features is not None and loaded.labels is not None
+        self.assertEqual(len(builds), 3)
+        self.assertTrue(is_disk_backed(loaded.ids))
+        assert_close(loaded.ids, torch.tensor(range(100)))
+        self.assertEqual(loaded.features.shape[0], 100)
+        self.assertEqual(loaded.labels.shape[0], 100)
+        # Feature 0 of node i is i * 10, so only node 0 may have an all-zero row.
+        assert_close(loaded.features[:, 0], torch.arange(100, dtype=torch.float32) * 10)
+
+    def test_load_retries_aborted_error_caused_by_dns_failure(self) -> None:
+        aborted = tf.errors.AbortedError(
+            None,
+            None,
+            "All 10 retry attempts failed. The last failure: Error executing an HTTP "
+            "request: libcurl code 6 meaning 'Couldn't resolve host name', "
+            "Could not resolve host: storage.googleapis.com",
+        )
+        builds: list[int] = []
+        ids = self._load_with_flaky_reader([aborted], builds).ids
+        assert_close(ids, torch.tensor(range(100)))
+        self.assertEqual(len(builds), 2)
+
+    def test_load_does_not_retry_unrelated_aborted_error(self) -> None:
+        builds: list[int] = []
+        aborted = tf.errors.AbortedError(
+            None,
+            None,
+            "All 10 retry attempts failed. The last failure: 503 backend error",
+        )
+        with self.assertRaises(tf.errors.AbortedError):
+            self._load_with_flaky_reader([aborted], builds)
+        self.assertEqual(len(builds), 1)
 
     def test_load_does_not_retry_non_transient_error(self) -> None:
         builds: list[int] = []
