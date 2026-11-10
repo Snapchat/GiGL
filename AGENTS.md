@@ -4,7 +4,8 @@ This file provides guidance to coding agents working in this repository.
 
 ## Coordination With CLAUDE.md
 
-- CLAUDE.md is the canonical source of truth for project context, architecture intent, and workflow conventions.
+- CLAUDE.md is the entry point for coding agents and points to CONTEXT.md for shared project context, architecture
+  intent, and workflow conventions.
 - At the start of every session: read [CLAUDE.md](CLAUDE.md) together with this file before making repository changes.
 - At the start of every session: discover available skills under [.claude/skills](.claude/skills).
 - When a relevant skill exists under `.claude/skills`, use it.
