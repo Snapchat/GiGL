@@ -119,7 +119,7 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
-    // supports [i] indexing with bounds checking in debug builds.
+    // supports direct [i] indexing without a per-access dispatch.
     auto seedNodeAcc = seedNodes.accessor<int64_t, 1>();
     _numNodesInQueue = _batchSize;
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
@@ -149,7 +149,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     // nodesToLookup[edgeTypeId] = set of node IDs that need a neighbor fetch for
     // edge type edgeTypeId this round.  Using a set deduplicates nodes that appear
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
-    std::unordered_map<int32_t, std::unordered_set<int32_t>> nodesToLookup;
+    std::unordered_map<int32_t, ska::flat_hash_set<int32_t>> nodesToLookup;
 
     // TODO: For homogeneous graphs _numNodeTypes == 1, so the inner loop always
     // executes exactly once (nodeTypeId=0).  std::vector indexing is cheap, but a
@@ -288,7 +288,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                         ".");
         }
 
-        // accessor<int64_t, 1>() gives a bounds-checked, typed 1-D view into
+        // accessor<int64_t, 1>() gives a typed 1-D view into
         // each tensor's data — equivalent to iterating over a NumPy array.
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
@@ -360,6 +360,9 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                             ".");
                 auto& sourceState = sourceStateIter->second;
                 const double sourceResidual = sourceState.residual;
+                // Copied because inserting neighbors may rehash residualStates and
+                // invalidate sourceState when source and destination node types match.
+                const int32_t neighborHop = sourceState.minHop + 1;
 
                 // a. Absorb: move residual into the PPR score.
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
@@ -412,7 +415,6 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     // exceeded.
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
-                        const int32_t neighborHop = sourceState.minHop + 1;
                         auto residualStateIter =
                             dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
                                 .first;
@@ -659,8 +661,8 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
     const int32_t residualTopUpBudget =
         std::max<int32_t>(0, sequenceLength - static_cast<int32_t>(selectedPairs.size()));
     if (residualTopUpBudget > 0) {
-        const std::unordered_map<int32_t, double>& pprScoresByNodeId = nodeTypeState.pprScores;
-        std::unordered_set<int32_t> selectedPPRNodeIds;
+        const ska::flat_hash_map<int32_t, double>& pprScoresByNodeId = nodeTypeState.pprScores;
+        ska::flat_hash_set<int32_t> selectedPPRNodeIds;
         selectedPPRNodeIds.reserve(selectedPairs.size());
         for (const auto& selectedPair : selectedPairs) {
             selectedPPRNodeIds.insert(selectedPair.nodeId);
