@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "sampling/ppr_forward_push.h"
 
+#include <algorithm>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -819,4 +820,32 @@ TEST(PPRForwardPush, LargeTraversalConservesMass) {
     runToConvergence(state, adjacency);
     EXPECT_NEAR(pprMassInvariant(state, alpha), 1.0, 1e-9);
     EXPECT_EQ(scoresByNode(state, 0, 100000, true).size(), static_cast<size_t>(numLeaves + 1));
+}
+
+// Equal scores are ordered by ascending node id, so the cutoff keeps the lowest ids.
+TEST(PPRForwardPush, TopKBreaksScoreTiesByNodeId) {
+    auto state =
+        makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{3, 0, 0, 0, 0, 0, 0, 0});
+    runToConvergence(state, {{0, {{0, {7, 3, 5}}}}});
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*enableResidualTopUp=*/false);
+    EXPECT_EQ(tensorToInt64Vector(topk.at(0).ids), std::vector<int64_t>({0, 3, 5}));
+}
+
+// Reordering neighbor lists does not change the output.
+TEST(PPRForwardPush, OutputIsIndependentOfNeighborOrder) {
+    const std::vector<int32_t> degrees = {3, 3, 2, 2, 1, 1};
+    const Adjacency adjacency = {{0, {{0, {1, 2, 3}}, {1, {0, 3, 4}}, {2, {1, 5}}, {3, {0, 4}}, {4, {5}}, {5, {2}}}}};
+    Adjacency reversed = adjacency;
+    for (auto& [nodeId, neighbors] : reversed[0]) {
+        std::reverse(neighbors.begin(), neighbors.end());
+    }
+    auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-4, degrees);
+    auto reversedState = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-4, degrees);
+    runToConvergence(state, adjacency);
+    runToConvergence(reversedState, reversed);
+
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/true);
+    auto reversedTopk = reversedState.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/true);
+    EXPECT_TRUE(torch::equal(topk.at(0).ids, reversedTopk.at(0).ids));
+    EXPECT_TRUE(torch::equal(topk.at(0).weights, reversedTopk.at(0).weights));
 }
