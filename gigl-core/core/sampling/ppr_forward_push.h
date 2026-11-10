@@ -41,6 +41,15 @@ struct OriginalEdgeExtractTensors {
 };
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
+// Raw view of one node type's total out-degree tensor, resolved once at construction.
+// Exactly one of degreesInt32 / degreesInt64 is non-null unless the tensor is empty
+// (numDegrees == 0), in which case every node has degree 0.
+struct DegreeView {
+    const int32_t* degreesInt32{nullptr};
+    const int64_t* degreesInt64{nullptr};
+    int64_t numDegrees{0};
+};
+
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
     int32_t minHop;  // minimum discovered hop within one seed's traversal
@@ -184,9 +193,6 @@ public:
         bool includeEdgeIds);
 
 private:
-    // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
-    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
-
     double _alpha;
     double _requeueThresholdFactor; // alpha * eps; per-node requeue threshold = factor * degree
 
@@ -206,6 +212,7 @@ private:
     std::vector<int32_t> _edgeTypeToDstNtypeId;
     std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
+    std::vector<DegreeView> _degreeViews; // aligned with _degreeTensors; points into their storage
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
     // 2D vector: both dimensions are dense sequential integers bounded at construction,
