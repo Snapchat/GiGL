@@ -215,7 +215,10 @@ class KfpOrchestrator:
             fail_fast (bool): If True, the first failed run cancels every run that is still
                 waiting, then this waits for Vertex AI to report those runs as cancelled,
                 which takes a few minutes. A run whose status request failed also gets a
-                cancel, because it can still be running. If False, every run is awaited.
+                cancel, because it can still be running. A cancelled run compiled with
+                ``ExitTask.CLEANUP``, as the e2e tests are, cancels its own Vertex AI,
+                Dataflow, and Dataproc child jobs in its exit task; other runs leave
+                their child jobs running. If False, every run is awaited.
                 Either way the error names each failed run.
 
         Raises:
