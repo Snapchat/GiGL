@@ -53,6 +53,7 @@ struct DegreeView {
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
     int32_t minHop;  // minimum discovered hop within one seed's traversal
+    bool queued;     // true while the node sits in its seed's live queue (not in the drained snapshot)
 };
 
 // Per-seed, per-node-type PPR algorithm state.
@@ -64,8 +65,8 @@ struct ResidualState {
 struct SeedNodeTypeState {
     ska::flat_hash_map<int32_t, double> pprScores;             // absorbed PPR mass
     ska::flat_hash_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
-    ska::flat_hash_set<int32_t> queue;                         // nodes queued for the next drain
-    ska::flat_hash_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
+    std::vector<int32_t> queue;                                // nodes queued for the next drain, each at most once
+    std::vector<int32_t> queuedNodes;                          // ascending-id snapshot captured by drainQueue()
 };
 
 // Cached adjacency payload stored in PPRForwardPush::_neighborCache.

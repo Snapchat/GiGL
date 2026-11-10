@@ -170,8 +170,8 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0};
-        _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
+        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0, true};
+        _state[seedIdx][seedNodeTypeId].queue.push_back(seedNodeId);
     }
 }
 
@@ -211,8 +211,14 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
             seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
             seedNodeTypeState.queue.clear();
             _numNodesInQueue -= static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
+            // Pushes within one round read residuals that earlier pushes in the same
+            // round may have updated, so the processing order affects the result.
+            // Ascending node id keeps the order independent of discovery order.
+            std::sort(seedNodeTypeState.queuedNodes.begin(), seedNodeTypeState.queuedNodes.end());
 
             for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
+                // A drained node may be queued again while the snapshot is pushed.
+                seedNodeTypeState.residualStates.find(nodeId)->second.queued = false;
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
                         nodesToLookup[edgeTypeId].insert(nodeId);
@@ -389,13 +395,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                 continue;
             }
 
-            // Pushes within one round read residuals that earlier pushes in the same
-            // round may have updated, so the processing order affects the result.
-            // Sorting by node id makes the order independent of the hash container.
-            std::vector<int32_t> sortedQueuedNodes(srcNodeTypeState.queuedNodes.begin(),
-                                                   srcNodeTypeState.queuedNodes.end());
-            std::sort(sortedQueuedNodes.begin(), sortedQueuedNodes.end());
-            for (int32_t sourceNodeId : sortedQueuedNodes) {
+            for (int32_t sourceNodeId : srcNodeTypeState.queuedNodes) {
                 auto sourceStateIter = srcNodeTypeState.residualStates.find(sourceNodeId);
                 TORCH_CHECK(sourceStateIter != srcNodeTypeState.residualStates.end(),
                             "PPR push expected residual state for queued node ",
@@ -465,20 +465,22 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                                 "). This indicates a construction bug in the sampler.");
                     const DegreeView& dstDegreeView = _degreeViews[dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
-                        auto residualStateIter =
-                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
-                                .first;
+                        auto residualStateIter = dstNodeTypeState.residualStates
+                                                     .emplace(neighborNodeId, ResidualState{0.0, neighborHop, false})
+                                                     .first;
                         auto& residualState = residualStateIter->second;
                         residualState.residual += residualPerNeighbor;
                         residualState.minHop = std::min(residualState.minHop, neighborHop);
 
+                        if (residualState.queued) {
+                            continue;
+                        }
                         double threshold =
                             _requeueThresholdFactor *
                             static_cast<double>(readTotalDegree(neighborNodeId, dstNodeTypeId, dstDegreeView));
-
-                        if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            residualState.residual >= threshold) {
-                            dstNodeTypeState.queue.insert(neighborNodeId);
+                        if (residualState.residual >= threshold) {
+                            residualState.queued = true;
+                            dstNodeTypeState.queue.push_back(neighborNodeId);
                             ++_numNodesInQueue;
                         }
                     }
