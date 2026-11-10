@@ -260,6 +260,7 @@ class InstrumentRpcCalleesQueueTimeTest(TestCase):
 class FusedDistFeatureRemoteGetTest(TestCase):
     def test_uninstrumented_remote_get_is_glts(self) -> None:
         feature = FusedDistFeature.__new__(FusedDistFeature)
+        feature._grouped_routing = False
         ids = torch.arange(3)
         with mock.patch.object(
             DistFeature, "_remote_selecting_get", return_value="glt"

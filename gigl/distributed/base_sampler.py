@@ -1,11 +1,12 @@
 import asyncio
+import contextlib
 import os
 import socket
 import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -22,7 +23,7 @@ from graphlearn_torch.sampler import (
     SamplerOutput,
 )
 from graphlearn_torch.typing import EdgeType, NodeType, as_str
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.utils import default_id_select, reverse_edge_type
 from jaxtyping import Int64
 
 from gigl.common.logger import Logger
@@ -36,6 +37,10 @@ from gigl.distributed.sampler import (
 from gigl.distributed.utils.fused_feature import (
     FusedDistFeature,
     build_fused_dist_feature,
+)
+from gigl.distributed.utils.partition_routing import (
+    group_by_partition,
+    grouped_routing_enabled,
 )
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
@@ -51,6 +56,16 @@ from gigl.distributed.utils.sampling_stats import (
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
+
+
+class _NoStats:
+    """Stands in for ``SamplingStats`` where timings are not collected."""
+
+    def add(self, key: str, value: float) -> None:
+        pass
+
+    def timer(self, key: str) -> contextlib.AbstractContextManager[None]:
+        return contextlib.nullcontext()
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -166,6 +181,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     self.rpc_router,
                     self.device,
                 )
+
+        # Opt-in sort-based routing of ids to partitions (``GIGL_SAMPLING_GROUPED_ROUTING``), read once here.
+        self._grouped_routing: bool = grouped_routing_enabled()
 
         # Opt-in sampling statistics (``GIGL_SAMPLING_STATS_EVERY_N_BATCHES``). ``None`` keeps
         # every hook below on its untimed path.
@@ -569,6 +587,36 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         return result_map
 
+    def _route_hop(
+        self,
+        srcs: torch.Tensor,
+        orders: torch.Tensor,
+        partition_ids: torch.Tensor,
+        node_pb: object,
+    ) -> Iterator[tuple[int, torch.Tensor, torch.Tensor]]:
+        """Yields ``(partition, ids, positions)`` of each partition that owns some of ``srcs``.
+
+        Partitions come in order starting at this process's own partition. ``positions`` are the indices of
+        ``ids`` in ``srcs``. With grouped routing on and GLT's default ``id_select``, one stable sort routes all
+        partitions. Otherwise one mask per partition does, which also serves a custom ``id_select``.
+        """
+        num_partitions = self.data.num_partitions
+        grouped = None
+        if self._grouped_routing and self.data.id_select is default_id_select:
+            grouped = group_by_partition(srcs, partition_ids, num_partitions)
+        for i in range(num_partitions):
+            pidx = (self.data.partition_idx + i) % num_partitions
+            if grouped is None:
+                p_mask = partition_ids == pidx
+                p_ids = self.data.id_select(srcs, p_mask, node_pb)
+                if p_ids.shape[0] == 0:
+                    continue
+                yield pidx, p_ids, torch.masked_select(orders, p_mask)
+            else:
+                if grouped[0][pidx].shape[0] == 0:
+                    continue
+                yield pidx, grouped[0][pidx], grouped[1][pidx]
+
     async def _sample_one_hop(
         self,
         srcs: torch.Tensor,
@@ -577,10 +625,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     ) -> NeighborOutput:
         """Sample one hop of neighbors for ``srcs`` across all partitions.
 
-        Delegates to GLT when sampling statistics are off. Otherwise this is a copy of
-        ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4) that
-        attributes wall time to the partition-routing loop, the local C++ sample, the wait on
-        remote RPCs, and stitching, and counts the RPCs and remote seeds each hop issues.
+        Delegates to GLT when sampling statistics and grouped routing are both off. Otherwise this
+        is a copy of ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4)
+        that attributes wall time to the partition-routing loop, the local C++ sample, the wait on
+        remote RPCs, and stitching, and counts the RPCs and remote seeds each hop issues. With
+        grouped routing on, the ids are routed to partitions by ``group_by_partition``.
 
         Args:
             srcs: Source node ids for this hop.
@@ -592,7 +641,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         """
         stats = self._stats
         if stats is None:
-            return await super()._sample_one_hop(srcs, num_nbr, etype)
+            if not self._grouped_routing:
+                return await super()._sample_one_hop(srcs, num_nbr, etype)
+            stats = _NoStats()
         device = self.device
         srcs = srcs.to(device)
         if self.data.graph_caching:
@@ -619,13 +670,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         futs: list[torch.futures.Future] = []
         local_sample_s = 0.0
         remote_seeds = 0
-        for i in range(self.data.num_partitions):
-            pidx = (self.data.partition_idx + i) % self.data.num_partitions
-            p_mask = partition_ids == pidx
-            p_ids = self.data.id_select(srcs, p_mask, node_pb)
-            if p_ids.shape[0] == 0:
-                continue
-            p_orders = torch.masked_select(orders, p_mask)
+        for pidx, p_ids, p_orders in self._route_hop(
+            srcs, orders, partition_ids, node_pb
+        ):
             if pidx == self.data.partition_idx:
                 local_start = time.perf_counter()
                 p_nbr_out = self.sampler.sample_one_hop(p_ids, num_nbr, etype)
