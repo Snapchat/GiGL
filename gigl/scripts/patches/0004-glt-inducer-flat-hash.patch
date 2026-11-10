@@ -1,0 +1,495 @@
+Add an opt-in flat hash table to the CPU inducers.
+
+CPUInducer and CPUHeteroInducer map global ids to local ids with a node-based
+std::unordered_map and do about three hash operations per edge: one insert, then two
+operator[] lookups, one of them repeated for every neighbor of the same source. The flat
+implementation uses an open-addressing table (power-of-two capacity, linear probing, growth by
+doubling) with one table operation per edge and one per source, and produces output identical
+to the std path, including local id order. Its memory is bounded by the distinct ids of a
+batch: the max_num_nodes constructor hint only pre-sizes the table up to a fixed cap and the
+table grows past it on demand.
+
+Both implementations stay compiled. GIGL_GLT_INDUCER_IMPL=std (default) keeps the original code
+path; =flat selects the new one; any other value falls back to std with a one-time warning on
+stderr. The variable is read once per process, when the first inducer is constructed.
+pywrap.inducer_impl() returns the selected name.
+
+diff --git a/graphlearn_torch/csrc/cpu/flat_int_map.h b/graphlearn_torch/csrc/cpu/flat_int_map.h
+new file mode 100644
+index 0000000..aea8afd
+--- /dev/null
++++ b/graphlearn_torch/csrc/cpu/flat_int_map.h
+@@ -0,0 +1,149 @@
++/* Copyright 2022 Alibaba Group Holding Limited. All Rights Reserved.
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#ifndef GRAPHLEARN_TORCH_CPU_FLAT_INT_MAP_H_
++#define GRAPHLEARN_TORCH_CPU_FLAT_INT_MAP_H_
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace graphlearn_torch {
++
++// Open-addressing hash table from int64 keys to int32 values: power-of-two
++// capacity, linear probing, a load factor of at most 1/2, and growth by
++// doubling. Memory is 16 bytes per slot and is bounded by the number of
++// distinct keys inserted, never by the key range. Values are never changed once
++// inserted and keys are never erased individually; Clear() empties the table
++// but keeps its capacity. INT64_MIN marks an empty slot, so that one key is
++// kept in a dedicated member instead.
++class FlatIntMap {
++public:
++  // Largest number of entries a Reserve() hint pre-allocates for. Larger
++  // tables are reached by growing.
++  static constexpr size_t kMaxReserve = size_t(1) << 18;
++
++  FlatIntMap() {}
++
++  void Reserve(size_t num_entries) {
++    size_t capacity = kMinCapacity;
++    while (capacity < std::min(num_entries, kMaxReserve) * 2) {
++      capacity <<= 1;
++    }
++    if (capacity > slots_.size()) {
++      Rehash(capacity);
++    }
++  }
++
++  void Clear() {
++    std::fill(slots_.begin(), slots_.end(), Slot{kEmpty, 0});
++    size_ = 0;
++    has_empty_key_ = false;
++  }
++
++  // Returns the value stored under `key`. If `key` is absent, stores `value`
++  // under it and returns `value`; `inserted` tells which happened.
++  int32_t Insert(int64_t key, int32_t value, bool& inserted) {
++    if (key == kEmpty) {
++      inserted = !has_empty_key_;
++      if (inserted) {
++        has_empty_key_ = true;
++        empty_key_value_ = value;
++        ++size_;
++      }
++      return empty_key_value_;
++    }
++    if ((size_ + 1) * 2 > slots_.size()) {
++      Rehash(std::max(kMinCapacity, slots_.size() * 2));
++    }
++    size_t i = Position(key);
++    while (slots_[i].key != kEmpty) {
++      if (slots_[i].key == key) {
++        inserted = false;
++        return slots_[i].value;
++      }
++      i = (i + 1) & mask_;
++    }
++    slots_[i] = Slot{key, value};
++    ++size_;
++    inserted = true;
++    return value;
++  }
++
++  // Returns the value stored under `key`, or nullptr if there is none.
++  const int32_t* Find(int64_t key) const {
++    if (key == kEmpty) {
++      return has_empty_key_ ? &empty_key_value_ : nullptr;
++    }
++    if (slots_.empty()) {
++      return nullptr;
++    }
++    size_t i = Position(key);
++    while (slots_[i].key != kEmpty) {
++      if (slots_[i].key == key) {
++        return &slots_[i].value;
++      }
++      i = (i + 1) & mask_;
++    }
++    return nullptr;
++  }
++
++  size_t size() const { return size_; }
++  size_t capacity() const { return slots_.size(); }
++
++private:
++  struct Slot {
++    int64_t key;
++    int32_t value;
++  };
++
++  static constexpr int64_t kEmpty = INT64_MIN;
++  static constexpr size_t kMinCapacity = 1024;
++
++  size_t Position(int64_t key) const {
++    // Fibonacci hashing: the top bits of the product are well mixed.
++    return static_cast<size_t>(
++        (static_cast<uint64_t>(key) * 0x9E3779B97F4A7C15ULL) >> shift_);
++  }
++
++  void Rehash(size_t capacity) {
++    std::vector<Slot> old(capacity, Slot{kEmpty, 0});
++    old.swap(slots_);
++    mask_ = capacity - 1;
++    shift_ = 64 - __builtin_ctzll(capacity);
++    for (const Slot& slot : old) {
++      if (slot.key == kEmpty) {
++        continue;
++      }
++      size_t i = Position(slot.key);
++      while (slots_[i].key != kEmpty) {
++        i = (i + 1) & mask_;
++      }
++      slots_[i] = slot;
++    }
++  }
++
++  std::vector<Slot> slots_;
++  size_t mask_ = 0;
++  int shift_ = 0;
++  size_t size_ = 0;
++  bool has_empty_key_ = false;
++  int32_t empty_key_value_ = 0;
++};
++
++}  // namespace graphlearn_torch
++
++#endif // GRAPHLEARN_TORCH_CPU_FLAT_INT_MAP_H_
+diff --git a/graphlearn_torch/csrc/cpu/inducer.cc b/graphlearn_torch/csrc/cpu/inducer.cc
+index 2ad7def..e184fcc 100644
+--- a/graphlearn_torch/csrc/cpu/inducer.cc
++++ b/graphlearn_torch/csrc/cpu/inducer.cc
+@@ -15,11 +15,42 @@ limitations under the License.
+
+ #include "graphlearn_torch/csrc/cpu/inducer.h"
+
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <stdexcept>
+
+ namespace graphlearn_torch {
+
+-CPUInducer::CPUInducer(int32_t num_nodes): Inducer(), nodes_size_(0) {
+-  glob2local_.reserve(num_nodes);
++InducerImpl SelectedInducerImpl() {
++  static const InducerImpl impl = []() {
++    const char* value = std::getenv("GIGL_GLT_INDUCER_IMPL");
++    if (value == nullptr || std::strcmp(value, "std") == 0) {
++      return InducerImpl::kStd;
++    }
++    if (std::strcmp(value, "flat") == 0) {
++      return InducerImpl::kFlat;
++    }
++    std::fprintf(stderr,
++                 "GIGL_GLT_INDUCER_IMPL=%s is not one of std, flat; "
++                 "using std\n", value);
++    return InducerImpl::kStd;
++  }();
++  return impl;
++}
++
++const char* InducerImplName(InducerImpl impl) {
++  return impl == InducerImpl::kFlat ? "flat" : "std";
++}
++
++CPUInducer::CPUInducer(int32_t num_nodes)
++  : Inducer(), use_flat_(SelectedInducerImpl() == InducerImpl::kFlat),
++    nodes_size_(0) {
++  if (use_flat_) {
++    flat_glob2local_.Reserve(num_nodes);
++  } else {
++    glob2local_.reserve(num_nodes);
++  }
+ }
+
+ torch::Tensor CPUInducer::InitNode(const torch::Tensor& seed) {
+@@ -29,7 +60,14 @@ torch::Tensor CPUInducer::InitNode(const torch::Tensor& seed) {
+   std::vector<int64_t> out_nodes;
+   out_nodes.reserve(seed_size);
+   for (int32_t i = 0; i < seed_size; ++i) {
+-    if (glob2local_.insert(std::make_pair(seed_ptr[i], nodes_size_)).second) {
++    bool inserted;
++    if (use_flat_) {
++      flat_glob2local_.Insert(seed_ptr[i], nodes_size_, inserted);
++    } else {
++      inserted =
++          glob2local_.insert(std::make_pair(seed_ptr[i], nodes_size_)).second;
++    }
++    if (inserted) {
+       out_nodes.push_back(seed_ptr[i]);
+       ++nodes_size_;
+     }
+@@ -42,6 +80,9 @@ torch::Tensor CPUInducer::InitNode(const torch::Tensor& seed) {
+ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+ CPUInducer::InduceNext(const torch::Tensor& srcs, const torch::Tensor& nbrs,
+     const torch::Tensor& nbrs_num) {
++  if (use_flat_) {
++    return InduceNextFlat(srcs, nbrs, nbrs_num);
++  }
+   const auto src_size = srcs.size(0);
+   const auto edge_size = nbrs.size(0);
+   const auto src_ptr = srcs.data_ptr<int64_t>();
+@@ -74,8 +115,53 @@ CPUInducer::InduceNext(const torch::Tensor& srcs, const torch::Tensor& nbrs,
+   return std::make_tuple(nodes, rows, cols);
+ }
+
++// Same output as the std::unordered_map path above, with one table operation
++// per edge and one per source: each neighbor's local id is recorded when it is
++// inserted, and a source's local id is looked up once for all of its neighbors.
++std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
++CPUInducer::InduceNextFlat(const torch::Tensor& srcs, const torch::Tensor& nbrs,
++    const torch::Tensor& nbrs_num) {
++  const auto src_size = srcs.size(0);
++  const auto edge_size = nbrs.size(0);
++  const auto src_ptr = srcs.data_ptr<int64_t>();
++  const auto nbrs_ptr = nbrs.data_ptr<int64_t>();
++  const auto nbrs_num_ptr = nbrs_num.data_ptr<int64_t>();
++
++  torch::Tensor rows = torch::empty(edge_size, srcs.options());
++  torch::Tensor cols = torch::empty(edge_size, srcs.options());
++  auto rows_ptr = rows.data_ptr<int64_t>();
++  auto cols_ptr = cols.data_ptr<int64_t>();
++  std::vector<int64_t> out_nodes;
++  out_nodes.reserve(edge_size);
++  for (int32_t i = 0; i < edge_size; ++i) {
++    bool inserted;
++    cols_ptr[i] = flat_glob2local_.Insert(nbrs_ptr[i], nodes_size_, inserted);
++    if (inserted) {
++      out_nodes.push_back(nbrs_ptr[i]);
++      ++nodes_size_;
++    }
++  }
++
++  int32_t cnt = 0;
++  for (int32_t i = 0; i < src_size; ++i) {
++    if (nbrs_num_ptr[i] == 0) {
++      continue;
++    }
++    // A source that was never inserted gets local id 0, as operator[] does.
++    bool inserted;
++    const int64_t row = flat_glob2local_.Insert(src_ptr[i], 0, inserted);
++    for (int32_t j = 0; j < nbrs_num_ptr[i]; ++j) {
++      rows_ptr[cnt++] = row;
++    }
++  }
++  torch::Tensor nodes = torch::empty(out_nodes.size(), srcs.options());
++  std::copy(out_nodes.begin(), out_nodes.end(), nodes.data_ptr<int64_t>());
++  return std::make_tuple(nodes, rows, cols);
++}
++
+ void CPUInducer::Reset() {
+   glob2local_.clear();
++  flat_glob2local_.Clear();
+   nodes_size_ = 0;
+ }
+
+@@ -83,10 +169,14 @@ void CPUInducer::Reset() {
+ // heterogeneous graph
+ CPUHeteroInducer::CPUHeteroInducer(
+     std::unordered_map<std::string, int32_t> num_nodes)
+-  : HeteroInducer() {
++  : HeteroInducer(), use_flat_(SelectedInducerImpl() == InducerImpl::kFlat) {
+   for (auto i : num_nodes) {
+     nodes_size_[i.first] = 0;
+-    (glob2local_[i.first]).reserve(i.second);
++    if (use_flat_) {
++      (flat_glob2local_[i.first]).Reserve(i.second);
++    } else {
++      (glob2local_[i.first]).reserve(i.second);
++    }
+   }
+ }
+
+@@ -100,7 +190,13 @@ TensorMap CPUHeteroInducer::InitNode(const TensorMap& seed) {
+     out_nodes.reserve(seed_size);
+     int64_t n_id = nodes_size_[iter.first];
+     for (int32_t i = 0; i < seed_size; ++i) {
+-      if (((glob2local_[iter.first]).insert({seed_ptr[i], n_id})).second) {
++      bool inserted;
++      if (use_flat_) {
++        (flat_glob2local_[iter.first]).Insert(seed_ptr[i], n_id, inserted);
++      } else {
++        inserted = ((glob2local_[iter.first]).insert({seed_ptr[i], n_id})).second;
++      }
++      if (inserted) {
+         out_nodes.push_back(seed_ptr[i]);
+         ++n_id;
+       }
+@@ -136,6 +232,9 @@ void CPUHeteroInducer::InsertGlob2Local(
+ }
+
+ HeteroCOO CPUHeteroInducer::InduceNext(const HeteroNbr& nbrs) {
++  if (use_flat_) {
++    return InduceNextFlat(nbrs);
++  }
+   std::unordered_map<std::string, std::vector<int64_t>> out_nodes;
+   InsertGlob2Local(nbrs, out_nodes);
+   auto tensor_option = std::get<0>(nbrs.begin()->second).options();
+@@ -180,10 +279,84 @@ HeteroCOO CPUHeteroInducer::InduceNext(const HeteroNbr& nbrs) {
+   return std::make_tuple(nodes_dict, rows_dict, cols_dict);
+ }
+
++// Same output as InduceNext above, with one table operation per edge and one
++// per source. The neighbor insertion pass writes each edge's column directly,
++// and a source's local id is looked up once for all of its neighbors.
++HeteroCOO CPUHeteroInducer::InduceNextFlat(const HeteroNbr& nbrs) {
++  auto tensor_option = std::get<0>(nbrs.begin()->second).options();
++  std::unordered_map<std::string, std::vector<int64_t>> out_nodes;
++  // Iterating `nbrs` twice visits the edge types in the same order, so the
++  // column tensors created here are matched to their edge types below by position.
++  std::vector<torch::Tensor> cols_by_position;
++  cols_by_position.reserve(nbrs.size());
++  for (const auto& iter : nbrs) {
++    const auto& dst_type = std::get<2>(iter.first);
++    const auto& dst = std::get<1>(iter.second);
++    const auto dst_size = dst.size(0);
++    const auto dst_ptr = dst.data_ptr<int64_t>();
++    auto& dst_glob2local = flat_glob2local_[dst_type];
++    auto& dst_out_nodes = out_nodes[dst_type];
++    dst_out_nodes.reserve(dst_size);
++    int64_t n_id = nodes_size_[dst_type];
++    torch::Tensor cols = torch::empty(dst_size, tensor_option);
++    auto cols_ptr = cols.data_ptr<int64_t>();
++    for (int32_t i = 0; i < dst_size; ++i) {
++      bool inserted;
++      cols_ptr[i] = dst_glob2local.Insert(dst_ptr[i], n_id, inserted);
++      if (inserted) {
++        dst_out_nodes.push_back(dst_ptr[i]);
++        ++n_id;
++      }
++    }
++    nodes_size_[dst_type] = n_id;
++    cols_by_position.push_back(std::move(cols));
++  }
++
++  TensorEdgeMap rows_dict;
++  TensorEdgeMap cols_dict;
++  TensorMap nodes_dict;
++  for (auto& iter : out_nodes) {
++    torch::Tensor nodes = torch::empty(iter.second.size(), tensor_option);
++    std::copy(iter.second.begin(), iter.second.end(), nodes.data_ptr<int64_t>());
++    nodes_dict.emplace(iter.first, std::move(nodes));
++  }
++
++  size_t position = 0;
++  for (const auto& iter : nbrs) {
++    const auto src_ptr = std::get<0>(iter.second).data_ptr<int64_t>();
++    const auto nbrs_num_ptr = std::get<2>(iter.second).data_ptr<int64_t>();
++    const auto src_size = std::get<0>(iter.second).size(0);
++    const auto edge_size = std::get<1>(iter.second).size(0);
++    const auto& src_glob2local = flat_glob2local_[std::get<0>(iter.first)];
++
++    torch::Tensor rows = torch::empty(edge_size, tensor_option);
++    auto rows_ptr = rows.data_ptr<int64_t>();
++    int32_t cnt = 0;
++    for (int32_t i = 0; i < src_size; ++i) {
++      if (nbrs_num_ptr[i] == 0) {
++        continue;
++      }
++      const int32_t* row = src_glob2local.Find(src_ptr[i]);
++      if (row == nullptr) {
++        throw std::out_of_range("unordered_map::at");
++      }
++      for (int32_t j = 0; j < nbrs_num_ptr[i]; ++j) {
++        rows_ptr[cnt++] = *row;
++      }
++    }
++    rows_dict.emplace(iter.first, std::move(rows));
++    cols_dict.emplace(iter.first, std::move(cols_by_position[position++]));
++  }
++  return std::make_tuple(nodes_dict, rows_dict, cols_dict);
++}
++
+ void CPUHeteroInducer::Reset() {
+   for (auto& i : glob2local_) {
+     i.second.clear();
+   }
++  for (auto& i : flat_glob2local_) {
++    i.second.Clear();
++  }
+   for (auto& i : nodes_size_) {
+     i.second = 0;
+   }
+diff --git a/graphlearn_torch/csrc/cpu/inducer.h b/graphlearn_torch/csrc/cpu/inducer.h
+index c5cfebd..733b9fb 100644
+--- a/graphlearn_torch/csrc/cpu/inducer.h
++++ b/graphlearn_torch/csrc/cpu/inducer.h
+@@ -20,11 +20,20 @@ limitations under the License.
+ #include <unordered_map>
+ #include <vector>
+
++#include "graphlearn_torch/csrc/cpu/flat_int_map.h"
+ #include "graphlearn_torch/include/inducer_base.h"
+ #include "graphlearn_torch/include/types.h"
+
+ namespace graphlearn_torch {
+
++// Hash table implementation used by the CPU inducers. Chosen once per process
++// from the GIGL_GLT_INDUCER_IMPL environment variable: "std" (default) keeps
++// the original std::unordered_map code path, "flat" uses FlatIntMap.
++enum class InducerImpl { kStd, kFlat };
++
++InducerImpl SelectedInducerImpl();
++const char* InducerImplName(InducerImpl impl);
++
+ class CPUInducer : public Inducer {
+ public:
+   explicit CPUInducer(int32_t num_nodes);
+@@ -42,8 +51,15 @@ public:
+   virtual void Reset();
+
+ private:
++  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
++  InduceNextFlat(const torch::Tensor& srcs,
++                 const torch::Tensor& nbrs,
++                 const torch::Tensor& nbrs_num);
++
++  bool       use_flat_;
+   int32_t    nodes_size_;
+   IntHashMap glob2local_;
++  FlatIntMap flat_glob2local_;
+ };
+
+
+@@ -63,10 +79,13 @@ public:
+ private:
+   void InsertGlob2Local(const HeteroNbr& nbrs,
+       std::unordered_map<std::string, std::vector<int64_t>>& out_nodes);
++  HeteroCOO InduceNextFlat(const HeteroNbr& nbrs);
+
+ private:
++  bool use_flat_;
+   std::unordered_map<std::string, int32_t>     nodes_size_;
+   std::unordered_map<std::string, IntHashMap>  glob2local_;
++  std::unordered_map<std::string, FlatIntMap>  flat_glob2local_;
+ };
+
+ }  // namespace graphlearn_torch
+diff --git a/graphlearn_torch/python/py_export_glt.cc b/graphlearn_torch/python/py_export_glt.cc
+index 12c013e..1336e9a 100644
+--- a/graphlearn_torch/python/py_export_glt.cc
++++ b/graphlearn_torch/python/py_export_glt.cc
+@@ -225,4 +225,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+     .def("node_subgraph", &CUDASubGraphOp::NodeSubGraph,
+          py::arg("srcs"), py::arg("with_edge"));
+ #endif
++
++  m.def("inducer_impl", []() {
++    return std::string(InducerImplName(SelectedInducerImpl()));
++  });
+ }

@@ -11,6 +11,7 @@ from typing import Optional, Union, cast
 import torch
 import torch.distributed.rpc
 import torch.multiprocessing as mp
+from graphlearn_torch import py_graphlearn_torch as pywrap
 from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import (
     DistDataset,
@@ -47,6 +48,7 @@ from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
+from gigl.distributed.utils.partition_routing import grouped_routing_enabled
 from gigl.distributed.utils.ptrace import allow_any_ptracer
 from gigl.distributed.utils.rpc_agent_stats import RpcAgentSampler
 from gigl.distributed.utils.rpc_init import (
@@ -61,6 +63,19 @@ from gigl.distributed.utils.sampling_stats import (
 from gigl.distributed.utils.thread_stats import ThreadRoles
 
 logger = Logger()
+
+
+def sampling_mode_log_lines(rank: int) -> list[str]:
+    """Log lines naming the environment-selected sampling modes of one worker.
+
+    Wheels built without the flat inducer patch have no selector and use the std table.
+    """
+    inducer_impl = getattr(pywrap, "inducer_impl", lambda: "std")()
+    grouped_routing = int(grouped_routing_enabled())
+    return [
+        f"INDUCER_IMPL impl={inducer_impl} worker={rank}",
+        f"GROUPED_ROUTING enabled={grouped_routing} worker={rank}",
+    ]
 
 
 def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> None:
@@ -156,6 +171,8 @@ def _sampling_worker_loop(
             thread_roles.snapshot_before_rpc()
         _, rpc_channels = sampling_rpc_backend_from_env()
         logger.info(f"RPC_CHANNELS channels={','.join(rpc_channels)} worker={rank}")
+        for line in sampling_mode_log_lines(rank):
+            logger.info(line)
         init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,

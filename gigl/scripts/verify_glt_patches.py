@@ -356,6 +356,42 @@ def verify_queue_teardown() -> bool:
     return no_leak and survives
 
 
+def verify_flat_inducer() -> bool:
+    """Checks the flat hash inducer is compiled in and the default implementation is unchanged.
+
+    Which implementation is selected is read from the environment, so the default is only
+    checked when ``GIGL_GLT_INDUCER_IMPL`` is not set; the flat path is checked by running
+    the inducer under whatever implementation is selected.
+    """
+    from graphlearn_torch import py_graphlearn_torch as pywrap
+
+    selector = getattr(pywrap, "inducer_impl", None)
+    if not _check(
+        "inducer: implementation selector is compiled in",
+        selector is not None,
+        "an unpatched wheel lacks this binding",
+    ):
+        return False
+    inducer = pywrap.CPUInducer(8)
+    seeds = inducer.init_node(torch.tensor([5, 5, 7], dtype=torch.int64))
+    nodes, rows, cols = inducer.induce_next(
+        seeds,
+        torch.tensor([9, 5, 9], dtype=torch.int64),
+        torch.tensor([2, 1], dtype=torch.int64),
+    )
+    induced = _check(
+        "inducer: induces in first-seen order",
+        nodes.tolist() == [9]
+        and rows.tolist() == [0, 0, 1]
+        and cols.tolist() == [2, 0, 2],
+        f"selected implementation: {selector()}",
+    )
+    default_is_std = os.environ.get("GIGL_GLT_INDUCER_IMPL") is not None or _check(
+        "inducer: default implementation is std", selector() == "std"
+    )
+    return induced and default_is_std
+
+
 def main() -> int:
     print(f"Verifying GLT patches against {Graph.__module__}")
     results = {
@@ -363,6 +399,7 @@ def main() -> int:
         "0001-glt-csr-col-count-and-int32-indices (int32)": verify_int32_indices(),
         "0001-glt-csr-col-count-and-int32-indices (missing edge ids)": verify_cpu_random_missing_edge_ids(),
         "0002-glt-unpin-shm-queue-on-teardown": verify_queue_teardown(),
+        "0004-glt-inducer-flat-hash": verify_flat_inducer(),
     }
     failed = [name for name, passed in results.items() if not passed]
     if failed:
