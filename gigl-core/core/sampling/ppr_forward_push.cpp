@@ -160,13 +160,12 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     // Allocate per-seed, per-node-type state.
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
-    // Pre-size the per-seed tables to skip the first several rehashes; a seed's
-    // traversal typically discovers thousands of nodes.
+    // Pre-size the seed node type's tables to skip the first several rehashes.
+    // Other node types are sized on demand so heterogeneous states do not pay for
+    // tables a seed may never reach.
     for (auto& perSeedState : _state) {
-        for (auto& nodeTypeState : perSeedState) {
-            nodeTypeState.residualStates.reserve(1024);
-            nodeTypeState.pprScores.reserve(256);
-        }
+        perSeedState[seedNodeTypeId].residualStates.reserve(1024);
+        perSeedState[seedNodeTypeId].pprScores.reserve(256);
     }
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
@@ -226,7 +225,12 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
 
             for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
                 // A drained node may be queued again while the snapshot is pushed.
-                seedNodeTypeState.residualStates.find(nodeId)->second.queued = false;
+                auto drainedStateIter = seedNodeTypeState.residualStates.find(nodeId);
+                TORCH_CHECK(drainedStateIter != seedNodeTypeState.residualStates.end(),
+                            "PPR drain expected residual state for queued node ",
+                            nodeId,
+                            ".");
+                drainedStateIter->second.queued = false;
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
                         nodesToLookup[edgeTypeId].insert(nodeId);
