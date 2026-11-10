@@ -16,7 +16,6 @@ from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
     MpDistSamplingWorkerOptions,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -49,6 +48,10 @@ from gigl.distributed.utils.dist_sampler import (
 )
 from gigl.distributed.utils.ptrace import allow_any_ptracer
 from gigl.distributed.utils.rpc_agent_stats import RpcAgentSampler
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_backend_from_env,
+)
 from gigl.distributed.utils.sampling_stats import (
     sampling_stats_every_n_batches,
     sampling_worker_num_rpc_threads_override,
@@ -149,7 +152,9 @@ def _sampling_worker_loop(
         if sampling_stats_every_n_batches() > 0:
             thread_roles = ThreadRoles()
             thread_roles.snapshot_before_rpc()
-        init_rpc(
+        _, rpc_channels = sampling_rpc_backend_from_env()
+        logger.info(f"RPC_CHANNELS channels={','.join(rpc_channels)} worker={rank}")
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
