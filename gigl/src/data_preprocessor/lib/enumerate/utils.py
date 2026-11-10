@@ -251,7 +251,7 @@ class Enumerator:
             f"Launch {len(node_data_references)} node enumeration jobs in parallel."
         )
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(node_data_references)
+            max_workers=max(1, len(node_data_references))
         ) as executor:
             futures: list[concurrent.futures.Future] = list()
             for node_data_ref in node_data_references:
@@ -278,7 +278,7 @@ class Enumerator:
             f"Launch {len(edge_data_references)} edge enumeration jobs in parallel."
         )
         with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(edge_data_references)
+            max_workers=max(1, len(edge_data_references))
         ) as executor:
             futures: list[concurrent.futures.Future] = list()
             for edge_data_ref in edge_data_references:
