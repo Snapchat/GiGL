@@ -1,6 +1,7 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <c10/util/ArrayRef.h>
 #include <c10/util/flat_hash_map.h>
 
 #include <cstdint>
@@ -40,13 +41,12 @@ struct OriginalEdgeExtractTensors {
 };
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
-// Raw view of one node type's total out-degree tensor, resolved once at construction.
-// Exactly one of degreesInt32 / degreesInt64 is non-null unless the tensor is empty
-// (numDegrees == 0), in which case every node has degree 0.
+// Non-owning pointer+length view of one node type's total out-degree tensor, resolved
+// once at construction. Exactly one of degreesInt32 / degreesInt64 is non-empty unless
+// the tensor is empty, in which case both are empty and every node has degree 0.
 struct DegreeView {
-    const int32_t* degreesInt32{nullptr};
-    const int64_t* degreesInt64{nullptr};
-    int64_t numDegrees{0};
+    c10::ArrayRef<int32_t> degreesInt32;
+    c10::ArrayRef<int64_t> degreesInt64;
 };
 
 struct ResidualState {
