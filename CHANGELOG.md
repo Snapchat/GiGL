@@ -40,12 +40,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
   comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
   `basic`, the channel every process can use). Unset, the default equals GraphLearn-Torch's (`mpt_uv,basic`). Use the
-  same value on every node of a job. A bad value fails once in the parent process before workers are spawned. The
-  colocated loader worker, the dataset-building process, the colocated sampling producer and the graph-store sampling
-  worker subprocesses honor the variable. The graph-store `init_server` and `init_client` (which accept `is_dynamic`)
-  and GraphLearn-Torch's own `init_server`/`init_client` keep GraphLearn-Torch's `init_rpc` and its default channels;
-  they still share `basic` with every other process. A unit test hashes the upstream source so a GraphLearn-Torch
-  upgrade that changes it is noticed
+  same value on every node of a job. A bad value fails in the parent process before workers are spawned for the
+  colocated sampling producer and the graph-store sampling backend, and in the process that initializes RPC (the
+  `mp.spawn` child, or each loader worker at startup) for the dataset-building process and the colocated loader worker.
+  The colocated loader worker, the dataset-building process, the colocated sampling producer and the graph-store
+  sampling worker subprocesses honor the variable. The graph-store `init_server` and `init_client` (which accept
+  `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep GraphLearn-Torch's `init_rpc` and its
+  default channels; they still share `basic` with every other process. A unit test hashes the upstream source so a
+  GraphLearn-Torch upgrade that changes it is noticed
 
 ### Changed
 

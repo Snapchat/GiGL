@@ -1,4 +1,5 @@
 import contextlib
+import os
 import queue
 import threading
 import time
@@ -26,6 +27,7 @@ from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     _shared_sampling_worker_loop,
 )
 from gigl.distributed.sampler_options import KHopNeighborSamplerOptions
+from gigl.distributed.utils.rpc_init import SAMPLING_RPC_CHANNELS_ENV
 from tests.test_assets.test_case import TestCase
 
 
@@ -184,6 +186,27 @@ class DistSamplingProducerTest(TestCase):
         self.assertEqual(len(backend._task_queues), 2)
         self.assertEqual(len(backend._workers), 2)
         self.assertTrue(backend._initialized)
+
+    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.mp.get_context")
+    def test_init_backend_rejects_invalid_channels_before_spawning_workers(
+        self, mock_get_mp_context: MagicMock
+    ) -> None:
+        worker_options = MagicMock()
+        worker_options.num_workers = 2
+        backend = SharedDistSamplingBackend(
+            data=MagicMock(),
+            worker_options=worker_options,
+            sampling_config=_make_sampling_config(),
+            sampler_options=KHopNeighborSamplerOptions(num_neighbors=[2]),
+            degree_tensors=None,
+        )
+
+        with patch.dict(os.environ, {SAMPLING_RPC_CHANNELS_ENV: "mpt_uv"}):
+            with self.assertRaises(ValueError):
+                backend.init_backend()
+
+        mock_get_mp_context.assert_not_called()
+        self.assertFalse(backend._initialized)
 
     def test_start_new_epoch_sampling_shuffle_refreshes_per_epoch(self) -> None:
         worker_options = MagicMock()

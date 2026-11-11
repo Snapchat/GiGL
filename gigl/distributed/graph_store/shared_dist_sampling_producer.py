@@ -104,7 +104,10 @@ from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
-from gigl.distributed.utils.rpc_init import init_rpc_from_env
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_channels_from_env,
+)
 
 logger = Logger()
 
@@ -928,7 +931,11 @@ class SharedDistSamplingBackend:
 
         Raises:
             RuntimeError: If no GLT server context is active.
+            ValueError: If ``GIGL_SAMPLING_RPC_CHANNELS`` is set to an invalid value.
         """
+        # Fail here on a bad channel value; a worker that raises before the barrier would leave
+        # this method waiting on it.
+        sampling_rpc_channels_from_env()
         with self._lock:
             if self._initialized:
                 return

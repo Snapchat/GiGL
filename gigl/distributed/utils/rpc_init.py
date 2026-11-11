@@ -25,7 +25,11 @@ Environment variable (a comma-separated list, unset means GLT's defaults):
 Call sites. These honor the variable (through ``init_rpc_from_env``): the colocated loader worker
 (``init_neighbor_loader_worker``), the dataset-building process (``dataset_factory``), the
 colocated sampling producer (``DistSamplingProducer``) and the graph-store sampling worker
-subprocesses (``shared_dist_sampling_producer``). These ignore it and use GLT's ``init_rpc``
+subprocesses (``shared_dist_sampling_producer``). An invalid value fails before any worker is
+spawned in ``DistSamplingProducer.init`` and in ``SharedDistSamplingBackend.init_backend``, which
+read the variable in the parent process first. It fails in the process that calls
+``init_rpc_from_env`` for the dataset-building process (the ``mp.spawn`` child, whose error
+``mp.spawn`` re-raises) and for the colocated loader worker (each loader worker at startup). These ignore it and use GLT's ``init_rpc``
 with GLT's default channels: the graph-store ``init_server`` and ``init_client`` (``dist_server``
 and ``compute``), which accept ``is_dynamic`` and are left on GLT's exact code, and GLT's own
 ``init_server``/``init_client``, which call GLT's ``init_rpc`` internally. Processes that honor it
@@ -104,12 +108,12 @@ def init_rpc_with_options(
         channels: TensorPipe channels in priority order; any of ``basic``, ``mpt_uv``,
             ``cma`` without repeats, and ``basic`` is required.
     """
-    channels = validate_channels(channels)
     with glt_rpc._rpc_init_lock:
         if glt_rpc.rpc_is_initialized() is True:
             return
         if glt_rpc.rpc_is_initialized() is None:
             raise RuntimeError("'init_rpc': Try to re-init rpc after shutdown.")
+        channels = validate_channels(channels)
 
         ctx = glt_rpc.get_context()
         if ctx is None:
