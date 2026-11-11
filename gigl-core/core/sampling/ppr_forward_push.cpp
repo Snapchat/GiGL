@@ -163,11 +163,12 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
     // Pre-size the seed node type's tables to skip the first several rehashes.
-    // Other node types are sized on demand so heterogeneous states do not pay for
-    // tables a seed may never reach.
+    // The sizes are about the median final table size per seed on the benchmark
+    // graph, rounded to a power of two. Other node types are sized on demand so
+    // heterogeneous states do not pay for tables a seed may never reach.
     for (auto& perSeedState : _state) {
         perSeedState[seedNodeTypeId].residualStates.reserve(1024);
-        perSeedState[seedNodeTypeId].pprScores.reserve(256);
+        perSeedState[seedNodeTypeId].pprScores.reserve(128);
     }
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
