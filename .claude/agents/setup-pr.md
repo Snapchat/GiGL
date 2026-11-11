@@ -90,10 +90,26 @@ rewrite history or change remote state. Local commits are allowed only for the c
    - Apply the `pr-description` skill to the branch and follow it to draft the PR title and description.
    - Include the draft verbatim in the final report.
 
+9. Write a PR links doc so the author can open the PR in one click.
+   - Write it to the directory given in your invocation, or to `.claude/tmp/pr_descriptions/` (gitignored) by
+     default.
+   - Write one doc per request, never one shared doc. Name it `open_links_<name>.md`, where `<name>` is the branch
+     name with slashes as dashes:
+     - Standalone PR: use the PR's branch.
+     - PR stack: use the top branch of the stack. Put one section per PR in the doc, in merge order, and give each
+       section the branch below it as its base.
+   - Save each description body to `body_<branch-name-with-slashes-as-dashes>.md` in the same directory.
+   - In each section, list the title, the base branch, the path to the body file, and two links:
+     - Title only: `https://github.com/Snapchat/GiGL/compare/<base>...<branch>?expand=1&title=<title>`
+     - Title and body: the same link plus `&body=<body>`, with the body's character count. Skip this link if the URL
+       is longer than about 8000 characters, because the browser or GitHub can truncate it.
+   - URL-encode the title and body, for example with `urllib.parse.quote_plus`.
+   - The links work only after the branch is pushed. If it is not pushed, say so at the top of the doc.
+
 ## Final report
 
 Report the branch and commit range, the chosen tier and why, files reviewed, any cleanup commits made and what they
-removed, formatter commands run (or why each was not applicable), test results for the tier, review results (or why
-the tier did not require them), any findings resolved or waived, the review-readiness confirmation, the drafted PR
-title and description, and the final status. If any blocking item failed or is ambiguous, clearly say that the branch
-is not ready for review. Never push, open, or update a PR yourself.
+removed, formatter commands run (or why each was not applicable), test results for the tier, review results (or why the
+tier did not require them), any findings resolved or waived, the review-readiness confirmation, the drafted PR title and
+description, the path to the PR links doc, and the final status. If any blocking item failed or is ambiguous, clearly
+say that the branch is not ready for review. Never push, open, or update a PR yourself.
