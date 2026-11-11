@@ -12,7 +12,7 @@ from gigl.common.utils.feature_quantization.lossless import (
     ColumnStats,
     FeatureCodec,
     chunk_rows,
-    kind_holding_domain,
+    narrowest_integer_encoding,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -33,7 +33,7 @@ _FEATURES: list[tuple[str, int, Optional[tuple[int, int]]]] = [
     ("one_hot", 9, (0, 1)),
 ]
 _NUM_COLUMNS = sum(width for _, width, _ in _FEATURES)
-_EXPECTED_KINDS = (
+_EXPECTED_ENCODINGS = (
     ["float32"] * 5
     + ["int8"] * 3
     + ["float32"] * 2
@@ -80,15 +80,15 @@ class FeatureCodecTest(TestCase):
         self.features = _features(1000, seed=0)
         self.codec = _fit(self.features)
 
-    def test_narrowest_kind_is_chosen_per_column_and_rows_shrink(self) -> None:
-        self.assertEqual(list(self.codec.column_dtypes), _EXPECTED_KINDS)
+    def test_narrowest_encoding_is_chosen_per_column_and_rows_shrink(self) -> None:
+        self.assertEqual(list(self.codec.column_encodings), _EXPECTED_ENCODINGS)
         # 8 float32 + 2 int32 = 40 B, then 5 int16 = 10 B, then 7 one-byte columns, then 9 bits in
         # 2 bytes, padded to 4.
         self.assertEqual(self.codec.row_bytes, 60)
-        self.assertEqual(kind_holding_domain(0, 1), "bit")
-        self.assertEqual(kind_holding_domain(0, 0), "bit")
-        self.assertEqual(kind_holding_domain(-1, 1), "int8")
-        self.assertEqual(kind_holding_domain(0, 200), "uint8")
+        self.assertEqual(narrowest_integer_encoding(0, 1), "bit")
+        self.assertEqual(narrowest_integer_encoding(0, 0), "bit")
+        self.assertEqual(narrowest_integer_encoding(-1, 1), "int8")
+        self.assertEqual(narrowest_integer_encoding(0, 200), "uint8")
         self.assertLess(self.codec.row_bytes, 4 * _NUM_COLUMNS)
 
     def test_round_trip_is_bit_exact_including_extremes_and_non_finite_dense(
@@ -187,21 +187,21 @@ class FeatureCodecTest(TestCase):
             ("widens_to_int16", 11, -2.0, "int16"),
         ]
     )
-    def test_column_kind_follows_the_values_it_holds(
-        self, _: str, column: int, bad_value: float, expected_kind: str
+    def test_column_encoding_follows_the_values_it_holds(
+        self, _: str, column: int, bad_value: float, expected_encoding: str
     ) -> None:
         features = _features(50, seed=2)
         features[7, column] = bad_value
         codec = _fit(features)
-        expected = list(_EXPECTED_KINDS)
-        expected[column] = expected_kind
-        self.assertEqual(list(codec.column_dtypes), expected)
+        expected = list(_EXPECTED_ENCODINGS)
+        expected[column] = expected_encoding
+        self.assertEqual(list(codec.column_encodings), expected)
         self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
 
     def test_integral_columns_are_packed_without_any_declaration(self) -> None:
         features = _features(50, seed=3)
         features[:, 0] = 3.0  # a "dense" column that happens to hold one whole number
-        self.assertEqual(_fit(features).column_dtypes[0], "int8")
+        self.assertEqual(_fit(features).column_encodings[0], "int8")
 
     def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
         first, second = _features(50, seed=5), _features(50, seed=6)
@@ -212,8 +212,8 @@ class FeatureCodecTest(TestCase):
             )
         )
         alone = _fit(first)
-        self.assertEqual(merged.column_dtypes[6], "int16")
-        self.assertEqual(alone.column_dtypes[6], "int8")
+        self.assertEqual(merged.column_encodings[6], "int16")
+        self.assertEqual(alone.column_encodings[6], "int8")
         for features in (first, second):
             self.assertTrue(
                 _same_bits(merged.decode(merged.encode(features)), features)
@@ -233,7 +233,7 @@ class FeatureCodecTest(TestCase):
             )
         )
         # Column 0 holds a -0.0 only on the other rank; every rank must still keep it float32.
-        self.assertEqual(merged.column_dtypes, ("float32", "bit", "int8"))
+        self.assertEqual(merged.column_encodings, ("float32", "bit", "int8"))
         for part in (features, other_rank):
             self.assertTrue(_same_bits(merged.decode(merged.encode(part)), part))
 
@@ -245,7 +245,7 @@ class FeatureCodecTest(TestCase):
         stats = ColumnStats.from_features(ids)
         self.assertEqual(stats.integral.tolist(), [True, False])
         self.assertEqual(
-            FeatureCodec.from_stats(stats).column_dtypes, ("int32", "float32")
+            FeatureCodec.from_stats(stats).column_encodings, ("int32", "float32")
         )
 
     @parameterized.expand(
@@ -307,10 +307,17 @@ class FeatureCodecTest(TestCase):
     def test_bfloat16_dense_columns_round_to_bfloat16_and_ids_stay_exact(
         self,
     ) -> None:
-        kinds = ["bfloat16" if kind == "float32" else kind for kind in _EXPECTED_KINDS]
-        codec = FeatureCodec(tuple(kinds))
+        encodings = [
+            "bfloat16" if encoding == "float32" else encoding
+            for encoding in _EXPECTED_ENCODINGS
+        ]
+        codec = FeatureCodec(tuple(encodings))
         decoded = codec.decode(codec.encode(self.features))
-        dense = [c for c, kind in enumerate(codec.column_dtypes) if kind == "bfloat16"]
+        dense = [
+            c
+            for c, encoding in enumerate(codec.column_encodings)
+            if encoding == "bfloat16"
+        ]
         ids = [c for c in range(_NUM_COLUMNS) if c not in dense]
         self.assertEqual(len(dense), 8)
         expected = self.features[:, dense].to(torch.bfloat16).float()
@@ -370,6 +377,14 @@ class FeatureCodecTest(TestCase):
             FeatureCodec(("int8",)).encode(
                 torch.tensor([[127.0 + 2.0**-40]], dtype=torch.float64)
             )
+
+    def test_encode_rejects_non_float32_input_for_dense_encodings(self) -> None:
+        float64_features = torch.tensor([[0.1, 1.0]], dtype=torch.float64)
+        for dense_encoding in ("float32", "bfloat16"):
+            with self.assertRaises(ValueError):
+                FeatureCodec((dense_encoding, "int8")).encode(float64_features)
+        # Integer encodings validate before casting, so float64 input stays allowed.
+        FeatureCodec(("int8", "int8")).encode(float64_features.round())
 
     def test_codec_survives_pickle(self) -> None:
         restored = pickle.loads(pickle.dumps(self.codec))

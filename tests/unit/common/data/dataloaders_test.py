@@ -810,7 +810,7 @@ class TFRecordDataLoaderTest(TestCase):
                 clip_min=0.0,
                 clip_max=3.0,
                 lossless_feature_indices=(3,),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             ),
         )
 
@@ -828,7 +828,7 @@ class TFRecordDataLoaderTest(TestCase):
                 clip_min=0.0,
                 clip_max=3.0,
                 lossless_feature_indices=(2,),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             ),
         )
 

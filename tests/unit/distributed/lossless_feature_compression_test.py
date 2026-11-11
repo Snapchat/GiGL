@@ -546,7 +546,7 @@ class LosslessCompressionLoaderTest(TestCase):
 
 
 class BuildDatasetLosslessCompressionTest(TestCase):
-    """``build_dataset`` infers the kind of every node feature column from the real partitioned data on every rank."""
+    """``build_dataset`` infers the encoding of every node feature column from the real partitioned data on every rank."""
 
     def _build(
         self,
@@ -602,7 +602,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         assert isinstance(packed, Feature)
         packed.lazy_init_with_ipc_handle()
         # One bit per binary column, padded to a multiple of four bytes.
-        self.assertEqual(metadata.lossless_column_kinds, ("bit",) * dim)
+        self.assertEqual(metadata.lossless_column_encodings, ("bit",) * dim)
         self.assertEqual(packed.feature_tensor.shape[1], ((dim + 7) // 8 + 3) // 4 * 4)
         self.assertTrue(
             torch.equal(
@@ -611,7 +611,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             )
         )
 
-    def test_heterogeneous_node_types_get_kinds_from_their_own_data(
+    def test_heterogeneous_node_types_get_encodings_from_their_own_data(
         self,
     ) -> None:
         info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO

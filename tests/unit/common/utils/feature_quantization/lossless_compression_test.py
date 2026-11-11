@@ -31,11 +31,11 @@ from tests.test_assets.test_case import TestCase
 _NUM_ROWS = 50
 
 
-def _features(num_columns: int, kinds: dict[int, tuple[int, int]]) -> torch.Tensor:
-    """Gaussian columns, except the ``kinds`` columns which hold ids of the given inclusive range (both ends present)."""
+def _features(num_columns: int, encodings: dict[int, tuple[int, int]]) -> torch.Tensor:
+    """Gaussian columns, except the ``encodings`` columns which hold ids of the given inclusive range (both ends present)."""
     generator = torch.Generator().manual_seed(0)
     features = torch.randn(_NUM_ROWS, num_columns, generator=generator)
-    for column, (low, high) in kinds.items():
+    for column, (low, high) in encodings.items():
         ids = torch.randint(low, high + 1, (_NUM_ROWS,), generator=generator).float()
         ids[0], ids[1] = low, high
         features[:, column] = ids
@@ -136,15 +136,15 @@ class CompressLosslessColumnsTest(TestCase):
         self.assertEqual(metadata.raw_feature_indices, (0, 4, 5))
         self.assertTrue(torch.equal(_reconstruct(raw, packed, metadata), features))
 
-    def test_one_hot_and_id_columns_get_their_narrowest_kind(self) -> None:
+    def test_one_hot_and_id_columns_get_their_narrowest_encoding(self) -> None:
         features = _features(4, {0: (0, 1), 1: (0, 1), 2: (0, 70000), 3: (-5, 5)})
-        features[5, 3] = -0.0  # a -0.0 would decode as +0.0 in an integer kind
+        features[5, 3] = -0.0  # a -0.0 would decode as +0.0 in an integer encoding
 
         raw, packed, metadata = _compress(features)
 
         assert raw is not None and packed is not None and metadata is not None
         self.assertEqual(metadata.lossless_feature_indices, (0, 1, 2))
-        self.assertEqual(metadata.lossless_column_kinds, ("bit", "bit", "int32"))
+        self.assertEqual(metadata.lossless_column_encodings, ("bit", "bit", "int32"))
         self.assertTrue(torch.equal(_reconstruct(raw, packed, metadata), features))
 
     def test_all_columns_integral_leaves_no_raw_matrix(self) -> None:
@@ -164,9 +164,9 @@ class CompressLosslessColumnsTest(TestCase):
         ]
     )
     def test_inputs_are_returned_untouched_when_compression_does_not_help(
-        self, _: str, kinds: dict[int, tuple[int, int]]
+        self, _: str, encodings: dict[int, tuple[int, int]]
     ) -> None:
-        features = _features(2, kinds)
+        features = _features(2, encodings)
 
         raw, packed, metadata = _compress(features)
 
@@ -180,7 +180,7 @@ class CompressLosslessColumnsTest(TestCase):
             bits=8,
             feature_dim=3,
             lossless_feature_indices=(0,),
-            lossless_column_kinds=("int8",),
+            lossless_column_encodings=("int8",),
         )
         with self.assertRaises(ValueError):
             _compress(
@@ -280,7 +280,7 @@ class FeatureQuantizationMetadataLayoutTest(TestCase):
             clip_min=0.0,
             clip_max=1.0,
             lossless_feature_indices=(4, 6),
-            lossless_column_kinds=("int16", "int8"),
+            lossless_column_encodings=("int16", "int8"),
         )
         # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 bytes padded to 4.
         self.assertEqual(metadata.quantized_packed_dim, 2)
@@ -294,14 +294,14 @@ class FeatureQuantizationMetadataLayoutTest(TestCase):
                 feature_dim=7,
                 quantized_feature_indices=(0,),
                 lossless_feature_indices=(0,),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             )
         with self.assertRaises(ValueError):
             FeatureQuantizationMetadata(
                 bits=4,
                 feature_dim=7,
                 lossless_feature_indices=(1, 2),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             )
 
     def test_metadata_without_a_lossless_region_keeps_its_old_layout(self) -> None:

@@ -10,14 +10,14 @@ float matrix, with a ``FeatureQuantizationMetadata`` describing them. Every late
 - loader decode
 
 This module adds columns to the same sidecar: every column that is integral on all ranks (one-hot columns, categorical
-ids) is stored as the narrowest integer kind that holds its values (``FeatureCodec``). The kind is inferred from the
+ids) is stored as the narrowest integer encoding that holds its values (``FeatureCodec``). The encoding is inferred from the
 data when the dataset is built instead of declared in the preprocessor, so existing preprocessed data needs no rerun.
 Columns that preprocessing already quantized are not in the raw matrix and are left alone.
 
 ``compress_lossless_columns`` is the pure tensor operation; ``compress_loaded_features`` applies it to the tensors of
 all node or edge types and makes the codec identical on every rank by merging per-rank column statistics over RPC.
 
-Compression is lossless and bit-exact: a column holding a non-integral value, a value no integer kind holds, or a
+Compression is lossless and bit-exact: a column holding a non-integral value, a value no integer encoding holds, or a
 ``-0.0`` stays float32.
 """
 
@@ -44,7 +44,7 @@ logger = Logger()
 
 _Key = TypeVar("_Key", bound=Hashable)
 
-_UNCOMPRESSED_KIND = "float32"
+_UNCOMPRESSED_ENCODING = "float32"
 
 FEATURE_COMPRESSION_ENV: Final[str] = "GIGL_FEATURE_COMPRESSION"
 
@@ -53,7 +53,7 @@ class FeatureCompression(str, Enum):
     """How node and edge features are compressed when a dataset is built."""
 
     OFF = "off"
-    # Infer the storage kind of every column from the data and compress the ones that shrink.
+    # Infer the encoding of every column from the data and compress the ones that shrink.
     AUTO = "auto"
 
 
@@ -90,7 +90,7 @@ def compress_lossless_columns(
 ]:
     """Moves the integral columns of one node or edge type from the raw float matrix into the packed sidecar.
 
-    The storage kind of each raw column comes from ``stats`` (``FeatureCodec.from_stats``), the statistics of the data
+    The encoding of each raw column comes from ``stats`` (``FeatureCodec.from_stats``), the statistics of the data
     merged over all partitions. Nothing is changed if no column is moved or moving them would not make rows smaller.
 
     Peak host memory is the input raw matrix, plus the remaining raw columns, plus the packed sidecar; the encode works in
@@ -124,14 +124,16 @@ def compress_lossless_columns(
             f"{name} has {len(raw_columns)} raw feature columns but the statistics cover {num_raw_columns}"
         )
     codec = FeatureCodec.from_stats(stats)
-    logger.info(f"{name}: columns by chosen kind {dict(Counter(codec.column_dtypes))}")
+    logger.info(
+        f"{name}: columns by chosen encoding {dict(Counter(codec.column_encodings))}"
+    )
     moved_positions: list[int] = []
-    for position, kind in enumerate(codec.column_dtypes):
-        if kind != _UNCOMPRESSED_KIND:
+    for position, encoding in enumerate(codec.column_encodings):
+        if encoding != _UNCOMPRESSED_ENCODING:
             moved_positions.append(position)
     if not moved_positions:
         return features, quantized_features, metadata
-    region = FeatureCodec(tuple(codec.column_dtypes[p] for p in moved_positions))
+    region = FeatureCodec(tuple(codec.column_encodings[p] for p in moved_positions))
     if region.row_bytes >= 4 * len(moved_positions):
         logger.info(
             f"Lossless compression would not shrink the rows of {name}; leaving them as float32"
@@ -144,13 +146,13 @@ def compress_lossless_columns(
             bits=None,
             feature_dim=num_raw_columns,
             lossless_feature_indices=tuple(moved_columns),
-            lossless_column_kinds=region.column_dtypes,
+            lossless_column_encodings=region.column_encodings,
         )
     else:
         new_metadata = replace(
             metadata,
             lossless_feature_indices=tuple(moved_columns),
-            lossless_column_kinds=region.column_dtypes,
+            lossless_column_encodings=region.column_encodings,
         )
 
     num_rows = 0 if features is None else features.shape[0]

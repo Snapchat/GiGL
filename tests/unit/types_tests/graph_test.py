@@ -175,7 +175,7 @@ class GraphTypesTyest(TestCase):
             feature_dim=8,
             quantized_feature_indices=(0, 1, 2),
             lossless_feature_indices=(4, 6, 7),
-            lossless_column_kinds=("int16", "int8", "bit"),
+            lossless_column_encodings=("int16", "int8", "bit"),
         )
         # 3 four-bit columns take 2 bytes, padded to 4; the lossless region is 2 + 1 + 1 bytes (the
         # bit column takes one byte).
@@ -196,7 +196,7 @@ class GraphTypesTyest(TestCase):
             bits=None,
             feature_dim=3,
             lossless_feature_indices=(1,),
-            lossless_column_kinds=("int8",),
+            lossless_column_encodings=("int8",),
         )
         self.assertEqual(metadata.quantized_packed_dim, 0)
         self.assertEqual(metadata.lossless_byte_offset, 0)
@@ -209,12 +209,12 @@ class GraphTypesTyest(TestCase):
             FeatureQuantizationMetadata(
                 bits=None, feature_dim=3, quantized_feature_indices=(0,)
             )
-        with self.assertRaises(ValueError):  # unknown lossless kind
+        with self.assertRaises(ValueError):  # unknown lossless encoding
             FeatureQuantizationMetadata(
                 bits=None,
                 feature_dim=3,
                 lossless_feature_indices=(0,),
-                lossless_column_kinds=("int12",),
+                lossless_column_encodings=("int12",),
             )
         with self.assertRaises(ValueError):  # column both quantized and lossless
             FeatureQuantizationMetadata(
@@ -222,14 +222,16 @@ class GraphTypesTyest(TestCase):
                 feature_dim=7,
                 quantized_feature_indices=(0,),
                 lossless_feature_indices=(0,),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             )
-        with self.assertRaises(ValueError):  # kinds do not match the lossless columns
+        with self.assertRaises(
+            ValueError
+        ):  # encodings do not match the lossless columns
             FeatureQuantizationMetadata(
                 bits=4,
                 feature_dim=7,
                 lossless_feature_indices=(1, 2),
-                lossless_column_kinds=("int8",),
+                lossless_column_encodings=("int8",),
             )
 
     @parameterized.expand(
