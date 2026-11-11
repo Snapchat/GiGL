@@ -202,7 +202,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     // nodesToLookup[edgeTypeId] = set of node IDs that need a neighbor fetch for
     // edge type edgeTypeId this round.  Using a set deduplicates nodes that appear
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
-    std::unordered_map<int32_t, ska::flat_hash_set<int32_t>> nodesToLookup;
+    ska::flat_hash_map<int32_t, ska::flat_hash_set<int32_t>> nodesToLookup;
 
     // TODO: For homogeneous graphs _numNodeTypes == 1, so the inner loop always
     // executes exactly once (nodeTypeId=0).  std::vector indexing is cheap, but a
