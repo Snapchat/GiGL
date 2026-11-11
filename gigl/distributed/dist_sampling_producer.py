@@ -16,7 +16,6 @@ from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
     MpDistSamplingWorkerOptions,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -46,6 +45,10 @@ from gigl.distributed.sampler_options import SamplerOptions
 from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
+)
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_backend_from_env,
 )
 
 logger = Logger()
@@ -109,7 +112,7 @@ def _sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(num_rpc_threads + 1)
 
-        init_rpc(
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
@@ -218,6 +221,8 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Fail here on a bad channel or transport value instead of inside every spawned worker.
+        sampling_rpc_backend_from_env()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
