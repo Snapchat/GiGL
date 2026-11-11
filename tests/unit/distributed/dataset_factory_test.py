@@ -96,7 +96,7 @@ class TestDatasetFactory(TestCase):
             metadata.lossless_feature_indices, tuple(range(metadata.feature_dim))
         )
         self.assertEqual(
-            metadata.lossless_column_kinds, ("bit",) * metadata.feature_dim
+            metadata.lossless_column_encodings, ("bit",) * metadata.feature_dim
         )
         self.assertIsNone(compressed.node_features)
         self.assertIsNone(uncompressed.node_quantization_metadata)

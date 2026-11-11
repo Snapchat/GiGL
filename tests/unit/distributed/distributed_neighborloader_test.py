@@ -895,7 +895,7 @@ class DistributedNeighborLoaderTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
             lossless_feature_indices=(4, 5),
-            lossless_column_kinds=lossless_codec.column_dtypes,
+            lossless_column_encodings=lossless_codec.column_encodings,
         )
         # The two-bit region (codes [0, 3] and [2, 1], see the test above) is padded to the
         # start of the lossless region, which holds the id columns as narrow integers.

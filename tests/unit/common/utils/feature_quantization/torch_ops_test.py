@@ -261,7 +261,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             clip_min=0.0,
             clip_max=3.0,
             lossless_feature_indices=(1, 4),
-            lossless_column_kinds=codec.column_dtypes,
+            lossless_column_encodings=codec.column_encodings,
         )
         quantized = torch.from_numpy(
             quantize_ndarray(quantized_features, bits=2, clip_min=0.0, clip_max=3.0)
@@ -295,7 +295,7 @@ class TorchFeatureQuantizationOpsTest(TestCase):
             bits=None,
             feature_dim=3,
             lossless_feature_indices=(0, 1, 2),
-            lossless_column_kinds=codec.column_dtypes,
+            lossless_column_encodings=codec.column_encodings,
         )
         packed = codec.encode(ids)
 
