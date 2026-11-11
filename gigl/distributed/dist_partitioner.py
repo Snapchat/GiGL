@@ -588,7 +588,7 @@ class DistPartitioner:
                 "Node packed features have already been registered. Cannot re-register node packed feature data."
             )
 
-        logger.info("Registering Node Quantized Features ...")
+        logger.info("Registering Node Packed Features ...")
 
         input_node_packed_features = self._convert_node_entity_to_heterogeneous_format(
             input_node_entity=node_packed_features
@@ -700,7 +700,7 @@ class DistPartitioner:
             raise ValueError(
                 "Edge packed features have already been registered. Cannot re-register edge packed feature data."
             )
-        logger.info("Registering Edge Quantized Features ...")
+        logger.info("Registering Edge Packed Features ...")
 
         input_edge_packed_features = self._convert_edge_entity_to_heterogeneous_format(
             input_edge_entity=edge_packed_features
