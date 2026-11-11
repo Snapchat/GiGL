@@ -8,7 +8,12 @@ import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
-from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
+from graphlearn_torch.distributed import (
+    dist_context,
+    init_rpc,
+    init_worker_group,
+    shutdown_rpc,
+)
 from graphlearn_torch.distributed.dist_context import DistRole
 from torch.distributed import rpc
 
@@ -273,6 +278,9 @@ class CallSitesHonorChannelsEnvTest(TestCase):
         super().setUp()
         glt_rpc._rpc_inited = False
         self.addCleanup(setattr, glt_rpc, "_rpc_inited", False)
+        self.addCleanup(
+            setattr, dist_context, "_dist_context", dist_context._dist_context
+        )
 
     def _call_dataset_building_process(self) -> None:
         _build_dataset_process(
