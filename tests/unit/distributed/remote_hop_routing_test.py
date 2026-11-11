@@ -1,6 +1,5 @@
 import hashlib
 import inspect
-import os
 
 import torch
 import torch.multiprocessing as mp
@@ -17,20 +16,21 @@ from graphlearn_torch.distributed.dist_feature import DistFeature
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.utils import get_free_port
-from gigl.distributed.utils.partition_routing import GROUPED_ROUTING_ENV
 from gigl.types.graph import GraphPartitionData, PartitionOutput
 from tests.test_assets.test_case import TestCase
 
 _NUM_NODES = 10
 
 # sha256 of inspect.getsource of graphlearn_torch's DistNeighborSampler._sample_one_hop, which
-# BaseDistNeighborSampler._sample_one_hop copies when grouped routing is on.
+# BaseDistNeighborSampler._sample_one_hop copies. To re-sync after a deliberate GLT upgrade, diff the two
+# functions, port GLT's change into the copy, then set the hash to the one the failing test prints.
 _GLT_SAMPLE_ONE_HOP_SHA256 = (
     "2158a4886c544e60380cc72e1011630dfd1f833ceb64bd50019f594f609fcb5d"
 )
 
 # sha256 of inspect.getsource of graphlearn_torch's DistFeature._remote_selecting_get, which
-# FusedDistFeature._remote_selecting_get copies when grouped routing is on.
+# FusedDistFeature._remote_selecting_get copies. To re-sync after a deliberate GLT upgrade, diff the two
+# functions, port GLT's change into the copy, then set the hash to the one the failing test prints.
 _GLT_REMOTE_SELECTING_GET_SHA256 = (
     "3dadb30e482876da4ba68760833e1543f883c6014472c89c725187f836a0d970"
 )
@@ -60,13 +60,8 @@ def _partition_dataset(rank: int) -> DistDataset:
     return dataset
 
 
-def _sample_hop_on_partition(
-    rank: int, master_port: int, output: dict, grouped: bool
-) -> None:
+def _sample_hop_on_partition(rank: int, master_port: int, output: dict) -> None:
     """Samples one hop for every node, half of which another partition owns, and records the neighbors."""
-    os.environ[GROUPED_ROUTING_ENV] = "0"
-    if grouped:
-        os.environ[GROUPED_ROUTING_ENV] = "1"
     init_worker_group(world_size=2, rank=rank)
     init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
     sampler = BaseDistNeighborSampler(
@@ -83,23 +78,17 @@ def _sample_hop_on_partition(
 
 
 class RemoteHopRoutingTest(TestCase):
-    def _assert_remote_hop_samples_the_ring(self, grouped: bool) -> None:
+    def test_remote_hop_samples_the_ring(self) -> None:
         output = mp.Manager().dict()
         mp.spawn(
             _sample_hop_on_partition,
-            args=(get_free_port(), output, grouped),
+            args=(get_free_port(), output),
             nprocs=2,
         )
         for rank in range(2):
             srcs, nbrs, nbr_num = output[rank]
             self.assertEqual(nbr_num, [1] * len(srcs))
             self.assertEqual(nbrs, [(src + 1) % _NUM_NODES for src in srcs])
-
-    def test_remote_hop_without_grouped_routing(self) -> None:
-        self._assert_remote_hop_samples_the_ring(grouped=False)
-
-    def test_remote_hop_with_grouped_routing(self) -> None:
-        self._assert_remote_hop_samples_the_ring(grouped=True)
 
 
 class GltSampleOneHopDriftTest(TestCase):

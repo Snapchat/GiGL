@@ -19,7 +19,7 @@ from graphlearn_torch.sampler import (
 )
 from graphlearn_torch.typing import EdgeType, NodeType, as_str
 from graphlearn_torch.utils import default_id_select, reverse_edge_type
-from jaxtyping import Int64
+from jaxtyping import Int64, Integer
 
 from gigl.common.logger import Logger
 from gigl.distributed.sampler import (
@@ -33,10 +33,7 @@ from gigl.distributed.utils.fused_feature import (
     FusedDistFeature,
     build_fused_dist_feature,
 )
-from gigl.distributed.utils.partition_routing import (
-    group_by_partition,
-    grouped_routing_enabled,
-)
+from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
@@ -159,9 +156,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     self.rpc_router,
                     self.device,
                 )
-
-        # Opt-in sort-based routing of ids to partitions (``GIGL_SAMPLING_GROUPED_ROUTING``), read once here.
-        self._grouped_routing: bool = grouped_routing_enabled()
 
     def _prepare_sample_loop_inputs(
         self,
@@ -523,46 +517,61 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
     def _route_hop(
         self,
-        srcs: torch.Tensor,
-        orders: torch.Tensor,
-        partition_ids: torch.Tensor,
+        srcs: Int64[torch.Tensor, "num_srcs"],
+        orders: Int64[torch.Tensor, "num_srcs"],
+        partition_ids: Integer[torch.Tensor, "num_srcs"],
         node_pb: object,
-    ) -> Iterator[tuple[int, torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[
+        tuple[
+            int,
+            Int64[torch.Tensor, "num_selected"],
+            Int64[torch.Tensor, "num_selected"],
+        ]
+    ]:
         """Yields ``(partition, ids, positions)`` of each partition that owns some of ``srcs``.
 
-        Partitions come in order starting at this process's own partition. ``positions`` are the indices of
-        ``ids`` in ``srcs``. With grouped routing on and GLT's default ``id_select``, one stable sort routes all
-        partitions. Otherwise one mask per partition does, which also serves a custom ``id_select``.
+        Partitions come in order starting at this process's own partition. With GLT's default ``id_select``, one
+        stable sort routes all partitions. A custom ``id_select`` selects the ids of each partition from a mask,
+        as GLT does.
+
+        Args:
+            srcs: Source node ids of the hop.
+            orders: Positions of ``srcs``, ``arange(len(srcs))``.
+            partition_ids: Owning partition of each source node.
+            node_pb: Node partition book, passed to a custom ``id_select``.
+
+        Returns:
+            An iterator over the partitions that own at least one source node. ``positions`` are the indices of
+            the partition's ids in ``srcs``.
         """
-        num_partitions = self.data.num_partitions
-        grouped = None
-        if self._grouped_routing and self.data.id_select is default_id_select:
-            grouped = group_by_partition(srcs, partition_ids, num_partitions)
+        num_partitions: int = self.data.num_partitions
+        if self.data.id_select is default_id_select:
+            ids_by_partition, index_by_partition = group_by_partition(
+                srcs, partition_ids, num_partitions
+            )
+            for i in range(num_partitions):
+                pidx = (self.data.partition_idx + i) % num_partitions
+                if ids_by_partition[pidx].shape[0] > 0:
+                    yield pidx, ids_by_partition[pidx], index_by_partition[pidx]
+            return
         for i in range(num_partitions):
             pidx = (self.data.partition_idx + i) % num_partitions
-            if grouped is None:
-                p_mask = partition_ids == pidx
-                p_ids = self.data.id_select(srcs, p_mask, node_pb)
-                if p_ids.shape[0] == 0:
-                    continue
+            p_mask = partition_ids == pidx
+            p_ids = self.data.id_select(srcs, p_mask, node_pb)
+            if p_ids.shape[0] > 0:
                 yield pidx, p_ids, torch.masked_select(orders, p_mask)
-            else:
-                if grouped[0][pidx].shape[0] == 0:
-                    continue
-                yield pidx, grouped[0][pidx], grouped[1][pidx]
 
     async def _sample_one_hop(
         self,
-        srcs: torch.Tensor,
+        srcs: Int64[torch.Tensor, "num_srcs"],
         num_nbr: int,
         etype: Optional[EdgeType],
     ) -> NeighborOutput:
-        """Sample one hop of neighbors for ``srcs`` across all partitions.
+        """Samples one hop of neighbors for ``srcs`` across all partitions.
 
-        Delegates to GLT when grouped routing is off. Otherwise this is a copy of
-        ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4) in which the ids
-        are routed to partitions by ``group_by_partition``. A unit test hashes GLT's source so that a
-        change to it is noticed.
+        This is ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4) with the
+        per-partition mask loop replaced by ``_route_hop``. A unit test hashes GLT's source so that a change to
+        it is noticed.
 
         Args:
             srcs: Source node ids for this hop.
@@ -570,37 +579,42 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             etype: Edge type to sample along, or ``None`` for homogeneous graphs.
 
         Returns:
-            The sampled neighbors of ``srcs`` in input order.
+            The sampled neighbors of ``srcs`` in input order. As in GLT, an empty ``int64`` tensor stands in
+            when no partition owns any of ``srcs``.
         """
-        if not self._grouped_routing:
-            return await super()._sample_one_hop(srcs, num_nbr, etype)
-        device = self.device
+        device: torch.device = self.device
         srcs = srcs.to(device)
         if self.data.graph_caching:
-            nbr_out = None
-            if srcs is not None and srcs.numel() > 0:
+            nbr_out: Optional[NeighborOutput] = None
+            if srcs.numel() > 0:
                 nbr_out = self.sampler.sample_one_hop(srcs, num_nbr, etype)
-            return nbr_out
+            return nbr_out  # type: ignore[return-value]
 
-        orders = torch.arange(srcs.size(0), dtype=torch.long, device=device)
-        src_ntype = None
+        orders: Int64[torch.Tensor, "num_srcs"] = torch.arange(
+            srcs.size(0), dtype=torch.long, device=device
+        )
+        src_ntype: Optional[NodeType] = None
         if etype is not None:
             if self.edge_dir == "out":
                 src_ntype = etype[0]
             elif self.edge_dir == "in":
                 src_ntype = etype[-1]
-        partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
+        partition_ids: Integer[torch.Tensor, "num_srcs"] = (
+            self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
+        )
         node_pb = self.dist_graph.node_pb
         if isinstance(node_pb, dict):
             node_pb = node_pb[src_ntype]
         partition_results: list[PartialNeighborOutput] = []
-        remote_orders_list: list[torch.Tensor] = []
-        futs: list[torch.futures.Future] = []
+        remote_orders_list: list[Int64[torch.Tensor, "num_selected"]] = []
+        futs: list[torch.futures.Future[NeighborOutput]] = []
         for pidx, p_ids, p_orders in self._route_hop(
             srcs, orders, partition_ids, node_pb
         ):
             if pidx == self.data.partition_idx:
-                p_nbr_out = self.sampler.sample_one_hop(p_ids, num_nbr, etype)
+                p_nbr_out: NeighborOutput = self.sampler.sample_one_hop(
+                    p_ids, num_nbr, etype
+                )
                 partition_results.append(PartialNeighborOutput(p_orders, p_nbr_out))
             else:
                 remote_orders_list.append(p_orders)
@@ -615,9 +629,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if len(remote_orders_list) == 0:
             if len(partition_results) > 0:
                 return partition_results[0].output
-            # Mirrors GLT, which returns an empty tensor rather than a NeighborOutput here.
             return torch.tensor([], device=device, dtype=torch.int64)  # type: ignore[return-value]
-        res_fut_list = await wrap_torch_future(torch.futures.collect_all(futs))
+        res_fut_list: list[
+            torch.futures.Future[NeighborOutput]
+        ] = await wrap_torch_future(torch.futures.collect_all(futs))
         for i, res_fut in enumerate(res_fut_list):
             partition_results.append(
                 PartialNeighborOutput(

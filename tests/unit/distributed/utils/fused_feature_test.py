@@ -1,4 +1,3 @@
-import os
 from unittest.mock import Mock, patch
 
 import torch
@@ -24,7 +23,6 @@ from gigl.distributed.utils.fused_feature import (
     FusedFeatureStore,
     build_fused_dist_feature,
 )
-from gigl.distributed.utils.partition_routing import GROUPED_ROUTING_ENV
 from tests.test_assets.test_case import TestCase
 
 _NUM_ENTITIES = 12
@@ -499,12 +497,6 @@ class FusedDistFeatureTest(TestCase):
             # request for each store a type has, which is 4 across the three types.
             self.assertEqual(separate_requests, 4)
             self.assertEqual(fused_requests, 3)
-
-    def test_lookup_with_grouped_routing_matches_separate_lookups(self) -> None:
-        with patch.dict(os.environ, {GROUPED_ROUTING_ENV: "1"}):
-            for is_heterogeneous in (False, True):
-                for rank, (matches, _, _) in self._run(is_heterogeneous).items():
-                    self.assertTrue(matches, f"rank {rank} fetched different rows")
 
 
 if __name__ == "__main__":

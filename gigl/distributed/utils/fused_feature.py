@@ -26,12 +26,9 @@ from graphlearn_torch.distributed.rpc import (
 from graphlearn_torch.partition import GLTPartitionBook, PartitionBook
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import ensure_device, get_available_device
-from jaxtyping import Float, Int64, UInt8
+from jaxtyping import Float, Int64, Integer, UInt8
 
-from gigl.distributed.utils.partition_routing import (
-    group_by_partition,
-    grouped_routing_enabled,
-)
+from gigl.distributed.utils.partition_routing import group_by_partition
 
 
 class FusedFeatureStore:
@@ -231,66 +228,87 @@ class FusedDistFeature(DistFeature):
 
         self.rpc_router = rpc_router
         self.rpc_callee_id = rpc_register(RpcFeatureLookupCallee(self))
-        self._grouped_routing = grouped_routing_enabled()
 
     def _route_remote(
-        self, ids: torch.Tensor, partition_ids: torch.Tensor
-    ) -> Iterator[tuple[int, torch.Tensor, torch.Tensor]]:
+        self,
+        ids: Int64[torch.Tensor, "num_ids"],
+        partition_ids: Integer[torch.Tensor, "num_ids"],
+    ) -> Iterator[
+        tuple[
+            int,
+            Int64[torch.Tensor, "num_selected"],
+            Int64[torch.Tensor, "num_selected"],
+        ]
+    ]:
         """Yields ``(partition, ids, positions)`` of each other partition that owns some of ``ids``.
 
-        ``positions`` are the indices of ``ids`` in the request. With grouped routing on, one stable sort routes
-        all partitions. Otherwise one mask per partition does, as in GLT.
+        Args:
+            ids: Ids of the request.
+            partition_ids: Owning partition of each id.
+
+        Returns:
+            An iterator over the partitions other than this one that own at least one id, in partition order.
+            ``positions`` are the indices of the partition's ids in ``ids``.
         """
-        if self._grouped_routing:
-            ids_by_partition, index_by_partition = group_by_partition(
-                ids, partition_ids, self.num_partitions
-            )
-        else:
-            input_order = torch.arange(ids.size(0), dtype=torch.long)
+        ids_by_partition, index_by_partition = group_by_partition(
+            ids, partition_ids, self.num_partitions
+        )
         for pidx in range(self.num_partitions):
             if pidx == self.partition_idx:
                 continue
-            if self._grouped_routing:
-                remote_ids = ids_by_partition[pidx]
-                remote_index = index_by_partition[pidx]
-                if remote_ids.shape[0] > 0:
-                    yield pidx, remote_ids, remote_index
-            else:
-                remote_mask = partition_ids == pidx
-                remote_ids = torch.masked_select(ids, remote_mask)
-                if remote_ids.shape[0] > 0:
-                    yield (
-                        pidx,
-                        remote_ids,
-                        torch.masked_select(input_order, remote_mask),
-                    )
+            remote_ids = ids_by_partition[pidx]
+            if remote_ids.shape[0] > 0:
+                yield pidx, remote_ids, index_by_partition[pidx]
 
     def _remote_selecting_get(
         self,
-        ids: torch.Tensor,
+        ids: Int64[torch.Tensor, "num_ids"],
         input_type: Optional[Union[NodeType, EdgeType]] = None,
-    ) -> torch.futures.Future:
-        """Fetches the remote rows of ids, as GLT's ``DistFeature`` does.
+    ) -> torch.futures.Future[
+        list[
+            tuple[
+                UInt8[torch.Tensor, "num_selected row_bytes"],
+                Int64[torch.Tensor, "num_selected"],
+            ]
+        ]
+    ]:
+        """Fetches the rows of the ids that other partitions own.
 
-        With grouped routing on, the ids are routed to partitions by ``group_by_partition``. With it off, this is
-        GLT's own implementation.
+        This is ``DistFeature._remote_selecting_get`` with the per-partition mask loop replaced by
+        ``group_by_partition``.
+
+        Args:
+            ids: Ids to look up.
+            input_type: Node or edge type of the ids for heterogeneous data.
+
+        Returns:
+            A future of one ``(rows, positions)`` pair per remote partition that owns some of ``ids``, in partition
+            order. ``rows`` are the served byte rows of the partition and ``positions`` their indices in ``ids``.
         """
-        if not self._grouped_routing:
-            return super()._remote_selecting_get(ids, input_type)
         assert self.rpc_callee_id is not None, (
             "Remote feature lookup is disabled in 'local_only' mode."
         )
         _, pb = self._get_local_store(input_type)
         ids = ids.to(pb.device)
-        partition_ids = pb[ids].cpu()
-        futs, indexes = [], []
+        partition_ids: Integer[torch.Tensor, "num_ids"] = pb[ids].cpu()
+        futs: list[
+            torch.futures.Future[UInt8[torch.Tensor, "num_selected row_bytes"]]
+        ] = []
+        indexes: list[Int64[torch.Tensor, "num_selected"]] = []
         for pidx, remote_ids, remote_index in self._route_remote(ids, partition_ids):
             to_worker = self.rpc_router.get_to_worker(pidx)
             args = (remote_ids.cpu(), input_type)
             futs.append(rpc_request_async(to_worker, self.rpc_callee_id, args=args))
             indexes.append(remote_index)
         collect_fut = torch.futures.collect_all(futs)
-        res_fut: torch.futures.Future = torch.futures.Future()
+        res_fut: torch.futures.Future[
+            list[
+                tuple[
+                    UInt8[torch.Tensor, "num_selected row_bytes"],
+                    Int64[torch.Tensor, "num_selected"],
+                ]
+            ]
+        ] = torch.futures.Future()
 
         def on_done(*_: object) -> None:
             try:
@@ -298,7 +316,8 @@ class FusedDistFeature(DistFeature):
                     (fut.wait(), indexes[i]) for i, fut in enumerate(collect_fut.wait())
                 ]
             except Exception as e:
-                res_fut.set_exception(e)
+                # torch types set_exception as taking the result type, not an exception.
+                res_fut.set_exception(e)  # ty: ignore[invalid-argument-type]
             else:
                 res_fut.set_result(result)
 

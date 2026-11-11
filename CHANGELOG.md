@@ -43,14 +43,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   same value on every node of a job. A bad value fails once in the parent process before workers are spawned.
   Graph-store mode keeps GraphLearn-Torch's own `init_rpc`. A unit test hashes the upstream source so a GraphLearn-Torch
   upgrade that changes it is noticed
-- Add opt-in sort-based routing of ids to partitions for the neighbor samplers' one-hop sampling and for
-  `FusedDistFeature` remote lookups. GraphLearn-Torch routes with a mask and two `masked_select` calls per partition,
-  each of which releases and reacquires the GIL; `GIGL_SAMPLING_GROUPED_ROUTING=1` (or `true`) routes all partitions
-  with one stable sort instead. Unset, empty, `0` and `false` keep GraphLearn-Torch's routing (the default); any other
-  value also keeps it and logs a warning. The ids and their order are identical to the default routing, except that a
-  negative partition id raises where GraphLearn-Torch's mask routing silently drops the id. Unit tests hash the copied
-  upstream `_sample_one_hop` and `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is
-  noticed
+- Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
+  neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
+  releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop
+  thread. This is a behavior-preserving performance change: the ids and their order are identical, including for ids no
+  partition owns, which both routings drop. The sort was never slower than the loop beyond noise (median of 30 calls
+  with 2 partitions, 200 to 200,000 ids) and was 1.3x to 11x faster with 4 to 60 partitions. A custom `id_select` on the
+  dataset keeps GraphLearn-Torch's mask loop. Unit tests hash the copied upstream `_sample_one_hop` and
+  `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is noticed
 
 ### Changed
 
