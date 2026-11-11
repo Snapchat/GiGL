@@ -6,6 +6,8 @@ CPP_SOURCES := $(shell find core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
+# Formatting also covers headers, tests, and benchmarks.
+CPP_FORMAT_SOURCES := $(shell find core tests benchmarks \( -name "*.cpp" -o -name "*.cu" -o -name "*.h" -o -name "*.cuh" \) 2>/dev/null)
 
 # Stamp-file guard: uv pip install -e gigl-core/ triggers a full CMake configure-and-build
 # cycle even when nothing changed. By making the stamp file depend on C++ sources and
@@ -38,10 +40,10 @@ benchmark_cpp: .cache/cpp_benchmarks/.configured
 	cmake --build .cache/cpp_benchmarks --parallel
 
 check_format_cpp:
-	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
+	clang-format-15 --dry-run --Werror --style=file $(CPP_FORMAT_SOURCES)
 
 format_cpp:
-	clang-format-15 -i --style=file $(CPP_SOURCES)
+	clang-format-15 -i --style=file $(CPP_FORMAT_SOURCES)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
