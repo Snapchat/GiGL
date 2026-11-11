@@ -19,6 +19,39 @@ from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
 from gigl.common.services.dataproc import DataprocService
 
+
+def build_subgraph_sampler_cluster_name(job_name: str) -> str:
+    """Return the Dataproc cluster name the subgraph sampler uses for ``job_name``.
+
+    Example:
+        >>> build_subgraph_sampler_cluster_name("my_job")
+        'sgs-my-job'
+
+    Args:
+        job_name: The GiGL applied task identifier.
+
+    Returns:
+        The sanitized cluster name.
+    """
+    return SparkJobManager.get_sanitized_dataproc_cluster_name(f"sgs_{job_name}")
+
+
+def build_split_generator_cluster_name(job_name: str) -> str:
+    """Return the Dataproc cluster name the split generator uses for ``job_name``.
+
+    Example:
+        >>> build_split_generator_cluster_name("my_job")
+        'split-my-job'
+
+    Args:
+        job_name: The GiGL applied task identifier.
+
+    Returns:
+        The sanitized cluster name.
+    """
+    return SparkJobManager.get_sanitized_dataproc_cluster_name(f"split_{job_name}")
+
+
 IDLE_TTL_DEFAULT_S = 600  # Auto delete cluster after 10 mins of idle time (i.e. no job is running on cluster)
 IDLE_TTL_DEV_DEFAULT_S = 36_000  # Auto delete cluster after 10 hours of idle time (i.e. no job is running on cluster)
 logger = Logger()
@@ -195,12 +228,27 @@ class SparkJobManager:
             cluster_name=self.__cluster_name,
         )
 
-    # must match pattern (?:[a-z](?:[-a-z0-9]{0,49}[a-z0-9])?)
     @staticmethod
-    def get_sanitized_dataproc_cluster_name(cluster_name: str):
+    def get_sanitized_dataproc_cluster_name(cluster_name: str) -> str:
+        """Make a name valid for Dataproc: ``_`` to ``-``, at most 50 characters, no trailing ``-``.
+
+        Dataproc cluster names must match ``(?:[a-z](?:[-a-z0-9]{0,49}[a-z0-9])?)``.
+        This is the single source of the rule; the subgraph sampler, the split
+        generator, and job cleanup all build cluster names through it.
+
+        Example:
+            >>> SparkJobManager.get_sanitized_dataproc_cluster_name("sgs_my_job")
+            'sgs-my-job'
+
+        Args:
+            cluster_name: Raw cluster name.
+
+        Returns:
+            The sanitized cluster name.
+        """
         cluster_name = cluster_name.replace("_", "-")[:50]
         if cluster_name.endswith("-"):
-            cluster_name = cluster_name[:-1] + "Z"
+            cluster_name = cluster_name[:-1] + "z"
         return cluster_name
 
     @staticmethod
