@@ -1,5 +1,9 @@
 substitutions:
   _CMD: ""
+  # Commit hashes of the active checkout. Cloud Build does not upload .git, so the Makefile cannot read them itself.
+  # The run-cloud-run-command-on-active-checkout action passes them. The Makefile reads them from the environment.
+  _GIT_HASH: ""
+  _SHORT_GIT_HASH: ""
   # _BUILDER_IMAGE, the builder image that runs _CMD, has no default. The run-cloud-run-command-on-active-checkout
   # action passes it from gigl/dep_vars.env, and Cloud Build fails a submit that uses it without a value.
 
@@ -18,6 +22,8 @@ steps:
     # affecting downstream consumers of GiGL (e.g. as a submodule) that have their own Maven routing.
     env:
       - 'SBT_OPTS=-Dsbt.override.build.repos=true -Dsbt.repository.config=repositories'
+      - 'GIT_HASH=${_GIT_HASH}'
+      - 'SHORT_GIT_HASH=${_SHORT_GIT_HASH}'
     args:
       - -c
       - |

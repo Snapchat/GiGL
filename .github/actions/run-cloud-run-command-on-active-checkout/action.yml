@@ -40,9 +40,14 @@ runs:
         PYTHON_VERSION: ${{ inputs.python_version }}
       run: |
         BUILDER_IMAGE="$("${GITHUB_ACTION_PATH}/builder_image.sh" "${PYTHON_VERSION}")"
+        # `gcloud builds submit` does not upload .git, so `git rev-parse` returns nothing inside Cloud Build.
+        # Read the hashes here from the active checkout and pass them in. We do not use GITHUB_SHA because
+        # some callers check out a different ref (e.g. a release branch) than the commit that triggered the workflow.
+        GIT_HASH="$(git rev-parse HEAD)"
+        SHORT_GIT_HASH="$(git rev-parse --short HEAD)"
         gcloud builds submit . \
           --config=.github/cloud_builder/run_command_on_active_checkout.yaml \
-          --substitutions="_CMD=${CMD},_BUILDER_IMAGE=${BUILDER_IMAGE},_GITHUB_RUN_ID=${GITHUB_RUN_ID_INPUT}" \
+          --substitutions="_CMD=${CMD},_BUILDER_IMAGE=${BUILDER_IMAGE},_GITHUB_RUN_ID=${GITHUB_RUN_ID_INPUT},_GIT_HASH=${GIT_HASH},_SHORT_GIT_HASH=${SHORT_GIT_HASH}" \
           --service-account="projects/${PROJECT}/serviceAccounts/${SERVICE_ACCOUNT}" \
           --project="${PROJECT}" \
           --machine-type="${MACHINE_TYPE}" \
