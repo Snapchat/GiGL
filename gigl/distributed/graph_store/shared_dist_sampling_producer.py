@@ -83,7 +83,6 @@ from graphlearn_torch.distributed import (
     DistDataset,
     RemoteDistSamplingWorkerOptions,
     get_context,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -105,6 +104,7 @@ from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
+from gigl.distributed.utils.rpc_init import init_rpc_from_env
 
 logger = Logger()
 
@@ -804,7 +804,7 @@ def _shared_sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(num_rpc_threads + 1)
 
-        init_rpc(
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,

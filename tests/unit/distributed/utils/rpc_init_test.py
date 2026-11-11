@@ -12,7 +12,11 @@ from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_r
 from graphlearn_torch.distributed.dist_context import DistRole
 from torch.distributed import rpc
 
+from gigl.distributed.dataset_factory import _build_dataset_process
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
+from gigl.distributed.utils.init_neighbor_loader_worker import (
+    init_neighbor_loader_worker,
+)
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.rpc_init import (
     SAMPLING_RPC_CHANNELS_ENV,
@@ -260,6 +264,84 @@ class SamplingProducerEnvValidationTest(TestCase):
         with mock.patch.dict(os.environ, {SAMPLING_RPC_CHANNELS_ENV: "mpt_uv"}):
             with self.assertRaises(ValueError):
                 producer.init()
+
+
+class CallSitesHonorChannelsEnvTest(TestCase):
+    """Call sites that initialize RPC through ``init_rpc_from_env`` read the channels variable."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        glt_rpc._rpc_inited = False
+        self.addCleanup(setattr, glt_rpc, "_rpc_inited", False)
+
+    def _call_dataset_building_process(self) -> None:
+        _build_dataset_process(
+            process_number_on_current_machine=1,
+            output_dict={},
+            serialized_graph_metadata=mock.Mock(),
+            master_ip_address="127.0.0.1",
+            master_dataset_building_ports=(1, 2),
+            node_rank=0,
+            node_world_size=1,
+            sample_edge_direction="out",
+            should_load_tensors_in_parallel=False,
+            partitioner_class=None,
+            node_tf_dataset_options=mock.Mock(),
+            edge_tf_dataset_options=mock.Mock(),
+        )
+
+    def _call_loader_worker(self) -> None:
+        # The worker pins the CPU affinity and thread counts of its process; keep the test
+        # process unchanged.
+        with (
+            mock.patch("psutil.Process"),
+            mock.patch("torch.set_num_threads"),
+            mock.patch("torch.set_num_interop_threads"),
+        ):
+            self._init_loader_worker()
+
+    def _init_loader_worker(self) -> None:
+        init_neighbor_loader_worker.__wrapped__(
+            master_ip_address="127.0.0.1",
+            local_process_rank=0,
+            local_process_world_size=1,
+            rank=0,
+            world_size=1,
+            master_worker_port=1,
+            device=torch.device("cpu"),
+            should_use_cpu_workers=True,
+            num_cpu_threads=1,
+        )
+
+    def test_invalid_channels_are_rejected_by_each_call_site(self) -> None:
+        for call in (self._call_dataset_building_process, self._call_loader_worker):
+            with self.subTest(call=call.__name__):
+                with mock.patch.dict(os.environ, {SAMPLING_RPC_CHANNELS_ENV: "mpt_uv"}):
+                    with self.assertRaises(ValueError):
+                        call()
+
+    def test_selected_channels_reach_the_tensorpipe_options(self) -> None:
+        for call in (self._call_dataset_building_process, self._call_loader_worker):
+            with self.subTest(call=call.__name__):
+                created: list[Any] = []
+                real_options = rpc.TensorPipeRpcBackendOptions
+
+                def record_options(**kwargs: Any) -> Any:
+                    created.append(kwargs)
+                    return real_options(**kwargs)
+
+                with (
+                    mock.patch.object(
+                        rpc, "TensorPipeRpcBackendOptions", record_options
+                    ),
+                    mock.patch.object(rpc, "init_rpc", side_effect=_StopInit),
+                    mock.patch.dict(
+                        os.environ, {SAMPLING_RPC_CHANNELS_ENV: "cma,basic"}
+                    ),
+                ):
+                    with self.assertRaises(_StopInit):
+                        call()
+                self.assertEqual(created[0]["_channels"], ["cma", "basic"])
 
 
 class SamplingRpcChannelsFromEnvTest(TestCase):

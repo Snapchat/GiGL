@@ -12,7 +12,6 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed import (
     barrier,
     get_context,
-    init_rpc,
     init_worker_group,
     rpc_is_initialized,
     shutdown_rpc,
@@ -39,6 +38,7 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
+from gigl.distributed.utils.rpc_init import init_rpc_from_env
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -324,7 +324,7 @@ def _build_dataset_process(
     rpc_port = master_dataset_building_ports[0]
     splitter_port = master_dataset_building_ports[1]
 
-    init_rpc(
+    init_rpc_from_env(
         master_addr=master_ip_address,
         master_port=rpc_port,
         num_rpc_threads=16,

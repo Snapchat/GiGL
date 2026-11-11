@@ -36,12 +36,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
-- Sampling workers initialize RPC through a vendored copy of GraphLearn-Torch's `init_rpc`
+- GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
   (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
   comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
   `basic`, the channel every process can use). Unset, the default equals GraphLearn-Torch's (`mpt_uv,basic`). Use the
-  same value on every node of a job. A bad value fails once in the parent process before workers are spawned.
-  Graph-store mode keeps GraphLearn-Torch's own `init_rpc`. A unit test hashes the upstream source so a GraphLearn-Torch
+  same value on every node of a job. A bad value fails once in the parent process before workers are spawned. The
+  colocated loader worker, the dataset-building process, the colocated sampling producer and the graph-store sampling
+  worker subprocesses honor the variable. The graph-store `init_server` and `init_client` (which accept `is_dynamic`)
+  and GraphLearn-Torch's own `init_server`/`init_client` keep GraphLearn-Torch's `init_rpc` and its default channels;
+  they still share `basic` with every other process. A unit test hashes the upstream source so a GraphLearn-Torch
   upgrade that changes it is noticed
 
 ### Changed
