@@ -10,7 +10,7 @@ rows, the latter ``None`` for a type without a sidecar.
 All stores are CPU stores: GiGL builds every ``Feature`` with ``with_gpu=False``.
 """
 
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
 import torch
 from graphlearn_torch.data import Feature
@@ -18,11 +18,20 @@ from graphlearn_torch.distributed.dist_feature import (
     DistFeature,
     RpcFeatureLookupCallee,
 )
-from graphlearn_torch.distributed.rpc import RpcDataPartitionRouter, rpc_register
+from graphlearn_torch.distributed.rpc import (
+    RpcDataPartitionRouter,
+    rpc_register,
+    rpc_request_async,
+)
 from graphlearn_torch.partition import GLTPartitionBook, PartitionBook
 from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import ensure_device, get_available_device
 from jaxtyping import Float, Int64, UInt8
+
+from gigl.distributed.utils.partition_routing import (
+    group_by_partition,
+    grouped_routing_enabled,
+)
 
 
 class FusedFeatureStore:
@@ -222,6 +231,79 @@ class FusedDistFeature(DistFeature):
 
         self.rpc_router = rpc_router
         self.rpc_callee_id = rpc_register(RpcFeatureLookupCallee(self))
+        self._grouped_routing = grouped_routing_enabled()
+
+    def _route_remote(
+        self, ids: torch.Tensor, partition_ids: torch.Tensor
+    ) -> Iterator[tuple[int, torch.Tensor, torch.Tensor]]:
+        """Yields ``(partition, ids, positions)`` of each other partition that owns some of ``ids``.
+
+        ``positions`` are the indices of ``ids`` in the request. With grouped routing on, one stable sort routes
+        all partitions. Otherwise one mask per partition does, as in GLT.
+        """
+        if self._grouped_routing:
+            ids_by_partition, index_by_partition = group_by_partition(
+                ids, partition_ids, self.num_partitions
+            )
+        else:
+            input_order = torch.arange(ids.size(0), dtype=torch.long)
+        for pidx in range(self.num_partitions):
+            if pidx == self.partition_idx:
+                continue
+            if self._grouped_routing:
+                remote_ids = ids_by_partition[pidx]
+                remote_index = index_by_partition[pidx]
+                if remote_ids.shape[0] > 0:
+                    yield pidx, remote_ids, remote_index
+            else:
+                remote_mask = partition_ids == pidx
+                remote_ids = torch.masked_select(ids, remote_mask)
+                if remote_ids.shape[0] > 0:
+                    yield (
+                        pidx,
+                        remote_ids,
+                        torch.masked_select(input_order, remote_mask),
+                    )
+
+    def _remote_selecting_get(
+        self,
+        ids: torch.Tensor,
+        input_type: Optional[Union[NodeType, EdgeType]] = None,
+    ) -> torch.futures.Future:
+        """Fetches the remote rows of ids, as GLT's ``DistFeature`` does.
+
+        With grouped routing on, the ids are routed to partitions by ``group_by_partition``. With it off, this is
+        GLT's own implementation.
+        """
+        if not self._grouped_routing:
+            return super()._remote_selecting_get(ids, input_type)
+        assert self.rpc_callee_id is not None, (
+            "Remote feature lookup is disabled in 'local_only' mode."
+        )
+        _, pb = self._get_local_store(input_type)
+        ids = ids.to(pb.device)
+        partition_ids = pb[ids].cpu()
+        futs, indexes = [], []
+        for pidx, remote_ids, remote_index in self._route_remote(ids, partition_ids):
+            to_worker = self.rpc_router.get_to_worker(pidx)
+            args = (remote_ids.cpu(), input_type)
+            futs.append(rpc_request_async(to_worker, self.rpc_callee_id, args=args))
+            indexes.append(remote_index)
+        collect_fut = torch.futures.collect_all(futs)
+        res_fut: torch.futures.Future = torch.futures.Future()
+
+        def on_done(*_: object) -> None:
+            try:
+                result = [
+                    (fut.wait(), indexes[i]) for i, fut in enumerate(collect_fut.wait())
+                ]
+            except Exception as e:
+                res_fut.set_exception(e)
+            else:
+                res_fut.set_result(result)
+
+        collect_fut.add_done_callback(on_done)
+        return res_fut
 
     def async_get(
         self,

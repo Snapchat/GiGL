@@ -43,6 +43,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`uv`; `mpt_uv,basic`). Use the same value on every node of a job. A bad value fails once in the parent process before
   workers are spawned. Graph-store mode keeps GraphLearn-Torch's own `init_rpc`. A unit test hashes the upstream source
   so a GraphLearn-Torch upgrade that changes it is noticed
+- Add opt-in sort-based routing of ids to partitions for the neighbor samplers' one-hop sampling and for
+  `FusedDistFeature` remote lookups. GraphLearn-Torch routes with a mask and two `masked_select` calls per partition,
+  each of which releases and reacquires the GIL; `GIGL_SAMPLING_GROUPED_ROUTING=1` (or `true`) routes all partitions
+  with one stable sort instead. Unset, empty, `0` and `false` keep GraphLearn-Torch's routing (the default); any other
+  value also keeps it and logs a warning. The ids and their order are identical to the default routing, except that a
+  negative partition id raises where GraphLearn-Torch's mask routing silently drops the id. A unit test hashes the
+  copied upstream `_sample_one_hop` source so a GraphLearn-Torch upgrade that changes it is noticed
 
 ### Changed
 
