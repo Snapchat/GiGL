@@ -28,7 +28,8 @@ struct PPRExtractTensors {
     torch::Tensor ids;         // int64 node IDs, flattened across seeds
     torch::Tensor weights;     // double feature matrix / edge_attr
     torch::Tensor validCounts; // int64 selected-node count per seed
-    torch::Tensor isExpanded;  // int64 bitmask of channels that pushed (expanded) this node for this seed (bit c = channel c). Untyped PPR uses channel 0, so the value is 0 or 1.
+    torch::Tensor isExpanded;  // int64 bitmask of channels that pushed (expanded) this node for this seed (bit c =
+                               // channel c). Untyped PPR uses channel 0, so the value is 0 or 1.
 };
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
@@ -95,9 +96,7 @@ struct OriginalEdgeDedupeKeyHash {
     // identity that GiGL uses to dedupe sampled edges.
     size_t operator()(const OriginalEdgeDedupeKey& key) const {
         size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
-        auto combine = [&seed](size_t value) {
-            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-        };
+        auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
         combine(std::hash<int32_t>{}(key.sourceNodeId));
         combine(std::hash<int32_t>{}(key.destinationNodeId));
         return seed;
