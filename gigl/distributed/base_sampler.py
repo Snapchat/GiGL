@@ -587,7 +587,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if etype is not None:
             if self.edge_dir == "out":
                 src_ntype = etype[0]
-            else:
+            elif self.edge_dir == "in":
                 src_ntype = etype[-1]
         partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
         node_pb = self.dist_graph.node_pb

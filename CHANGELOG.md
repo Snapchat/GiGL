@@ -48,8 +48,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   each of which releases and reacquires the GIL; `GIGL_SAMPLING_GROUPED_ROUTING=1` (or `true`) routes all partitions
   with one stable sort instead. Unset, empty, `0` and `false` keep GraphLearn-Torch's routing (the default); any other
   value also keeps it and logs a warning. The ids and their order are identical to the default routing, except that a
-  negative partition id raises where GraphLearn-Torch's mask routing silently drops the id. A unit test hashes the
-  copied upstream `_sample_one_hop` source so a GraphLearn-Torch upgrade that changes it is noticed
+  negative partition id raises where GraphLearn-Torch's mask routing silently drops the id. Unit tests hash the copied
+  upstream `_sample_one_hop` and `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is
+  noticed
 
 ### Changed
 

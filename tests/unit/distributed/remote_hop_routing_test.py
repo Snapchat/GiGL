@@ -12,6 +12,7 @@ from graphlearn_torch.distributed import (
     init_worker_group,
     shutdown_rpc,
 )
+from graphlearn_torch.distributed.dist_feature import DistFeature
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.dist_dataset import DistDataset
@@ -26,6 +27,12 @@ _NUM_NODES = 10
 # BaseDistNeighborSampler._sample_one_hop copies when grouped routing is on.
 _GLT_SAMPLE_ONE_HOP_SHA256 = (
     "2158a4886c544e60380cc72e1011630dfd1f833ceb64bd50019f594f609fcb5d"
+)
+
+# sha256 of inspect.getsource of graphlearn_torch's DistFeature._remote_selecting_get, which
+# FusedDistFeature._remote_selecting_get copies when grouped routing is on.
+_GLT_REMOTE_SELECTING_GET_SHA256 = (
+    "3dadb30e482876da4ba68760833e1543f883c6014472c89c725187f836a0d970"
 )
 
 
@@ -105,6 +112,19 @@ class GltSampleOneHopDriftTest(TestCase):
             "graphlearn_torch's DistNeighborSampler._sample_one_hop changed. Re-diff it against "
             "gigl.distributed.base_sampler.BaseDistNeighborSampler._sample_one_hop and port the "
             f"change. After a deliberate GLT upgrade, set _GLT_SAMPLE_ONE_HOP_SHA256 to {digest}.",
+        )
+
+
+class GltRemoteSelectingGetDriftTest(TestCase):
+    def test_glt_remote_selecting_get_source_is_unchanged(self) -> None:
+        source = inspect.getsource(DistFeature._remote_selecting_get)
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        self.assertEqual(
+            digest,
+            _GLT_REMOTE_SELECTING_GET_SHA256,
+            "graphlearn_torch's DistFeature._remote_selecting_get changed. Re-diff it against "
+            "gigl.distributed.utils.fused_feature.FusedDistFeature._remote_selecting_get and port "
+            f"the change. After a deliberate GLT upgrade, set _GLT_REMOTE_SELECTING_GET_SHA256 to {digest}.",
         )
 
 

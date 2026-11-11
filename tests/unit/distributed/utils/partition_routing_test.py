@@ -1,4 +1,5 @@
 import os
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -7,6 +8,7 @@ from absl.testing import absltest
 from graphlearn_torch.utils import default_id_select
 
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.distributed.utils import partition_routing
 from gigl.distributed.utils.fused_feature import FusedDistFeature
 from gigl.distributed.utils.partition_routing import (
     GROUPED_ROUTING_ENV,
@@ -88,6 +90,41 @@ class GroupByPartitionTest(TestCase):
                 self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
                 self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
 
+    def test_out_of_range_ids_are_dropped_without_work_proportional_to_their_size(
+        self,
+    ) -> None:
+        ids = torch.tensor([10, 11, 12, 13])
+        partition_ids = torch.tensor([0, 10**9, 1, 1])
+
+        start = time.monotonic()
+        ids_by_partition, index_by_partition = group_by_partition(ids, partition_ids, 2)
+        elapsed = time.monotonic() - start
+
+        self.assertLess(elapsed, 5)
+        self.assertEqual(len(ids_by_partition), 2)
+        self.assertEqual(len(index_by_partition), 2)
+        self.assert_tensor_equality(ids_by_partition[0], torch.tensor([10]))
+        self.assert_tensor_equality(ids_by_partition[1], torch.tensor([12, 13]))
+        self.assert_tensor_equality(index_by_partition[1], torch.tensor([2, 3]))
+
+    def test_negative_partition_ids_raise(self) -> None:
+        with self.assertRaises(RuntimeError):
+            group_by_partition(torch.tensor([1, 2]), torch.tensor([0, -1]), 2)
+
+    def test_non_integral_float_partition_ids_are_dropped_like_the_mask(self) -> None:
+        ids = torch.tensor([10, 11, 12, 13, 14, 15])
+        partition_ids = torch.tensor([0.0, 1.5, 1.0, -0.5, float("nan"), 2.0])
+        expected_ids, expected_index = _masked_routing(ids, partition_ids, 3)
+
+        actual_ids, actual_index = group_by_partition(ids, partition_ids, 3)
+
+        self.assert_tensor_equality(actual_ids[0], torch.tensor([10]))
+        self.assert_tensor_equality(actual_ids[1], torch.tensor([12]))
+        self.assert_tensor_equality(actual_ids[2], torch.tensor([15]))
+        for pidx in range(3):
+            self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
+            self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
+
     def test_other_id_dtypes_are_kept(self) -> None:
         partition_ids = torch.tensor([1, 0, 1, 2, 0, 2])
         for dtype in (torch.int32, torch.int64):
@@ -109,10 +146,6 @@ def _random_routing_inputs(
     ids = torch.randint(0, 50, (int(torch.randint(0, 300, (1,), generator=generator)),))
     partition_book = torch.randint(0, num_partitions, (50,), generator=generator)
     return ids, partition_book[ids], num_partitions, local_partition
-
-
-def _custom_id_select(srcs, p_mask, node_pb=None):
-    return torch.masked_select(srcs, p_mask)
 
 
 class CallerRoutingTest(TestCase):
@@ -191,6 +224,14 @@ class CallerRoutingTest(TestCase):
 
 
 class GroupedRoutingEnabledTest(TestCase):
+    def test_invalid_value_warns_once_per_process(self) -> None:
+        with patch.dict(os.environ, {GROUPED_ROUTING_ENV: "garbage"}):
+            with patch.object(partition_routing, "_invalid_value_warned", False):
+                with patch.object(partition_routing.logger, "warning") as warning:
+                    for _ in range(3):
+                        self.assertFalse(grouped_routing_enabled())
+        self.assertEqual(warning.call_count, 1)
+
     def test_environment_variable_selects_grouped_routing(self) -> None:
         cases = {
             None: False,
