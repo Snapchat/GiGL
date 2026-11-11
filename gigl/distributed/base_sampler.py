@@ -524,8 +524,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
     ) -> Iterator[
         tuple[
             int,
-            Int64[torch.Tensor, "num_selected"],
-            Int64[torch.Tensor, "num_selected"],
+            Int64[torch.Tensor, "_num_selected"],
+            Int64[torch.Tensor, "_num_selected"],
         ]
     ]:
         """Yields ``(partition, ids, positions)`` of each partition that owns some of ``srcs``.
@@ -606,7 +606,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if isinstance(node_pb, dict):
             node_pb = node_pb[src_ntype]
         partition_results: list[PartialNeighborOutput] = []
-        remote_orders_list: list[Int64[torch.Tensor, "num_selected"]] = []
+        remote_orders_list: list[Int64[torch.Tensor, "_num_selected"]] = []
         futs: list[torch.futures.Future[NeighborOutput]] = []
         for pidx, p_ids, p_orders in self._route_hop(
             srcs, orders, partition_ids, node_pb

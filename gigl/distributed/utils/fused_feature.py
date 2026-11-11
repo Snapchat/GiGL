@@ -236,8 +236,8 @@ class FusedDistFeature(DistFeature):
     ) -> Iterator[
         tuple[
             int,
-            Int64[torch.Tensor, "num_selected"],
-            Int64[torch.Tensor, "num_selected"],
+            Int64[torch.Tensor, "_num_selected"],
+            Int64[torch.Tensor, "_num_selected"],
         ]
     ]:
         """Yields ``(partition, ids, positions)`` of each other partition that owns some of ``ids``.
@@ -267,8 +267,8 @@ class FusedDistFeature(DistFeature):
     ) -> torch.futures.Future[
         list[
             tuple[
-                UInt8[torch.Tensor, "num_selected row_bytes"],
-                Int64[torch.Tensor, "num_selected"],
+                UInt8[torch.Tensor, "_num_selected row_bytes"],
+                Int64[torch.Tensor, "_num_selected"],
             ]
         ]
     ]:
@@ -292,9 +292,9 @@ class FusedDistFeature(DistFeature):
         ids = ids.to(pb.device)
         partition_ids: Integer[torch.Tensor, "num_ids"] = pb[ids].cpu()
         futs: list[
-            torch.futures.Future[UInt8[torch.Tensor, "num_selected row_bytes"]]
+            torch.futures.Future[UInt8[torch.Tensor, "_num_selected row_bytes"]]
         ] = []
-        indexes: list[Int64[torch.Tensor, "num_selected"]] = []
+        indexes: list[Int64[torch.Tensor, "_num_selected"]] = []
         for pidx, remote_ids, remote_index in self._route_remote(ids, partition_ids):
             to_worker = self.rpc_router.get_to_worker(pidx)
             args = (remote_ids.cpu(), input_type)
@@ -304,8 +304,8 @@ class FusedDistFeature(DistFeature):
         res_fut: torch.futures.Future[
             list[
                 tuple[
-                    UInt8[torch.Tensor, "num_selected row_bytes"],
-                    Int64[torch.Tensor, "num_selected"],
+                    UInt8[torch.Tensor, "_num_selected row_bytes"],
+                    Int64[torch.Tensor, "_num_selected"],
                 ]
             ]
         ] = torch.futures.Future()

@@ -2,7 +2,8 @@
 
 GLT routes ids with one mask and two ``masked_select`` calls per partition. Each of those torch ops releases and
 reacquires the GIL, so with many partitions the routing dominates the sampler's event-loop thread. Grouping the ids
-once with a stable sort does the same routing in a handful of ops and yields identical ids in identical order.
+once with a stable sort does the same routing in a handful of ops and yields the same ids in the same order for
+integer partition books.
 
 ``group_by_partition`` replaces the per-partition mask loops of two GLT functions, which GiGL copies and edits:
 
@@ -23,8 +24,8 @@ def group_by_partition(
     partition_ids: Integer[torch.Tensor, "num_ids"],
     num_partitions: int,
 ) -> tuple[
-    list[Integer[torch.Tensor, "num_selected"]],
-    list[Int64[torch.Tensor, "num_selected"]],
+    list[Integer[torch.Tensor, "_num_selected"]],
+    list[Int64[torch.Tensor, "_num_selected"]],
 ]:
     """Splits ``ids`` by owning partition with one stable sort.
 
@@ -44,7 +45,10 @@ def group_by_partition(
         The ids of each partition, and the positions of those ids in ``ids``. Both lists are indexed by partition.
     """
     # Every id that no partition owns is sent to the extra partition ``num_partitions``, which is dropped below.
-    # This bounds the work by ``num_partitions`` instead of by the largest id.
+    # This bounds the work by ``num_partitions`` instead of by the largest id. The conversion to ``long`` has to
+    # come first: ``bincount`` and ``clamp_max`` reject the unsigned dtypes of partition books (``uint16``,
+    # ``uint32``, ``uint64``) on CPU. A ``uint64`` value above the ``int64`` maximum wraps to a negative value and
+    # is dropped, as the mask drops it.
     partition_ids = partition_ids.to(torch.long)
     partition_ids = partition_ids.masked_fill(
         (partition_ids < 0) | (partition_ids > num_partitions), num_partitions
@@ -56,10 +60,10 @@ def group_by_partition(
     # Torch RPC pickles the whole storage of a view, and TensorPipe only re-copies a storage that is at least
     # twice the bytes in use. Without a storage of their own, the ids of a partition could put up to twice their
     # bytes on the wire, e.g. all of the sorted ids when there are two partitions.
-    ids_by_partition: list[Integer[torch.Tensor, "num_selected"]] = []
+    ids_by_partition: list[Integer[torch.Tensor, "_num_selected"]] = []
     for chunk in ids[perm.to(ids.device)].split(counts)[:num_partitions]:
         ids_by_partition.append(chunk.clone())
-    index_by_partition: list[Int64[torch.Tensor, "num_selected"]] = list(
+    index_by_partition: list[Int64[torch.Tensor, "_num_selected"]] = list(
         perm.split(counts)
     )[:num_partitions]
     return ids_by_partition, index_by_partition

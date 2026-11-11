@@ -75,13 +75,42 @@ class GroupByPartitionTest(TestCase):
 
     def test_other_partition_id_dtypes_route_the_same(self) -> None:
         ids = torch.tensor([5, 6, 7, 8, 9, 10])
-        for dtype in (torch.int32, torch.int64, torch.uint8):
+        for dtype in (
+            torch.int32,
+            torch.int64,
+            torch.uint8,
+            torch.uint16,
+            torch.uint32,
+            torch.uint64,
+        ):
             partition_ids = torch.tensor([1, 0, 1, 2, 0, 2], dtype=dtype)
             expected_ids, expected_index = _masked_routing(ids, partition_ids, 3)
             actual_ids, actual_index = group_by_partition(ids, partition_ids, 3)
             for pidx in range(3):
                 self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
                 self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
+
+    def test_unsigned_partition_ids_above_the_signed_range_are_dropped(self) -> None:
+        ids = torch.tensor([10, 11, 12, 13])
+        partition_ids = torch.tensor([1, 2**64 - 1, 0, 2**63], dtype=torch.uint64)
+        expected_ids, expected_index = _masked_routing(ids, partition_ids, 2)
+
+        actual_ids, actual_index = group_by_partition(ids, partition_ids, 2)
+
+        self.assert_tensor_equality(actual_ids[0], torch.tensor([12]))
+        self.assert_tensor_equality(actual_ids[1], torch.tensor([10]))
+        for pidx in range(2):
+            self.assert_tensor_equality(actual_ids[pidx], expected_ids[pidx])
+            self.assert_tensor_equality(actual_index[pidx], expected_index[pidx])
+
+    def test_partitions_of_unequal_sizes_pass_the_shape_checks(self) -> None:
+        ids = torch.tensor([9, 4, 9, 7, 1])
+        partition_ids = torch.tensor([2, 0, 2, 1, 0], dtype=torch.uint8)
+
+        ids_by_partition, index_by_partition = group_by_partition(ids, partition_ids, 4)
+
+        self.assertEqual([c.numel() for c in ids_by_partition], [2, 1, 2, 0])
+        self.assertEqual([c.numel() for c in index_by_partition], [2, 1, 2, 0])
 
     def test_out_of_range_ids_are_dropped_without_work_proportional_to_their_size(
         self,
@@ -185,6 +214,26 @@ class CallerRoutingTest(TestCase):
         self.assertEqual(len(selections), 2)
         self.assertEqual([r[0] for r in routed], [0, 1])
         self.assert_tensor_equality(routed[1][1], torch.tensor([4, 6]))
+
+    def test_hop_and_remote_feature_routing_accept_partitions_of_unequal_sizes(
+        self,
+    ) -> None:
+        srcs = torch.tensor([9, 4, 9, 7, 1])
+        partition_ids = torch.tensor([2, 0, 2, 1, 0], dtype=torch.uint8)
+        sampler = BaseDistNeighborSampler.__new__(BaseDistNeighborSampler)
+        sampler.data = SimpleNamespace(
+            num_partitions=4, partition_idx=0, id_select=default_id_select
+        )
+        feature = FusedDistFeature.__new__(FusedDistFeature)
+        feature.num_partitions = 4
+        feature.partition_idx = 0
+
+        hops = list(sampler._route_hop(srcs, torch.arange(5), partition_ids, None))
+        remote = list(feature._route_remote(srcs, partition_ids))
+
+        self.assertEqual([h[0] for h in hops], [0, 1, 2])
+        self.assertEqual([r[0] for r in remote], [1, 2])
+        self.assertEqual([r[1].numel() for r in remote], [1, 2])
 
     def test_remote_feature_routing_matches_the_mask_routing_of_other_partitions(
         self,
