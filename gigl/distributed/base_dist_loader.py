@@ -8,6 +8,8 @@ Subclasses GLT's DistLoader and handles:
 - Graph Store mode: barrier loop + async RPC dispatch + channel creation
 """
 
+import os
+import socket
 import sys
 import time
 from collections import Counter
@@ -58,16 +60,25 @@ from gigl.distributed.graph_store.messages import (
 from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
-from gigl.distributed.utils.channel import MonitoredShmChannel
+from gigl.distributed.utils.channel import MonitoredShmChannel, SizedShmChannel
+from gigl.distributed.utils.cpu_pinning import apply_cpu_pinning, cpu_pinning_mode
 from gigl.distributed.utils.dist_typed_sampler import (
     parse_typed_channel_ratio_groups,
 )
+from gigl.distributed.utils.flow_stats import FlowStatsSampler
+from gigl.distributed.utils.host_stats import HostCounterSampler
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
     extract_edge_type_metadata,
     patch_fanout_for_sampling,
     strip_non_ppr_edge_types,
+)
+from gigl.distributed.utils.sampling_stats import (
+    SamplingStats,
+    sampling_skip_edge_features,
+    sampling_stats_every_n_batches,
+    tensor_map_bytes,
 )
 from gigl.env.constants import GIGL_ENABLE_PERF_MONITORING, is_env_flag_enabled
 from gigl.src.common.utils.metrics_service_provider import get_metrics_service_instance
@@ -337,10 +348,33 @@ class BaseDistLoader(DistLoader):
         self.to_device = device
         self.worker_options = worker_options
 
+        # Pin before any sampling worker or RPC thread exists so they inherit the affinity.
+        if isinstance(worker_options, MpDistSamplingWorkerOptions):
+            apply_cpu_pinning(
+                cpu_pinning_mode(),
+                local_rank=runtime.local_rank,
+                worker_index=None,
+                num_local_ranks=runtime.local_world_size,
+                workers_per_rank=worker_options.num_workers,
+            )
+
         self._is_collocated_worker = False
         self._with_channel = True
         self._num_recv = 0
         self._epoch = 0
+
+        # Opt-in consumer-side statistics (``GIGL_SAMPLING_STATS_EVERY_N_BATCHES``); ``None``
+        # leaves ``__next__`` on GLT's path.
+        self._loader_stats: Optional[SamplingStats] = None
+        every_n_batches = sampling_stats_every_n_batches()
+        if every_n_batches > 0:
+            self._loader_stats = SamplingStats(
+                "GLT_LOADER_STATS",
+                every_n_batches=every_n_batches,
+                scope=f"rank={runtime.rank} local_rank={runtime.local_rank} pid={os.getpid()} host={socket.gethostname()}",
+            )
+        self._host_sampler: Optional[HostCounterSampler] = None
+        self._flow_sampler: Optional[FlowStatsSampler] = None
 
         # --- Mode-specific attributes and connection initialization ---
         if (
@@ -415,6 +449,22 @@ class BaseDistLoader(DistLoader):
                 "for colocated mode or (RemoteDistDataset, RemoteDistSamplingWorkerOptions) "
                 "for graph-store mode."
             )
+
+        # One host sampler per machine; started once the sampling workers exist so their
+        # resident memory can be tracked.
+        if self._loader_stats is not None and runtime.local_rank == 0:
+            self._host_sampler = HostCounterSampler(pids=self.sampling_worker_pids())
+            self._host_sampler.start()
+            self._loader_stats.register_reporter(self._host_sampler.make_reporter())
+            self._flow_sampler = FlowStatsSampler()
+            self._flow_sampler.start()
+            self._loader_stats.register_reporter(self._flow_sampler.make_reporter())
+
+    def sampling_worker_pids(self) -> list[int]:
+        """Process ids of this loader's local sampling workers; empty in graph-store mode."""
+        if self._is_mp_worker:
+            return self._mp_producer.worker_pids()
+        return []
 
     @staticmethod
     def validate_for_weighted_sampling(
@@ -509,7 +559,8 @@ class BaseDistLoader(DistLoader):
             with_edge=(
                 dataset_schema.edge_feature_info is not None
                 or dataset_schema.edge_quantization_metadata is not None
-            ),
+            )
+            and not sampling_skip_edge_features(),
             collect_features=True,
             with_neg=False,
             with_weight=with_weight,
@@ -554,6 +605,11 @@ class BaseDistLoader(DistLoader):
                 channel_name,
                 worker_options.channel_capacity,
                 worker_options.channel_size,
+            )
+        elif sampling_stats_every_n_batches() > 0:
+            logger.info("Sampling statistics enabled, using SizedShmChannel")
+            channel = SizedShmChannel(
+                worker_options.channel_capacity, worker_options.channel_size
             )
         else:
             logger.info(f"{GIGL_ENABLE_PERF_MONITORING} not set, using ShmChannel")
@@ -979,6 +1035,12 @@ class BaseDistLoader(DistLoader):
     def shutdown(self) -> None:
         if self._shutdowned:
             return
+        if self._host_sampler is not None:
+            self._host_sampler.stop()
+            self._host_sampler = None
+        if self._flow_sampler is not None:
+            self._flow_sampler.stop()
+            self._flow_sampler = None
         if self._is_collocated_worker:
             self._collocated_producer.shutdown()
         elif self._is_mp_worker:
@@ -1143,6 +1205,34 @@ class BaseDistLoader(DistLoader):
             # the message.
             torch.cuda.current_stream().synchronize()
         return super()._collate_fn(msg)
+
+    def __next__(self) -> Union[Data, HeteroData]:
+        """Receive and collate the next batch.
+
+        GLT's ``__next__`` when statistics are off. Otherwise the same two steps are timed:
+        ``recv_wait_ms`` is time blocked on the channel (the producers are the bottleneck when
+        it is large) and ``collate_ms`` covers host-to-device copies, the stream synchronize,
+        and the PyG conversion. ``msg_mb`` is the received message size and ``loadavg1`` the
+        host's one-minute load average.
+        """
+        stats = self._loader_stats
+        if stats is None:
+            return super().__next__()
+        if self._num_recv == self._num_expected:
+            raise StopIteration
+        if isinstance(self._channel, ShmChannel):
+            stats.add("channel_empty_frac", float(self._channel.empty()))
+        if isinstance(self._channel, SizedShmChannel):
+            stats.add("channel_qsize", float(self._channel.qsize()))
+        with stats.timer("recv_wait_ms"):
+            msg = self._channel.recv()
+        stats.add("msg_mb", tensor_map_bytes(msg) / 2**20)
+        with stats.timer("collate_ms"):
+            result = self._collate_fn(msg)
+        self._num_recv += 1
+        stats.add("loadavg1", os.getloadavg()[0])
+        stats.batch_done()
+        return result
 
     # Overwrite DistLoader.__iter__ to so we can use our own __iter__ and rpc calls
     def __iter__(self) -> Self:

@@ -11,12 +11,12 @@ from typing import Optional, Union, cast
 import torch
 import torch.distributed.rpc
 import torch.multiprocessing as mp
+from graphlearn_torch import py_graphlearn_torch as pywrap
 from graphlearn_torch.channel import ChannelBase
 from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
     MpDistSamplingWorkerOptions,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -43,12 +43,39 @@ from gigl.distributed.constants import (
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
+from gigl.distributed.utils.cpu_pinning import apply_worker_cpu_pinning
 from gigl.distributed.utils.dist_sampler import (
     create_dist_sampler,
     join_workers_with_shared_deadline,
 )
+from gigl.distributed.utils.partition_routing import grouped_routing_enabled
+from gigl.distributed.utils.ptrace import allow_any_ptracer
+from gigl.distributed.utils.rpc_agent_stats import RpcAgentSampler
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_backend_from_env,
+)
+from gigl.distributed.utils.sampling_stats import (
+    sampling_stats_every_n_batches,
+    sampling_worker_num_rpc_threads_override,
+    sampling_worker_torch_threads_override,
+)
+from gigl.distributed.utils.thread_stats import ThreadRoles
 
 logger = Logger()
+
+
+def sampling_mode_log_lines(rank: int) -> list[str]:
+    """Log lines naming the environment-selected sampling modes of one worker.
+
+    Wheels built without the flat inducer patch have no selector and use the std table.
+    """
+    inducer_impl = getattr(pywrap, "inducer_impl", lambda: "std")()
+    grouped_routing = int(grouped_routing_enabled())
+    return [
+        f"INDUCER_IMPL impl={inducer_impl} worker={rank}",
+        f"GROUPED_ROUTING enabled={grouped_routing} worker={rank}",
+    ]
 
 
 def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> None:
@@ -72,6 +99,20 @@ def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> Non
         )
 
 
+def sampling_worker_thread_settings(default_num_rpc_threads: int) -> tuple[int, int]:
+    """Returns ``(num_rpc_threads, torch_threads)`` for a sampling worker.
+
+    The environment overrides replace the RPC thread count and the torch intra-op thread
+    count; torch threads default to one more than the RPC threads.
+    """
+    num_rpc_threads = default_num_rpc_threads
+    rpc_threads_override = sampling_worker_num_rpc_threads_override()
+    if rpc_threads_override is not None:
+        num_rpc_threads = rpc_threads_override
+    torch_threads = sampling_worker_torch_threads_override() or (num_rpc_threads + 1)
+    return num_rpc_threads, torch_threads
+
+
 def _sampling_worker_loop(
     rank: int,
     data: DistDataset,
@@ -87,7 +128,11 @@ def _sampling_worker_loop(
     degree_tensors: Optional[Union[torch.Tensor, dict[NodeType, torch.Tensor]]],
 ):
     dist_sampler = None
+    rpc_agent_sampler: Optional[RpcAgentSampler] = None
     try:
+        apply_worker_cpu_pinning(rank)
+        if sampling_stats_every_n_batches() > 0:
+            allow_any_ptracer()
         init_worker_group(
             world_size=worker_options.worker_world_size,
             rank=worker_options.worker_ranks[rank],
@@ -100,21 +145,44 @@ def _sampling_worker_loop(
             )
 
         if worker_options.num_rpc_threads is None:
-            num_rpc_threads = min(data.num_partitions, 16)
+            default_num_rpc_threads = min(data.num_partitions, 16)
         else:
-            num_rpc_threads = worker_options.num_rpc_threads
+            default_num_rpc_threads = worker_options.num_rpc_threads
+        num_rpc_threads, torch_threads = sampling_worker_thread_settings(
+            default_num_rpc_threads
+        )
+        if (
+            num_rpc_threads != default_num_rpc_threads
+            or torch_threads != num_rpc_threads + 1
+        ):
+            logger.info(
+                f"sampling worker {rank}: num_rpc_threads={num_rpc_threads} "
+                f"torch_num_threads={torch_threads} (environment override)"
+            )
 
         current_device = worker_options.worker_devices[rank]
 
         _set_worker_signal_handlers()
-        torch.set_num_threads(num_rpc_threads + 1)
+        torch.set_num_threads(torch_threads)
 
-        init_rpc(
+        thread_roles: Optional[ThreadRoles] = None
+        if sampling_stats_every_n_batches() > 0:
+            thread_roles = ThreadRoles()
+            thread_roles.snapshot_before_rpc()
+        _, rpc_channels = sampling_rpc_backend_from_env()
+        logger.info(f"RPC_CHANNELS channels={','.join(rpc_channels)} worker={rank}")
+        for line in sampling_mode_log_lines(rank):
+            logger.info(line)
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
             rpc_timeout=worker_options.rpc_timeout,
         )
+        if thread_roles is not None:
+            thread_roles.snapshot_after_rpc()
+            rpc_agent_sampler = RpcAgentSampler()
+            rpc_agent_sampler.start()
 
         if sampling_config.seed is not None:
             seed_everything(sampling_config.seed)
@@ -129,6 +197,14 @@ def _sampling_worker_loop(
             current_device=current_device,
         )
         dist_sampler.start_loop()
+        if thread_roles is not None and dist_sampler._stats is not None:
+            # ``_runner_t`` is GLT's private handle to the asyncio loop thread started above.
+            loop_thread = dist_sampler._runner_t
+            if loop_thread is not None and loop_thread.native_id is not None:
+                thread_roles.set_loop_tid(loop_thread.native_id)
+            dist_sampler._stats.register_reporter(thread_roles.make_reporter())
+            if rpc_agent_sampler is not None:
+                dist_sampler._stats.register_reporter(rpc_agent_sampler.make_reporter())
 
         unshuffled_index_loader: Optional[DataLoader]
         loader: DataLoader
@@ -196,6 +272,8 @@ def _sampling_worker_loop(
         # its sampler loop and RPC agent instead of leaking them
         if dist_sampler is not None:
             dist_sampler.shutdown_loop()
+        if rpc_agent_sampler is not None:
+            rpc_agent_sampler.stop()
         shutdown_rpc(graceful=False)
 
 
@@ -216,8 +294,14 @@ class DistSamplingProducer(DistMpSamplingProducer):
         self._sampler_options = sampler_options
         self._degree_tensors = degree_tensors
 
+    def worker_pids(self) -> list[int]:
+        """Process ids of the spawned sampling workers; empty before ``init``."""
+        return [worker.pid for worker in self._workers if worker.pid is not None]
+
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Fail here on a bad channel or transport value instead of inside every spawned worker.
+        sampling_rpc_backend_from_env()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:

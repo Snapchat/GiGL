@@ -1,3 +1,4 @@
+import random
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -18,6 +19,42 @@ from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 from gigl.utils.share_memory import allocate_disk_backed
 
 logger = Logger()
+
+# Bounded retry for transient storage read failures (see `_is_transient_read_error`).
+_MAX_READ_ATTEMPTS = 5
+_READ_RETRY_INITIAL_BACKOFF_SECONDS = 15.0
+_READ_RETRY_MAX_BACKOFF_SECONDS = 60.0
+_TRANSIENT_READ_ERROR_TYPES = (
+    tf.errors.FailedPreconditionError,
+    tf.errors.UnavailableError,
+    # TF's GCS filesystem reports a failure it retried internally as
+    # `Aborted: All N retry attempts failed. The last failure: <cause>`; the message check below
+    # keeps only those whose cause is a name-resolution failure.
+    tf.errors.AbortedError,
+)
+_TRANSIENT_READ_ERROR_MESSAGES = (
+    "Could not resolve host",
+    "Couldn't resolve host name",
+)
+
+
+def _is_transient_read_error(error: BaseException) -> bool:
+    """Whether `error` is a transient name-resolution failure raised while reading from storage."""
+    return isinstance(error, _TRANSIENT_READ_ERROR_TYPES) and any(
+        message in str(error) for message in _TRANSIENT_READ_ERROR_MESSAGES
+    )
+
+
+def _read_retry_backoff_seconds(attempt: int) -> float:
+    """Exponential backoff (15s, 30s, 60s, 60s) capped at 60s, with up to 50% added jitter.
+
+    With 5 attempts the total wait before giving up is about 2.75 to 4 minutes.
+    """
+    backoff = min(
+        _READ_RETRY_INITIAL_BACKOFF_SECONDS * 2 ** (attempt - 1),
+        _READ_RETRY_MAX_BACKOFF_SECONDS,
+    )
+    return backoff * (1 + random.random() / 2)
 
 
 class LoadedEntityTensors(NamedTuple):
@@ -241,6 +278,9 @@ def _assemble_entity_tensor(
         destination.narrow(concat_axis, offset, length).copy_(batch)
         offset += length
         del batch
+    assert offset == total_along_concat_axis, (
+        f"Assembled {offset} entries along axis {concat_axis} but expected {total_along_concat_axis}"
+    )
     return destination
 
 
@@ -511,49 +551,66 @@ class TFRecordDataLoader:
                 labels=empty_label,
             )
 
-        dataset = TFRecordDataLoader._build_dataset_for_uris(
-            uris=uris,
-            feature_spec=feature_spec_dict,
-            opts=tf_dataset_options,
-        )
-
+        # `tf.data` reads all shards through one interleaved iterator, and a mid-iteration error
+        # invalidates it, so no per-shard retry is possible. Instead retry the whole read: batches
+        # are accumulated into locals that are reset on every attempt, so a failed attempt's
+        # partial output is discarded and a successful attempt contains each record exactly once.
         start_time = time.perf_counter()
-        num_entities_processed = 0
-        id_tensors: list[torch.Tensor] = []
-        feature_tensors: list[torch.Tensor] = []
-        quantized_feature_tensors: list[tf.Tensor] = []
-        label_tensors: list[torch.Tensor] = []
-        for idx, batch in enumerate(dataset):
-            id_tensors.append(proccess_id_tensor(batch))
-            if feature_keys or label_keys:
-                feature_tensor, label_tensor = _concatenate_features_by_names(
-                    batch, feature_keys, label_keys
+        for attempt in range(1, _MAX_READ_ATTEMPTS + 1):
+            try:
+                dataset = TFRecordDataLoader._build_dataset_for_uris(
+                    uris=uris,
+                    feature_spec=feature_spec_dict,
+                    opts=tf_dataset_options,
                 )
-                if feature_tensor is not None:
-                    feature_tensors.append(feature_tensor)
-                if label_tensor is not None:
-                    label_tensors.append(label_tensor)
-            if packed_feature_key is not None:
-                quantized_feature_tensor = tf.io.decode_raw(
-                    batch[packed_feature_key], tf.uint8
+
+                num_entities_processed = 0
+                id_tensors: list[torch.Tensor] = []
+                feature_tensors: list[torch.Tensor] = []
+                quantized_feature_tensors: list[tf.Tensor] = []
+                label_tensors: list[torch.Tensor] = []
+                for idx, batch in enumerate(dataset):
+                    id_tensors.append(proccess_id_tensor(batch))
+                    if feature_keys or label_keys:
+                        feature_tensor, label_tensor = _concatenate_features_by_names(
+                            batch, feature_keys, label_keys
+                        )
+                        if feature_tensor is not None:
+                            feature_tensors.append(feature_tensor)
+                        if label_tensor is not None:
+                            label_tensors.append(label_tensor)
+                    if packed_feature_key is not None:
+                        quantized_feature_tensor = tf.io.decode_raw(
+                            batch[packed_feature_key], tf.uint8
+                        )
+                        quantized_feature_tensor = tf.reshape(
+                            quantized_feature_tensor,
+                            [-1, serialized_tf_record_info.packed_feature_dim],
+                        )
+                        quantized_feature_tensors.append(quantized_feature_tensor)
+                    num_entities_processed += (
+                        id_tensors[-1].shape[0]
+                        if entity_type == FeatureTypes.NODE
+                        else id_tensors[-1].shape[1]
+                    )
+                    if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
+                        logger.info(
+                            f"Processed {idx + 1:,} total batches with {num_entities_processed:,} {entity_type.name}"
+                        )
+                break
+            except tf.errors.OpError as e:
+                if attempt == _MAX_READ_ATTEMPTS or not _is_transient_read_error(e):
+                    raise
+                backoff = _read_retry_backoff_seconds(attempt)
+                logger.warning(
+                    f"Transient storage read failure while loading TFRecords under "
+                    f"{serialized_tf_record_info.tfrecord_uri_prefix.uri} "
+                    f"(attempt {attempt}/{_MAX_READ_ATTEMPTS}), retrying in {backoff:.1f}s: {e}"
                 )
-                quantized_feature_tensor = tf.reshape(
-                    quantized_feature_tensor,
-                    [-1, serialized_tf_record_info.packed_feature_dim],
-                )
-                quantized_feature_tensors.append(quantized_feature_tensor)
-            num_entities_processed += (
-                id_tensors[-1].shape[0]
-                if entity_type == FeatureTypes.NODE
-                else id_tensors[-1].shape[1]
-            )
-            if (idx + 1) % tf_dataset_options.log_every_n_batch == 0:
-                logger.info(
-                    f"Processed {idx + 1:,} total batches with {num_entities_processed:,} {entity_type.name}"
-                )
+                time.sleep(backoff)
         end = time.perf_counter()
         logger.info(
-            f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds, {num_entities_processed / (end - start_time):,.2f} records per second"
+            f"Processed {num_entities_processed:,} {entity_type.name} records in {end - start_time:.2f} seconds (including time spent on failed attempts), {num_entities_processed / (end - start_time):,.2f} records per second"
         )
         start = time.perf_counter()
         # Assemble each entity tensor into its final buffer. With tensor spilling enabled this

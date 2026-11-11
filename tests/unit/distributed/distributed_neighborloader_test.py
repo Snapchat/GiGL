@@ -1,5 +1,7 @@
+import os
 import unittest
 from collections.abc import Mapping, MutableMapping
+from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
@@ -19,6 +21,10 @@ from gigl.distributed.sampler import (
 )
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
+from gigl.distributed.utils.sampling_stats import (
+    SAMPLING_SKIP_EDGE_FEATURES_ENV,
+    SAMPLING_STATS_EVERY_N_BATCHES_ENV,
+)
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -114,6 +120,36 @@ def _run_distributed_neighbor_loader_labeled_homogeneous(
     assert count == expected_data_count, (
         f"Expected {expected_data_count} batches, but got {count}."
     )
+
+    shutdown_rpc()
+
+
+def _run_distributed_neighbor_loader_with_sampling_stats(
+    _,
+    dataset: DistDataset,
+    expected_data_count: int,
+    every_n_batches: int,
+):
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    assert loader._loader_stats is not None
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        assert datum.x.shape[0] == datum.node.shape[0]
+        count += 1
+    assert count == expected_data_count
+    # Every consumed batch advanced the stats window and each full window was flushed.
+    assert loader._loader_stats._batches == expected_data_count % every_n_batches
+    last_report = loader._loader_stats.last_report
+    assert last_report is not None
+    for key in ("recv_wait_ms", "collate_ms", "msg_mb", "channel_empty_frac"):
+        assert f" {key}=" in last_report, f"{key} missing from: {last_report}"
 
     shutdown_rpc()
 
@@ -526,6 +562,26 @@ class DistributedNeighborLoaderTest(TestCase):
             fn=_run_distributed_neighbor_loader,
             args=(dataset, expected_data_count),
         )
+
+    def test_distributed_neighbor_loader_with_sampling_stats(self):
+        # The sampling workers inherit the environment, so this runs the instrumented
+        # sampler, feature-fetch, channel, and loader paths end to end.
+        expected_data_count = 2708
+        every_n_batches = 1000
+
+        dataset = run_distributed_dataset(
+            rank=0,
+            world_size=self._world_size,
+            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
+        )
+        with mock.patch.dict(
+            os.environ, {SAMPLING_STATS_EVERY_N_BATCHES_ENV: str(every_n_batches)}
+        ):
+            mp.spawn(
+                fn=_run_distributed_neighbor_loader_with_sampling_stats,
+                args=(dataset, expected_data_count, every_n_batches),
+            )
 
     def test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(
@@ -1103,6 +1159,20 @@ class WithEdgeDerivationTest(TestCase):
             num_neighbors=[2, 2], dataset_schema=schema
         )
         self.assertTrue(config.with_edge)
+
+    def test_env_flag_skips_edge_features_even_when_present(self) -> None:
+        schema = DatasetSchema(
+            is_homogeneous_with_labeled_edge_type=False,
+            edge_types=None,
+            node_feature_info=None,
+            edge_feature_info=FeatureInfo(dim=4, dtype=torch.float32),
+            edge_dir="out",
+        )
+        with mock.patch.dict(os.environ, {SAMPLING_SKIP_EDGE_FEATURES_ENV: "1"}):
+            config = BaseDistLoader.create_sampling_config(
+                num_neighbors=[2, 2], dataset_schema=schema
+            )
+        self.assertFalse(config.with_edge)
 
     def test_config_with_edge_true_for_heterogeneous_edge_feature_dict(self) -> None:
         schema = DatasetSchema(

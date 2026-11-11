@@ -1,21 +1,29 @@
 import asyncio
+import contextlib
+import os
+import socket
+import time
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
+from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.distributed.dist_feature import DistFeature
+from graphlearn_torch.distributed.dist_neighbor_sampler import PartialNeighborOutput
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
+from graphlearn_torch.distributed.rpc import rpc_request_async
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
+    NeighborOutput,
     NodeSamplerInput,
     SamplerOutput,
 )
 from graphlearn_torch.typing import EdgeType, NodeType, as_str
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.utils import default_id_select, reverse_edge_type
 from jaxtyping import Int64
 
 from gigl.common.logger import Logger
@@ -30,13 +38,34 @@ from gigl.distributed.utils.fused_feature import (
     FusedDistFeature,
     build_fused_dist_feature,
 )
+from gigl.distributed.utils.partition_routing import (
+    group_by_partition,
+    grouped_routing_enabled,
+)
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
 )
+from gigl.distributed.utils.sampling_stats import (
+    SamplingStats,
+    instrument_fused_dist_feature,
+    instrument_rpc_callees,
+    sampling_stats_every_n_batches,
+    tensor_map_bytes,
+)
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
+
+
+class _NoStats:
+    """Stands in for ``SamplingStats`` where timings are not collected."""
+
+    def add(self, key: str, value: float) -> None:
+        pass
+
+    def timer(self, key: str) -> contextlib.AbstractContextManager[None]:
+        return contextlib.nullcontext()
 
 
 def _stable_unique_preserve_order(nodes: torch.Tensor) -> torch.Tensor:
@@ -152,6 +181,32 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     self.rpc_router,
                     self.device,
                 )
+
+        # Opt-in sort-based routing of ids to partitions (``GIGL_SAMPLING_GROUPED_ROUTING``), read once here.
+        self._grouped_routing: bool = grouped_routing_enabled()
+
+        # Opt-in sampling statistics (``GIGL_SAMPLING_STATS_EVERY_N_BATCHES``). ``None`` keeps
+        # every hook below on its untimed path.
+        self._stats: Optional[SamplingStats] = None
+        every_n_batches = sampling_stats_every_n_batches()
+        if every_n_batches > 0:
+            context = get_context()
+            worker_rank = -1
+            if context is not None:
+                worker_rank = context.rank
+            scope = (
+                f"worker={worker_rank} pid={os.getpid()} host={socket.gethostname()}"
+            )
+            self._stats = SamplingStats(
+                "GLT_SAMPLING_STATS", every_n_batches=every_n_batches, scope=scope
+            )
+            for name, feature in (
+                ("nfeat", self.dist_node_feature),
+                ("efeat", self.dist_edge_feature),
+            ):
+                if feature is not None:
+                    instrument_fused_dist_feature(feature, self._stats, name)
+            instrument_rpc_callees(self._stats)
 
     def _prepare_sample_loop_inputs(
         self,
@@ -283,9 +338,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         (in channel mode) so the consumer raises promptly, or re-raise (in
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
         """
+        stats = self._stats
+        batch_start = 0.0
+        if stats is not None:
+            batch_start = time.perf_counter()
         try:
             sampler_output = await async_func(*args, **kwargs)
-            res = await self._collate_fn(sampler_output)
+            if stats is None:
+                res = await self._collate_fn(sampler_output)
+            else:
+                sample_done = time.perf_counter()
+                res = await self._collate_fn(sampler_output)
+                stats.add("sample_ms", (sample_done - batch_start) * 1e3)
+                stats.add("collate_ms", (time.perf_counter() - sample_done) * 1e3)
         except Exception:
             logger.exception(
                 "Sampling coroutine failed; forwarding error to the loader."
@@ -308,7 +373,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             raise  # channel-less mode: propagates via run_task / torch RPC
         if self.channel is None:
             return res
-        self.channel.send(res)
+        if stats is None:
+            self.channel.send(res)
+            return None
+        with stats.timer("send_ms"):
+            self.channel.send(res)
+        stats.add("msg_mb", tensor_map_bytes(res) / 2**20)
+        stats.add("batch_ms", (time.perf_counter() - batch_start) * 1e3)
+        stats.batch_done()
         return None
 
     async def _collate_fn(
@@ -492,7 +564,11 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
-        values = await asyncio.gather(*futs.values())
+        if self._stats is None:
+            values = await asyncio.gather(*futs.values())
+        else:
+            with self._stats.timer("collate_wait_ms"):
+                values = await asyncio.gather(*futs.values())
         for result_key, value in zip(futs, values):
             if result_key in label_keys:
                 # DistFeature always returns [N, K]. We collapse K=1 to 1-D
@@ -510,6 +586,131 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             result_map[result_key] = value
 
         return result_map
+
+    def _route_hop(
+        self,
+        srcs: torch.Tensor,
+        orders: torch.Tensor,
+        partition_ids: torch.Tensor,
+        node_pb: object,
+    ) -> Iterator[tuple[int, torch.Tensor, torch.Tensor]]:
+        """Yields ``(partition, ids, positions)`` of each partition that owns some of ``srcs``.
+
+        Partitions come in order starting at this process's own partition. ``positions`` are the indices of
+        ``ids`` in ``srcs``. With grouped routing on and GLT's default ``id_select``, one stable sort routes all
+        partitions. Otherwise one mask per partition does, which also serves a custom ``id_select``.
+        """
+        num_partitions = self.data.num_partitions
+        grouped = None
+        if self._grouped_routing and self.data.id_select is default_id_select:
+            grouped = group_by_partition(srcs, partition_ids, num_partitions)
+        for i in range(num_partitions):
+            pidx = (self.data.partition_idx + i) % num_partitions
+            if grouped is None:
+                p_mask = partition_ids == pidx
+                p_ids = self.data.id_select(srcs, p_mask, node_pb)
+                if p_ids.shape[0] == 0:
+                    continue
+                yield pidx, p_ids, torch.masked_select(orders, p_mask)
+            else:
+                if grouped[0][pidx].shape[0] == 0:
+                    continue
+                yield pidx, grouped[0][pidx], grouped[1][pidx]
+
+    async def _sample_one_hop(
+        self,
+        srcs: torch.Tensor,
+        num_nbr: int,
+        etype: Optional[EdgeType],
+    ) -> NeighborOutput:
+        """Sample one hop of neighbors for ``srcs`` across all partitions.
+
+        Delegates to GLT when sampling statistics and grouped routing are both off. Otherwise this
+        is a copy of ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4)
+        that attributes wall time to the partition-routing loop, the local C++ sample, the wait on
+        remote RPCs, and stitching, and counts the RPCs and remote seeds each hop issues. With
+        grouped routing on, the ids are routed to partitions by ``group_by_partition``.
+
+        Args:
+            srcs: Source node ids for this hop.
+            num_nbr: Requested neighbors per source node.
+            etype: Edge type to sample along, or ``None`` for homogeneous graphs.
+
+        Returns:
+            The sampled neighbors of ``srcs`` in input order.
+        """
+        stats = self._stats
+        if stats is None:
+            if not self._grouped_routing:
+                return await super()._sample_one_hop(srcs, num_nbr, etype)
+            stats = _NoStats()
+        device = self.device
+        srcs = srcs.to(device)
+        if self.data.graph_caching:
+            nbr_out = None
+            if srcs is not None and srcs.numel() > 0:
+                with stats.timer("hop_local_sample_ms"):
+                    nbr_out = self.sampler.sample_one_hop(srcs, num_nbr, etype)
+            return nbr_out
+
+        route_start = time.perf_counter()
+        orders = torch.arange(srcs.size(0), dtype=torch.long, device=device)
+        src_ntype = None
+        if etype is not None:
+            if self.edge_dir == "out":
+                src_ntype = etype[0]
+            else:
+                src_ntype = etype[-1]
+        partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
+        node_pb = self.dist_graph.node_pb
+        if isinstance(node_pb, dict):
+            node_pb = node_pb[src_ntype]
+        partition_results: list[PartialNeighborOutput] = []
+        remote_orders_list: list[torch.Tensor] = []
+        futs: list[torch.futures.Future] = []
+        local_sample_s = 0.0
+        remote_seeds = 0
+        for pidx, p_ids, p_orders in self._route_hop(
+            srcs, orders, partition_ids, node_pb
+        ):
+            if pidx == self.data.partition_idx:
+                local_start = time.perf_counter()
+                p_nbr_out = self.sampler.sample_one_hop(p_ids, num_nbr, etype)
+                local_sample_s += time.perf_counter() - local_start
+                partition_results.append(PartialNeighborOutput(p_orders, p_nbr_out))
+            else:
+                remote_orders_list.append(p_orders)
+                remote_seeds += p_ids.shape[0]
+                to_worker = self.rpc_router.get_to_worker(pidx)
+                # Only a callee wrapped by ``instrument_rpc_callees`` accepts the trailing send time.
+                args = (p_ids.cpu(), num_nbr, etype)
+                if self._stats is not None:
+                    args = (*args, time.time())
+                futs.append(
+                    rpc_request_async(to_worker, self.rpc_sample_callee_id, args=args)
+                )
+        stats.add(
+            "hop_route_ms", (time.perf_counter() - route_start - local_sample_s) * 1e3
+        )
+        stats.add("hop_local_sample_ms", local_sample_s * 1e3)
+        stats.add("hop_rpc_count", len(futs))
+        stats.add("hop_remote_seeds", remote_seeds)
+        if len(remote_orders_list) == 0:
+            if len(partition_results) > 0:
+                return partition_results[0].output
+            # Mirrors GLT, which returns an empty tensor rather than a NeighborOutput here.
+            return torch.tensor([], device=device, dtype=torch.int64)  # type: ignore[return-value]
+        wait_start = time.perf_counter()
+        res_fut_list = await wrap_torch_future(torch.futures.collect_all(futs))
+        stats.add("hop_rpc_wait_ms", (time.perf_counter() - wait_start) * 1e3)
+        with stats.timer("hop_stitch_ms"):
+            for i, res_fut in enumerate(res_fut_list):
+                partition_results.append(
+                    PartialNeighborOutput(
+                        index=remote_orders_list[i], output=res_fut.wait().to(device)
+                    )
+                )
+            return self._stitch_sample_results(srcs, partition_results)
 
     async def _sample_from_nodes(
         self,

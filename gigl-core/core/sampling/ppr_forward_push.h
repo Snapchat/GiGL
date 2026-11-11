@@ -1,6 +1,7 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <c10/util/flat_hash_map.h>
 
 #include <cstdint>
 #include <optional>
@@ -26,7 +27,8 @@ struct PPRExtractTensors {
     torch::Tensor ids;         // int64 node IDs, flattened across seeds
     torch::Tensor weights;     // double feature matrix / edge_attr
     torch::Tensor validCounts; // int64 selected-node count per seed
-    torch::Tensor isExpanded;  // int64 bitmask of channels that pushed (expanded) this node for this seed (bit c = channel c). Untyped PPR uses channel 0, so the value is 0 or 1.
+    torch::Tensor isExpanded;  // int64 bitmask of channels that pushed (expanded) this node for this seed (bit c =
+                               // channel c). Untyped PPR uses channel 0, so the value is 0 or 1.
 };
 using PPRExtractResult = std::unordered_map<int32_t, PPRExtractTensors>;
 
@@ -39,23 +41,32 @@ struct OriginalEdgeExtractTensors {
 };
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
+// Raw view of one node type's total out-degree tensor, resolved once at construction.
+// Exactly one of degreesInt32 / degreesInt64 is non-null unless the tensor is empty
+// (numDegrees == 0), in which case every node has degree 0.
+struct DegreeView {
+    const int32_t* degreesInt32{nullptr};
+    const int64_t* degreesInt64{nullptr};
+    int64_t numDegrees{0};
+};
+
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
     int32_t minHop;  // minimum discovered hop within one seed's traversal
+    bool queued;     // true while the node sits in its seed's live queue (not in the drained snapshot)
 };
 
 // Per-seed, per-node-type PPR algorithm state.
 // Grouping all four containers into one struct is a logical convenience: a single
 // _state[seedIdx][nodeTypeId] access reaches all state for a given (seed, ntype)
-// pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
-// unordered_set heap-allocate their bucket storage, so the actual key-value data is
-// not co-located in memory — only the control-plane metadata (size, bucket pointer)
-// lives inside the struct.
+// pair, rather than indexing four separate 2D arrays.  Note that the flat hash
+// tables heap-allocate their slot arrays, so the key-value data is not co-located
+// with the struct — only the control-plane metadata lives inside it.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores;             // absorbed PPR mass
-    std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
-    std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
+    ska::flat_hash_map<int32_t, double> pprScores;             // absorbed PPR mass
+    ska::flat_hash_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
+    std::vector<int32_t> queue;                                // nodes queued for the next drain, each at most once
+    std::vector<int32_t> queuedNodes;                          // ascending-id snapshot captured by drainQueue()
 };
 
 // Cached adjacency payload stored in PPRForwardPush::_neighborCache.
@@ -86,9 +97,7 @@ struct OriginalEdgeDedupeKeyHash {
     // identity that GiGL uses to dedupe sampled edges.
     size_t operator()(const OriginalEdgeDedupeKey& key) const {
         size_t seed = std::hash<int32_t>{}(key.edgeTypeId);
-        auto combine = [&seed](size_t value) {
-            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-        };
+        auto combine = [&seed](size_t value) { seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2); };
         combine(std::hash<int32_t>{}(key.sourceNodeId));
         combine(std::hash<int32_t>{}(key.destinationNodeId));
         return seed;
@@ -185,9 +194,6 @@ public:
         bool includeEdgeIds);
 
 private:
-    // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
-    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
-
     double _alpha;
     double _requeueThresholdFactor; // alpha * eps; per-node requeue threshold = factor * degree
 
@@ -207,6 +213,7 @@ private:
     std::vector<int32_t> _edgeTypeToDstNtypeId;
     std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
+    std::vector<DegreeView> _degreeViews; // aligned with _degreeTensors; points into their storage
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
     // 2D vector: both dimensions are dense sequential integers bounded at construction,
@@ -223,7 +230,7 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
+    ska::flat_hash_map<uint64_t, CachedNeighborList> _neighborCache;
 };
 
 // Helper function for draining several independent channel states for one
