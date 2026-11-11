@@ -16,9 +16,8 @@ from gigl.distributed.dist_sampling_producer import DistSamplingProducer
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.rpc_init import (
     SAMPLING_RPC_CHANNELS_ENV,
-    SAMPLING_RPC_TRANSPORTS_ENV,
     init_rpc_from_env,
-    sampling_rpc_backend_from_env,
+    sampling_rpc_channels_from_env,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -38,17 +37,25 @@ _BUSY_THREAD_CPU_NS = 500_000
 _MIN_BUSY_UV_THREADS_WITH_LANES = 8
 
 
+class _StopInit(Exception):
+    pass
+
+
 class _Echo(glt_rpc.RpcCalleeBase):
     def call(self, tensor: torch.Tensor) -> torch.Tensor:
         return tensor + 1
 
 
 def _count_uv_threads() -> int:
+    # A thread can exit between listing /proc/self/task and opening its comm file.
     count = 0
     for tid in os.listdir("/proc/self/task"):
-        with open(f"/proc/self/task/{tid}/comm") as f:
-            if f.read().strip() == "TP_UV_loop":
-                count += 1
+        try:
+            with open(f"/proc/self/task/{tid}/comm") as f:
+                if f.read().strip() == "TP_UV_loop":
+                    count += 1
+        except OSError:
+            continue
     return count
 
 
@@ -147,7 +154,6 @@ def _run_two_ranks(implementation: str, env: dict[str, str]) -> dict[int, Any]:
     result_queue = mp.get_context("spawn").SimpleQueue()
     with mock.patch.dict(os.environ):
         os.environ.pop(SAMPLING_RPC_CHANNELS_ENV, None)
-        os.environ.pop(SAMPLING_RPC_TRANSPORTS_ENV, None)
         os.environ.update(env)
         mp.spawn(
             fn=_run_rank,
@@ -223,6 +229,31 @@ class InitRpcParityTest(TestCase):
         )
 
 
+class InitRpcChannelSelectionTest(TestCase):
+    def tearDown(self) -> None:
+        glt_rpc._rpc_inited = False
+        super().tearDown()
+
+    def test_channels_reach_the_tensorpipe_options(self) -> None:
+        init_worker_group(world_size=1, rank=0, group_name=_GROUP)
+        created: list[Any] = []
+        real_options = rpc.TensorPipeRpcBackendOptions
+
+        def record_options(**kwargs: Any) -> Any:
+            created.append(kwargs)
+            return real_options(**kwargs)
+
+        with mock.patch.object(rpc, "TensorPipeRpcBackendOptions", record_options):
+            with mock.patch.object(rpc, "init_rpc", side_effect=_StopInit):
+                with mock.patch.dict(
+                    os.environ, {SAMPLING_RPC_CHANNELS_ENV: "cma,basic"}
+                ):
+                    with self.assertRaises(_StopInit):
+                        init_rpc_from_env(master_addr="127.0.0.1", master_port=1)
+        self.assertEqual(created[0]["_channels"], ["cma", "basic"])
+        self.assertEqual(created[0]["_transports"], ["uv"])
+
+
 class SamplingProducerEnvValidationTest(TestCase):
     def test_init_rejects_invalid_channels_before_spawning_workers(self) -> None:
         producer = object.__new__(DistSamplingProducer)
@@ -231,28 +262,24 @@ class SamplingProducerEnvValidationTest(TestCase):
                 producer.init()
 
 
-class SamplingRpcBackendFromEnvTest(TestCase):
-    def _parse(self, env: dict[str, str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+class SamplingRpcChannelsFromEnvTest(TestCase):
+    def _parse(self, env: dict[str, str]) -> tuple[str, ...]:
         with mock.patch.dict(os.environ, env):
-            return sampling_rpc_backend_from_env()
+            return sampling_rpc_channels_from_env()
 
     def setUp(self) -> None:
         super().setUp()
-        for name in (SAMPLING_RPC_CHANNELS_ENV, SAMPLING_RPC_TRANSPORTS_ENV):
-            patcher = mock.patch.dict(os.environ)
-            patcher.start()
-            self.addCleanup(patcher.stop)
-            os.environ.pop(name, None)
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop(SAMPLING_RPC_CHANNELS_ENV, None)
 
     def test_unset_gives_glt_defaults(self) -> None:
-        self.assertEqual(self._parse({}), (("uv",), ("mpt_uv", "basic")))
+        self.assertEqual(self._parse({}), ("mpt_uv", "basic"))
 
     def test_valid_values_are_parsed_with_whitespace_trimmed(self) -> None:
-        env = {
-            SAMPLING_RPC_CHANNELS_ENV: "cma, mpt_uv ,basic",
-            SAMPLING_RPC_TRANSPORTS_ENV: "uv",
-        }
-        self.assertEqual(self._parse(env), (("uv",), ("cma", "mpt_uv", "basic")))
+        env = {SAMPLING_RPC_CHANNELS_ENV: "cma, mpt_uv ,basic"}
+        self.assertEqual(self._parse(env), ("cma", "mpt_uv", "basic"))
 
     def test_invalid_values_are_rejected(self) -> None:
         for channels in (
@@ -264,14 +291,12 @@ class SamplingRpcBackendFromEnvTest(TestCase):
             "mpt_uv",
             "mpt_uv,cma",
             "basic,,cma",
+            "basic,basic",
+            "basic,mpt_uv,basic",
         ):
             with self.subTest(channels=channels):
                 with self.assertRaises(ValueError):
                     self._parse({SAMPLING_RPC_CHANNELS_ENV: channels})
-        for transports in ("", "shm", "ibv", "uv,shm"):
-            with self.subTest(transports=transports):
-                with self.assertRaises(ValueError):
-                    self._parse({SAMPLING_RPC_TRANSPORTS_ENV: transports})
 
 
 if __name__ == "__main__":

@@ -1,23 +1,27 @@
-"""``init_rpc`` for sampling workers with selectable TensorPipe transports and channels.
+"""``init_rpc`` for sampling workers with selectable TensorPipe channels.
 
 ``init_rpc_with_options`` is a copy of ``graphlearn_torch.distributed.rpc.init_rpc`` that differs
-only in where the TensorPipe transports and channels come from. Its defaults equal GLT's, so with
-no overrides the options, the module state and the side effects are the same. A unit test hashes
-GLT's ``init_rpc`` source so that a GLT upgrade that changes it is noticed and the copy is revisited.
+in where the TensorPipe channels come from, and in one detail of the ``is_dynamic`` path: the
+server-availability retry loops catch ``Exception`` where GLT has a bare ``except``, so a
+``KeyboardInterrupt`` or ``SystemExit`` raised while polling propagates instead of being retried.
+Sampling workers never pass ``is_dynamic=True``. Its defaults equal GLT's, so with no override the
+options, the module state and the side effects are the same. A unit test hashes GLT's ``init_rpc``
+source so that a GLT upgrade that changes it is noticed and the copy is revisited.
 
 All module state is written through the ``graphlearn_torch.distributed.rpc`` module object so that
 GLT's own helpers (``all_gather``, ``barrier``, ``rpc_is_initialized``, ...) see it. As in GLT,
 ``_rpc_master_addr`` and ``_rpc_master_port`` are never set; the master address and port only
 form the TensorPipe ``init_method``.
 
-Environment variables (comma-separated lists, unset means GLT's defaults):
-    GIGL_SAMPLING_RPC_CHANNELS: any of ``basic``, ``mpt_uv``, ``cma``; ``basic`` is required.
-        Every valid list therefore shares ``basic``, the CPU channel that carries tensors across
-        hosts, with every other valid list. Order is TensorPipe's channel priority, first is
-        highest. The value must be identical on every node of a job: two processes that pick
-        channels with no common choice abort on the first request. It has no effect in graph-store
-        mode, whose RPC is initialized by GLT's own ``init_rpc``.
-    GIGL_SAMPLING_RPC_TRANSPORTS: ``uv`` only.
+Environment variable (a comma-separated list, unset means GLT's defaults):
+    GIGL_SAMPLING_RPC_CHANNELS: any of ``basic``, ``mpt_uv``, ``cma``; ``basic`` is required and
+        no name may repeat. ``basic`` sends each message over a single connection handled by one
+        thread; ``mpt_uv`` multiplexes a message over several connections and threads. Both work
+        across hosts. ``basic`` is required because it is the channel every process can use, so
+        every valid list shares it with every other valid list. Order is TensorPipe's channel
+        priority, first is highest. The value must be identical on every node of a job: two
+        processes that pick channels with no common choice abort on the first request. It has no
+        effect in graph-store mode, whose RPC is initialized by GLT's own ``init_rpc``.
 """
 
 import logging
@@ -30,74 +34,47 @@ from graphlearn_torch.distributed.dist_context import DistRole
 from torch.distributed import rpc
 
 SAMPLING_RPC_CHANNELS_ENV = "GIGL_SAMPLING_RPC_CHANNELS"
-SAMPLING_RPC_TRANSPORTS_ENV = "GIGL_SAMPLING_RPC_TRANSPORTS"
 
-DEFAULT_TRANSPORTS: tuple[str, ...] = ("uv",)
+_TRANSPORTS: tuple[str, ...] = ("uv",)
 DEFAULT_CHANNELS: tuple[str, ...] = ("mpt_uv", "basic")
 
-_ALLOWED_TRANSPORTS = frozenset({"uv"})
 _ALLOWED_CHANNELS = frozenset({"basic", "mpt_uv", "cma"})
 _REQUIRED_CHANNEL = "basic"
 
 
-def _parse_list(env_name: str, allowed: frozenset[str]) -> Optional[tuple[str, ...]]:
-    raw = os.environ.get(env_name)
-    if raw is None:
-        return None
-    values = tuple(item.strip() for item in raw.split(","))
-    for value in values:
-        if value not in allowed:
-            raise ValueError(
-                f"{env_name}={raw!r} contains {value!r}; allowed values are {sorted(allowed)}"
-            )
-    return values
-
-
-def validate_rpc_backend(
-    transports: Sequence[str], channels: Sequence[str]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Validates a transport and channel selection and returns it as tuples.
+def validate_channels(channels: Sequence[str]) -> tuple[str, ...]:
+    """Validates a channel selection and returns it as a tuple.
 
     Raises:
-        ValueError: If a transport or channel is not allowed, or ``basic`` is missing from the
-            channels (lists that share no channel with a peer abort the process on the first
-            send).
+        ValueError: If a channel is not allowed or appears twice, or ``basic`` is missing (lists
+            that share no channel with a peer abort the process on the first send).
     """
-    transports = tuple(transports)
     channels = tuple(channels)
-    for transport in transports:
-        if transport not in _ALLOWED_TRANSPORTS:
-            raise ValueError(
-                f"Transport {transport!r} is not allowed; allowed: {sorted(_ALLOWED_TRANSPORTS)}"
-            )
-    if not transports:
-        raise ValueError("At least one RPC transport is required")
     for channel in channels:
         if channel not in _ALLOWED_CHANNELS:
             raise ValueError(
                 f"Channel {channel!r} is not allowed; allowed: {sorted(_ALLOWED_CHANNELS)}"
             )
+    if len(set(channels)) != len(channels):
+        raise ValueError(f"Channels {list(channels)} must not contain duplicates")
     if _REQUIRED_CHANNEL not in channels:
         raise ValueError(
             f"Channels {list(channels)} must include {_REQUIRED_CHANNEL!r} so that every "
             "process of a job shares at least one channel"
         )
-    return transports, channels
+    return channels
 
 
-def sampling_rpc_backend_from_env() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Returns (transports, channels) from the environment, defaulting to GLT's values.
+def sampling_rpc_channels_from_env() -> tuple[str, ...]:
+    """Returns the channels from the environment, defaulting to GLT's values.
 
     Raises:
-        ValueError: If a variable is set to an invalid value, including an empty list.
+        ValueError: If the variable is set to an invalid value, including an empty list.
     """
-    transports = _parse_list(SAMPLING_RPC_TRANSPORTS_ENV, _ALLOWED_TRANSPORTS)
-    channels = _parse_list(SAMPLING_RPC_CHANNELS_ENV, _ALLOWED_CHANNELS)
-    if transports is None:
-        transports = DEFAULT_TRANSPORTS
-    if channels is None:
-        channels = DEFAULT_CHANNELS
-    return validate_rpc_backend(transports, channels)
+    raw = os.environ.get(SAMPLING_RPC_CHANNELS_ENV)
+    if raw is None:
+        return DEFAULT_CHANNELS
+    return validate_channels(tuple(item.strip() for item in raw.split(",")))
 
 
 def init_rpc_with_options(
@@ -106,8 +83,7 @@ def init_rpc_with_options(
     num_rpc_threads: int = 16,
     rpc_timeout: float = 180,
     is_dynamic: bool = False,
-    _transports: Sequence[str] = DEFAULT_TRANSPORTS,
-    _channels: Sequence[str] = DEFAULT_CHANNELS,
+    channels: Sequence[str] = DEFAULT_CHANNELS,
 ) -> None:
     """Initializes RPC on the current process like GLT's ``init_rpc``, with chosen channels.
 
@@ -117,11 +93,10 @@ def init_rpc_with_options(
         num_rpc_threads: Size of the RPC worker thread pool.
         rpc_timeout: RPC timeout in seconds, also used for the bring-up gather and barrier.
         is_dynamic: Whether servers and clients join dynamically.
-        _transports: TensorPipe transports; only ``uv`` is accepted.
-        _channels: TensorPipe channels in priority order; any of ``basic``, ``mpt_uv``,
-            ``cma``, and ``basic`` is required.
+        channels: TensorPipe channels in priority order; any of ``basic``, ``mpt_uv``,
+            ``cma`` without repeats, and ``basic`` is required.
     """
-    transports, channels = validate_rpc_backend(_transports, _channels)
+    channels = validate_channels(channels)
     with glt_rpc._rpc_init_lock:
         if glt_rpc.rpc_is_initialized() is True:
             return
@@ -133,7 +108,7 @@ def init_rpc_with_options(
             raise RuntimeError("'init_rpc': Distributed context has not been set.")
 
         options = rpc.TensorPipeRpcBackendOptions(
-            _transports=list(transports),
+            _transports=list(_TRANSPORTS),
             _channels=list(channels),
             num_worker_threads=num_rpc_threads,
             rpc_timeout=rpc_timeout,
@@ -258,14 +233,13 @@ def init_rpc_from_env(
     rpc_timeout: float = 180,
     is_dynamic: bool = False,
 ) -> None:
-    """Calls ``init_rpc_with_options`` with the transports and channels from the environment."""
-    transports, channels = sampling_rpc_backend_from_env()
+    """Calls ``init_rpc_with_options`` with the channels from the environment."""
+    channels = sampling_rpc_channels_from_env()
     init_rpc_with_options(
         master_addr=master_addr,
         master_port=master_port,
         num_rpc_threads=num_rpc_threads,
         rpc_timeout=rpc_timeout,
         is_dynamic=is_dynamic,
-        _transports=transports,
-        _channels=channels,
+        channels=channels,
     )

@@ -48,7 +48,7 @@ from gigl.distributed.utils.dist_sampler import (
 )
 from gigl.distributed.utils.rpc_init import (
     init_rpc_from_env,
-    sampling_rpc_backend_from_env,
+    sampling_rpc_channels_from_env,
 )
 
 logger = Logger()
@@ -57,7 +57,7 @@ logger = Logger()
 def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> None:
     """Reset the RPC agent's request timeout once a sampling worker is past its init barrier.
 
-    ``init_rpc`` sets the agent's default request timeout to the bring-up tolerance, which is
+    ``init_rpc_from_env`` sets the agent's default request timeout to the bring-up tolerance, which is
     deliberately generous so cross-rank skew does not kill the gather -- but leaving it there
     would mean every steady-state sampling and feature-collection RPC also waits that long
     before a stuck request surfaces. The init barrier is precisely the boundary between the two
@@ -221,8 +221,8 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
-        # Fail here on a bad channel or transport value instead of inside every spawned worker.
-        sampling_rpc_backend_from_env()
+        # Fail here on a bad channel value instead of inside every spawned worker.
+        sampling_rpc_channels_from_env()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -263,7 +263,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         """Wait for every sampling worker to reach the init barrier, but not forever.
 
         An unbounded ``barrier.wait()`` here is the difference between a job that fails and a job
-        that hangs. Each worker must complete GLT's ``init_rpc``, which itself gathers all
+        that hangs. Each worker must complete ``init_rpc_from_env``, which itself gathers all
         ``num_workers x world_size`` workers within the bring-up tolerance; a worker that loses
         that gather dies, never reaches this barrier, and leaves this process blocked forever
         while its peers sit in collectives until the training process group's own timeout fires.
@@ -300,7 +300,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
             self.shutdown()
             raise RuntimeError(
                 f"sampling workers did not reach the init barrier within {timeout_seconds}s; "
-                f"{diagnosis}. A worker that loses GLT's init_rpc gather dies before this "
+                f"{diagnosis}. A worker that loses the init_rpc gather dies before this "
                 f"barrier. Raise {SAMPLING_RPC_INIT_TIMEOUT_ENV} (this bound is a multiple of "
                 f"it) if init is legitimately slower than this on a cold cache."
             ) from None
