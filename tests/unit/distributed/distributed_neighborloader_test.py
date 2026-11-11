@@ -438,6 +438,26 @@ def _run_featureless_edge_ids_absent(
     shutdown_rpc()
 
 
+def _run_empty_frontier_neighbor_loader(
+    _,
+    dataset: DistDataset,
+    holder: MutableMapping,
+):
+    # Every neighbor found at hop 2 is already seen, so hop 3 starts with an empty frontier.
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+    holder["count"] = count
+    shutdown_rpc()
+
+
 def _run_quantized_feature_neighbor_loader(
     _: int,
     dataset: DistDataset,
@@ -1194,6 +1214,36 @@ class WithEdgeDerivationTest(TestCase):
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
         self.assertTrue(holder["packed_features_absent"])
+
+    def test_empty_frontier_in_later_hop_does_not_crash(self) -> None:
+        # Two nodes with edges 0 <-> 1. After hop 2 no new node exists, so hop 3 has no sources.
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(2),
+            edge_partition_book=torch.zeros(2),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1], [1, 0]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(2, 2), ids=torch.arange(2)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        holder: MutableMapping = manager.dict()
+        proc = mp.spawn(
+            fn=_run_empty_frontier_neighbor_loader,
+            args=(dataset, holder),
+            join=False,
+        )
+        proc.join(timeout=120)
+        self.assertEqual(holder["count"], 2)
 
 
 class SamplingSeedTest(TestCase):
