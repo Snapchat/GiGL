@@ -10,7 +10,7 @@ from gigl.common.utils.feature_quantization import lossless
 from gigl.common.utils.feature_quantization.lossless import (
     FeatureCodec,
     chunk_rows,
-    kind_holding_domain,
+    narrowest_integer_encoding,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -31,7 +31,7 @@ _FEATURES: list[tuple[str, int, Optional[tuple[int, int]]]] = [
     ("one_hot", 9, (0, 1)),
 ]
 _NUM_COLUMNS = sum(width for _, width, _ in _FEATURES)
-_EXPECTED_KINDS = (
+_EXPECTED_ENCODINGS = (
     ["float32"] * 5
     + ["int8"] * 3
     + ["float32"] * 2
@@ -65,13 +65,15 @@ def _features(num_rows: int, seed: int) -> torch.Tensor:
 
 
 def _declared(dense_dtype: str = "float32") -> FeatureCodec:
-    """Declares the narrowest kind that holds each id block's domain, and ``dense_dtype`` for the rest."""
-    kinds: list[str] = []
+    """Declares the narrowest encoding that holds each id block's domain, and ``dense_dtype`` for the rest."""
+    encodings: list[str] = []
     for _, width, domain in _FEATURES:
-        kind = dense_dtype if domain is None else kind_holding_domain(*domain)
-        assert kind is not None
-        kinds += [kind] * width
-    return FeatureCodec(tuple(kinds))
+        encoding = (
+            dense_dtype if domain is None else narrowest_integer_encoding(*domain)
+        )
+        assert encoding is not None
+        encodings += [encoding] * width
+    return FeatureCodec(tuple(encodings))
 
 
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -84,15 +86,15 @@ class FeatureCodecTest(TestCase):
         self.features = _features(1000, seed=0)
         self.codec = _declared()
 
-    def test_narrowest_kind_is_chosen_per_column_and_rows_shrink(self) -> None:
-        self.assertEqual(list(self.codec.column_dtypes), _EXPECTED_KINDS)
+    def test_narrowest_encoding_is_chosen_per_column_and_rows_shrink(self) -> None:
+        self.assertEqual(list(self.codec.column_encodings), _EXPECTED_ENCODINGS)
         # 8 float32 + 2 int32 = 40 B, then 5 int16 = 10 B, then 7 one-byte columns, then 9 bits in
         # 2 bytes, padded to 4.
         self.assertEqual(self.codec.row_bytes, 60)
-        self.assertEqual(kind_holding_domain(0, 1), "bit")
-        self.assertEqual(kind_holding_domain(0, 0), "bit")
-        self.assertEqual(kind_holding_domain(-1, 1), "int8")
-        self.assertEqual(kind_holding_domain(0, 200), "uint8")
+        self.assertEqual(narrowest_integer_encoding(0, 1), "bit")
+        self.assertEqual(narrowest_integer_encoding(0, 0), "bit")
+        self.assertEqual(narrowest_integer_encoding(-1, 1), "int8")
+        self.assertEqual(narrowest_integer_encoding(0, 200), "uint8")
         self.assertLess(self.codec.row_bytes, 4 * _NUM_COLUMNS)
 
     def test_round_trip_is_bit_exact_including_extremes_and_non_finite_dense(
@@ -181,7 +183,7 @@ class FeatureCodecTest(TestCase):
         decoded = self.codec.decode(self.codec.encode(empty))
         self.assertEqual(decoded.shape, (0, _NUM_COLUMNS))
 
-    def test_hand_written_spec_round_trips_every_kind(self) -> None:
+    def test_hand_written_spec_round_trips_every_encoding(self) -> None:
         codec = FeatureCodec(("float32", "int8", "uint8", "int16", "uint8_bias1"))
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
@@ -196,7 +198,11 @@ class FeatureCodecTest(TestCase):
     ) -> None:
         codec = _declared("bfloat16")
         decoded = codec.decode(codec.encode(self.features))
-        dense = [c for c, kind in enumerate(codec.column_dtypes) if kind == "bfloat16"]
+        dense = [
+            c
+            for c, encoding in enumerate(codec.column_encodings)
+            if encoding == "bfloat16"
+        ]
         ids = [c for c in range(_NUM_COLUMNS) if c not in dense]
         self.assertEqual(len(dense), 8)
         expected = self.features[:, dense].to(torch.bfloat16).float()
@@ -256,6 +262,14 @@ class FeatureCodecTest(TestCase):
             FeatureCodec(("int8",)).encode(
                 torch.tensor([[127.0 + 2.0**-40]], dtype=torch.float64)
             )
+
+    def test_encode_rejects_non_float32_input_for_dense_encodings(self) -> None:
+        float64_features = torch.tensor([[0.1, 1.0]], dtype=torch.float64)
+        for dense_encoding in ("float32", "bfloat16"):
+            with self.assertRaises(ValueError):
+                FeatureCodec((dense_encoding, "int8")).encode(float64_features)
+        # Integer encodings validate before casting, so float64 input stays allowed.
+        FeatureCodec(("int8", "int8")).encode(float64_features.round())
 
     def test_codec_survives_pickle(self) -> None:
         restored = pickle.loads(pickle.dumps(self.codec))

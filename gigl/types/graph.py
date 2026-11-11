@@ -135,7 +135,7 @@ class FeatureQuantizationMetadata:
 
     1. ``quantized_feature_indices`` columns, n-bit quantized and packed ``8 // bits`` per byte (lossy). Padded to a
        multiple of four bytes when a lossless region follows.
-    2. ``lossless_feature_indices`` columns, stored as the narrow types in ``lossless_column_kinds`` (see
+    2. ``lossless_feature_indices`` columns, stored as the narrow types in ``lossless_column_encodings`` (see
        ``gigl.common.utils.feature_quantization.lossless.FeatureCodec``; lossless except for ``bfloat16``).
 
     Every other logical column stays in the raw float matrix.
@@ -149,7 +149,7 @@ class FeatureQuantizationMetadata:
         neg_mean: Reconstruction value of 1-bit quantization.
         pos_mean: Reconstruction value of 1-bit quantization.
         lossless_feature_indices: Logical columns of the lossless region, in storage order.
-        lossless_column_kinds: Storage kind of each lossless column, aligned with ``lossless_feature_indices``.
+        lossless_column_encodings: Encoding of each lossless column, aligned with ``lossless_feature_indices``.
     """
 
     bits: Optional[int]
@@ -160,7 +160,7 @@ class FeatureQuantizationMetadata:
     neg_mean: Optional[float] = None
     pos_mean: Optional[float] = None
     lossless_feature_indices: tuple[int, ...] = ()
-    lossless_column_kinds: tuple[str, ...] = ()
+    lossless_column_encodings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.bits is None:
@@ -170,12 +170,12 @@ class FeatureQuantizationMetadata:
             raise ValueError(
                 f"bits must be one of {SUPPORTED_QUANTIZATION_BITS}, got {self.bits}"
             )
-        if self.lossless_column_kinds:
-            # Fails on an unknown kind now instead of when a batch is first decoded.
-            FeatureCodec(self.lossless_column_kinds)
-        if len(self.lossless_feature_indices) != len(self.lossless_column_kinds):
+        if self.lossless_column_encodings:
+            # Fails on an unknown encoding now instead of when a batch is first decoded.
+            FeatureCodec(self.lossless_column_encodings)
+        if len(self.lossless_feature_indices) != len(self.lossless_column_encodings):
             raise ValueError(
-                "lossless_feature_indices and lossless_column_kinds must have the same length"
+                "lossless_feature_indices and lossless_column_encodings must have the same length"
             )
         packed_indices = self.packed_feature_indices
         if any(i < 0 or i >= self.feature_dim for i in packed_indices):
@@ -202,7 +202,7 @@ class FeatureQuantizationMetadata:
         """Codec of the lossless region, or ``None`` if there is none."""
         if not self.lossless_feature_indices:
             return None
-        return FeatureCodec(self.lossless_column_kinds)
+        return FeatureCodec(self.lossless_column_encodings)
 
     @property
     def quantized_packed_dim(self) -> int:

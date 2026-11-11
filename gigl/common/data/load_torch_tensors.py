@@ -165,6 +165,19 @@ def _validate_weight_edge_feature_name(
             )
 
 
+def _shift_indices_past_removed_column(
+    indices: tuple[int, ...], removed_index: int
+) -> tuple[int, ...]:
+    """Shifts every index after ``removed_index`` one position to the left."""
+    shifted_indices: list[int] = []
+    for index in indices:
+        if index > removed_index:
+            shifted_indices.append(index - 1)
+        else:
+            shifted_indices.append(index)
+    return tuple(shifted_indices)
+
+
 def remove_sampling_weight_from_edge_quantization_metadata(
     serialized_graph_metadata: SerializedGraphMetadata,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
@@ -239,22 +252,13 @@ def remove_sampling_weight_from_edge_quantization_metadata(
         # The sampling-weight column is removed before reconstruction, shifting
         # every following logical feature index one position to the left.
         weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
-        adjusted_quantized_feature_indices = tuple(
-            quantized_feature_index - 1
-            if quantized_feature_index > weight_logical_index
-            else quantized_feature_index
-            for quantized_feature_index in metadata.quantized_feature_indices
+        # Lossless indices are logical column indices too, so they shift like the quantized ones.
+        # Otherwise a lossless column after the weight column decodes into the wrong position.
+        adjusted_quantized_feature_indices = _shift_indices_past_removed_column(
+            metadata.quantized_feature_indices, weight_logical_index
         )
-        adjusted_lossless_feature_indices_list: list[int] = []
-        for lossless_feature_index in metadata.lossless_feature_indices:
-            if lossless_feature_index > weight_logical_index:
-                adjusted_lossless_feature_indices_list.append(
-                    lossless_feature_index - 1
-                )
-            else:
-                adjusted_lossless_feature_indices_list.append(lossless_feature_index)
-        adjusted_lossless_feature_indices = tuple(
-            adjusted_lossless_feature_indices_list
+        adjusted_lossless_feature_indices = _shift_indices_past_removed_column(
+            metadata.lossless_feature_indices, weight_logical_index
         )
         adjusted_metadata[edge_type] = replace(
             metadata,

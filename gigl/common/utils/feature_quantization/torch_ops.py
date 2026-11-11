@@ -20,23 +20,24 @@ def dequantize_torch_tensor(
     The columns come back in ``metadata.packed_feature_indices`` order: first the n-bit quantized columns
     (approximate), then the lossless columns (exact, except ``bfloat16`` ones).
     """
-    q = metadata
 
-    if packed_features.size(-1) != q.packed_feature_dim:
+    if packed_features.size(-1) != metadata.packed_feature_dim:
         raise ValueError(
-            f"Expected packed feature dim {q.packed_feature_dim} for "
-            f"{q.quantized_feature_dim} quantized and {q.lossless_feature_dim} lossless features, got "
+            f"Expected packed feature dim {metadata.packed_feature_dim} for "
+            f"{metadata.quantized_feature_dim} quantized and {metadata.lossless_feature_dim} lossless features, got "
             f"{packed_features.size(-1)}."
         )
 
     regions: list[torch.Tensor] = []
-    if q.quantized_feature_dim:
+    if metadata.quantized_feature_dim:
         regions.append(
-            _dequantize_region(packed_features[..., : q.quantized_packed_dim], q)
+            _dequantize_region(
+                packed_features[..., : metadata.quantized_packed_dim], metadata
+            )
         )
-    lossless_codec = q.lossless_codec
+    lossless_codec = metadata.lossless_codec
     if lossless_codec is not None:
-        lossless_rows = packed_features[..., q.lossless_byte_offset :]
+        lossless_rows = packed_features[..., metadata.lossless_byte_offset :]
         leading_shape = lossless_rows.shape[:-1]
         regions.append(
             lossless_codec.decode(
@@ -53,21 +54,25 @@ def dequantize_torch_tensor(
 
 
 def _dequantize_region(
-    packed_features: torch.Tensor, q: FeatureQuantizationMetadata
+    packed_features: torch.Tensor, metadata: FeatureQuantizationMetadata
 ) -> torch.Tensor:
-    assert q.bits is not None
+    assert metadata.bits is not None
     codes = _unpack_torch_tensor(
-        packed_features, dim=q.quantized_feature_dim, bits=q.bits
+        packed_features, dim=metadata.quantized_feature_dim, bits=metadata.bits
     ).float()
-    if q.bits == 1:
-        if q.neg_mean is None or q.pos_mean is None:
+    if metadata.bits == 1:
+        if metadata.neg_mean is None or metadata.pos_mean is None:
             raise ValueError("1-bit dequantization requires pos_mean/neg_mean")
-        return torch.where(codes.bool(), q.pos_mean, q.neg_mean)
+        return torch.where(codes.bool(), metadata.pos_mean, metadata.neg_mean)
     else:
-        if q.clip_min is None or q.clip_max is None:
-            raise ValueError(f"{q.bits}-bit dequantization requires clip_min/clip_max")
-        levels = (1 << q.bits) - 1
-        return q.clip_min + (codes / levels) * (q.clip_max - q.clip_min)
+        if metadata.clip_min is None or metadata.clip_max is None:
+            raise ValueError(
+                f"{metadata.bits}-bit dequantization requires clip_min/clip_max"
+            )
+        levels = (1 << metadata.bits) - 1
+        return metadata.clip_min + (codes / levels) * (
+            metadata.clip_max - metadata.clip_min
+        )
 
 
 def _unpack_torch_tensor(

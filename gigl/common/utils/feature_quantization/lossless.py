@@ -7,9 +7,9 @@ fixed width. Rows are stored in the packed sidecar that feature quantization alr
 host-to-device copy move opaque byte rows unchanged, and ``decode`` rebuilds the float32 columns on
 the consumer's device.
 
-Storage kinds, one per column. ``encode`` raises on a value its column's kind cannot represent:
+Each column has one encoding, which says how the codec stores that column. ``encode`` raises on a value its column's encoding cannot represent:
 
-* ``float32``: exact real values. Also the kind of a column that preprocessing already quantized.
+* ``float32``: exact real values. Also the encoding of a column that preprocessing already quantized.
 * ``bfloat16``: real values, lossy.
 * ``int8``: ids in ``[-128, 127]``.
 * ``uint8``: ids in ``[0, 255]``.
@@ -18,7 +18,7 @@ Storage kinds, one per column. ``encode`` raises on a value its column's kind ca
 * ``int32``: ids in ``[-2**31, 2**31 - 128]``. The upper bound is the largest float32 below ``2**31``.
 * ``bit``: exactly ``0`` or ``1`` (for example a one-hot column), stored in one bit.
 
-Layout: columns are grouped by storage kind and the groups are laid out from widest to
+Layout: columns are grouped by encoding and the groups are laid out from widest to
 narrowest (4-byte, 2-byte, 1-byte) so every group starts at an offset aligned to its element
 size and can be read with ``Tensor.view(dtype)`` on a byte slice. The ``bit`` group comes last: its
 columns are packed eight per byte, column ``j`` of the group in bit ``j % 8`` of byte ``j // 8``
@@ -26,18 +26,19 @@ columns are packed eight per byte, column ``j`` of the group in bit ``j % 8`` of
 multiple of four bytes so that row strides stay aligned for any row subset.
 
 Example:
-    Declare the codec of a node type with one real-valued column, three id columns and one 0/1
-    column. Column 0 is a float column that preprocessing already quantized, so it stays
-    ``float32``.
+    Declare the codec of a node type with five columns: an ``int16`` id, an ``int8`` id, a
+    ``uint8_bias1`` id, an ``int32`` id and a 0/1 ``bit`` column.
 
     >>> import torch
     >>> from gigl.common.utils.feature_quantization.lossless import FeatureCodec
-    >>> codec = FeatureCodec(("float32", "int8", "uint8_bias1", "int32", "bit"))
+    >>> codec = FeatureCodec(("int16", "int8", "uint8_bias1", "int32", "bit"))
     >>> features = torch.tensor(
-    ...     [[0.5, -3.0, -1.0, 100000.0, 1.0], [2.25, 127.0, 254.0, -7.0, 0.0]]
+    ...     [[300.0, -3.0, -1.0, 100000.0, 1.0], [-2.0, 127.0, 254.0, -7.0, 0.0]]
     ... )
 
-    ``encode`` packs each row to ``uint8``: 4 + 4 + 1 + 1 + 1 bytes, padded to 12.
+    In the declared column order the columns need 2, 1, 1, 4 bytes and 1 bit. ``encode`` lays the
+    groups out widest first: ``int32`` 4 bytes, ``int16`` 2, ``int8`` 1, ``uint8_bias1`` 1, then one
+    byte for the ``bit`` group. That is 9 bytes, padded to 12, and each row is stored as ``uint8``.
 
     >>> rows = codec.encode(features)
     >>> rows.dtype, tuple(rows.shape)
@@ -56,7 +57,7 @@ Example:
     >>> codec.encode(torch.tensor([[0.0, 128.0, 0.0, 0.0, 0.0]]))
     Traceback (most recent call last):
         ...
-    ValueError: Column 1 holds a value that is not an integer in [-128, 127] (kind int8); the packed layout cannot represent it
+    ValueError: Column 1 holds a value that is not an integer in [-128, 127] (encoding int8); the packed layout cannot represent it
 """
 
 from dataclasses import dataclass
@@ -68,30 +69,30 @@ from jaxtyping import Float, Float32, Shaped, UInt8
 
 
 @dataclass(frozen=True)
-class _StorageKind:
+class _ColumnEncoding:
     dtype: torch.dtype
     # Added to a column value before the cast to ``dtype`` and subtracted after decoding.
     bias: int
-    # Inclusive range of representable column values; (0, 0) and unused for the dense kinds.
+    # Inclusive range of representable column values; (0, 0) and unused for the dense encodings.
     value_range: tuple[int, int]
 
 
-_KINDS: Final[dict[str, _StorageKind]] = {
-    "float32": _StorageKind(torch.float32, 0, (0, 0)),
-    "int32": _StorageKind(torch.int32, 0, (-(2**31), 2**31 - 128)),
-    "bfloat16": _StorageKind(torch.bfloat16, 0, (0, 0)),
-    "int16": _StorageKind(torch.int16, 0, (-(2**15), 2**15 - 1)),
-    "int8": _StorageKind(torch.int8, 0, (-(2**7), 2**7 - 1)),
-    "uint8": _StorageKind(torch.uint8, 0, (0, 2**8 - 1)),
-    "uint8_bias1": _StorageKind(torch.uint8, 1, (-1, 2**8 - 2)),
+_ENCODINGS: Final[dict[str, _ColumnEncoding]] = {
+    "float32": _ColumnEncoding(torch.float32, 0, (0, 0)),
+    "int32": _ColumnEncoding(torch.int32, 0, (-(2**31), 2**31 - 128)),
+    "bfloat16": _ColumnEncoding(torch.bfloat16, 0, (0, 0)),
+    "int16": _ColumnEncoding(torch.int16, 0, (-(2**15), 2**15 - 1)),
+    "int8": _ColumnEncoding(torch.int8, 0, (-(2**7), 2**7 - 1)),
+    "uint8": _ColumnEncoding(torch.uint8, 0, (0, 2**8 - 1)),
+    "uint8_bias1": _ColumnEncoding(torch.uint8, 1, (-1, 2**8 - 2)),
     # Eight columns per byte; ``dtype`` is the type of one packed byte.
-    "bit": _StorageKind(torch.uint8, 0, (0, 1)),
+    "bit": _ColumnEncoding(torch.uint8, 0, (0, 1)),
 }
-_DENSE_KINDS: Final[tuple[str, ...]] = ("float32", "bfloat16")
+_DENSE_ENCODINGS: Final[tuple[str, ...]] = ("float32", "bfloat16")
 # Widest first (dict order), so each group's byte offset is a multiple of its element size.
-_KIND_ORDER: Final[tuple[str, ...]] = tuple(_KINDS)
-# Narrowest first, so the first kind that holds a range is the cheapest.
-_INTEGER_KINDS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
+_ENCODING_ORDER: Final[tuple[str, ...]] = tuple(_ENCODINGS)
+# Narrowest first, so the first encoding that holds a range is the cheapest.
+_INTEGER_ENCODINGS_NARROWEST_FIRST: Final[tuple[str, ...]] = (
     "bit",
     "int8",
     "uint8",
@@ -110,18 +111,18 @@ def chunk_rows(num_columns: int, element_size: int) -> int:
     return max(1, _CHUNK_BYTES // max(1, num_columns * element_size))
 
 
-def kind_holding_domain(low: int, high: int) -> Optional[str]:
-    """The narrowest integer storage kind that holds every integer in ``[low, high]``, if any."""
-    for kind in _INTEGER_KINDS_NARROWEST_FIRST:
-        kind_low, kind_high = _KINDS[kind].value_range
-        if kind_low <= low and high <= kind_high:
-            return kind
+def narrowest_integer_encoding(low: int, high: int) -> Optional[str]:
+    """The narrowest integer encoding that holds every integer in ``[low, high]``, if any."""
+    for encoding in _INTEGER_ENCODINGS_NARROWEST_FIRST:
+        encoding_low, encoding_high = _ENCODINGS[encoding].value_range
+        if encoding_low <= low and high <= encoding_high:
+            return encoding
     return None
 
 
 @dataclass(frozen=True)
 class _Group:
-    kind: str
+    encoding: str
     dtype: torch.dtype
     bias: int
     byte_offset: int
@@ -132,7 +133,7 @@ class _Group:
 
     @property
     def num_bytes(self) -> int:
-        if self.kind == "bit":
+        if self.encoding == "bit":
             return (len(self.columns) + 7) // 8
         return len(self.columns) * self.dtype.itemsize
 
@@ -142,33 +143,33 @@ class FeatureCodec:
     """Packing of a float32 ``[N, D]`` matrix into ``uint8`` ``[N, row_bytes]`` rows.
 
     Args:
-        column_dtypes: Storage kind of every original column; the module docstring lists the kinds.
+        column_encodings: Encoding of every original column; the module docstring lists the encodings.
     """
 
-    column_dtypes: tuple[str, ...]
+    column_encodings: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        unknown = set(self.column_dtypes) - set(_KINDS)
+        unknown = set(self.column_encodings) - set(_ENCODINGS)
         if unknown:
-            raise ValueError(f"Unknown column kinds {sorted(unknown)}")
+            raise ValueError(f"Unknown column encodings {sorted(unknown)}")
 
     @property
     def num_columns(self) -> int:
-        return len(self.column_dtypes)
+        return len(self.column_encodings)
 
     @cached_property
     def _groups(self) -> tuple[_Group, ...]:
         groups: list[_Group] = []
         offset = 0
-        for kind in _KIND_ORDER:
+        for encoding in _ENCODING_ORDER:
             columns = tuple(
                 column
-                for column, column_kind in enumerate(self.column_dtypes)
-                if column_kind == kind
+                for column, column_encoding in enumerate(self.column_encodings)
+                if column_encoding == encoding
             )
             if not columns:
                 continue
-            storage_kind = _KINDS[kind]
+            encoding_spec = _ENCODINGS[encoding]
             runs: list[tuple[int, int, int]] = []
             for position, column in enumerate(columns):
                 if runs and runs[-1][0] + runs[-1][2] == column:
@@ -176,9 +177,9 @@ class FeatureCodec:
                 else:
                     runs.append((column, position, 1))
             group = _Group(
-                kind,
-                storage_kind.dtype,
-                storage_kind.bias,
+                encoding,
+                encoding_spec.dtype,
+                encoding_spec.bias,
                 offset,
                 columns,
                 tuple(runs),
@@ -203,17 +204,25 @@ class FeatureCodec:
 
         Args:
             features: The ``[N, D]`` matrix to pack.
-            validate: Whether to check that every id column holds integers its kind can store.
+            validate: Whether to check that every id column holds integers its encoding can store.
                 Pass ``False`` only when the statistics this codec was built from cover ``features``, because
                 they already prove that every value fits.
 
         Raises:
-            ValueError: If the width is not ``D``, or ``validate`` is set and an id column holds a
-                non-integral or out-of-range value (including NaN).
+            ValueError: If the width is not ``D``, if a ``float32`` or ``bfloat16`` column is declared
+                and ``features`` is not float32 (the cast would silently lose precision), or if ``validate``
+                is set and an id column holds a non-integral or out-of-range value (including NaN).
         """
         if features.dim() != 2 or features.shape[1] != self.num_columns:
             raise ValueError(
                 f"Expected features of shape [N, {self.num_columns}], got {tuple(features.shape)}"
+            )
+        if features.dtype != torch.float32 and any(
+            group.encoding in _DENSE_ENCODINGS for group in self._groups
+        ):
+            raise ValueError(
+                f"Dense encodings require float32 features, got {features.dtype}; "
+                "casting would silently lose precision"
             )
         out = torch.zeros(
             features.shape[0], self.row_bytes, dtype=torch.uint8, device=features.device
@@ -226,7 +235,7 @@ class FeatureCodec:
                     group.columns, dtype=torch.long, device=chunk.device
                 )
                 values = chunk.index_select(1, index)
-                if group.kind in _DENSE_KINDS:
+                if group.encoding in _DENSE_ENCODINGS:
                     values = values.to(torch.float32)
                 else:
                     if validate:
@@ -234,7 +243,7 @@ class FeatureCodec:
                         self._check_ids(values, group)
                     if group.bias:
                         values = values + group.bias
-                if group.kind == "bit":
+                if group.encoding == "bit":
                     stored = self._pack_bits(values)
                 else:
                     stored = values.to(group.dtype).contiguous().view(torch.uint8)
@@ -273,13 +282,13 @@ class FeatureCodec:
 
     @staticmethod
     def _check_ids(values: torch.Tensor, group: _Group) -> None:
-        low, high = _KINDS[group.kind].value_range
+        low, high = _ENCODINGS[group.encoding].value_range
         ok = (values >= low) & (values <= high) & (values == values.floor())
         if not bool(ok.all()):
             bad_column = group.columns[int((~ok).any(dim=0).nonzero()[0])]
             raise ValueError(
                 f"Column {bad_column} holds a value that is not an integer in [{low}, {high}] "
-                f"(kind {group.kind}); the packed layout cannot represent it"
+                f"(encoding {group.encoding}); the packed layout cannot represent it"
             )
 
     def decode(
@@ -303,7 +312,7 @@ class FeatureCodec:
         )
         for group in self._groups:
             part = rows[:, group.byte_offset : group.byte_offset + group.num_bytes]
-            if group.kind == "bit":
+            if group.encoding == "bit":
                 part = self._unpack_bits(part, len(group.columns))
             else:
                 part = part.view(group.dtype).to(torch.float32)
