@@ -5,6 +5,11 @@ DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
+SHORT_GIT_HASH?=$(shell git rev-parse --short HEAD 2>/dev/null || "")
+# Docker image tag. The artifact registry enforces tag immutability, so a date alone can
+# collide when a build is retried or two builds start in the same minute. The short hash
+# makes the tag unique per commit.
+DOCKER_IMAGE_TAG?=${DATE}_${SHORT_GIT_HASH}
 PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
@@ -16,17 +21,17 @@ DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DOCKER_IMAGE_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DOCKER_IMAGE_TAG}
 
-# Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
+# Image built and used by `make integration_test`. The tag defaults to ${DOCKER_IMAGE_TAG} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
 # other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
 # the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
-INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
+INTEGRATION_TEST_CPU_IMAGE_TAG?=${DOCKER_IMAGE_TAG}
 INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
@@ -309,12 +314,16 @@ run_hom_cora_snc_e2e_test:
 
 # Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+# CI pipelines clean up their child jobs on exit instead of sending the notification email.
+run_all_e2e_tests: exit_task:=cleanup
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
+# Set E2E_FAIL_FAST=1 to cancel the other pipelines as soon as one fails (the merge queue does).
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
-		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name))
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name)) \
+		$(if $(E2E_FAIL_FAST),--fail_fast)
 
 # The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
@@ -325,6 +334,7 @@ run_glt_e2e_tests: run_all_e2e_tests
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
+# Set exit_task=cleanup to compile the CI variant that cancels child jobs on exit instead of emailing.
 compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
@@ -332,6 +342,7 @@ compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docke
 		--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
 		--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG} \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
+		$(if $(exit_task),--exit_task=$(exit_task)) \
 
 _skip_build_deps:
 	@echo "compiled_pipeline_path was provided. Skipping build dependencies i.e. Compiling jars and pushing docker images"
@@ -367,6 +378,13 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--run_labels="gigl_commit=$(GIT_HASH)" \
 		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
+
+# Cancel a GiGL pipeline run, wait for it to stop, then cancel the Vertex AI, Dataflow,
+# and Dataproc jobs it launched. Also cleans up the children of a run that already stopped.
+# Example:
+# make pipeline_run=projects/my-project/locations/us-central1/pipelineJobs/my-run cancel_pipeline_run
+cancel_pipeline_run:
+	uv run python -m gigl.src.common.job_cleanup --pipeline_run=$(pipeline_run)
 
 
 clean_build_files_py:
