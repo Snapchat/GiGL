@@ -70,6 +70,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- `retain_edge_ids` now defaults to `False` in `build_dataset`, `DistDataset.build`, `CompactTopology`,
+  `build_csr_from_coo`, and the `build_dataset_from_task_config_uri` runtime args. The memory-lean graph build is used
+  only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
+  bytes per edge of implicit ids are no longer stored. Callers that need per-edge ids on such graphs must pass
+  `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
 
 ### Fixed
 
