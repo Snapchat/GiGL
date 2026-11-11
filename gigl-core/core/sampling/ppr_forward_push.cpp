@@ -57,7 +57,7 @@ static inline int32_t readTotalDegree(int32_t nodeId, int32_t nodeTypeId, const 
     if (degreeView.degreesInt32.empty() && degreeView.degreesInt64.empty()) {
         return 0;
     }
-    const int64_t numDegrees = static_cast<int64_t>(degreeView.degreesInt32.size() + degreeView.degreesInt64.size());
+    const auto numDegrees = static_cast<int64_t>(degreeView.degreesInt32.size() + degreeView.degreesInt64.size());
     TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
     TORCH_CHECK(nodeId < numDegrees,
                 "Node ID ",
