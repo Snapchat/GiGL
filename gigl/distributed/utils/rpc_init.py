@@ -20,26 +20,34 @@ Environment variable (a comma-separated list, unset means GLT's defaults):
         across hosts. ``basic`` is required because it is the channel every process can use, so
         every valid list shares it with every other valid list. Order is TensorPipe's channel
         priority, first is highest. The value must be identical on every node of a job: two
-        processes that pick channels with no common choice abort on the first request. It has no
-        effect in graph-store mode, whose RPC is initialized by GLT's own ``init_rpc``.
+        processes that pick channels with no common choice abort on the first request.
+
+Call sites. These honor the variable (through ``init_rpc_from_env``): the colocated loader worker
+(``init_neighbor_loader_worker``), the dataset-building process (``dataset_factory``), the
+colocated sampling producer (``DistSamplingProducer``) and the graph-store sampling worker
+subprocesses (``shared_dist_sampling_producer``). These ignore it and use GLT's ``init_rpc``
+with GLT's default channels: the graph-store ``init_server`` and ``init_client`` (``dist_server``
+and ``compute``), which accept ``is_dynamic`` and are left on GLT's exact code, and GLT's own
+``init_server``/``init_client``, which call GLT's ``init_rpc`` internally. Processes that honor it
+and processes that do not still share ``basic``, so a mixed deployment connects.
 """
 
 import logging
 import os
 import time
-from typing import Optional, Sequence
+from typing import Final, Optional, Sequence
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 from graphlearn_torch.distributed.dist_context import DistRole
 from torch.distributed import rpc
 
-SAMPLING_RPC_CHANNELS_ENV = "GIGL_SAMPLING_RPC_CHANNELS"
+SAMPLING_RPC_CHANNELS_ENV: Final[str] = "GIGL_SAMPLING_RPC_CHANNELS"
 
-_TRANSPORTS: tuple[str, ...] = ("uv",)
-DEFAULT_CHANNELS: tuple[str, ...] = ("mpt_uv", "basic")
+_TRANSPORTS: Final[tuple[str, ...]] = ("uv",)
+DEFAULT_CHANNELS: Final[tuple[str, ...]] = ("mpt_uv", "basic")
 
-_ALLOWED_CHANNELS = frozenset({"basic", "mpt_uv", "cma"})
-_REQUIRED_CHANNEL = "basic"
+_ALLOWED_CHANNELS: Final[frozenset[str]] = frozenset({"basic", "mpt_uv", "cma"})
+_REQUIRED_CHANNEL: Final[str] = "basic"
 
 
 def validate_channels(channels: Sequence[str]) -> tuple[str, ...]:

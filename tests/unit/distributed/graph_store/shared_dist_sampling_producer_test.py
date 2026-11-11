@@ -319,7 +319,9 @@ class DistSamplingProducerTest(TestCase):
         self.assertNotIn(1, backend._channel_sampling_config)
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
-    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc_from_env"
+    )
     @patch(
         "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
     )
@@ -736,7 +738,9 @@ class StallFixWorkerLoopTest(TestCase):
         self.assertFalse(worker_thread.is_alive())
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
-    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc_from_env"
+    )
     @patch(
         "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
     )
@@ -763,7 +767,9 @@ class StallFixWorkerLoopTest(TestCase):
         )
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
-    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc_from_env"
+    )
     @patch(
         "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
     )
@@ -887,7 +893,9 @@ class StallFixWorkerLoopTest(TestCase):
             self.assertFalse(thread.is_alive())
 
     @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.shutdown_rpc")
-    @patch("gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc")
+    @patch(
+        "gigl.distributed.graph_store.shared_dist_sampling_producer.init_rpc_from_env"
+    )
     @patch(
         "gigl.distributed.graph_store.shared_dist_sampling_producer.init_worker_group"
     )
