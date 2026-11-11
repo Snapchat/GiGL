@@ -54,19 +54,20 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
 // Reads one node's total out-degree from a resolved degree view. Returns 0 when the
 // node type has no degree data.
 static inline int32_t readTotalDegree(int32_t nodeId, int32_t nodeTypeId, const DegreeView& degreeView) {
-    if (degreeView.numDegrees == 0) {
+    if (degreeView.degreesInt32.empty() && degreeView.degreesInt64.empty()) {
         return 0;
     }
+    const int64_t numDegrees = static_cast<int64_t>(degreeView.degreesInt32.size() + degreeView.degreesInt64.size());
     TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeId < degreeView.numDegrees,
+    TORCH_CHECK(nodeId < numDegrees,
                 "Node ID ",
                 nodeId,
                 " out of range for degree tensor of ntype_id ",
                 nodeTypeId,
                 " (size=",
-                degreeView.numDegrees,
+                numDegrees,
                 "). This indicates corrupted graph data or a sampler bug.");
-    if (degreeView.degreesInt32 != nullptr) {
+    if (!degreeView.degreesInt32.empty()) {
         return degreeView.degreesInt32[nodeId];
     }
     return static_cast<int32_t>(std::min<int64_t>(degreeView.degreesInt64[nodeId], INT32_MAX));
@@ -144,11 +145,12 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         if (degreeTensor.numel() == 0) {
             continue;
         }
-        _degreeViews[nodeTypeIndex].numDegrees = degreeTensor.size(0);
         if (degreeTensor.scalar_type() == torch::kInt) {
-            _degreeViews[nodeTypeIndex].degreesInt32 = degreeTensor.data_ptr<int32_t>();
+            _degreeViews[nodeTypeIndex].degreesInt32 =
+                c10::ArrayRef<int32_t>(degreeTensor.data_ptr<int32_t>(), degreeTensor.numel());
         } else if (degreeTensor.scalar_type() == torch::kLong) {
-            _degreeViews[nodeTypeIndex].degreesInt64 = degreeTensor.data_ptr<int64_t>();
+            _degreeViews[nodeTypeIndex].degreesInt64 =
+                c10::ArrayRef<int64_t>(degreeTensor.data_ptr<int64_t>(), degreeTensor.numel());
         } else {
             TORCH_CHECK(false,
                         "Unsupported degree tensor dtype: ",
