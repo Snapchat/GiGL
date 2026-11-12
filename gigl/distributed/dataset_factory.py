@@ -19,7 +19,6 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
@@ -111,9 +110,8 @@ def _load_and_build_partitioned_dataset(
     rank: int = get_context().rank
     world_size: int = get_context().world_size
 
-    tfrecord_data_loader = TFRecordDataLoader(rank=rank, world_size=world_size)
     loaded_graph_tensors = load_torch_tensors_from_tf_record(
-        tf_record_dataloader=tfrecord_data_loader,
+        world_size=world_size,
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         rank=rank,
