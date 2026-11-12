@@ -21,10 +21,10 @@ One patch because the parts rewrite the same regions of graph.cc and random_samp
 them separately duplicates that text and lets an edit to one silently break the other's context.
 
 diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
-index cd8b4ba..28125f8 100644
+index cd8b4ba..bd68965 100644
 --- a/graphlearn_torch/csrc/cpu/graph.cc
 +++ b/graphlearn_torch/csrc/cpu/graph.cc
-@@ -16,8 +16,136 @@ limitations under the License.
+@@ -16,8 +16,148 @@ limitations under the License.
  #include "graphlearn_torch/include/graph.h"
  #include "graphlearn_torch/include/common.h"
 
@@ -33,6 +33,7 @@ index cd8b4ba..28125f8 100644
 +#include <cstdint>
 +#include <limits>
 +#include <memory>
++#include <system_error>
 +#include <thread>
 +#include <vector>
 +
@@ -65,13 +66,24 @@ index cd8b4ba..28125f8 100644
 +template <typename Fn>
 +void ParallelChunks(int64_t count, int64_t num_threads, Fn fn) {
 +  const int64_t per_thread = (count + num_threads - 1) / num_threads;
-+  std::vector<std::thread> workers;
-+  for (int64_t t = 1; t < num_threads; ++t) {
++  auto run_chunk = [&](int64_t t) {
 +    const int64_t begin = std::min(t * per_thread, count);
-+    const int64_t end = std::min(begin + per_thread, count);
-+    workers.emplace_back([=] { fn(begin, end, t); });
++    fn(begin, std::min(begin + per_thread, count), t);
++  };
++  std::vector<std::thread> workers;
++  workers.reserve(num_threads);
++  try {
++    for (int64_t t = 1; t < num_threads; ++t) {
++      workers.emplace_back(run_chunk, t);
++    }
++  } catch (const std::system_error&) {
++    // The OS refused a thread (EAGAIN). Destroying a joinable thread would terminate the
++    // process, so join the ones started and run the chunks that never got a thread below.
 +  }
-+  fn(0, std::min(per_thread, count), 0);
++  run_chunk(0);
++  for (int64_t t = static_cast<int64_t>(workers.size()) + 1; t < num_threads; ++t) {
++    run_chunk(t);
++  }
 +  for (auto& worker : workers) {
 +    worker.join();
 +  }
@@ -161,7 +173,7 @@ index cd8b4ba..28125f8 100644
  void Graph::InitCPUGraphFromCSR(
      const torch::Tensor& indptr,
      const torch::Tensor& indices,
-@@ -27,10 +155,23 @@ void Graph::InitCPUGraphFromCSR(
+@@ -27,10 +167,23 @@ void Graph::InitCPUGraphFromCSR(
    CheckEq<int64_t>(indices.dim(), 1);
 
    row_ptr_ = indptr.data_ptr<int64_t>();
