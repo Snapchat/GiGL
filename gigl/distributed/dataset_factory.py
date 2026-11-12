@@ -19,12 +19,12 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
 )
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
 from gigl.common.utils.garbage_collection import freeze_gc
