@@ -70,6 +70,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- `DistDataset` builds each rank's CSR/CSC over only that rank's row range under range partitioning:
+  `build_csr_from_coo` and `CompactTopology` take `row_start`, and the degree count, scatter and sort (including the
+  disk-backed paths) skip the empty rows below it. The output, including the zero-prefixed `indptr`, is identical to the
+  full-range build by @kmontemayor2-sc
 
 ### Fixed
 

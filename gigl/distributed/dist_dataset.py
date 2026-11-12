@@ -872,6 +872,9 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(book, RangePartitionBook)
                 else get_total_ids(book)
             )
+            row_start = 0
+            if isinstance(book, RangePartitionBook) and self._rank > 0:
+                row_start = int(book.partition_bounds[self._rank - 1])
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
                 f"{num_rows:,} rows, input dtype {coo.dtype}"
@@ -881,6 +884,7 @@ class DistDataset(glt.distributed.DistDataset):
                 layout=target_layout,
                 num_rows=num_rows,
                 retain_edge_ids=retain_edge_ids,
+                row_start=row_start,
             )
             del coo
             gc.collect()
