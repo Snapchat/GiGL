@@ -36,6 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
+- Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
+  (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
+  through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
 
 ### Changed
 
