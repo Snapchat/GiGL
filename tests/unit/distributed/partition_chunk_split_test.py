@@ -41,12 +41,19 @@ def _mask_loop_split(
 
 
 class PartitionChunkSplitTest(TestCase):
+    def _assert_compact(self, tensor: torch.Tensor) -> None:
+        """A piece must own exactly its bytes, as rpc sends a view's whole storage."""
+        self.assertEqual(tensor.storage_offset(), 0)
+        self.assertEqual(
+            tensor.untyped_storage().nbytes(), tensor.numel() * tensor.element_size()
+        )
+
     @parameterized.expand(
         [
             param("single_rank", world_size=1, num_items=50),
             param("few_ranks", world_size=3, num_items=1000),
             param("many_ranks_with_empty", world_size=60, num_items=40),
-            param("more_than_uint8_ranks", world_size=300, num_items=5000),
+            param("int64_book_300_ranks", world_size=300, num_items=5000),
             param("empty_chunk", world_size=4, num_items=0),
             param("int32_ids", world_size=5, num_items=500, id_dtype=torch.int32),
             param("generate_pb", world_size=7, num_items=500, generate_pb=True),
@@ -72,6 +79,8 @@ class PartitionChunkSplitTest(TestCase):
         dst = torch.randint(0, 10_000, (num_items,)).to(id_dtype)
         features = torch.randn(num_items, 6)
         edge_ids = torch.arange(num_items, dtype=torch.int64)
+        # Distinct from the positions in the chunk, so mixing up the two would fail.
+        pb_indices = torch.randperm(num_items) + 1_000_000
         input_data = None
         if has_data:
             input_data = (src, dst, features, edge_ids)
@@ -85,7 +94,7 @@ class PartitionChunkSplitTest(TestCase):
         partitioner._partition_mgr = _RecordingPartitionManager()
         partitioner._partition_single_chunk_data(
             input_data=input_data,
-            rank_indices=edge_ids,
+            rank_indices=pb_indices,
             partition_function=lambda _, __: chunk_rank,
             chunk_start_pos=0,
             chunk_end_pos=num_items,
@@ -93,7 +102,7 @@ class PartitionChunkSplitTest(TestCase):
         )
 
         expected = _mask_loop_split(
-            input_data, edge_ids, chunk_rank.long(), world_size, generate_pb
+            input_data, pb_indices, chunk_rank.long(), world_size, generate_pb
         )
         actual = partitioner._partition_mgr.chunk_res
         self.assertEqual(len(actual), world_size)
@@ -107,34 +116,13 @@ class PartitionChunkSplitTest(TestCase):
                 for actual_tensor, expected_tensor in zip(actual_data, expected_data):
                     self.assert_tensor_equality(actual_tensor, expected_tensor)
                     self.assertEqual(actual_tensor.dtype, expected_tensor.dtype)
+                    self._assert_compact(actual_tensor)
             if expected_pb is None:
                 self.assertIsNone(actual_pb)
             else:
                 assert actual_pb is not None
                 self.assert_tensor_equality(actual_pb, expected_pb)
-
-    def test_local_piece_does_not_pin_sorted_chunk(self) -> None:
-        world_size = 4
-        num_items = 1000
-        chunk_rank = torch.randint(0, world_size, (num_items,))
-        data = (torch.arange(num_items),)
-        partitioner = object.__new__(DistPartitioner)
-        partitioner._world_size = world_size
-        partitioner._rank = 1
-        partitioner._partition_mgr = _RecordingPartitionManager()
-        partitioner._partition_single_chunk_data(
-            input_data=data,
-            rank_indices=torch.arange(num_items),
-            partition_function=lambda _, __: chunk_rank,
-            chunk_start_pos=0,
-            chunk_end_pos=num_items,
-            generate_pb=False,
-        )
-        local_tensor = partitioner._partition_mgr.chunk_res[1][0][0]
-        self.assertEqual(
-            local_tensor.untyped_storage().nbytes(),
-            local_tensor.numel() * local_tensor.element_size(),
-        )
+                self._assert_compact(actual_pb)
 
 
 if __name__ == "__main__":

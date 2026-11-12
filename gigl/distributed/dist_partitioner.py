@@ -853,7 +853,7 @@ class DistPartitioner:
     ) -> None:
         """
         Partitions a single chunk of data across multiple machines. First, the partition function is used to lookup or compute the rank of the current input.
-        Then, the inputs are stably sorted by rank and split into one piece per rank. We then send each piece to its machine using the partition manager.
+        Then, the positions are stably sorted by rank and split into one compact piece per rank. We then send each piece to its machine using the partition manager.
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned on the current chunk, which any information that should be partitioned across machines.
             rank_indices (torch.Tensor): torch tensor of indices which are used to determine the rank of each item to be partitioned on the current chunk
@@ -868,7 +868,8 @@ class DistPartitioner:
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
 
         # A single stable sort of the chunk by destination rank replaces one masking pass per rank.
-        # The stable sort keeps the within-rank order of the input, so each rank's slice equals what masking would select.
+        # The stable sort keeps the within-rank order of the input, so each rank's positions equal what masking would select.
+        # Valid ranks are in [0, world_size), so the key dtypes below cannot wrap; out-of-range ranks are undefined.
         counts = torch.bincount(chunk_rank, minlength=self._world_size).tolist()
         if self._world_size <= 256:
             sort_key = chunk_rank.to(torch.uint8)
@@ -878,34 +879,20 @@ class DistPartitioner:
             sort_key = chunk_rank.to(torch.int32)
         order = torch.argsort(sort_key, stable=True)
         del sort_key
-        sorted_data = index_select(input_data, order)
-        sorted_rank_indices = None
-        if generate_pb:
-            sorted_rank_indices = rank_indices[order]
-        del order
 
-        # `split` returns views, so the piece kept on this machine is cloned to avoid pinning the whole sorted chunk until the final concatenation.
-        # Pieces sent to other machines are copied by the rpc layer as they are views of a larger storage.
+        # Each rank's piece is gathered from the unsorted input into its own compact tensor.
+        # Views of one sorted buffer would be sent whole by rpc when a piece covers more than half of it,
+        # and would pin the buffer on the receiver until the final concatenation.
         chunk_res: list[
             Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
         ] = []
-        per_rank_data: Optional[list[Tuple[torch.Tensor, ...]]] = None
-        if sorted_data is not None:
-            per_rank_data = list(zip(*[tensor.split(counts) for tensor in sorted_data]))
-        per_rank_rank_indices: Optional[Tuple[torch.Tensor, ...]] = None
-        if sorted_rank_indices is not None:
-            per_rank_rank_indices = sorted_rank_indices.split(counts)
-        for rank in range(self._world_size):
-            rank_data = None
-            if per_rank_data is not None:
-                rank_data = per_rank_data[rank]
-                if rank == self._rank:
-                    rank_data = tuple(tensor.clone() for tensor in rank_data)
+        for rank_positions in order.split(counts):
+            rank_data = index_select(input_data, rank_positions)
             rank_rank_indices = None
-            if per_rank_rank_indices is not None:
-                rank_rank_indices = per_rank_rank_indices[rank]
+            if generate_pb:
+                rank_rank_indices = rank_indices[rank_positions]
             chunk_res.append((rank_data, rank_rank_indices))
-        del sorted_data, sorted_rank_indices, per_rank_data, per_rank_rank_indices
+        del order
 
         self._partition_mgr.process(chunk_res)
 
@@ -2036,8 +2023,11 @@ class DistPartitioner:
         # The imported modules and registered inputs hold on the order of a million tracked objects, and every `gc.collect()` call during
         # partitioning scans them while holding the GIL, which also stalls the rpc handlers serving other machines.
         # Freezing moves them out of the collector's view; the collections that remain only scan objects created afterwards.
+        # Objects frozen by the caller are left frozen.
+        gc_frozen_by_caller = gc.get_freeze_count() > 0
         gc.collect()
-        gc.freeze()
+        if not gc_frozen_by_caller:
+            gc.freeze()
 
         try:
             # Node partition should happen at the very beginning, as edge partition
@@ -2085,7 +2075,8 @@ class DistPartitioner:
             else:
                 partitioned_negative_edge_index = None
         finally:
-            gc.unfreeze()
+            if not gc_frozen_by_caller:
+                gc.unfreeze()
 
         logger.info(
             f"Rank {self._rank} finished partitioning in {time.time() - start_time:.2f} seconds"
