@@ -117,11 +117,8 @@ def _scatter_in_bands(
     chunk_size: int,
     band_bytes: Optional[int],
     edge_ids: Optional[torch.Tensor] = None,
-    row_base: int = 0,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
-
-    Row ``r`` of ``indptr`` holds input row id ``r + row_base``.
 
     ``band_bytes=None`` is a single band, right for an in-memory destination. On disk a single pass
     writes all over the file, so every page is faulted in, dirtied by a few bytes, written back and
@@ -152,15 +149,11 @@ def _scatter_in_bands(
             cursor = indptr[first_row:last_row].clone()
             for start in range(0, num_edges, chunk_size):
                 row_chunk = row[start : start + chunk_size]
-                in_band = (row_chunk >= first_row + row_base) & (
-                    row_chunk < last_row + row_base
-                )
+                in_band = (row_chunk >= first_row) & (row_chunk < last_row)
                 if not bool(in_band.any()):
                     del row_chunk, in_band
                     continue
-                selected_rows = row_chunk[in_band].to(torch.int64) - (
-                    first_row + row_base
-                )
+                selected_rows = row_chunk[in_band].to(torch.int64) - first_row
                 if edge_ids is None:
                     _place_chunk(
                         row_chunk=selected_rows,
@@ -259,8 +252,6 @@ def build_csr_from_coo(
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
     retain_edge_ids: bool = True,
-    row_start: int = 0,
-    local_rows: bool = False,
 ) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
@@ -286,24 +277,16 @@ def build_csr_from_coo(
         retain_edge_ids (bool): Retain original COO positions in CSR order by default.
             The int64 IDs cost 8 bytes per edge. Set to ``False`` when callers do not
             sample edge IDs.
-        row_start (int): Smallest row id the edges may use. ``indptr`` keeps its full
-            ``num_rows + 1`` length, with rows below ``row_start`` empty, but the degree count,
-            scatter and sort only visit rows from ``row_start`` on. Lets a rank that owns the id
-            range ``[row_start, num_rows)`` skip the empty rows below it.
-        local_rows (bool): Drop the empty rows below ``row_start`` from ``indptr``. ``indptr``
-            then has ``num_rows - row_start + 1`` entries, and its row ``r`` holds the edges of
-            row id ``row_start + r``. ``indices`` and ``edge_ids`` are the same either way.
 
     Returns:
-        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, or ``[num_rows - row_start + 1]``
-        when ``local_rows``, always int64, and ``indices`` of shape ``[num_edges]``, int32 when
-        ``col`` is int32 and int64 otherwise, plus optional
+        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
+        of shape ``[num_edges]``, int32 when ``col`` is int32 and int64 otherwise, plus optional
         int64 ``edge_ids`` of shape ``[num_edges]`` in CSR order. Empty input returns an empty
         ID tensor when retention is enabled and ``None`` otherwise.
 
     Raises:
-        ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range or below
-            ``row_start``, or the scatter does not exactly fill every row.
+        ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
+            scatter does not exactly fill every row.
     """
     if row.dim() != 1 or col.dim() != 1:
         raise ValueError(f"Expected 1-D row and col, got {row.shape} and {col.shape}")
@@ -317,9 +300,6 @@ def build_csr_from_coo(
     row_max = -1
     if num_edges:
         row_max = int(row.max().item())
-        row_min = int(row.min().item())
-        if row_min < row_start:
-            raise ValueError(f"Row id {row_min} is below row_start={row_start}")
     if num_rows is None:
         num_rows = row_max + 1
     elif row_max >= num_rows:
@@ -327,11 +307,7 @@ def build_csr_from_coo(
 
     # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
     # allocate_preshared.
-    # Rows of indptr below indptr_start are empty and stored; local_rows drops them.
-    indptr_start = row_start
-    if local_rows:
-        indptr_start = 0
-    indptr = allocate_preshared((num_rows - row_start + indptr_start + 1,), torch.int64)
+    indptr = allocate_preshared((num_rows + 1,), torch.int64)
     if num_edges == 0:
         # A rank can own no edges of some edge type.
         indptr.zero_()
@@ -343,12 +319,8 @@ def build_csr_from_coo(
             indices=torch.empty(0, dtype=indices_dtype),
             edge_ids=edge_ids,
         )
-    indptr[: indptr_start + 1] = 0
-    torch.cumsum(
-        parallel_degrees(row, num_rows, row_start),
-        dim=0,
-        out=indptr[indptr_start + 1 :],
-    )
+    indptr[0] = 0
+    torch.cumsum(parallel_degrees(row, num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
@@ -361,9 +333,8 @@ def build_csr_from_coo(
     if is_disk_backed(indices) or (edge_ids is not None and is_disk_backed(edge_ids)):
         scatter_band_bytes = band_bytes
     if scatter_band_bytes is None:
-        row_base = row_start - indptr_start
-        parallel_scatter(row, col, indptr, indices, edge_ids, indptr_start, row_base)
-        parallel_sort_within_rows(indptr, indices, edge_ids, indptr_start)
+        parallel_scatter(row, col, indptr, indices, edge_ids)
+        parallel_sort_within_rows(indptr, indices, edge_ids)
     else:
         _scatter_in_bands(
             row=row,
@@ -373,14 +344,13 @@ def build_csr_from_coo(
             chunk_size=chunk_size,
             band_bytes=scatter_band_bytes,
             edge_ids=edge_ids,
-            row_base=row_start - indptr_start,
         )
         gc.collect()
         _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
 
     logger.info(
-        f"Built CSR for {num_edges:,} edges over {num_rows:,} rows, from row {row_start:,} "
-        f"(local rows {local_rows}, indices {indices.numel() * indices.element_size() / 2**30:.1f} GiB as "
+        f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
+        f"(indices {indices.numel() * indices.element_size() / 2**30:.1f} GiB as "
         f"{indices.dtype}, indptr {indptr.numel() * indptr.element_size() / 2**30:.1f} GiB)"
     )
     return CsrBuildResult(indptr=indptr, indices=indices, edge_ids=edge_ids)
@@ -403,10 +373,9 @@ class CompactTopology(Topology):
         retain_edge_ids (bool): Retain COO-position IDs for edge sampling by default,
             at a cost of 8 bytes per edge. Use ``False`` only when callers sample
             without edge IDs.
-        row_start (int): Smallest compressed id the edges may use; see
-            :func:`build_csr_from_coo`.
-        local_rows (bool): Store only the rows from ``row_start`` on. ``row_offset`` is then
-            ``row_start``, and row ``r`` of ``indptr`` holds compressed id ``row_offset + r``.
+        row_offset (int): The global id that compressed id 0 of ``edge_index`` stands for.
+            A rank that owns the id range ``[row_offset, row_offset + num_rows)`` passes ids
+            relative to its range start, so ``indptr`` has no rows for the ids below it.
             GLT's samplers index ``indptr`` directly, so seeds must be translated with
             :func:`to_local_rows` first. ``to_coo`` adds the offset back.
     """
@@ -418,8 +387,7 @@ class CompactTopology(Topology):
         num_rows: Optional[int] = None,
         *,
         retain_edge_ids: bool = True,
-        row_start: int = 0,
-        local_rows: bool = False,
+        row_offset: int,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
@@ -430,17 +398,13 @@ class CompactTopology(Topology):
         else:
             compressed, other = 1, 0
         self._layout = layout
+        self.row_offset = row_offset
         csr = build_csr_from_coo(
             row=edge_index[compressed],
             col=edge_index[other],
             num_rows=num_rows,
             retain_edge_ids=retain_edge_ids,
-            row_start=row_start,
-            local_rows=local_rows,
         )
-        self.row_offset = 0
-        if local_rows:
-            self.row_offset = row_start
         self._indptr, self._indices, self._edge_ids = (
             csr.indptr,
             csr.indices,
@@ -468,9 +432,9 @@ class CompactTopology(Topology):
 
 
 def get_row_offset(topology: Topology) -> int:
-    """Return the compressed id that row 0 of ``topology.indptr`` holds.
+    """Return the global id that row 0 of ``topology.indptr`` holds.
 
-    It is 0 for every topology except a :class:`CompactTopology` built with ``local_rows``.
+    It is 0 for every topology except a :class:`CompactTopology` built with a ``row_offset``.
 
     Args:
         topology: A GLT topology.
@@ -486,9 +450,9 @@ def get_row_offset(topology: Topology) -> int:
 def to_local_rows(ids: torch.Tensor, row_offset: int, num_rows: int) -> torch.Tensor:
     """Translate global compressed ids to rows of a topology that starts at ``row_offset``.
 
-    Ids outside ``[row_offset, row_offset + num_rows)`` map to ``num_rows``. GLT's samplers
-    return no neighbors for a row at or past the row count, so these ids sample nothing, as they
-    do on the zero rows of a full-length ``indptr``.
+    Ids outside ``[row_offset, row_offset + num_rows)`` map to ``num_rows``.
+    GLT's samplers return no neighbors for a row at or past the row count, so these ids sample
+    nothing, as they do on the empty rows of an ``indptr`` that starts at id 0.
 
     Example:
         >>> to_local_rows(torch.tensor([3, 5, 9, 12]), row_offset=5, num_rows=5)
@@ -496,7 +460,7 @@ def to_local_rows(ids: torch.Tensor, row_offset: int, num_rows: int) -> torch.Te
 
     Args:
         ids: Global compressed ids.
-        row_offset: The compressed id of row 0.
+        row_offset: The global id of row 0.
         num_rows: The number of stored rows.
 
     Returns:

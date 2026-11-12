@@ -1,10 +1,11 @@
-"""Sampling on local-row topologies must match sampling on full-length ``indptr`` topologies.
+"""Sampling a range-partitioned graph must match sampling the same graph without row offsets.
 
-Each test builds the same three-partition graph twice, once with ``local_csr_rows`` and once
-without, samples it from every rank, and compares the outputs exactly.
+Under a range partition book each rank's topology stores only the rows of the ids it owns and
+records its range start as a row offset. Under a tensor partition book every rank stores a row
+for every id. Each test builds the same three-partition graph both ways, samples it from every
+rank, and compares the outputs exactly.
 """
 
-from types import SimpleNamespace
 from typing import Any, Literal
 
 import torch
@@ -18,12 +19,12 @@ from graphlearn_torch.distributed import (
     shutdown_rpc,
 )
 from graphlearn_torch.partition import RangePartitionBook
-from graphlearn_torch.sampler import NeighborSampler, NodeSamplerInput
+from graphlearn_torch.sampler import NodeSamplerInput
 from parameterized import param, parameterized
 
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
-    _translate_seeds_to_local_rows,
+    _GlobalIdNeighborSampler,
 )
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
@@ -56,9 +57,12 @@ def _edges(edge_type: EdgeType) -> torch.Tensor:
 
 
 def _partition_dataset(
-    rank: int, edge_dir: Literal["in", "out"], local_csr_rows: bool
+    rank: int, edge_dir: Literal["in", "out"], range_partitioned: bool
 ) -> DistDataset:
-    """The partition of ``rank``: each edge goes to the owner of the node it is sampled from."""
+    """The partition of ``rank``: each edge goes to the owner of the node it is sampled from.
+
+    Both kinds of partition book assign the same nodes to the same ranks.
+    """
     compressed = 0
     if edge_dir == "in":
         compressed = 1
@@ -70,12 +74,16 @@ def _partition_dataset(
         partitioned_edge_index[edge_type] = GraphPartitionData(
             edge_index=edges[:, owned], edge_ids=None
         )
+    if range_partitioned:
+        node_partition_book = RangePartitionBook(
+            partition_ranges=_PARTITION_RANGES, partition_idx=rank
+        )
+    else:
+        node_partition_book = torch.zeros(_NUM_NODES, dtype=torch.int64)
+        for partition_index, (range_start, range_end) in enumerate(_PARTITION_RANGES):
+            node_partition_book[range_start:range_end] = partition_index
     partition_output = PartitionOutput(
-        node_partition_book={
-            _USER: RangePartitionBook(
-                partition_ranges=_PARTITION_RANGES, partition_idx=rank
-            )
-        },
+        node_partition_book={_USER: node_partition_book},
         edge_partition_book=None,
         partitioned_edge_index=partitioned_edge_index,
         partitioned_node_features=None,
@@ -85,7 +93,7 @@ def _partition_dataset(
         partitioned_node_labels=None,
     )
     dataset = DistDataset(rank=rank, world_size=_NUM_PARTITIONS, edge_dir=edge_dir)
-    dataset.build(partition_output=partition_output, local_csr_rows=local_csr_rows)
+    dataset.build(partition_output=partition_output)
     return dataset
 
 
@@ -105,7 +113,7 @@ def _sample_on_partition(
     rpc_port: int,
     process_group_port: int,
     edge_dir: Literal["in", "out"],
-    local_csr_rows: bool,
+    range_partitioned: bool,
     output: dict,
 ) -> None:
     """Sample every node from this rank, through routing and directly, and record the results."""
@@ -117,11 +125,11 @@ def _sample_on_partition(
     )
     init_worker_group(world_size=_NUM_PARTITIONS, rank=rank)
     init_rpc(master_addr="127.0.0.1", master_port=rpc_port, num_rpc_threads=4)
-    dataset = _partition_dataset(rank, edge_dir, local_csr_rows)
+    dataset = _partition_dataset(rank, edge_dir, range_partitioned)
     assert isinstance(dataset.graph, dict)
     start, _ = _PARTITION_RANGES[rank]
     expected_offset = 0
-    if local_csr_rows:
+    if range_partitioned:
         expected_offset = start
     for graph in dataset.graph.values():
         assert get_row_offset(graph.topo) == expected_offset
@@ -166,68 +174,61 @@ def _sample_on_partition(
     torch.distributed.destroy_process_group()
 
 
-def _run(edge_dir: Literal["in", "out"], local_csr_rows: bool) -> dict[int, Any]:
+def _run(edge_dir: Literal["in", "out"], range_partitioned: bool) -> dict[int, Any]:
     output = mp.Manager().dict()
     mp.spawn(
         _sample_on_partition,
-        args=(get_free_port(), get_free_port(), edge_dir, local_csr_rows, output),
+        args=(get_free_port(), get_free_port(), edge_dir, range_partitioned, output),
         nprocs=_NUM_PARTITIONS,
     )
     return dict(output)
 
 
-class LocalCsrRowsSamplingTest(TestCase):
+class RangePartitionedSamplingTest(TestCase):
     @parameterized.expand([param("in", edge_dir="in"), param("out", edge_dir="out")])
-    def test_local_rows_sample_exactly_as_full_rows(
+    def test_row_offsets_sample_exactly_as_rows_for_every_id(
         self, _name: str, edge_dir: Literal["in", "out"]
     ) -> None:
-        full_rows = _run(edge_dir, local_csr_rows=False)
-        local_rows = _run(edge_dir, local_csr_rows=True)
+        every_row = _run(edge_dir, range_partitioned=False)
+        offset_rows = _run(edge_dir, range_partitioned=True)
         for rank in range(_NUM_PARTITIONS):
-            self.assertEqual(set(local_rows[rank]), set(full_rows[rank]))
-            for key, expected in full_rows[rank].items():
-                self.assertEqual(local_rows[rank][key], expected, f"rank {rank} {key}")
+            self.assertEqual(set(offset_rows[rank]), set(every_row[rank]))
+            for key, expected in every_row[rank].items():
+                self.assertEqual(offset_rows[rank][key], expected, f"rank {rank} {key}")
         # The graph must give the samplers real work: some neighbors from every partition.
-        sampled = full_rows[0][f"routed/{_FOLLOWS}/-1"]
+        sampled = every_row[0][f"routed/{_FOLLOWS}/-1"]
         self.assertGreater(len(sampled["nbr"]), _NUM_NODES)
-        self.assertEqual(full_rows[0]["degrees"]["user"][27:], [0, 0, 0])
+        self.assertEqual(every_row[0]["degrees"]["user"][27:], [0, 0, 0])
 
 
-class LocalCsrRowsGuardTest(TestCase):
-    """Operations that read ``indptr`` without ``sample_one_hop`` must refuse local rows."""
+class RowOffsetNeighborSamplerTest(TestCase):
+    """``_GlobalIdNeighborSampler`` on a topology that stores ids 7 to 9 as rows 0 to 2."""
 
-    def _dist_sampler(self, with_neg: bool) -> SimpleNamespace:
-        """The attributes of a GLT distributed sampler that the translation reads."""
+    def _sampler(self, with_neg: bool) -> _GlobalIdNeighborSampler:
         topology = CompactTopology(
-            torch.tensor([[7, 8], [0, 1]]),
-            layout="CSR",
-            num_rows=10,
-            row_start=7,
-            local_rows=True,
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", num_rows=3, row_offset=7
         )
-        graph = Graph(topology, "CPU", None)
-        return SimpleNamespace(
-            dist_graph=SimpleNamespace(local_graph=graph),
+        return _GlobalIdNeighborSampler(
+            Graph(topology, "CPU", None),
+            [-1],
+            device=torch.device("cpu"),
             with_neg=with_neg,
-            sampler=NeighborSampler(graph, [-1], device=torch.device("cpu")),
         )
+
+    def test_sampling_takes_global_ids(self) -> None:
+        output = self._sampler(with_neg=False).sample_one_hop(
+            torch.tensor([0, 7, 8, 9, 10]), -1
+        )
+        self.assertEqual(output.nbr.tolist(), [0, 1])
+        self.assertEqual(output.nbr_num.tolist(), [0, 1, 1, 0, 0])
 
     def test_negative_sampling_raises(self) -> None:
         with self.assertRaises(ValueError):
-            _translate_seeds_to_local_rows(self._dist_sampler(with_neg=True))
+            self._sampler(with_neg=True).lazy_init_neg_sampler()
 
     def test_subgraph_extraction_raises(self) -> None:
-        dist_sampler = self._dist_sampler(with_neg=False)
-        _translate_seeds_to_local_rows(dist_sampler)
         with self.assertRaises(ValueError):
-            dist_sampler.sampler.subgraph_op
-
-    def test_sampling_takes_global_ids(self) -> None:
-        dist_sampler = self._dist_sampler(with_neg=False)
-        _translate_seeds_to_local_rows(dist_sampler)
-        output = dist_sampler.sampler.sample_one_hop(torch.tensor([0, 7, 8, 9, 10]), -1)
-        self.assertEqual(output.nbr.tolist(), [0, 1])
-        self.assertEqual(output.nbr_num.tolist(), [0, 1, 1, 0, 0])
+            self._sampler(with_neg=False).subgraph_op
 
 
 if __name__ == "__main__":

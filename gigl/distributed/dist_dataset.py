@@ -685,7 +685,6 @@ class DistDataset(glt.distributed.DistDataset):
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         edge_features_registered: bool,
         retain_edge_ids: bool = True,
-        local_csr_rows: bool = False,
     ) -> None:
         """Initializes the graph structure from partition output.
 
@@ -702,7 +701,6 @@ class DistDataset(glt.distributed.DistDataset):
                 partitioned. They need explicit edge IDs rather than the compact build's
                 partition-local COO positions, so their presence forces GLT's build.
             retain_edge_ids: Whether to retain implicit edge IDs for sampling.
-            local_csr_rows: Whether to store only this rank's rows; see ``build``.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -770,7 +768,6 @@ class DistDataset(glt.distributed.DistDataset):
                     {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_index},
                     node_partition_book,
                     retain_edge_ids,
-                    local_csr_rows,
                 )
                 # GLT expects a bare Graph for a homogeneous dataset, not a one-entry dict.
                 self.graph = graph[DEFAULT_HOMOGENEOUS_EDGE_TYPE]
@@ -782,7 +779,7 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(partitioned_edge_index, MutableMapping):
                     partitioned_edge_index.clear()
                 graph = self._build_graph_per_edge_type(
-                    edge_index, node_partition_book, retain_edge_ids, local_csr_rows
+                    edge_index, node_partition_book, retain_edge_ids
                 )
                 self.graph = graph
                 logger.info(
@@ -813,7 +810,6 @@ class DistDataset(glt.distributed.DistDataset):
         edge_index: dict[EdgeType, torch.Tensor],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         retain_edge_ids: bool = True,
-        local_csr_rows: bool = False,
     ) -> dict[EdgeType, Graph]:
         """Build one GLT ``Graph`` per edge type, releasing each COO before starting the next.
 
@@ -836,11 +832,10 @@ class DistDataset(glt.distributed.DistDataset):
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
-                destructively: entries are removed as they are converted.
+                destructively: entries are removed as they are converted, and under range
+                partitioning their compressed ids are shifted in place.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
             retain_edge_ids: Whether to retain implicit edge IDs for sampling.
-            local_csr_rows: Under range partitioning, store only the rows from this rank's range
-                start, and record that start as the topology's ``row_offset``.
 
         Returns:
             dict[EdgeType, Graph]: One initialized CPU ``Graph`` per edge type.
@@ -878,25 +873,27 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(book, RangePartitionBook)
                 else get_total_ids(book)
             )
-            row_start = 0
+            # Under range partitioning the compressed ids of this rank's edges lie in
+            # [row_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
+            # empty rows below the range, which on the last rank is nearly one row per node in
+            # the graph. The COO is released after the build, so it is shifted in place.
+            row_offset = 0
             if isinstance(book, RangePartitionBook) and self._rank > 0:
-                row_start = int(book.partition_bounds[self._rank - 1])
-            # With local_csr_rows the rows below row_start are not stored; the topology records
-            # row_start as its row_offset. A tensor book has no range, so it keeps every row.
-            store_local_rows = local_csr_rows and isinstance(book, RangePartitionBook)
+                row_offset = int(book.partition_bounds[self._rank - 1])
+                compressed_dimension = 0 if target_layout == "CSR" else 1
+                coo[compressed_dimension] -= row_offset
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
-                f"{num_rows:,} rows, input dtype {coo.dtype}, local rows {store_local_rows}"
+                f"{num_rows - row_offset:,} rows from id {row_offset:,}, input dtype {coo.dtype}"
             )
-            # The build raises if a compressed id falls outside [row_start, num_rows), so a
+            # The build raises if a shifted id falls outside [0, num_rows - row_offset), so a
             # partitioner that places an edge away from its compressed node's owner fails here.
             topology = CompactTopology(
                 coo,
                 layout=target_layout,
-                num_rows=num_rows,
+                num_rows=num_rows - row_offset,
                 retain_edge_ids=retain_edge_ids,
-                row_start=row_start,
-                local_rows=store_local_rows,
+                row_offset=row_offset,
             )
             del coo
             gc.collect()
@@ -904,8 +901,7 @@ class DistDataset(glt.distributed.DistDataset):
             graph_for_type.lazy_init()
             graph[edge_type] = graph_for_type
             logger.info(
-                f"Built graph for {edge_type} in {time.time() - start_time:.1f}s, "
-                f"row offset {topology.row_offset:,}"
+                f"Built graph for {edge_type} in {time.time() - start_time:.1f}s"
             )
             gc.collect()
 
@@ -1142,7 +1138,6 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
         retain_edge_ids: bool = True,
-        local_csr_rows: bool = False,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -1160,9 +1155,6 @@ class DistDataset(glt.distributed.DistDataset):
             retain_edge_ids (bool): Retain implicit edge IDs for sampling. Use ``False`` only
                 when sampling with ``with_edge=False``. Explicit IDs and edge features use
                 GLT's build regardless of this setting.
-            local_csr_rows (bool): Store each rank's topology for only the compressed ids it owns,
-                with a row offset, instead of a full-length ``indptr`` padded with empty rows. Applies
-                to range partitioning only.
         """
         logger.info(
             f"Rank {self._rank} starting building dataset class from partitioned graph ..."
@@ -1234,7 +1226,6 @@ class DistDataset(glt.distributed.DistDataset):
                 or partition_output.partitioned_edge_quantized_features is not None
             ),
             retain_edge_ids=retain_edge_ids,
-            local_csr_rows=local_csr_rows,
         )
         partition_output.partitioned_edge_index = None
         gc.collect()

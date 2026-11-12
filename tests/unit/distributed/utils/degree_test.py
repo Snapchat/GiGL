@@ -312,19 +312,22 @@ class TestHelperFunctions(TestCase):
             param("last_rank_with_trailing_zero_degrees", row_start=4, num_rows=12),
         ]
     )
-    def test_degrees_from_local_rows_match_full_rows(
+    def test_degrees_with_a_row_offset_are_indexed_by_global_id(
         self, _, row_start: int, num_rows: int
     ):
         coo = torch.tensor([[4, 4, 6, 8, 8, 8], [0, 1, 2, 0, 1, 3]])
-        full = CompactTopology(
-            coo, layout="CSR", num_rows=num_rows, row_start=row_start
-        )
-        local = CompactTopology(
-            coo, layout="CSR", num_rows=num_rows, row_start=row_start, local_rows=True
+        full = CompactTopology(coo, layout="CSR", num_rows=num_rows, row_offset=0)
+        shifted = coo.clone()
+        shifted[0] -= row_start
+        offset_topology = CompactTopology(
+            shifted,
+            layout="CSR",
+            num_rows=num_rows - row_start,
+            row_offset=row_start,
         )
 
         self.assert_tensor_equality(
-            _compute_degrees_from_topology(local),
+            _compute_degrees_from_topology(offset_topology),
             _compute_degrees_from_indptr(full.indptr),
         )
 

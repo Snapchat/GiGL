@@ -846,7 +846,7 @@ class TestDataSplitters(TestCase):
             ),
         ]
     )
-    def test_get_padded_labels_matches_on_local_rows(
+    def test_get_padded_labels_with_a_row_offset(
         self,
         _name: str,
         anchors: list[int],
@@ -857,10 +857,10 @@ class TestDataSplitters(TestCase):
         coo = torch.tensor(
             [[5, 5, 5, 6, 7, 7, 9, 10, 11], [20, 21, 22, 23, 24, 25, 26, 27, 28]]
         )
-        full = CompactTopology(coo, layout="CSR", num_rows=12, row_start=5)
-        local = CompactTopology(
-            coo, layout="CSR", num_rows=12, row_start=5, local_rows=True
-        )
+        full = CompactTopology(coo, layout="CSR", num_rows=12, row_offset=0)
+        shifted = coo.clone()
+        shifted[0] -= 5
+        local = CompactTopology(shifted, layout="CSR", num_rows=7, row_offset=5)
         self.assertEqual(local.indptr.numel(), 8)
 
         expected = _get_padded_labels(

@@ -712,8 +712,7 @@ def _get_padded_labels(
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
-    # Row 0 of indptr holds anchor id row_offset. Ids below it have no stored row and no labels,
-    # as on a full-length indptr, whose rows below a rank's range are empty.
+    # Row 0 of indptr holds anchor id row_offset. Ids below it have no stored row and no labels.
     row_offset = get_row_offset(topo)
     extra_nodes_to_pad = 0
     if allow_non_existant_node_ids:

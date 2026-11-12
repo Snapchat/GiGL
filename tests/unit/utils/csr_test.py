@@ -230,118 +230,6 @@ class BuildCsrFromCooTest(TestCase):
         with self.assertRaises(ValueError):
             build_csr_from_coo(torch.tensor([5]), torch.tensor([0]), num_rows=3)
 
-    def test_row_id_below_row_start_raises(self) -> None:
-        with self.assertRaises(ValueError):
-            build_csr_from_coo(
-                torch.tensor([1, 5]), torch.tensor([0, 0]), num_rows=8, row_start=2
-            )
-
-    @parameterized.expand(
-        [
-            param("int64_with_ids", dtype=torch.int64, retain_edge_ids=True),
-            param("int32_with_ids", dtype=torch.int32, retain_edge_ids=True),
-            param("int64_no_ids", dtype=torch.int64, retain_edge_ids=False),
-            param("int32_no_ids", dtype=torch.int32, retain_edge_ids=False),
-        ]
-    )
-    def test_row_start_matches_full_range_build(
-        self, _name: str, dtype: torch.dtype, retain_edge_ids: bool
-    ) -> None:
-        generator = torch.Generator().manual_seed(11)
-        num_rows, row_start = 5000, 3700
-        row = torch.randint(row_start, num_rows, (40_000,), generator=generator)
-        col = torch.randint(0, num_rows, (40_000,), generator=generator)
-        row, col = row.to(dtype), col.to(dtype)
-
-        expected = build_csr_from_coo(
-            row, col, num_rows=num_rows, retain_edge_ids=retain_edge_ids
-        )
-        result = build_csr_from_coo(
-            row,
-            col,
-            num_rows=num_rows,
-            retain_edge_ids=retain_edge_ids,
-            row_start=row_start,
-        )
-
-        torch.testing.assert_close(result.indptr, expected.indptr, rtol=0, atol=0)
-        torch.testing.assert_close(result.indices, expected.indices, rtol=0, atol=0)
-        self.assertEqual(result.indices.dtype, dtype)
-        if retain_edge_ids:
-            torch.testing.assert_close(
-                result.edge_ids, expected.edge_ids, rtol=0, atol=0
-            )
-        else:
-            self.assertIsNone(result.edge_ids)
-
-    def test_row_start_with_no_edges(self) -> None:
-        empty = torch.empty(0, dtype=torch.int64)
-        result = build_csr_from_coo(empty, empty, num_rows=6, row_start=4)
-        torch.testing.assert_close(result.indptr, torch.zeros(7, dtype=torch.int64))
-
-    def test_row_start_with_all_edges_in_the_last_row(self) -> None:
-        row = torch.tensor([5, 5, 5])
-        col = torch.tensor([2, 0, 1])
-        result = build_csr_from_coo(row, col, num_rows=6, row_start=5)
-        torch.testing.assert_close(result.indptr, torch.tensor([0, 0, 0, 0, 0, 0, 3]))
-        torch.testing.assert_close(result.indices, torch.tensor([0, 1, 2]))
-
-    @parameterized.expand(
-        [
-            param("int64_with_ids", dtype=torch.int64, retain_edge_ids=True),
-            param("int32_with_ids", dtype=torch.int32, retain_edge_ids=True),
-            param("int32_no_ids", dtype=torch.int32, retain_edge_ids=False),
-        ]
-    )
-    def test_local_rows_drop_only_the_empty_rows_below_row_start(
-        self, _name: str, dtype: torch.dtype, retain_edge_ids: bool
-    ) -> None:
-        generator = torch.Generator().manual_seed(13)
-        # Rows past 4900 have no edges, so the local build must keep trailing empty rows too.
-        num_rows, row_start = 5000, 3700
-        row = torch.randint(row_start, 4900, (40_000,), generator=generator).to(dtype)
-        col = torch.randint(0, num_rows, (40_000,), generator=generator).to(dtype)
-
-        full = build_csr_from_coo(
-            row, col, num_rows=num_rows, retain_edge_ids=retain_edge_ids
-        )
-        local = build_csr_from_coo(
-            row,
-            col,
-            num_rows=num_rows,
-            retain_edge_ids=retain_edge_ids,
-            row_start=row_start,
-            local_rows=True,
-        )
-
-        self.assertEqual(local.indptr.numel(), num_rows - row_start + 1)
-        torch.testing.assert_close(
-            local.indptr, full.indptr[row_start:], rtol=0, atol=0
-        )
-        torch.testing.assert_close(local.indices, full.indices, rtol=0, atol=0)
-        if retain_edge_ids:
-            torch.testing.assert_close(local.edge_ids, full.edge_ids, rtol=0, atol=0)
-        else:
-            self.assertIsNone(local.edge_ids)
-
-    def test_local_rows_with_no_edges(self) -> None:
-        empty = torch.empty(0, dtype=torch.int64)
-        result = build_csr_from_coo(
-            empty, empty, num_rows=6, row_start=4, local_rows=True
-        )
-        torch.testing.assert_close(result.indptr, torch.zeros(3, dtype=torch.int64))
-
-    def test_local_rows_raise_on_a_row_outside_the_range(self) -> None:
-        col = torch.tensor([0, 0])
-        with self.assertRaises(ValueError):
-            build_csr_from_coo(
-                torch.tensor([1, 5]), col, num_rows=8, row_start=2, local_rows=True
-            )
-        with self.assertRaises(ValueError):
-            build_csr_from_coo(
-                torch.tensor([2, 8]), col, num_rows=8, row_start=2, local_rows=True
-            )
-
     def test_parallel_scatter_raises_when_degrees_disagree_with_edges(self) -> None:
         # indptr claims row 0 holds one edge, but two edges name row 0.
         with self.assertRaises(ValueError):
@@ -522,7 +410,7 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
             ),
         ):
-            topology = CompactTopology(coo, layout="CSR")
+            topology = CompactTopology(coo, layout="CSR", row_offset=0)
             edge_ids_ptr = topology.edge_ids.data_ptr()
             self.assertTrue(topology.edge_ids.is_shared())
             topology.share_memory_()
@@ -592,35 +480,6 @@ class ScatterPlacementTest(TestCase):
         torch.testing.assert_close(result.indptr, expected_ptr)
         torch.testing.assert_close(result.indices, expected_col)
         torch.testing.assert_close(edge_ids, expected_ids)
-
-    def test_a_local_rows_build_on_disk_matches_the_full_build(self):
-        # Distinct edges, so edge ids have one valid order whichever scatter places them.
-        pairs = torch.randperm(24 * 64, generator=torch.Generator().manual_seed(29))[
-            :500
-        ]
-        row = 40 + pairs // 64
-        col = pairs % 64
-        full = build_csr_from_coo(row=row, col=col, num_rows=64)
-        with (
-            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
-            mock.patch(
-                "gigl.utils.share_memory.available_memory_bytes", return_value=1024
-            ),
-        ):
-            local = build_csr_from_coo(
-                row=row,
-                col=col,
-                num_rows=64,
-                band_bytes=256,
-                chunk_size=37,
-                row_start=40,
-                local_rows=True,
-            )
-
-        self.assertTrue(is_disk_backed(local.indices))
-        torch.testing.assert_close(local.indptr, full.indptr[40:])
-        torch.testing.assert_close(local.indices, full.indices)
-        torch.testing.assert_close(local.edge_ids, full.edge_ids)
 
 
 if __name__ == "__main__":

@@ -174,8 +174,7 @@ def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
 def _compute_degrees_from_topology(topo: Topology) -> torch.Tensor:
     """Compute degrees indexed by global compressed id.
 
-    A topology with a row offset stores no rows below it, so those ids get degree 0, as they do
-    on a full-length ``indptr``.
+    A topology with a row offset stores no rows below it, so those ids get degree 0.
     """
     local_degrees = _compute_degrees_from_indptr(topo.indptr)
     row_offset = get_row_offset(topo)

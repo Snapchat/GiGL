@@ -392,7 +392,7 @@ class DistServer:
     ) -> tuple[int, int]:
         graph = self.dataset.get_graph(edge_type)
         if layout == "coo":
-            # A local-row topology counts only its stored rows; row ids start at its offset.
+            # A topology with a row offset counts only its stored rows; row ids start at the offset.
             row_count = graph.row_count + get_row_offset(graph.topo)
             col_count = graph.col_count
         else:
