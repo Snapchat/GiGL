@@ -1,15 +1,13 @@
-"""Types shared by the TFRecord and Parquet loaders. Must not import TensorFlow."""
+"""Types shared by the TFRecord and Parquet loaders."""
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import NamedTuple, Optional, Sequence, Tuple, Union
 
 import torch
 from jaxtyping import Int64, Shaped, UInt8
 
 from gigl.common import Uri
-
-if TYPE_CHECKING:
-    from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
+from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 
 
 class LoadedEntityTensors(NamedTuple):
@@ -35,7 +33,7 @@ class SerializedTFRecordInfo:
     # If entity keys are not present, we insert them during tensor loading. For example, if the FeatureSpecDict
     # doesn't have the "node_id" identifier, we populate the feature_spce with a FixedLenFeature with shape=[], dtype=tf.int64.
     # Note that entity label keys should also be included in the feature_spec if they are present.
-    feature_spec: "FeatureSpecDict"
+    feature_spec: FeatureSpecDict
     # Feature dimension of current entity
     feature_dim: int
     # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.

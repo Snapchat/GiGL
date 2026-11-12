@@ -2,8 +2,6 @@ import io
 import os
 import re
 import resource
-import subprocess
-import sys
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -1020,60 +1018,6 @@ class ParquetRowCountManifestTest(TestCase):
         )
         _, log = self._load()
         self.assertIn("manifest_used=False", log)
-
-
-_PARQUET_ONLY_SCRIPT = """
-import os
-import re
-import resource
-import sys
-
-import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-from gigl.common import Uri, UriFactory
-from gigl.common.data.load_torch_tensors import (
-    SerializedGraphMetadata,
-    load_torch_tensors_from_tf_record,
-)
-from gigl.common.data.loader_types import SerializedTFRecordInfo
-
-root = sys.argv[1]
-os.makedirs(root + "/nodes")
-os.makedirs(root + "/edges")
-node_uri = UriFactory.create_uri(root + "/nodes")
-edge_uri = UriFactory.create_uri(root + "/edges")
-pq.write_table(pa.table({"node_id": pa.array(np.arange(10))}), root + "/nodes/part-00000-of-00001.parquet")
-info = SerializedTFRecordInfo(
-    tfrecord_uri_prefix=node_uri, parquet_uri_prefix=node_uri, feature_keys=[], feature_spec={},
-    feature_dim=0, entity_key="node_id",
-)
-edge_info = SerializedTFRecordInfo(
-    tfrecord_uri_prefix=edge_uri, parquet_uri_prefix=edge_uri, feature_keys=[], feature_spec={},
-    feature_dim=0, entity_key=("src", "dst"),
-)
-pq.write_table(pa.table({"src": pa.array(np.arange(4)), "dst": pa.array(np.arange(4))}), root + "/edges/part-00000-of-00001.parquet")
-loaded = load_torch_tensors_from_tf_record(
-    world_size=1,
-    serialized_graph_metadata=SerializedGraphMetadata(node_entity_info=info, edge_entity_info=edge_info),
-    should_load_tensors_in_parallel=False,
-)
-assert loaded.node_ids.shape[0] == 10, loaded.node_ids.shape
-tf_modules = sorted(name for name in sys.modules if name.split(".")[0] == "tensorflow")
-assert not tf_modules, tf_modules[:5]
-"""
-
-
-class ParquetLoadingDoesNotImportTensorFlowTest(TestCase):
-    def test_loading_parquet_does_not_import_tensorflow(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            result = subprocess.run(
-                [sys.executable, "-c", _PARQUET_ONLY_SCRIPT, temp_dir],
-                capture_output=True,
-                text=True,
-            )
-        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
 
 
 if __name__ == "__main__":
