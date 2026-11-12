@@ -8,7 +8,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from unittest import mock
 
 import numpy as np
@@ -27,7 +27,11 @@ from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     load_torch_tensors_from_tf_record,
 )
-from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.loader_types import (
+    LoadedEntityTensors,
+    SerializedTFRecordInfo,
+    TFDatasetOptions,
+)
 from gigl.common.data.parquet_loader import ParquetDataLoader
 from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
@@ -439,6 +443,206 @@ class ParquetDataLoaderTest(TestCase):
         self.assertNotEqual(fd_counts, [])
         for fd_count in fd_counts:
             self.assertLess(int(fd_count), _FD_SETSIZE)
+
+
+_PACKED_DIM = 3
+_PACKED_ROWS_PER_FILE = [5, 1, 4]
+
+
+def _packed_bytes(num_rows: int) -> np.ndarray:
+    """Distinct ``[num_rows, _PACKED_DIM]`` uint8 rows including 0 and 255."""
+    return (
+        ((np.arange(num_rows * _PACKED_DIM) * 37 + 250) % 256)
+        .astype(np.uint8)
+        .reshape(num_rows, _PACKED_DIM)
+    )
+
+
+def _write_packed_entity_files(
+    root: Path, is_node: bool, ids: np.ndarray, floats: np.ndarray, packed: np.ndarray
+) -> tuple[Path, Path]:
+    """Writes the same rows as Parquet (the preprocessor's column layout) and as TFRecords.
+
+    Quantized features are one ``FixedSizeBinary`` column named after the packed feature key, the remaining
+    features are in the float32 ``features`` column.
+    """
+    parquet_dir = root / "parquet"
+    tfrecord_dir = root / "tfrecord"
+    parquet_dir.mkdir()
+    tfrecord_dir.mkdir()
+    if is_node:
+        id_columns = {"node_id": ids}
+    else:
+        id_columns = {"src": ids, "dst": ids + 100}
+    columns: dict[str, pa.Array] = {
+        name: pa.array(values) for name, values in id_columns.items()
+    }
+    columns["features"] = pa.FixedSizeListArray.from_arrays(
+        pa.array(floats.reshape(-1)), floats.shape[1]
+    )
+    columns["packed_features"] = pa.FixedSizeBinaryArray.from_buffers(
+        pa.binary(_PACKED_DIM), len(ids), [None, pa.py_buffer(packed.tobytes())]
+    )
+    table = pa.table(columns)
+    start = 0
+    for file_index, num_rows in enumerate(_PACKED_ROWS_PER_FILE):
+        name = f"part-{file_index:05d}-of-{len(_PACKED_ROWS_PER_FILE):05d}"
+        pq.write_table(
+            table.slice(start, num_rows),
+            parquet_dir / f"{name}.parquet",
+            row_group_size=2,
+        )
+        with tf.io.TFRecordWriter(str(tfrecord_dir / f"{name}.tfrecord")) as writer:
+            for row in range(start, start + num_rows):
+                feature = {
+                    name: tf.train.Feature(
+                        int64_list=tf.train.Int64List(value=[values[row]])
+                    )
+                    for name, values in id_columns.items()
+                }
+                feature["feature_a"] = tf.train.Feature(
+                    float_list=tf.train.FloatList(value=floats[row])
+                )
+                feature["packed_features"] = tf.train.Feature(
+                    bytes_list=tf.train.BytesList(value=[packed[row].tobytes()])
+                )
+                writer.write(
+                    tf.train.Example(
+                        features=tf.train.Features(feature=feature)
+                    ).SerializeToString()
+                )
+        start += num_rows
+    return parquet_dir, tfrecord_dir
+
+
+class ParquetPackedFeaturesTest(TestCase):
+    """Quantized (packed) features load from Parquet exactly as they do from TFRecords."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self._temp_dir.name)
+
+    def tearDown(self) -> None:
+        self._temp_dir.cleanup()
+        super().tearDown()
+
+    @parameterized.expand([("nodes", True, 1), ("nodes", True, 2), ("edges", False, 1)])
+    def test_matches_tfrecord_loader(
+        self, _name: str, is_node: bool, world_size: int
+    ) -> None:
+        num_rows = sum(_PACKED_ROWS_PER_FILE)
+        ids = np.arange(num_rows, dtype=np.int64) + 7
+        floats = (np.arange(num_rows * 2) * 0.25).astype(np.float32).reshape(-1, 2)
+        packed = _packed_bytes(num_rows)
+        parquet_dir, tfrecord_dir = _write_packed_entity_files(
+            self.root, is_node, ids, floats, packed
+        )
+        if is_node:
+            entity_key: Union[str, tuple[str, str]] = "node_id"
+            feature_spec: FeatureSpecDict = {
+                "node_id": tf.io.FixedLenFeature([], tf.int64)
+            }
+        else:
+            entity_key = ("src", "dst")
+            feature_spec = {
+                "src": tf.io.FixedLenFeature([], tf.int64),
+                "dst": tf.io.FixedLenFeature([], tf.int64),
+            }
+        feature_spec = {
+            **feature_spec,
+            "feature_a": tf.io.FixedLenFeature([2], tf.float32),
+            "packed_features": tf.io.FixedLenFeature([], tf.string),
+        }
+
+        def info(directory: Path, parquet: bool) -> SerializedTFRecordInfo:
+            uri = UriFactory.create_uri(directory)
+            return SerializedTFRecordInfo(
+                tfrecord_uri_prefix=uri,
+                parquet_uri_prefix=uri if parquet else None,
+                feature_keys=["feature_a"],
+                feature_spec=feature_spec,
+                feature_dim=2,
+                entity_key=entity_key,
+                packed_feature_key="packed_features",
+                packed_feature_dim=_PACKED_DIM,
+            )
+
+        parquet_parts = [
+            ParquetDataLoader(rank, world_size).load_as_torch_tensors(
+                info(parquet_dir, parquet=True)
+            )
+            for rank in range(world_size)
+        ]
+        tfrecord_parts = [
+            TFRecordDataLoader(rank, world_size).load_as_torch_tensors(
+                info(tfrecord_dir, parquet=False),
+                TFDatasetOptions(deterministic=True),
+            )
+            for rank in range(world_size)
+        ]
+
+        # TFRecord gives ranks whole files and Parquet gives them row ranges, so compare the union over
+        # ranks sorted by the (source) node id.
+        def sorted_union(parts: list[LoadedEntityTensors]) -> list[torch.Tensor]:
+            ids_tensor = torch.cat([part.ids for part in parts], dim=-1)
+            order = torch.argsort(ids_tensor if is_node else ids_tensor[0])
+            result = [ids_tensor[..., order]]
+            result.append(torch.cat([_present(part.features) for part in parts])[order])
+            result.append(
+                torch.cat([_present(part.quantized_features) for part in parts])[order]
+            )
+            return result
+
+        parquet_result = sorted_union(parquet_parts)
+        tfrecord_result = sorted_union(tfrecord_parts)
+        for actual, expected in zip(parquet_result, tfrecord_result):
+            assert_close(actual, expected, rtol=0, atol=0)
+        self.assertEqual(parquet_result[2].dtype, torch.uint8)
+        assert_close(parquet_result[2], torch.from_numpy(packed), rtol=0, atol=0)
+
+    def test_no_files_gives_empty_packed_features(self) -> None:
+        (self.root / "empty").mkdir()
+        loaded = ParquetDataLoader(0, 1).load_as_torch_tensors(
+            SerializedTFRecordInfo(
+                tfrecord_uri_prefix=UriFactory.create_uri(self.root / "empty"),
+                parquet_uri_prefix=UriFactory.create_uri(self.root / "empty"),
+                feature_keys=[],
+                feature_spec={},
+                feature_dim=0,
+                entity_key="node_id",
+                packed_feature_key="packed_features",
+                packed_feature_dim=_PACKED_DIM,
+            )
+        )
+        quantized = _present(loaded.quantized_features)
+        self.assertEqual(quantized.shape, (0, _PACKED_DIM))
+        self.assertEqual(quantized.dtype, torch.uint8)
+
+    def test_packed_column_of_the_wrong_width_is_rejected(self) -> None:
+        pq.write_table(
+            pa.table(
+                {
+                    "node_id": pa.array([1, 2], type=pa.int64()),
+                    "packed_features": pa.FixedSizeBinaryArray.from_buffers(
+                        pa.binary(2), 2, [None, pa.py_buffer(b"\x01\x02\x03\x04")]
+                    ),
+                }
+            ),
+            self.root / "part-00000-of-00001.parquet",
+        )
+        info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=UriFactory.create_uri(self.root),
+            parquet_uri_prefix=UriFactory.create_uri(self.root),
+            feature_keys=[],
+            feature_spec={},
+            feature_dim=0,
+            entity_key="node_id",
+            packed_feature_key="packed_features",
+            packed_feature_dim=_PACKED_DIM,
+        )
+        with self.assertRaisesRegex(ValueError, "bytes per row"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(info)
 
 
 class _FailingReadsFile(io.RawIOBase):

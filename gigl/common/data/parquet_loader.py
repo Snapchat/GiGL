@@ -5,6 +5,8 @@ Expected layout under ``SerializedTFRecordInfo.parquet_uri_prefix``: ``part-XXXX
 * nodes: ``node_id`` (int64) and, if the node type has features, ``features`` as
   ``FixedSizeList<float32>[feature_dim]`` with slots in ``feature_keys`` order;
 * edges: ``src`` and ``dst`` (int64) and, if the edge type has features, ``features`` as above;
+* if the entity has quantized features, one ``FixedSizeBinary[packed_feature_dim]`` column named ``packed_feature_key``
+  with the packed bytes of each row; ``features`` then holds only the features that are not quantized;
 * optional label columns named by ``label_keys``, each a numeric scalar or a fixed-size list.
 """
 
@@ -192,6 +194,27 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
         offset += len(chunk)
 
 
+def _copy_packed_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
+    """Copies a ``FixedSizeBinary`` column into the leading rows of the ``[rows, width]`` uint8 ``destination``."""
+    offset = 0
+    for chunk in column.chunks:
+        if chunk.null_count:
+            raise ValueError(f"Parquet column has {chunk.null_count} null values")
+        width = chunk.type.byte_width
+        if width != destination.shape[1]:
+            raise ValueError(
+                f"Packed feature column has {width} bytes per row but {destination.shape[1]} were expected"
+            )
+        values = np.frombuffer(
+            chunk.buffers()[1],
+            dtype=np.uint8,
+            count=len(chunk) * width,
+            offset=chunk.offset * width,
+        )
+        destination[offset : offset + len(chunk)] = values.reshape(len(chunk), width)
+        offset += len(chunk)
+
+
 class ParquetDataLoader:
     """Loads one entity (node, edge, positive label or negative label) of one type from Parquet files.
 
@@ -284,8 +307,16 @@ class ParquetDataLoader:
         labels = None
         if info.label_keys:
             labels = torch.empty(0, len(info.label_keys))
+        quantized_features = None
+        if info.packed_feature_key is not None:
+            quantized_features = torch.empty(
+                0, info.packed_feature_dim, dtype=torch.uint8
+            )
         return LoadedEntityTensors(
-            ids=ids, features=features, quantized_features=None, labels=labels
+            ids=ids,
+            features=features,
+            quantized_features=quantized_features,
+            labels=labels,
         )
 
     def load_as_torch_tensors(
@@ -298,15 +329,12 @@ class ParquetDataLoader:
                 ``parquet_uri_prefix`` set.
         Returns:
             LoadedEntityTensors: The (ids, features, quantized features, labels) of this rank's rows.
-                Quantized features are not supported and are always None.
+                Quantized features are the uint8 ``[rows, packed_feature_dim]`` packed bytes and are None
+                unless ``packed_feature_key`` is set.
         """
         info = serialized_tf_record_info
         if info.parquet_uri_prefix is None:
             raise ValueError("ParquetDataLoader requires parquet_uri_prefix to be set")
-        if info.packed_feature_key is not None:
-            raise NotImplementedError(
-                "Quantized (packed) features are not supported by the Parquet loader"
-            )
         fd_count = _open_fd_count()
         wall_start = time.perf_counter()
 
@@ -378,6 +406,8 @@ class ParquetDataLoader:
             has_features = bool(info.feature_keys)
             if has_features:
                 columns.append(_FEATURES_COLUMN)
+            if info.packed_feature_key is not None:
+                columns.append(info.packed_feature_key)
             columns.extend(info.label_keys)
 
             # Shards without row groups carry only the id columns, so the schema comes from a file with rows.
@@ -394,6 +424,11 @@ class ParquetDataLoader:
                 features = allocate_preshared(
                     (num_rows, info.feature_dim), torch.float32
                 )
+            quantized_features: Optional[torch.Tensor] = None
+            if info.packed_feature_key is not None:
+                quantized_features = allocate_preshared(
+                    (num_rows, info.packed_feature_dim), torch.uint8
+                )
             labels: Optional[torch.Tensor] = None
             if info.label_keys:
                 labels = allocate_preshared(
@@ -403,6 +438,9 @@ class ParquetDataLoader:
             features_np = None
             if features is not None:
                 features_np = features.numpy()
+            quantized_features_np = None
+            if quantized_features is not None:
+                quantized_features_np = quantized_features.numpy()
             labels_np = None
             if labels is not None:
                 labels_np = labels.numpy()
@@ -450,6 +488,11 @@ class ParquetDataLoader:
                     _copy_into(table.column(_DST_COLUMN), ids_np[1, out])
                 if features_np is not None:
                     _copy_into(table.column(_FEATURES_COLUMN), features_np[out])
+                if quantized_features_np is not None:
+                    _copy_packed_into(
+                        table.column(info.packed_feature_key),
+                        quantized_features_np[out],
+                    )
                 if labels_np is not None:
                     label_offset = 0
                     for key, width in zip(info.label_keys, label_widths):
@@ -485,5 +528,8 @@ class ParquetDataLoader:
             f"rows_per_s={num_rows / max(wall_s, 1e-9):.0f}"
         )
         return LoadedEntityTensors(
-            ids=ids, features=features, quantized_features=None, labels=labels
+            ids=ids,
+            features=features,
+            quantized_features=quantized_features,
+            labels=labels,
         )
