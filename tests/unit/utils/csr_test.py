@@ -292,6 +292,41 @@ class BuildCsrFromCooTest(TestCase):
         torch.testing.assert_close(result.indptr, torch.tensor([0, 0, 0, 0, 0, 0, 3]))
         torch.testing.assert_close(result.indices, torch.tensor([0, 1, 2]))
 
+    @parameterized.expand([param("negative", -1, 10), param("past_num_rows", 11, 10)])
+    def test_row_start_outside_the_row_range_raises(
+        self, _name: str, row_start: int, num_rows: int
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "row_start"):
+            build_csr_from_coo(
+                torch.tensor([3]),
+                torch.tensor([1]),
+                num_rows=num_rows,
+                row_start=row_start,
+            )
+
+    def test_disk_backed_build_orders_duplicate_edges_the_same_for_any_row_start(
+        self,
+    ) -> None:
+        """Exactly duplicated edges keep their COO order, so edge ids do not depend on row_start."""
+        generator = torch.Generator().manual_seed(0)
+        num_rows, row_start = 300, 112
+        row = torch.randint(row_start, num_rows, (500,), generator=generator)
+        col = torch.randint(0, 5, (500,), generator=generator)
+        with mock.patch("gigl.utils.csr.is_disk_backed", return_value=True):
+            expected = build_csr_from_coo(
+                row, col, num_rows=num_rows, sort_block_edges=64, chunk_size=13
+            )
+            result = build_csr_from_coo(
+                row,
+                col,
+                num_rows=num_rows,
+                sort_block_edges=64,
+                chunk_size=13,
+                row_start=row_start,
+            )
+
+        torch.testing.assert_close(result.edge_ids, expected.edge_ids, rtol=0, atol=0)
+
     def test_parallel_scatter_raises_when_degrees_disagree_with_edges(self) -> None:
         # indptr claims row 0 holds one edge, but two edges name row 0.
         with self.assertRaises(ValueError):

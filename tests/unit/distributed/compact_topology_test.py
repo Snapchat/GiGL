@@ -288,6 +288,51 @@ class InitializeGraphTest(TestCase):
 
     @parameterized.expand(
         [
+            param("first_rank", rank=0, expected_row_start=0),
+            param("middle_rank", rank=1, expected_row_start=10),
+            param("last_rank", rank=3, expected_row_start=30),
+        ]
+    )
+    def test_a_rank_builds_only_the_rows_it_owns(
+        self, _name: str, rank: int, expected_row_start: int
+    ) -> None:
+        """Range partitioning starts a rank's rows at the previous rank's range end."""
+        ranges = [(0, 10), (10, 25), (25, 30), (30, 50)]
+        row_start, row_end = ranges[rank]
+        generator = torch.Generator().manual_seed(rank)
+        coo = torch.stack(
+            [
+                torch.randint(row_start, row_end, (300,), generator=generator),
+                torch.randint(0, 50, (300,), generator=generator),
+            ]
+        )
+        book = RangePartitionBook(partition_ranges=ranges, partition_idx=rank)
+        dataset = DistDataset(rank=rank, world_size=len(ranges), edge_dir="out")
+
+        with mock.patch(
+            "gigl.distributed.dist_dataset.CompactTopology", wraps=CompactTopology
+        ) as compact_topology:
+            dataset._initialize_graph(
+                partitioned_edge_index=GraphPartitionData(
+                    edge_index=coo.clone(), edge_ids=None
+                ),
+                node_partition_book=book,
+                edge_features_registered=False,
+            )
+
+        self.assertEqual(
+            compact_topology.call_args.kwargs["row_start"], expected_row_start
+        )
+        expected = CompactTopology(coo, layout="CSR", num_rows=row_end)
+        assert isinstance(dataset.graph, Graph)
+        topo = dataset.graph.topo
+        self.assertEqual(topo.indptr.numel(), row_end + 1)
+        torch.testing.assert_close(topo.indptr, expected.indptr, rtol=0, atol=0)
+        torch.testing.assert_close(topo.indices, expected.indices, rtol=0, atol=0)
+        torch.testing.assert_close(topo.edge_ids, expected.edge_ids, rtol=0, atol=0)
+
+    @parameterized.expand(
+        [
             param("range_out", edge_dir="out", tensor_book=False, expected_rows=50),
             param("range_in", edge_dir="in", tensor_book=False, expected_rows=10),
             param("tensor_out", edge_dir="out", tensor_book=True, expected_rows=100),
@@ -403,7 +448,9 @@ class BuildReleasesEachCooTest(TestCase):
 
         alive_at_each_build: list[set[EdgeType]] = []
 
-        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=True):
+        def recording_topology(
+            edge_index, layout, num_rows, retain_edge_ids=True, row_start=0
+        ):
             alive_at_each_build.append(
                 {edge_type for edge_type, ref in refs.items() if ref() is not None}
             )
@@ -412,6 +459,7 @@ class BuildReleasesEachCooTest(TestCase):
                 layout=layout,
                 num_rows=num_rows,
                 retain_edge_ids=retain_edge_ids,
+                row_start=row_start,
             )
 
         class _EdgeSplitter:

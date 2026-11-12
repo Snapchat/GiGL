@@ -72,8 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
 - `DistDataset` builds each rank's CSR/CSC over only that rank's row range under range partitioning:
   `build_csr_from_coo` and `CompactTopology` take `row_start`, and the degree count, scatter and sort (including the
-  disk-backed paths) skip the empty rows below it. The output, including the zero-prefixed `indptr`, is identical to the
-  full-range build by @kmontemayor2-sc
+  disk-backed paths) skip the empty rows below it. The output, including the zero-prefixed `indptr` and edge ids, is
+  identical to the full-range build by @kmontemayor2-sc
 
 ### Fixed
 

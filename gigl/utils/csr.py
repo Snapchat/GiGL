@@ -232,7 +232,7 @@ def _sort_within_rows(
                 torch.arange(row_end - block_start, dtype=torch.int64), counts
             )
             del counts
-            by_column = torch.argsort(indices[edge_start:edge_end])
+            by_column = torch.argsort(indices[edge_start:edge_end], stable=True)
             columns = indices[edge_start:edge_end][by_column]
             if edge_ids is not None:
                 sorted_edge_ids = edge_ids[edge_start:edge_end][by_column]
@@ -295,7 +295,8 @@ def build_csr_from_coo(
 
     Raises:
         ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range (including
-            below ``row_start``), or the scatter does not exactly fill every row.
+            below ``row_start``), ``row_start`` is negative or exceeds ``num_rows``, or the scatter
+            does not exactly fill every row.
     """
     if row.dim() != 1 or col.dim() != 1:
         raise ValueError(f"Expected 1-D row and col, got {row.shape} and {col.shape}")
@@ -306,10 +307,15 @@ def build_csr_from_coo(
     num_edges = row.numel()
     # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
     indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
+    if row_start < 0:
+        raise ValueError(f"row_start must be non-negative, got {row_start}")
+    if num_rows is not None and row_start > num_rows:
+        raise ValueError(f"row_start={row_start} exceeds num_rows={num_rows}")
     row_max = -1
     if num_edges:
-        row_max = int(row.max().item())
-        row_min = int(row.min().item())
+        row_min_tensor, row_max_tensor = torch.aminmax(row)
+        row_min = int(row_min_tensor.item())
+        row_max = int(row_max_tensor.item())
         if row_min < row_start:
             raise ValueError(f"Row id {row_min} is below row_start={row_start}")
     if num_rows is None:
