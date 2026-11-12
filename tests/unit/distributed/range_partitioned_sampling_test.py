@@ -93,7 +93,8 @@ def _partition_dataset(
         partitioned_node_labels=None,
     )
     dataset = DistDataset(rank=rank, world_size=_NUM_PARTITIONS, edge_dir=edge_dir)
-    dataset.build(partition_output=partition_output)
+    # The samplers sample with edge ids, which the compact build stores only on request.
+    dataset.build(partition_output=partition_output, retain_edge_ids=True)
     return dataset
 
 

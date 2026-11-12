@@ -22,17 +22,21 @@ from numba import njit, prange
 
 @no_type_check
 @njit(cache=True, parallel=True)
-def _degrees_kernel(row: np.ndarray, num_rows: int, num_ranges: int) -> np.ndarray:
-    # Equal-width row ranges: there is no indptr yet to balance by.
-    counts = np.zeros(num_rows, dtype=np.int64)
-    per_range = (num_rows + num_ranges - 1) // num_ranges
+def _degrees_kernel(
+    row: np.ndarray, row_start: int, num_rows: int, num_ranges: int
+) -> np.ndarray:
+    # Equal-width ranges over [row_start, num_rows): there is no indptr yet to balance by.
+    # counts[i] is the degree of row row_start + i.
+    span = num_rows - row_start
+    counts = np.zeros(span, dtype=np.int64)
+    per_range = (span + num_ranges - 1) // num_ranges
     for range_index in prange(num_ranges):
-        low = range_index * per_range
+        low = row_start + range_index * per_range
         high = min(low + per_range, num_rows)
         for edge in range(row.shape[0]):
             row_id = row[edge]
             if low <= row_id < high:
-                counts[row_id] += 1
+                counts[row_id - row_start] += 1
     return counts
 
 
@@ -99,19 +103,27 @@ def _sort_rows_kernel(
                 indices[start:end].sort()
 
 
-def _edge_balanced_row_bounds(indptr: np.ndarray, num_ranges: int) -> np.ndarray:
+def _edge_balanced_row_bounds(
+    indptr: np.ndarray, num_ranges: int, row_start: int
+) -> np.ndarray:
+    # Row ids in [row_start, len(indptr) - 1]; rows below row_start are empty and never searched.
     # int64 keys: float keys would make searchsorted copy all of indptr to compare.
-    keys = np.arange(num_ranges + 1, dtype=np.int64) * int(indptr[-1]) // num_ranges
-    bounds = np.searchsorted(indptr, keys)
-    bounds[0] = 0
+    tail = indptr[row_start:]
+    keys = np.arange(num_ranges + 1, dtype=np.int64) * int(tail[-1]) // num_ranges
+    bounds = np.searchsorted(tail, keys) + row_start
+    bounds[0] = row_start
     bounds[-1] = indptr.shape[0] - 1
     return np.unique(bounds)
 
 
-def parallel_degrees(row: torch.Tensor, num_rows: int) -> torch.Tensor:
-    """``torch.bincount(row, minlength=num_rows)`` across all cores, as int64."""
+def parallel_degrees(row: torch.Tensor, num_rows: int, row_start: int) -> torch.Tensor:
+    """``torch.bincount(row - row_start, minlength=num_rows - row_start)`` across all cores.
+
+    Every id in ``row`` must lie in ``[row_start, num_rows)``. Returns int64 degrees of rows
+    ``row_start`` to ``num_rows - 1``.
+    """
     return torch.from_numpy(
-        _degrees_kernel(row.numpy(), num_rows, numba.get_num_threads())
+        _degrees_kernel(row.numpy(), row_start, num_rows, numba.get_num_threads())
     )
 
 
@@ -121,6 +133,7 @@ def parallel_scatter(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     edge_ids: Optional[torch.Tensor],
+    row_start: int,
 ) -> None:
     """Place every edge in its row of ``indices`` (and its COO position in ``edge_ids``).
 
@@ -130,6 +143,7 @@ def parallel_scatter(
         indptr: CSR row pointers built from the degrees of ``row``.
         indices: Output column ids, one slot per edge; written in place.
         edge_ids: Output COO position of each edge, written in place, or ``None`` to skip them.
+        row_start: First row that can hold edges; the rows below it must be empty.
 
     Raises:
         ValueError: If the edges do not fill every row exactly.
@@ -141,7 +155,7 @@ def parallel_scatter(
         indptr_np,
         indices.numpy(),
         np.empty(0, dtype=np.int64) if edge_ids is None else edge_ids.numpy(),
-        _edge_balanced_row_bounds(indptr_np, numba.get_num_threads()),
+        _edge_balanced_row_bounds(indptr_np, numba.get_num_threads(), row_start),
         edge_ids is not None,
     )
     if int(placed.min()) < 0 or int(placed.sum()) != row.numel():
@@ -149,7 +163,10 @@ def parallel_scatter(
 
 
 def parallel_sort_within_rows(
-    indptr: torch.Tensor, indices: torch.Tensor, edge_ids: Optional[torch.Tensor]
+    indptr: torch.Tensor,
+    indices: torch.Tensor,
+    edge_ids: Optional[torch.Tensor],
+    row_start: int,
 ) -> None:
     """Sort each row's columns ascending in place, permuting ``edge_ids`` alongside.
 
@@ -158,6 +175,7 @@ def parallel_sort_within_rows(
         indices: Column ids to sort within each row; sorted in place.
         edge_ids: Edge ids to permute with ``indices``, or ``None``. A stable sort keeps
             duplicate edges in input order.
+        row_start: First row that can hold edges; the rows below it must be empty.
     """
     indptr_np = indptr.numpy()
     # More ranges than threads: long rows sort slower, and finer ranges balance them.
@@ -165,6 +183,6 @@ def parallel_sort_within_rows(
         indptr_np,
         indices.numpy(),
         np.empty(0, dtype=np.int64) if edge_ids is None else edge_ids.numpy(),
-        _edge_balanced_row_bounds(indptr_np, numba.get_num_threads() * 8),
+        _edge_balanced_row_bounds(indptr_np, numba.get_num_threads() * 8, row_start),
         edge_ids is not None,
     )
