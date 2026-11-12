@@ -16,10 +16,11 @@ The data preprocessor writes one directory per node type and per edge type. The 
     gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_node_features_dir/user/parquet/part-00000-of-00042.parquet
     gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_node_features_dir/user/parquet/part-00001-of-00042.parquet
 
-- Edge type ``user-follows-user``::
+- Edge type ``user-follows-user``. The directory below the edge type is the edge usage type: ``main`` for the graph
+  edges, ``positive`` and ``negative`` for label edges::
 
-    gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_edge_features_dir/user-follows-user/parquet/_row_counts.json
-    gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_edge_features_dir/user-follows-user/parquet/part-00000-of-00042.parquet
+    gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_edge_features_dir/user-follows-user/main/parquet/_row_counts.json
+    gs://<temp bucket>/<job name>/data_preprocess/staging/transformed_edge_features_dir/user-follows-user/main/parquet/part-00000-of-00042.parquet
 """
 
 import json
