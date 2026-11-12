@@ -47,6 +47,16 @@ class SerializedTFRecordInfo:
     label_keys: Sequence[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
+    # Uri Prefix for stored Parquet files. When set, the entity is loaded with ParquetDataLoader and
+    # tfrecord_uri_prefix is ignored.
+    parquet_uri_prefix: Optional[Uri] = None
+
+    @property
+    def data_uri_prefix(self) -> Uri:
+        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise."""
+        if self.parquet_uri_prefix is not None:
+            return self.parquet_uri_prefix
+        return self.tfrecord_uri_prefix
 
     @property
     def is_node_entity(self) -> bool:

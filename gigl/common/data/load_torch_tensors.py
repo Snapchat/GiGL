@@ -9,6 +9,7 @@ from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
 from torch.multiprocessing import Manager
 
 from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.parquet_loader import ParquetDataLoader
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -273,7 +274,7 @@ def _data_loading_process(
     the error_dict "error" field, since exceptions for spawned processes won't properly be raised to the parent process.
 
     Args:
-        world_size (int): Number of machines; each rank loads its share of the files
+        world_size (int): Number of machines; each rank loads its share of the files (TFRecord) or rows (Parquet)
         output_dict (MutableMapping[str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]]):
             Dictionary initialized by mp.Manager().dict() in which outputs of tensor loading will be written to
         error_dict (MutableMapping[str, str]): Dictionary initialized by mp.Manager().dict() in which error of errors in current process will be written to
@@ -303,7 +304,7 @@ def _data_loading_process(
             is_input_homogeneous = False
 
         all_tf_record_uris = [
-            serialized_entity.tfrecord_uri_prefix.uri
+            serialized_entity.data_uri_prefix.uri
             for serialized_entity in serialized_tf_record_info.values()
         ]
 
@@ -330,51 +331,56 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
-            # Imported here so that this module does not import TensorFlow.
-            from gigl.common.data.tf_record_loader import TFRecordDataLoader
+            if serialized_entity_tf_record_info.parquet_uri_prefix is not None:
+                loaded_entity = ParquetDataLoader(
+                    rank=rank, world_size=world_size
+                ).load_as_torch_tensors(serialized_entity_tf_record_info)
+            else:
+                # Imported here so that loading only Parquet entities never imports TensorFlow.
+                from gigl.common.data.tf_record_loader import TFRecordDataLoader
 
-            loaded_entity = TFRecordDataLoader(
-                rank=rank, world_size=world_size
-            ).load_as_torch_tensors(
-                serialized_tf_record_info=serialized_entity_tf_record_info,
-                tf_dataset_options=tf_dataset_options,
-            )
+                loaded_entity = TFRecordDataLoader(
+                    rank=rank, world_size=world_size
+                ).load_as_torch_tensors(
+                    serialized_tf_record_info=serialized_entity_tf_record_info,
+                    tf_dataset_options=tf_dataset_options,
+                )
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
             entity_quantized_features = loaded_entity.quantized_features
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
-                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
             )
             if entity_features is not None:
                 features[graph_type] = entity_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
             if entity_quantized_features is not None:
                 quantized_features[graph_type] = entity_quantized_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} quantized features of shape {entity_quantized_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} quantized features of shape {entity_quantized_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
                 labels[graph_type] = entity_labels
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
         # Extract weight column from edge features when weight_edge_feat_name is set.
@@ -510,7 +516,7 @@ def load_torch_tensors_from_tf_record(
     the `should_load_tensors_in_parallel` to allow some customization for loading strategies based on the input data.
 
     Args:
-        world_size (int): Number of machines; each rank loads its share of the files
+        world_size (int): Number of machines; each rank loads its share of the files (TFRecord) or rows (Parquet)
         serialized_graph_metadata (SerializedGraphMetadata): Serialized graph metadata contained serialized information for loading tfrecords across node and edge types
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         rank (int): Rank on current machine
