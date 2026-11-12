@@ -1,7 +1,4 @@
-"""Backwards-compatible re-exports.
-
-The shared loader types live in ``gigl.common.data.loader_types`` and ``TFRecordDataLoader`` in
-``gigl.common.data.tf_record_loader``.
+"""Re-exports the TFRecord loader and its types from their new modules.
 
 TODO: Remove this module once downstream imports use ``loader_types`` and ``tf_record_loader`` directly.
 """
