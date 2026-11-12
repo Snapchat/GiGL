@@ -926,23 +926,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(node_features, Mapping):
-            self._node_feature_info = {}
-            for node_type, node_features_per_node_type in node_features.items():
-                # We cannot make isinstance checks with NodeType, so we check
-                # if it is not an edge type, since it must be one of the two.
-                assert not isinstance(node_type, EdgeType)
-                self._node_feature_info[node_type] = FeatureInfo(
-                    dim=node_features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=node_features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
             )
         else:
-            self._node_feature_info = FeatureInfo(
-                dim=node_features.size(1),
-                dtype=node_features.dtype,
-            )
             logger.info("Initialized node features for homogeneous graph to dataset")
 
     def _initialize_node_packed_features(
@@ -994,36 +981,6 @@ class DistDataset(glt.distributed.DistDataset):
             )
             logger.info(
                 "Initialized node packed features for homogeneous graph to dataset"
-            )
-        self._describe_packed_node_features_as_logical()
-
-    def _describe_packed_node_features_as_logical(self) -> None:
-        """Makes ``node_feature_info`` report the logical width of node types that have packed columns.
-
-        The raw float store only holds the columns that are not packed, but loaders and models see (and placeholders
-        for unsampled node types must have) the full logical feature width.
-        """
-        metadata = self._node_quantization_metadata
-        packed = self._node_packed_features
-        if metadata is None or packed is None:
-            return
-        if isinstance(packed, Mapping):
-            feature_info: dict[NodeType, FeatureInfo] = {}
-            if isinstance(self._node_feature_info, Mapping):
-                feature_info = dict(self._node_feature_info)
-            for node_type in packed:
-                if isinstance(metadata, FeatureQuantizationMetadata):
-                    node_metadata = metadata
-                else:
-                    node_metadata = metadata[node_type]
-                feature_info[node_type] = FeatureInfo(
-                    dim=node_metadata.feature_dim, dtype=torch.float32
-                )
-            self._node_feature_info = feature_info
-        else:
-            assert isinstance(metadata, FeatureQuantizationMetadata)
-            self._node_feature_info = FeatureInfo(
-                dim=metadata.feature_dim, dtype=torch.float32
             )
 
     def _initialize_node_labels(
@@ -1257,6 +1214,12 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output.partitioned_node_packed_features = None
         gc.collect()
 
+        self._node_feature_info = _build_feature_info(
+            raw_features=self._node_features,
+            packed_features=self._node_packed_features,
+            metadata=self._node_quantization_metadata,
+        )
+
         self._initialize_node_labels(
             node_partition_book=partition_output.node_partition_book,
             partitioned_node_labels=partition_output.partitioned_node_labels,
@@ -1487,6 +1450,67 @@ def _append_non_split_node_ids(
         return torch.cat(
             [train_node_ids, val_node_ids, test_node_ids, node_ids_not_in_split]
         )
+
+
+def _build_feature_info(
+    raw_features: Optional[Union[Feature, Mapping[_EntityType, Feature]]],
+    packed_features: Optional[Union[Feature, Mapping[_EntityType, Feature]]],
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata,
+            Mapping[_EntityType, FeatureQuantizationMetadata],
+        ]
+    ],
+) -> Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]]:
+    """Builds the feature info loaders and models see, from the raw and packed feature stores.
+
+    A type with packed columns is described by its logical width (``metadata.feature_dim``) and ``torch.float32``,
+    because its raw store only holds the columns that are not packed.
+    Unsampled types need a placeholder of the full logical width, so the raw width would be wrong for them.
+
+    A type without packed columns is described by the shape and dtype of its raw store.
+
+    The result is a dict if either store (or the metadata) is keyed by type, and a single ``FeatureInfo`` otherwise.
+    A single metadata value applies to every type.
+
+    Args:
+        raw_features: The store of columns that are not packed, or None.
+        packed_features: The store of packed uint8 columns, or None.
+        metadata: How the packed columns were quantized, or None if nothing is packed.
+
+    Returns:
+        The feature info, or None if there are no features.
+    """
+    if raw_features is None and packed_features is None:
+        return None
+
+    if isinstance(raw_features, Mapping) or isinstance(packed_features, Mapping):
+        raw_by_type: Mapping[_EntityType, Feature] = raw_features or {}
+        packed_by_type: Mapping[_EntityType, Feature] = packed_features or {}
+        feature_info: dict[_EntityType, FeatureInfo] = {}
+        for entity_type in [*raw_by_type, *packed_by_type]:
+            if metadata is not None and entity_type in packed_by_type:
+                if isinstance(metadata, FeatureQuantizationMetadata):
+                    type_metadata = metadata
+                else:
+                    type_metadata = metadata[entity_type]
+                feature_info[entity_type] = FeatureInfo(
+                    dim=type_metadata.feature_dim, dtype=torch.float32
+                )
+            else:
+                raw_tensor = raw_by_type[entity_type].feature_tensor
+                feature_info[entity_type] = FeatureInfo(
+                    dim=raw_tensor.size(1), dtype=raw_tensor.dtype
+                )
+        return feature_info
+
+    if packed_features is not None and metadata is not None:
+        assert isinstance(metadata, FeatureQuantizationMetadata)
+        return FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
+    assert raw_features is not None
+    return FeatureInfo(
+        dim=raw_features.feature_tensor.size(1), dtype=raw_features.feature_tensor.dtype
+    )
 
 
 @overload
