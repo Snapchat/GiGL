@@ -12,16 +12,15 @@ from parameterized import param, parameterized
 from torch.testing import assert_close
 
 from gigl.common import UriFactory
-from gigl.common.data.dataloaders import (
-    SerializedTFRecordInfo,
-    TFDatasetOptions,
-    TFRecordDataLoader,
-    _get_labels_from_features,
-)
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     load_torch_tensors_from_tf_record,
     remove_sampling_weight_from_edge_quantization_metadata,
+)
+from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.tf_record_loader import (
+    TFRecordDataLoader,
+    _get_labels_from_features,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -648,9 +647,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -723,7 +721,7 @@ class TFRecordDataLoaderTest(TestCase):
 
         with self.assertRaises(ValueError):
             load_torch_tensors_from_tf_record(
-                tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
+                world_size=1,
                 serialized_graph_metadata=serialized_graph_metadata,
                 should_load_tensors_in_parallel=False,
                 weight_edge_feat_name="quantized_weight",
@@ -879,9 +877,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -969,9 +966,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
