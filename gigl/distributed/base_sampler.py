@@ -6,11 +6,13 @@ from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
+from graphlearn_torch.data import Graph
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.distributed.dist_feature import DistFeature
 from graphlearn_torch.distributed.event_loop import wrap_torch_future
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
+    NeighborOutput,
     NodeSamplerInput,
     SamplerOutput,
 )
@@ -34,6 +36,7 @@ from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
 )
+from gigl.utils.csr import get_row_offset, to_local_rows
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
@@ -97,6 +100,75 @@ class SampleLoopInputs:
     metadata: dict[str, torch.Tensor]
 
 
+def _translate_seeds_to_local_rows(sampler: GLTDistNeighborSampler) -> None:
+    """Make the GLT ``NeighborSampler`` of ``sampler`` accept global ids on local-row topologies.
+
+    A topology built with ``local_csr_rows`` stores only the rows from its ``row_offset`` on, but
+    GLT's kernels index ``indptr`` by the seed id. This replaces ``sample_one_hop`` on the
+    ``NeighborSampler`` instance with one that translates seeds by :func:`to_local_rows` first.
+    Neighbor ids and edge ids are stored as global ids, so the output needs no translation.
+
+    The RPC callee that serves other ranks' requests holds the same ``NeighborSampler`` object,
+    so remote seeds are translated too.
+
+    This depends on GLT's ``DistNeighborSampler.__init__``, which passes ``self.sampler`` itself to
+    ``RpcSamplingCallee``, and on ``RpcSamplingCallee.call``, which looks up ``sample_one_hop`` on
+    that object at each call. If a GLT upgrade gives the callee a different ``NeighborSampler``, or
+    binds the method at registration, remote requests reach the kernels with untranslated global ids.
+    Those ids are at or above the stored row count on most ranks, so their nodes silently get no
+    neighbors: the job does not fail, but embeddings that need cross-rank neighbors are wrong. Rank 0
+    has a row offset of 0 and stays correct. ``local_csr_rows_test`` compares routed sampling across
+    ranks against full-length rows and catches this; run it on every GLT upgrade.
+
+    Negative sampling and subgraph extraction read ``indptr`` without ``sample_one_hop``, so they
+    raise on a local-row topology.
+
+    Args:
+        sampler: A GLT distributed sampler after ``__init__``.
+
+    Raises:
+        ValueError: If the sampler uses negative sampling on a local-row topology.
+    """
+    local_graph = sampler.dist_graph.local_graph
+    graphs: dict[Optional[EdgeType], Graph] = {None: local_graph}
+    if isinstance(local_graph, dict):
+        graphs = dict(local_graph)
+    # Edge types whose topology starts past row 0, mapped to (row offset, stored rows).
+    row_ranges: dict[Optional[EdgeType], tuple[int, int]] = {}
+    for edge_type, graph in graphs.items():
+        row_offset = get_row_offset(graph.topo)
+        if row_offset:
+            row_ranges[edge_type] = (row_offset, graph.topo.row_count)
+    if not row_ranges:
+        return
+    if sampler.with_neg:
+        raise ValueError(
+            "Negative sampling is not supported on a topology built with local_csr_rows"
+        )
+    neighbor_sampler = sampler.sampler
+    sample_one_hop = neighbor_sampler.sample_one_hop
+
+    def sample_one_hop_from_global_ids(
+        input_seeds: torch.Tensor,
+        req_num: int,
+        etype: Optional[EdgeType] = None,
+    ) -> NeighborOutput:
+        # An edge type absent from row_ranges has row offset 0 and needs no translation.
+        if etype in row_ranges:
+            row_offset, num_rows = row_ranges[etype]
+            input_seeds = to_local_rows(input_seeds, row_offset, num_rows)
+        return sample_one_hop(input_seeds, req_num, etype)
+
+    def reject_subgraph_op() -> None:
+        raise ValueError(
+            "Subgraph extraction is not supported on a topology built with local_csr_rows"
+        )
+
+    neighbor_sampler.sample_one_hop = sample_one_hop_from_global_ids
+    neighbor_sampler.lazy_init_subgraph_op = reject_subgraph_op
+    logger.info(f"Sampling translates seeds to local rows for {row_ranges}")
+
+
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
     """Base class for GiGL distributed samplers.
 
@@ -129,6 +201,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         super().__init__(*args, **{**kwargs, "collect_features": False})
         self.collect_features = collect_features
         self._sampling_error_sent: bool = False
+        _translate_seeds_to_local_rows(self)
 
         self.dist_node_feature: Optional[FusedDistFeature] = None
         self.dist_edge_feature: Optional[FusedDistFeature] = None

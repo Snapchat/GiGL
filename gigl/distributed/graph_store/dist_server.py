@@ -100,6 +100,7 @@ from gigl.types.graph import (
     reverse_edge_type,
     select_label_edge_types,
 )
+from gigl.utils.csr import get_row_offset
 from gigl.utils.data_splitters import get_labels_for_anchor_nodes
 from gigl.utils.share_memory import share_memory
 
@@ -391,7 +392,8 @@ class DistServer:
     ) -> tuple[int, int]:
         graph = self.dataset.get_graph(edge_type)
         if layout == "coo":
-            row_count = graph.row_count
+            # A local-row topology counts only its stored rows; row ids start at its offset.
+            row_count = graph.row_count + get_row_offset(graph.topo)
             col_count = graph.col_count
         else:
             raise ValueError(f"Invalid layout {layout}")

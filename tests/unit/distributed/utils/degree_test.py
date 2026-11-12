@@ -7,10 +7,12 @@ from parameterized import param, parameterized
 from gigl.distributed.utils.degree import (
     _clamp_to_int32,
     _compute_degrees_from_indptr,
+    _compute_degrees_from_topology,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType
+from gigl.utils.csr import CompactTopology
 from tests.test_assets.distributed.test_dataset import (
     DEFAULT_HETEROGENEOUS_EDGE_INDICES,
     DEFAULT_HOMOGENEOUS_EDGE_INDEX,
@@ -302,6 +304,29 @@ class TestHelperFunctions(TestCase):
         expected = torch.tensor([3, 2, 5, 2], dtype=torch.int32)
         result = _compute_degrees_from_indptr(indptr)
         self.assert_tensor_equality(result, expected)
+
+    @parameterized.expand(
+        [
+            param("middle_rank", row_start=4, num_rows=9),
+            # A last rank whose final nodes have no edges keeps their zero degrees.
+            param("last_rank_with_trailing_zero_degrees", row_start=4, num_rows=12),
+        ]
+    )
+    def test_degrees_from_local_rows_match_full_rows(
+        self, _, row_start: int, num_rows: int
+    ):
+        coo = torch.tensor([[4, 4, 6, 8, 8, 8], [0, 1, 2, 0, 1, 3]])
+        full = CompactTopology(
+            coo, layout="CSR", num_rows=num_rows, row_start=row_start
+        )
+        local = CompactTopology(
+            coo, layout="CSR", num_rows=num_rows, row_start=row_start, local_rows=True
+        )
+
+        self.assert_tensor_equality(
+            _compute_degrees_from_topology(local),
+            _compute_degrees_from_indptr(full.indptr),
+        )
 
     def test_clamp_to_int32(self):
         """Test that large degree values clamp before conversion."""

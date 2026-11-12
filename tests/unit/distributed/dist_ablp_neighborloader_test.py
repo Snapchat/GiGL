@@ -1180,6 +1180,12 @@ class DistABLPLoaderTest(TestCase):
                 fanout=[2, 2],
             ),
             param(
+                "Range-based partitioning, local CSR rows",
+                partitioner_class=DistRangePartitioner,
+                fanout=[2, 2],
+                local_csr_rows=True,
+            ),
+            param(
                 "Range-based partitioning, dict fanout",
                 partitioner_class=DistRangePartitioner,
                 fanout={
@@ -1200,6 +1206,7 @@ class DistABLPLoaderTest(TestCase):
         _,
         partitioner_class: type[DistPartitioner],
         fanout: Union[list[int], dict[EdgeType, list[int]]],
+        local_csr_rows: bool = False,
     ):
         create_test_process_group()
         toy_heterogeneous_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -1233,6 +1240,7 @@ class DistABLPLoaderTest(TestCase):
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
             partitioner_class=partitioner_class,
+            local_csr_rows=local_csr_rows,
         )
 
         mp.spawn(

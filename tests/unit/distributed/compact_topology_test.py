@@ -5,6 +5,7 @@ own build rather than asserting hand-written expectations.
 """
 
 import weakref
+from multiprocessing.reduction import ForkingPickler
 from typing import Literal, Union
 from unittest import mock
 
@@ -16,7 +17,7 @@ from parameterized import param, parameterized
 from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
-from gigl.utils.csr import CompactTopology
+from gigl.utils.csr import CompactTopology, get_row_offset, to_local_rows
 from gigl.utils.data_splitters import _get_padded_labels
 from tests.test_assets.test_case import TestCase
 
@@ -38,10 +39,13 @@ def _random_coo(num_nodes: int, num_edges: int, seed: int) -> torch.Tensor:
 
 class CompactTopologyTest(TestCase):
     def test_it_has_exactly_the_attributes_of_a_real_topology(self) -> None:
-        """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed."""
+        """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed.
+
+        ``row_offset`` is the one field GiGL adds.
+        """
         coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
         self.assertEqual(
-            set(CompactTopology(coo, layout="CSR").__dict__),
+            set(CompactTopology(coo, layout="CSR").__dict__) - {"row_offset"},
             set(Topology(edge_index=coo, layout="CSR").__dict__),
         )
 
@@ -374,6 +378,105 @@ class InitializeGraphTest(TestCase):
         self.assertEqual(dataset.graph.topo.degrees.tolist(), [1] + [0] * 9)
 
 
+class LocalCsrRowsBuildTest(TestCase):
+    """``local_csr_rows`` stores a rank's rows from its range start, with that start as offset."""
+
+    _BOOK = RangePartitionBook(partition_ranges=[(0, 10), (10, 25)], partition_idx=1)
+
+    def _build(
+        self,
+        edge_index: torch.Tensor,
+        edge_dir: Literal["in", "out"],
+        node_partition_book: Union[torch.Tensor, RangePartitionBook],
+        edge_features_registered: bool = False,
+    ) -> DistDataset:
+        dataset = DistDataset(rank=1, world_size=2, edge_dir=edge_dir)
+        dataset._initialize_graph(
+            partitioned_edge_index={
+                _EDGE_TYPE: GraphPartitionData(edge_index=edge_index, edge_ids=None)
+            },
+            node_partition_book={
+                NodeType("user"): node_partition_book,
+                NodeType("item"): node_partition_book,
+            },
+            edge_features_registered=edge_features_registered,
+            local_csr_rows=True,
+        )
+        return dataset
+
+    @parameterized.expand(
+        [
+            # out compresses sources, in compresses destinations.
+            param("out", edge_dir="out", edge_index=[[10, 24, 12], [3, 0, 24]]),
+            param("in", edge_dir="in", edge_index=[[3, 0, 24], [10, 24, 12]]),
+        ]
+    )
+    def test_rows_start_at_the_range_start(
+        self, _name: str, edge_dir: Literal["in", "out"], edge_index: list[list[int]]
+    ) -> None:
+        coo = torch.tensor(edge_index)
+        dataset = self._build(coo.clone(), edge_dir, self._BOOK)
+
+        assert isinstance(dataset.graph, dict)
+        topology = dataset.graph[_EDGE_TYPE].topo
+        self.assertEqual(get_row_offset(topology), 10)
+        self.assertEqual(topology.indptr.numel(), 15 + 1)
+        row, col, _, _ = topology.to_coo()
+        self.assertEqual(
+            sorted(zip(row.tolist(), col.tolist())),
+            sorted(zip(coo[0].tolist(), coo[1].tolist())),
+        )
+
+    @parameterized.expand(
+        [
+            param("below_range_out", edge_dir="out", edge_index=[[9], [12]]),
+            param("past_range_out", edge_dir="out", edge_index=[[25], [12]]),
+            param("below_range_in", edge_dir="in", edge_index=[[12], [9]]),
+            param("past_range_in", edge_dir="in", edge_index=[[12], [25]]),
+        ]
+    )
+    def test_an_edge_outside_the_rank_range_raises(
+        self, _name: str, edge_dir: Literal["in", "out"], edge_index: list[list[int]]
+    ) -> None:
+        with self.assertRaises(ValueError):
+            self._build(torch.tensor(edge_index), edge_dir, self._BOOK)
+
+    def test_a_tensor_book_keeps_every_row(self) -> None:
+        dataset = self._build(torch.tensor([[3], [12]]), "out", torch.zeros(25))
+        assert isinstance(dataset.graph, dict)
+        topology = dataset.graph[_EDGE_TYPE].topo
+        self.assertEqual(get_row_offset(topology), 0)
+        self.assertEqual(topology.indptr.numel(), 25 + 1)
+
+    def test_the_glt_build_keeps_every_row(self) -> None:
+        dataset = self._build(
+            torch.tensor([[12], [3]]), "out", self._BOOK, edge_features_registered=True
+        )
+        assert isinstance(dataset.graph, dict)
+        self.assertEqual(get_row_offset(dataset.graph[_EDGE_TYPE].topo), 0)
+
+    def test_the_row_offset_survives_ipc(self) -> None:
+        dataset = self._build(torch.tensor([[12, 24], [3, 4]]), "out", self._BOOK)
+
+        assert isinstance(dataset.graph, dict)
+        graph = dataset.graph[_EDGE_TYPE]
+
+        # DistDataset.share_ipc hands each Graph to GLT's Graph reduction.
+        rebuilt = ForkingPickler.loads(ForkingPickler.dumps(graph))
+
+        self.assertEqual(get_row_offset(rebuilt.topo), 10)
+        self.assert_tensor_equality(rebuilt.topo.indptr, graph.topo.indptr)
+        self.assertEqual(rebuilt.row_count, 15)
+
+    def test_seeds_translate_to_local_rows(self) -> None:
+        self.assert_tensor_equality(
+            to_local_rows(
+                torch.tensor([3, 10, 17, 24, 25]), row_offset=10, num_rows=15
+            ),
+            torch.tensor([15, 0, 7, 14, 15]),
+        )
+
+
 class BuildReleasesEachCooTest(TestCase):
     def test_each_coo_is_freed_before_the_next_edge_type_is_built(self) -> None:
         """Through ``build()`` with an edge splitter, whose local once kept every COO alive."""
@@ -403,15 +506,12 @@ class BuildReleasesEachCooTest(TestCase):
 
         alive_at_each_build: list[set[EdgeType]] = []
 
-        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=True):
+        def recording_topology(edge_index, layout, num_rows, **kwargs):
             alive_at_each_build.append(
                 {edge_type for edge_type, ref in refs.items() if ref() is not None}
             )
             return CompactTopology(
-                edge_index,
-                layout=layout,
-                num_rows=num_rows,
-                retain_edge_ids=retain_edge_ids,
+                edge_index, layout=layout, num_rows=num_rows, **kwargs
             )
 
         class _EdgeSplitter:

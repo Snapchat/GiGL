@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Union
+from typing import Optional, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -10,6 +10,7 @@ from torch.testing import assert_close
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import DEFAULT_HOMOGENEOUS_EDGE_TYPE, to_heterogeneous_edge
+from gigl.utils.csr import CompactTopology
 from gigl.utils.data_splitters import (
     DistNodeAnchorLinkSplitter,
     DistNodeSplitter,
@@ -821,6 +822,60 @@ class TestDataSplitters(TestCase):
             max_labels_per_anchor_node=1,
         )
         self.assert_tensor_equality(labels, torch.tensor([[1], [2]], dtype=torch.int64))
+
+    @parameterized.expand(
+        [
+            # 3 is below the rank's range [5, 12); 11 is its last row, 12 and 15 are past it.
+            param(
+                "every_anchor_present",
+                anchors=[5, 3, 11, 7, 6],
+                allow_missing=False,
+                max_labels=None,
+            ),
+            param(
+                "missing_anchors",
+                anchors=[5, 12, 3, 11, 15, 7],
+                allow_missing=True,
+                max_labels=None,
+            ),
+            param(
+                "capped_labels",
+                anchors=[3, 5, 7, 11],
+                allow_missing=True,
+                max_labels=2,
+            ),
+        ]
+    )
+    def test_get_padded_labels_matches_on_local_rows(
+        self,
+        _name: str,
+        anchors: list[int],
+        allow_missing: bool,
+        max_labels: Optional[int],
+    ) -> None:
+        # Label edges of anchors 5 to 11; 8 has none.
+        coo = torch.tensor(
+            [[5, 5, 5, 6, 7, 7, 9, 10, 11], [20, 21, 22, 23, 24, 25, 26, 27, 28]]
+        )
+        full = CompactTopology(coo, layout="CSR", num_rows=12, row_start=5)
+        local = CompactTopology(
+            coo, layout="CSR", num_rows=12, row_start=5, local_rows=True
+        )
+        self.assertEqual(local.indptr.numel(), 8)
+
+        expected = _get_padded_labels(
+            torch.tensor(anchors),
+            full,
+            allow_non_existant_node_ids=allow_missing,
+            max_labels_per_anchor_node=max_labels,
+        )
+        labels = _get_padded_labels(
+            torch.tensor(anchors),
+            local,
+            allow_non_existant_node_ids=allow_missing,
+            max_labels_per_anchor_node=max_labels,
+        )
+        self.assert_tensor_equality(labels, expected)
 
     def test_get_max_labels_per_anchor_node_from_runtime_args(self):
         self.assertIsNone(get_max_labels_per_anchor_node_from_runtime_args({}))

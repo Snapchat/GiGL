@@ -69,6 +69,7 @@ def _load_and_build_partitioned_dataset(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
+    local_csr_rows: bool = False,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -96,6 +97,9 @@ def _load_and_build_partitioned_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
+        local_csr_rows (bool): Under range partitioning, store each rank's topology for only the
+            compressed ids it owns, with a row offset, instead of a full-length ``indptr`` padded
+            with empty rows. Saves 8 bytes per id below the rank's range per edge type.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -251,6 +255,7 @@ def _load_and_build_partitioned_dataset(
         partition_output=partition_output,
         splitter=splitter,
         retain_edge_ids=retain_edge_ids,
+        local_csr_rows=local_csr_rows,
     )
 
     return dataset
@@ -273,6 +278,7 @@ def _build_dataset_process(
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
+    local_csr_rows: bool = False,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -356,6 +362,7 @@ def _build_dataset_process(
         _ssl_positive_label_percentage=_ssl_positive_label_percentage,
         weight_edge_feat_name=weight_edge_feat_name,
         retain_edge_ids=retain_edge_ids,
+        local_csr_rows=local_csr_rows,
     )
 
     output_dict["dataset"] = output_dataset
@@ -383,6 +390,7 @@ def build_dataset(
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
     retain_edge_ids: bool = True,
+    local_csr_rows: bool = False,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -426,6 +434,9 @@ def build_dataset(
             Set this to ``False`` for graphs without edge features. GiGL loaders already
             sample them with ``with_edge=False``, so the retained IDs only cost memory.
             The default is ``True`` only for backwards compatibility.
+        local_csr_rows (bool): Under range partitioning, store each rank's topology for only the
+            compressed ids it owns, with a row offset, instead of a full-length ``indptr`` padded
+            with empty rows. Saves 8 bytes per id below the rank's range per edge type.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class
@@ -522,6 +533,7 @@ def build_dataset(
             _ssl_positive_label_percentage,
             weight_edge_feat_name,
             retain_edge_ids,
+            local_csr_rows,
         ),
     )
 
@@ -568,6 +580,8 @@ def build_dataset_from_task_config_uri(
       Set to False only when sampling with ``with_edge=False``.
       Set this to False for graphs without edge features. GiGL loaders already sample them
       with ``with_edge=False``. The default is True only for backwards compatibility.
+    - local_csr_rows (bool): Under range partitioning, store each rank's topology for only the
+      ids it owns, with a row offset, defaulting to False.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -660,6 +674,7 @@ def build_dataset_from_task_config_uri(
         args.get("should_load_tensors_in_parallel", "True")
     )
     retain_edge_ids = str_to_bool(args.get("retain_edge_ids", "True"))
+    local_csr_rows = str_to_bool(args.get("local_csr_rows", "False"))
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
@@ -672,6 +687,9 @@ def build_dataset_from_task_config_uri(
     )
     logger.info(
         f"Inferred 'retain_edge_ids' argument as : {retain_edge_ids} from argument path {args_path}. To override, please provide 'retain_edge_ids' flag."
+    )
+    logger.info(
+        f"Inferred 'local_csr_rows' argument as : {local_csr_rows} from argument path {args_path}. To override, please provide 'local_csr_rows' flag."
     )
 
     # We use a `SerializedGraphMetadata` object to store and organize information for loading serialized TFRecords from disk into memory.
@@ -701,6 +719,7 @@ def build_dataset_from_task_config_uri(
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,
+        local_csr_rows=local_csr_rows,
     )
     dataset.max_labels_per_anchor_node = max_labels_per_anchor_node
 
