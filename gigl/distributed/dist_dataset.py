@@ -872,6 +872,9 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(book, RangePartitionBook)
                 else get_total_ids(book)
             )
+            # Under range partitioning this rank only receives edges whose compressed node lies in
+            # [partition_bounds[rank - 1], partition_bounds[rank]), so rows below the range start
+            # are empty. Passing the start lets the CSR build skip them instead of scanning them.
             row_start = 0
             if isinstance(book, RangePartitionBook) and self._rank > 0:
                 row_start = int(book.partition_bounds[self._rank - 1])
