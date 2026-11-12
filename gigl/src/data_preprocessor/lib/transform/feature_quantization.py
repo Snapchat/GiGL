@@ -283,16 +283,20 @@ def _build_feature_matrix(
                 f"Quantization expects a value in every row, got {key} with "
                 f"{col.null_count} null rows."
             )
-        scalar_error = ValueError(
-            f"Quantization expects scalar features, got {key} with rows "
-            "that do not hold exactly one value."
-        )
-        try:
-            values = list_column_to_numpy(col, batch.num_rows)
-        except ValueError as error:
-            raise scalar_error from error
-        if values.shape[1] != 1:
-            raise scalar_error
+        # ``list_column_to_numpy`` checks only the total number of values, so check every row first.
+        if pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
+            row_lengths = col.value_lengths().to_numpy(zero_copy_only=False)
+            has_one_value_per_row = bool((row_lengths == 1).all())
+        elif pa.types.is_fixed_size_list(col.type):
+            has_one_value_per_row = col.type.list_size == 1
+        else:
+            has_one_value_per_row = True
+        if not has_one_value_per_row:
+            raise ValueError(
+                f"Quantization expects scalar features, got {key} with rows "
+                "that do not hold exactly one value."
+            )
+        values = list_column_to_numpy(col, batch.num_rows)
         cols.append(values.astype(np.float32, copy=False))
 
     feature_matrix = np.concatenate(cols, axis=1)

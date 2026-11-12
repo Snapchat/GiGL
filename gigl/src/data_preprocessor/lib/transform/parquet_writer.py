@@ -66,6 +66,7 @@ TARGET_BYTES_PER_PARQUET_FILE: Final[int] = 1_000_000_000
 
 
 def _fixed_size_list(values: np.ndarray) -> pa.Array:
+    """Returns a ``[num_rows, width]`` numpy array as a ``FixedSizeList`` array of ``num_rows`` rows."""
     return pa.FixedSizeListArray.from_arrays(
         pa.array(np.ascontiguousarray(values).reshape(-1)), values.shape[1]
     )
@@ -228,6 +229,7 @@ class _BufferedParquetWriter:
         self.uncompressed_bytes_written = 0
 
     def _open_writer(self, schema: pa.Schema) -> pq.ParquetWriter:
+        """Returns a Parquet writer for ``schema`` on the file handle."""
         return pq.ParquetWriter(
             self._file_handle,
             schema,

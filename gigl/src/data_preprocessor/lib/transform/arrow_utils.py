@@ -11,7 +11,8 @@ def list_column_to_numpy(column: pa.Array, num_rows: int) -> np.ndarray:
     the Arrow buffers whenever the value type allows it. A plain primitive column is returned as a width-1 matrix.
 
     The values are checked in total only: the number of values must divide evenly by ``num_rows``, but each row's
-    length is not checked. This is enough for TFT dense outputs, whose shapes are fixed.
+    length is not checked. This is enough for TFT dense outputs, whose shapes are fixed. Checking every row costs about
+    as much as the conversion itself for batches with hundreds of scalar columns.
 
     Example:
 
