@@ -3,7 +3,7 @@ from typing import Optional, Union, cast
 
 from parameterized import param, parameterized
 
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
