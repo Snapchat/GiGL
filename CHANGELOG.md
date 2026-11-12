@@ -78,6 +78,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `build_csr_from_coo` and `CompactTopology` take `row_start`, and the degree count, scatter and sort (including the
   disk-backed paths) skip the empty rows below it. The output, including the zero-prefixed `indptr` and edge ids, is
   identical to the full-range build by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
 
 ### Fixed
 
