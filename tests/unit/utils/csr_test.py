@@ -51,7 +51,9 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (50_000,), generator=generator).to(dtype)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        result = build_csr_from_coo(row, col, num_rows=num_rows, chunk_size=chunk_size)
+        result = build_csr_from_coo(
+            row, col, num_rows=num_rows, chunk_size=chunk_size, retain_edge_ids=True
+        )
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(
@@ -68,14 +70,14 @@ class BuildCsrFromCooTest(TestCase):
         row = torch.tensor([1, 0, 1, 0], dtype=torch.int64)
         col = torch.tensor([3, 5, 1, 2], dtype=torch.int64)
 
-        result = build_csr_from_coo(row, col, num_rows=2)
+        result = build_csr_from_coo(row, col, num_rows=2, retain_edge_ids=True)
 
         self.assertIsNotNone(result.edge_ids)
         torch.testing.assert_close(result.indptr, torch.tensor([0, 2, 4]))
         torch.testing.assert_close(result.indices, torch.tensor([2, 5, 1, 3]))
         torch.testing.assert_close(result.edge_ids, torch.tensor([3, 1, 2, 0]))
 
-        omitted = build_csr_from_coo(row, col, num_rows=2, retain_edge_ids=False)
+        omitted = build_csr_from_coo(row, col, num_rows=2)
         self.assertIsNone(omitted.edge_ids)
         torch.testing.assert_close(omitted.indptr, result.indptr)
         torch.testing.assert_close(omitted.indices, result.indices)
@@ -132,7 +134,9 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, 3, (10_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, 4)
-        result = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
+        result = build_csr_from_coo(
+            row, col, num_rows=4, chunk_size=333, retain_edge_ids=True
+        )
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
@@ -213,7 +217,7 @@ class BuildCsrFromCooTest(TestCase):
     def test_empty_input(self) -> None:
         empty = torch.empty(0, dtype=torch.int64)
 
-        result = build_csr_from_coo(empty, empty, num_rows=10)
+        result = build_csr_from_coo(empty, empty, num_rows=10, retain_edge_ids=True)
 
         self.assertEqual(result.indptr.numel(), 11)
         self.assertEqual(int(result.indptr.sum()), 0)
@@ -222,9 +226,7 @@ class BuildCsrFromCooTest(TestCase):
         edge_ids = result.edge_ids
         assert edge_ids is not None
         self.assertEqual(edge_ids.numel(), 0)
-        self.assertIsNone(
-            build_csr_from_coo(empty, empty, retain_edge_ids=False).edge_ids
-        )
+        self.assertIsNone(build_csr_from_coo(empty, empty).edge_ids)
 
     def test_row_id_beyond_num_rows_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -286,7 +288,12 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, 5, (500,), generator=generator)
         with mock.patch("gigl.utils.csr.is_disk_backed", return_value=True):
             result = build_csr_from_coo(
-                row, col, num_rows=num_rows, sort_block_edges=64, chunk_size=13
+                row,
+                col,
+                num_rows=num_rows,
+                sort_block_edges=64,
+                chunk_size=13,
+                retain_edge_ids=True,
             )
 
         assert result.edge_ids is not None
@@ -488,7 +495,7 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
             ),
         ):
-            topology = CompactTopology(coo, layout="CSR")
+            topology = CompactTopology(coo, layout="CSR", retain_edge_ids=True)
             edge_ids_ptr = topology.edge_ids.data_ptr()
             self.assertTrue(topology.edge_ids.is_shared())
             topology.share_memory_()
@@ -540,7 +547,9 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1024
             ),
         ):
-            result = build_csr_from_coo(row=row, col=col, num_rows=64, band_bytes=256)
+            result = build_csr_from_coo(
+                row=row, col=col, num_rows=64, band_bytes=256, retain_edge_ids=True
+            )
 
         self.assertTrue(is_disk_backed(result.indices))
         reference_indptr, reference_indices = _reference_csr(row, col, 64)
@@ -572,6 +581,7 @@ class ScatterPlacementTest(TestCase):
                 num_rows=8,
                 chunk_size=17,
                 band_bytes=128,
+                retain_edge_ids=True,
             )
 
         edge_ids = result.edge_ids

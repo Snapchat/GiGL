@@ -70,6 +70,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- `retain_edge_ids` now defaults to `False` in `build_dataset`, `DistDataset.build`, `CompactTopology`,
+  `build_csr_from_coo`, and the `build_dataset_from_task_config_uri` runtime args. The memory-lean graph build is used
+  only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
+  bytes per edge of implicit ids are no longer stored. Callers that need per-edge ids on such graphs must pass
+  `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/877
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
 - `build_csr_from_coo` (and so `CompactTopology` and `DistDataset`) starts the degree count, scatter and sort at the
   smallest row id present, skipping the empty rows below it, which speeds up a rank that owns a high id range under
   range partitioning. There is no API change, and the output, including the zero-prefixed `indptr` and edge ids, is
