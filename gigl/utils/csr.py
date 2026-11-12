@@ -258,8 +258,6 @@ def build_csr_from_coo(
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
     retain_edge_ids: bool = True,
-    *,
-    row_start: int,
 ) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
@@ -285,10 +283,6 @@ def build_csr_from_coo(
         retain_edge_ids (bool): Retain original COO positions in CSR order by default.
             The int64 IDs cost 8 bytes per edge. Set to ``False`` when callers do not
             sample edge IDs.
-        row_start (int): Smallest row id the edges may use. ``indptr`` keeps its full
-            ``num_rows + 1`` length, with rows below ``row_start`` empty, but the degree count,
-            scatter and sort only visit rows from ``row_start`` on. Lets a rank that owns the id
-            range ``[row_start, num_rows)`` skip the empty rows below it.
 
     Returns:
         CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
@@ -297,9 +291,8 @@ def build_csr_from_coo(
         ID tensor when retention is enabled and ``None`` otherwise.
 
     Raises:
-        ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range (including
-            below ``row_start``), ``row_start`` is negative or exceeds ``num_rows``, or the scatter
-            does not exactly fill every row.
+        ValueError: If ``row`` and ``col`` disagree in length, a row id is out of range, or the
+            scatter does not exactly fill every row.
     """
     if row.dim() != 1 or col.dim() != 1:
         raise ValueError(f"Expected 1-D row and col, got {row.shape} and {col.shape}")
@@ -310,17 +303,16 @@ def build_csr_from_coo(
     num_edges = row.numel()
     # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
     indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
-    if row_start < 0:
-        raise ValueError(f"row_start must be non-negative, got {row_start}")
-    if num_rows is not None and row_start > num_rows:
-        raise ValueError(f"row_start={row_start} exceeds num_rows={num_rows}")
+    # Every row below the smallest row id is empty, so the degree count, scatter and sort start
+    # at that row instead of scanning the empty rows below it (a rank that owns a high id range).
+    row_start = 0
     row_max = -1
     if num_edges:
         row_min_tensor, row_max_tensor = torch.aminmax(row)
-        row_min = int(row_min_tensor.item())
+        row_start = int(row_min_tensor.item())
         row_max = int(row_max_tensor.item())
-        if row_min < row_start:
-            raise ValueError(f"Row id {row_min} is below row_start={row_start}")
+        if row_start < 0:
+            raise ValueError(f"Row id {row_start} is negative")
     if num_rows is None:
         num_rows = row_max + 1
     elif row_max >= num_rows:
@@ -399,8 +391,6 @@ class CompactTopology(Topology):
         retain_edge_ids (bool): Retain COO-position IDs for edge sampling by default,
             at a cost of 8 bytes per edge. Use ``False`` only when callers sample
             without edge IDs.
-        row_start (int): Smallest compressed id the edges may use; see
-            :func:`build_csr_from_coo`.
     """
 
     def __init__(
@@ -410,7 +400,6 @@ class CompactTopology(Topology):
         num_rows: Optional[int] = None,
         *,
         retain_edge_ids: bool = True,
-        row_start: int,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
@@ -426,7 +415,6 @@ class CompactTopology(Topology):
             col=edge_index[other],
             num_rows=num_rows,
             retain_edge_ids=retain_edge_ids,
-            row_start=row_start,
         )
         self._indptr, self._indices, self._edge_ids = (
             csr.indptr,
