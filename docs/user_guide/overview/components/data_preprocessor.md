@@ -42,7 +42,7 @@ The Data Preprocessor undertakes the following actions
   for each feature-set, and other metadata to GCS.
 
 The output format is chosen with the `data_preprocessor_output_format` feature flag in the task config, which defaults
-to `parquet`; set it to `tfrecord` to write TFRecords instead. Parquet files are split by size (about 200 MB of
+to `parquet`; set it to `tfrecord` to write TFRecords instead. Parquet files are split by size (about 1 GB of
 uncompressed data each) unless `data_preprocessor_num_shards` fixes the file count.
 
 ## How do I run it?

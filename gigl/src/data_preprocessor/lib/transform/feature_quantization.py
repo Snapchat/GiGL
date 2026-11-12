@@ -12,6 +12,7 @@ from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
+from gigl.src.data_preprocessor.lib.transform.arrow_utils import list_column_to_numpy
 from gigl.src.data_preprocessor.lib.types import FeatureQuantizationSpec
 
 logger = Logger()
@@ -277,34 +278,24 @@ def _build_feature_matrix(
             raise ValueError(f"Feature key {key} not found in RecordBatch.")
 
         col = batch.column(key_to_idx[key])
-        if (
-            pa.types.is_list(col.type)
-            or pa.types.is_large_list(col.type)
-            or pa.types.is_fixed_size_list(col.type)
-        ):
-            # TFT emits scalar features as list columns holding one value per
-            # row. NumPy 2.4+ refuses to cast the object array of 1-element
-            # arrays that to_numpy() returns for them, so unwrap to the values.
-            if col.null_count:
-                raise ValueError(
-                    f"Quantization expects a value in every row, got {key} with "
-                    f"{col.null_count} null rows."
-                )
-            lengths = col.value_lengths().to_numpy(zero_copy_only=False)
-            if not (lengths == 1).all():
-                raise ValueError(
-                    f"Quantization expects scalar features, got {key} with rows "
-                    "that do not hold exactly one value."
-                )
-            col = col.flatten()
-        values = np.asarray(col.to_numpy(zero_copy_only=False), dtype=np.float32)
-        if values.ndim != 1:
+        if col.null_count:
             raise ValueError(
-                f"Quantization expects scalar features, got {key} with shape {values.shape}."
+                f"Quantization expects a value in every row, got {key} with "
+                f"{col.null_count} null rows."
             )
-        cols.append(values)
+        scalar_error = ValueError(
+            f"Quantization expects scalar features, got {key} with rows "
+            "that do not hold exactly one value."
+        )
+        try:
+            values = list_column_to_numpy(col, batch.num_rows)
+        except ValueError as error:
+            raise scalar_error from error
+        if values.shape[1] != 1:
+            raise scalar_error
+        cols.append(values.astype(np.float32, copy=False))
 
-    feature_matrix = np.stack(cols, axis=1)
+    feature_matrix = np.concatenate(cols, axis=1)
     if not np.isfinite(feature_matrix).all():
         raise ValueError("Feature quantization expects finite feature values.")
     return feature_matrix

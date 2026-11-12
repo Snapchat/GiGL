@@ -25,6 +25,7 @@ from gigl.common.data.parquet_manifest import MANIFEST_FILE_NAME, write_manifest
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.src.data_preprocessor.lib.transform import parquet_writer
 from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
+    RecordBatchToDenseArrowTable,
     WriteDenseParquet,
 )
 from tests.test_assets.test_case import TestCase
@@ -370,3 +371,61 @@ class ParquetWriterRoundTripTest(TestCase):
             self.assertGreater(len(paths), 1)
             total_rows = sum(pq.ParquetFile(path).metadata.num_rows for path in paths)
             self.assertEqual(total_rows, 100)
+
+
+class RecordBatchToDenseArrowTableTest(TestCase):
+    def _converter(self) -> RecordBatchToDenseArrowTable:
+        return RecordBatchToDenseArrowTable(
+            id_keys=["node_id"],
+            id_columns=["node_id"],
+            feature_keys=["scalar", "vector"],
+            label_keys=["label"],
+            packed_feature_key="packed",
+            packed_feature_dim=2,
+        )
+
+    def _batch(self, list_type_factory: type) -> pa.RecordBatch:
+        def column(rows: list[list[object]], value_type: pa.DataType) -> pa.Array:
+            return pa.array(rows, type=list_type_factory(value_type))
+
+        return pa.RecordBatch.from_pydict(
+            {
+                "node_id": column([[10], [11], [12], [13]], pa.int64()),
+                "scalar": column([[1], [2], [3], [4]], pa.int64()),
+                "vector": column(
+                    [[0.5, 1.5], [2.5, 3.5], [4.5, 5.5], [6.5, 7.5]], pa.float32()
+                ),
+                "label": column([[0], [1], [0], [1]], pa.int64()),
+                "packed": column([[b"ab"], [b"cd"], [b"ef"], [b"gh"]], pa.binary()),
+            }
+        )
+
+    def test_sliced_batch_converts_only_its_rows(self) -> None:
+        for list_type_factory in (pa.list_, pa.large_list):
+            batch = self._batch(list_type_factory).slice(1, 2)
+
+            table = next(self._converter().process(batch))
+
+            self.assertEqual(table["node_id"].to_pylist(), [11, 12])
+            self.assertEqual(
+                table["features"].to_pylist(), [[2.0, 2.5, 3.5], [3.0, 4.5, 5.5]]
+            )
+            self.assertEqual(table["label"].to_pylist(), [1.0, 0.0])
+            self.assertEqual(table["packed"].to_pylist(), [b"cd", b"ef"])
+
+    def test_null_feature_rows_raise(self) -> None:
+        batch = pa.RecordBatch.from_pydict(
+            {
+                "node_id": pa.array([[1], [2]], type=pa.list_(pa.int64())),
+                "scalar": pa.array([[1], None], type=pa.list_(pa.int64())),
+            }
+        )
+        converter = RecordBatchToDenseArrowTable(
+            id_keys=["node_id"],
+            id_columns=["node_id"],
+            feature_keys=["scalar"],
+            label_keys=[],
+        )
+
+        with self.assertRaises(ValueError):
+            next(converter.process(batch))
