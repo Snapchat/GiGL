@@ -11,7 +11,7 @@ from typing import Any, Literal
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
-from graphlearn_torch.data import Graph
+from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.distributed import (
     barrier,
     init_rpc,
@@ -25,6 +25,7 @@ from parameterized import param, parameterized
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     _GlobalIdNeighborSampler,
+    _stores_only_owned_rows,
 )
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
@@ -202,34 +203,69 @@ class RangePartitionedSamplingTest(TestCase):
         self.assertEqual(every_row[0]["degrees"]["user"][27:], [0, 0, 0])
 
 
-class RowOffsetNeighborSamplerTest(TestCase):
-    """``_GlobalIdNeighborSampler`` on a topology that stores ids 7 to 9 as rows 0 to 2."""
+class GlobalIdNeighborSamplerTest(TestCase):
+    """``_GlobalIdNeighborSampler`` on topologies with and without a row offset."""
 
-    def _sampler(self, with_neg: bool) -> _GlobalIdNeighborSampler:
-        topology = CompactTopology(
-            torch.tensor([[0, 1], [0, 1]]), layout="CSR", num_rows=3, row_offset=7
-        )
+    def _sampler(
+        self, topology: Topology, stores_only_owned_rows: bool, with_neg: bool = False
+    ) -> _GlobalIdNeighborSampler:
         return _GlobalIdNeighborSampler(
             Graph(topology, "CPU", None),
             [-1],
             device=torch.device("cpu"),
             with_neg=with_neg,
+            stores_only_owned_rows=stores_only_owned_rows,
         )
 
-    def test_sampling_takes_global_ids(self) -> None:
-        output = self._sampler(with_neg=False).sample_one_hop(
+    def test_sampling_takes_global_ids_on_a_row_offset(self) -> None:
+        """Ids 7 to 9 are stored as rows 0 to 2."""
+        topology = CompactTopology(
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", num_rows=3, row_offset=7
+        )
+        output = self._sampler(topology, stores_only_owned_rows=True).sample_one_hop(
             torch.tensor([0, 7, 8, 9, 10]), -1
         )
         self.assertEqual(output.nbr.tolist(), [0, 1])
         self.assertEqual(output.nbr_num.tolist(), [0, 1, 1, 0, 0])
 
-    def test_negative_sampling_raises(self) -> None:
-        with self.assertRaises(ValueError):
-            self._sampler(with_neg=True).lazy_init_neg_sampler()
+    def test_glt_topology_samples_as_glt_does(self) -> None:
+        """GLT's own build has no row offset; ids past its last row get no neighbors."""
+        topology = Topology(edge_index=torch.tensor([[0, 1, 1], [2, 0, 2]]))
+        seeds = torch.tensor([1, 0, 5])
+        output = self._sampler(topology, stores_only_owned_rows=False).sample_one_hop(
+            seeds, -1
+        )
+        self.assertEqual(output.nbr.tolist(), [0, 2, 2])
+        self.assertEqual(output.nbr_num.tolist(), [2, 1, 0])
 
-    def test_subgraph_extraction_raises(self) -> None:
+    def test_negative_sampling_raises_when_only_owned_rows_are_stored(self) -> None:
+        topology = CompactTopology(
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", row_offset=0
+        )
         with self.assertRaises(ValueError):
-            self._sampler(with_neg=False).subgraph_op
+            self._sampler(
+                topology, stores_only_owned_rows=True, with_neg=True
+            ).lazy_init_neg_sampler()
+
+    def test_subgraph_extraction_raises_when_only_owned_rows_are_stored(self) -> None:
+        topology = CompactTopology(
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", row_offset=0
+        )
+        with self.assertRaises(ValueError):
+            self._sampler(topology, stores_only_owned_rows=True).subgraph_op
+
+    @parameterized.expand(
+        [
+            param("range_rank_0", rank=0, range_partitioned=True, expected=True),
+            param("range_rank_1", rank=1, range_partitioned=True, expected=True),
+            param("tensor_rank_1", rank=1, range_partitioned=False, expected=False),
+        ]
+    )
+    def test_every_rank_of_a_range_partitioned_build_stores_only_owned_rows(
+        self, _name: str, rank: int, range_partitioned: bool, expected: bool
+    ) -> None:
+        dataset = _partition_dataset(rank, "out", range_partitioned)
+        self.assertEqual(_stores_only_owned_rows(dataset), expected)
 
 
 if __name__ == "__main__":

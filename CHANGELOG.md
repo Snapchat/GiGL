@@ -83,6 +83,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   smallest row id present, skipping the empty rows below it, which speeds up a rank that owns a high id range under
   range partitioning. There is no API change, and the output, including the zero-prefixed `indptr` and edge ids, is
   identical to a build from row 0 by @kmontemayor2-sc
+- Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
+  longer grows with rank id. `CompactTopology` takes a required `row_offset`, the global id of its first row. GiGL's
+  distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo` add the
+  offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with GLT's
+  `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
 
 ### Fixed
 

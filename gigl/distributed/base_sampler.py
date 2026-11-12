@@ -25,6 +25,7 @@ from graphlearn_torch.distributed.rpc import (
     rpc_register,
     rpc_sync_data_partitions,
 )
+from graphlearn_torch.partition import RangePartitionBook
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -56,7 +57,7 @@ from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
 )
-from gigl.utils.csr import get_row_offset, to_local_rows
+from gigl.utils.csr import CompactTopology, get_row_offset, to_local_rows
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
@@ -120,24 +121,57 @@ class SampleLoopInputs:
     metadata: dict[str, torch.Tensor]
 
 
-def _has_row_offset(graph: Union[Graph, dict[EdgeType, Graph]]) -> bool:
-    """Whether any topology of ``graph`` stores its rows from a row offset above 0."""
-    graphs = graph.values() if isinstance(graph, dict) else [graph]
-    return any(get_row_offset(edge_graph.topo) > 0 for edge_graph in graphs)
+def _stores_only_owned_rows(data: DistDataset) -> bool:
+    """Whether ``data`` was built with each rank's topology holding only the rows it owns.
+
+    GiGL's compact build (:class:`gigl.utils.csr.CompactTopology`) under a range partition book
+    stores rows from the rank's range start, as recorded in ``row_offset``.
+    This holds on every rank, including rank 0, whose offset is 0, so all ranks agree.
+    Graphs that fall back to GLT's build, and tensor partition books, keep a row per id.
+
+    Args:
+        data: The dataset the sampler reads.
+
+    Returns:
+        bool: Whether the topologies store only the owned rows.
+    """
+    if isinstance(data.node_pb, dict):
+        books = list(data.node_pb.values())
+    else:
+        books = [data.node_pb]
+    graphs: list[Graph]
+    if isinstance(data.graph, dict):
+        graphs = list(data.graph.values())
+    else:
+        graphs = [data.graph]
+    range_partitioned = any(isinstance(book, RangePartitionBook) for book in books)
+    compact = any(isinstance(graph.topo, CompactTopology) for graph in graphs)
+    return range_partitioned and compact
 
 
 class _GlobalIdNeighborSampler(NeighborSampler):
-    """GLT's ``NeighborSampler``, taking global seed ids on topologies that have a row offset.
+    """GLT's ``NeighborSampler``, taking global seed ids.
 
     Under range partitioning a rank's topology stores rows only for the ids the rank owns (see
     ``row_offset`` of :class:`gigl.utils.csr.CompactTopology`), but GLT's kernels index ``indptr``
     by the seed id.
-    ``sample_one_hop`` translates seeds to local rows first.
+    ``sample_one_hop`` translates seeds to local rows first, on every topology: with a row offset
+    of 0 the translation only maps ids past the last row to the row count.
     Neighbor ids and edge ids are stored as global ids, so the output needs no translation.
 
     Negative sampling and subgraph extraction read ``indptr`` without ``sample_one_hop``, so they
-    raise on a topology with a row offset.
+    raise when the topologies store only the owned rows.
+
+    Args:
+        *args: Positional arguments of GLT's ``NeighborSampler``.
+        stores_only_owned_rows: Whether the topologies store only the rows the rank owns, as
+            :func:`_stores_only_owned_rows` returns.
+        **kwargs: Keyword arguments of GLT's ``NeighborSampler``.
     """
+
+    def __init__(self, *args, stores_only_owned_rows: bool, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._stores_only_owned_rows = stores_only_owned_rows
 
     def sample_one_hop(
         self,
@@ -156,20 +190,20 @@ class _GlobalIdNeighborSampler(NeighborSampler):
             NeighborOutput: The sampled neighbors, as GLT's ``sample_one_hop`` returns them.
         """
         graph = self.graph if etype is None else self.graph[etype]
-        row_offset = get_row_offset(graph.topo)
-        if row_offset > 0:
-            input_seeds = to_local_rows(input_seeds, row_offset, graph.topo.row_count)
-        return super().sample_one_hop(input_seeds, req_num, etype)
+        local_seeds = to_local_rows(
+            input_seeds, get_row_offset(graph.topo), graph.topo.row_count
+        )
+        return super().sample_one_hop(local_seeds, req_num, etype)
 
     def lazy_init_neg_sampler(self) -> None:
         """Build GLT's negative sampler when negative sampling is on.
 
         Raises:
-            ValueError: If negative sampling is on and a topology has a row offset.
+            ValueError: If negative sampling is on and the topologies store only the owned rows.
         """
-        if self.with_neg and _has_row_offset(self.graph):
+        if self.with_neg and self._stores_only_owned_rows:
             raise ValueError(
-                "Negative sampling is not supported on a topology with a row offset"
+                "Negative sampling is not supported on a range-partitioned compact topology"
             )
         super().lazy_init_neg_sampler()
 
@@ -177,11 +211,11 @@ class _GlobalIdNeighborSampler(NeighborSampler):
         """Build GLT's subgraph operator.
 
         Raises:
-            ValueError: If a topology has a row offset.
+            ValueError: If the topologies store only the owned rows.
         """
-        if _has_row_offset(self.graph):
+        if self._stores_only_owned_rows:
             raise ValueError(
-                "Subgraph extraction is not supported on a topology with a row offset"
+                "Subgraph extraction is not supported on a range-partitioned compact topology"
             )
         super().lazy_init_subgraph_op()
 
@@ -393,6 +427,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             self.with_weight,
             self.edge_dir,
             seed=self.seed,
+            stores_only_owned_rows=_stores_only_owned_rows(data),
         )
         self.inducer_pool = queue.Queue(maxsize=self.concurrency)
 
