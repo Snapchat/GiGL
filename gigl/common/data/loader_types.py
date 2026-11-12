@@ -23,7 +23,8 @@ class LoadedEntityTensors(NamedTuple):
 class SerializedTFRecordInfo:
     """
     Stores information pertaining to how a single entity (node, edge, positive label, negative label) and single node/edge type in the heterogeneous case is serialized on disk.
-    This field is used as input to the TFRecordDataLoader.load_as_torch_tensor() function for loading torch tensors.
+    This field is used as input to TFRecordDataLoader.load_as_torch_tensors() or, when parquet_uri_prefix is set,
+    ParquetDataLoader.load_as_torch_tensors() for loading torch tensors.
     """
 
     # Uri Prefix for stored TfRecords

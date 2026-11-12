@@ -226,9 +226,11 @@ class ParquetDataLoader:
     their own rows.
 
     Row counts come from the manifest written next to the files (see ``gigl.common.data.parquet_manifest``) when it
-    matches the files found, and from the file footers otherwise. Outputs are allocated once from them, in shared memory (or spilled to disk, see
-    ``gigl.utils.share_memory.allocate_preshared``), and filled by a thread pool. No intermediate batches are kept and the
-    outputs need no later copy into shared memory.
+    matches the files found, and from the file footers otherwise.
+
+    Outputs are allocated once from those counts, in shared memory (or spilled to disk, see
+    ``gigl.utils.share_memory.allocate_preshared``), and filled by a thread pool. No intermediate batches are kept and
+    the outputs need no later copy into shared memory.
 
     Args:
         rank (int): Rank of the current machine.
