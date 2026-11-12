@@ -36,7 +36,7 @@ class TransformedFeaturesInfo:
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
     custom_identifier: Optional[str] = None
-    output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.TFRECORD
+    output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.PARQUET
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class TransformedFeaturesInfo:
         entity_type: Union[NodeType, EdgeType],
         custom_identifier: str = "",
         feature_quantization_enabled: bool = False,
-        output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.TFRECORD,
+        output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.PARQUET,
     ) -> None:
         self.output_format = output_format
         self.feature_type = feature_type
