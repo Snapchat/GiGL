@@ -647,7 +647,6 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
@@ -878,7 +877,6 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
@@ -968,7 +966,6 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
