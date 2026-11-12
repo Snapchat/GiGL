@@ -58,10 +58,10 @@ def filesystem_and_path(uri: Uri) -> tuple[pafs.FileSystem, str]:
     is resolved by pyarrow.
 
     Args:
-        uri: The location of the directory or file.
+        uri (Uri): The location of the directory or file.
 
     Returns:
-        The filesystem and the scheme-less path within it, such as ``my-bucket/my_job/parquet/``.
+        tuple[pafs.FileSystem, str]: The filesystem and the scheme-less path within it, such as ``my-bucket/my_job/parquet/``.
     """
     if isinstance(uri, GcsUri):
         fs = pafs.GcsFileSystem(retry_time_limit=GCS_RETRY_TIME_LIMIT)
@@ -73,11 +73,11 @@ def list_parquet_files(fs: pafs.FileSystem, path: str) -> list[str]:
     """Returns the sorted paths of the Parquet data files directly under ``path``.
 
     Args:
-        fs: The filesystem that holds ``path``.
-        path: The scheme-less directory path within ``fs``.
+        fs (pafs.FileSystem): The filesystem that holds ``path``.
+        path (str): The scheme-less directory path within ``fs``.
 
     Returns:
-        The sorted full paths of the files that end in ``.parquet``. The manifest itself is not included.
+        list[str]: The sorted full paths of the files that end in ``.parquet``. The manifest itself is not included.
     """
     selector = pafs.FileSelector(path.rstrip("/"), recursive=False)
     infos = fs.get_file_info(selector)
@@ -92,10 +92,10 @@ def manifest_path(path: str) -> str:
     """Returns the path of the manifest in the directory ``path``.
 
     Args:
-        path: The scheme-less directory path, with or without a trailing slash.
+        path (str): The scheme-less directory path, with or without a trailing slash.
 
     Returns:
-        ``path`` joined with the manifest file name.
+        str: ``path`` joined with the manifest file name.
     """
     return path.rstrip("/") + "/" + MANIFEST_FILE_NAME
 
@@ -106,12 +106,12 @@ def read_manifest_row_groups(
     """Returns the row-group row counts of ``files`` (as listed under ``path``) from the manifest under ``path``.
 
     Args:
-        fs: The filesystem that holds ``path``.
-        path: The scheme-less directory path within ``fs``.
-        files: The data file paths listed under ``path``, as returned by ``list_parquet_files``.
+        fs (pafs.FileSystem): The filesystem that holds ``path``.
+        path (str): The scheme-less directory path within ``fs``.
+        files (list[str]): The data file paths listed under ``path``, as returned by ``list_parquet_files``.
 
     Returns:
-        One list of row-group row counts per entry of ``files``, in the same order.
+        list[list[int]]: One list of row-group row counts per entry of ``files``, in the same order.
 
     Raises:
         FileNotFoundError: If there is no manifest.
@@ -167,11 +167,11 @@ def build_manifest(
     """Builds the manifest of the Parquet files under ``uri_prefix`` by reading each footer once.
 
     Args:
-        uri_prefix: The directory that holds the Parquet files.
-        num_threads: The number of threads that read footers in parallel.
+        uri_prefix (Uri): The directory that holds the Parquet files.
+        num_threads (int): The number of threads that read footers in parallel.
 
     Returns:
-        The manifest, with the keys ``version`` and ``files``.
+        dict[str, Any]: The manifest, with the keys ``version`` and ``files``.
     """
     fs, path = filesystem_and_path(uri_prefix)
     files = list_parquet_files(fs, path)
@@ -187,11 +187,11 @@ def write_manifest(
     """Builds the manifest of the Parquet files under ``uri_prefix`` and writes it there.
 
     Args:
-        uri_prefix: The directory that holds the Parquet files.
-        num_threads: The number of threads that read footers in parallel.
+        uri_prefix (Uri): The directory that holds the Parquet files.
+        num_threads (int): The number of threads that read footers in parallel.
 
     Returns:
-        The manifest that was written.
+        dict[str, Any]: The manifest that was written.
     """
     manifest = build_manifest(uri_prefix, num_threads)
     fs, path = filesystem_and_path(uri_prefix)
