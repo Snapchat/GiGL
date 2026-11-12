@@ -7,7 +7,7 @@ from typing import Literal, Optional, TypeVar, Union, overload
 import torch
 from graphlearn_torch.partition import PartitionBook
 
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 

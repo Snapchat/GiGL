@@ -8,11 +8,7 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
 from torch.multiprocessing import Manager
 
-from gigl.common.data.dataloaders import (
-    SerializedTFRecordInfo,
-    TFDatasetOptions,
-    TFRecordDataLoader,
-)
+from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (
@@ -257,7 +253,7 @@ def remove_sampling_weight_from_edge_quantization_metadata(
 
 
 def _data_loading_process(
-    tf_record_dataloader: TFRecordDataLoader,
+    world_size: int,
     output_dict: MutableMapping[
         str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
     ],
@@ -277,7 +273,7 @@ def _data_loading_process(
     the error_dict "error" field, since exceptions for spawned processes won't properly be raised to the parent process.
 
     Args:
-        tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
+        world_size (int): Number of machines; each rank loads its share of the files
         output_dict (MutableMapping[str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]]):
             Dictionary initialized by mp.Manager().dict() in which outputs of tensor loading will be written to
         error_dict (MutableMapping[str, str]): Dictionary initialized by mp.Manager().dict() in which error of errors in current process will be written to
@@ -334,7 +330,12 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
-            loaded_entity = tf_record_dataloader.load_as_torch_tensors(
+            # Imported here so that this module does not import TensorFlow.
+            from gigl.common.data.tf_record_loader import TFRecordDataLoader
+
+            loaded_entity = TFRecordDataLoader(
+                rank=rank, world_size=world_size
+            ).load_as_torch_tensors(
                 serialized_tf_record_info=serialized_entity_tf_record_info,
                 tf_dataset_options=tf_dataset_options,
             )
@@ -493,7 +494,7 @@ def _data_loading_process(
 
 
 def load_torch_tensors_from_tf_record(
-    tf_record_dataloader: TFRecordDataLoader,
+    world_size: int,
     serialized_graph_metadata: SerializedGraphMetadata,
     should_load_tensors_in_parallel: bool,
     rank: int = 0,
@@ -509,7 +510,7 @@ def load_torch_tensors_from_tf_record(
     the `should_load_tensors_in_parallel` to allow some customization for loading strategies based on the input data.
 
     Args:
-        tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
+        world_size (int): Number of machines; each rank loads its share of the files
         serialized_graph_metadata (SerializedGraphMetadata): Serialized graph metadata contained serialized information for loading tfrecords across node and edge types
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         rank (int): Rank on current machine
@@ -551,7 +552,7 @@ def load_torch_tensors_from_tf_record(
     node_data_loading_process = ctx.Process(
         target=_data_loading_process,
         kwargs={
-            "tf_record_dataloader": tf_record_dataloader,
+            "world_size": world_size,
             "output_dict": node_output_dict,
             "error_dict": error_dict,
             "entity_type": _NODE_KEY,
@@ -564,7 +565,7 @@ def load_torch_tensors_from_tf_record(
     edge_data_loading_process = ctx.Process(
         target=_data_loading_process,
         kwargs={
-            "tf_record_dataloader": tf_record_dataloader,
+            "world_size": world_size,
             "output_dict": edge_output_dict,
             "error_dict": error_dict,
             "entity_type": _EDGE_KEY,
@@ -579,7 +580,7 @@ def load_torch_tensors_from_tf_record(
         positive_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
             kwargs={
-                "tf_record_dataloader": tf_record_dataloader,
+                "world_size": world_size,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
                 "entity_type": _POSITIVE_LABEL_KEY,
@@ -594,7 +595,7 @@ def load_torch_tensors_from_tf_record(
         negative_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
             kwargs={
-                "tf_record_dataloader": tf_record_dataloader,
+                "world_size": world_size,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
                 "entity_type": _NEGATIVE_LABEL_KEY,
