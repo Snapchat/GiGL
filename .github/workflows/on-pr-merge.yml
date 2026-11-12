@@ -120,9 +120,19 @@ jobs:
     - name: Run E2E Tests
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make run_all_e2e_tests"
+        # The merge queue fails fast: the first failed pipeline cancels the rest to free capacity.
+        # GITHUB_RUN_ID labels the pipeline runs so the cancel step below can find them.
+        cmd: "make run_all_e2e_tests GITHUB_RUN_ID=${{ github.run_id }} E2E_FAIL_FAST=1"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
 # TODO(kmonte): Re-enable this once the tests are fixed.
   # ci-integration-example-notebooks-test:
