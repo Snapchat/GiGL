@@ -1,4 +1,7 @@
 import io
+import os
+import re
+import resource
 import subprocess
 import sys
 import tempfile
@@ -30,6 +33,7 @@ from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict
 from tests.test_assets.test_case import TestCase
 
+_FD_SETSIZE = 1024
 _NUM_NODES = 53
 _FEATURE_DIM = 3
 # Files with different numbers of row groups of different sizes, 53 rows in total.
@@ -398,6 +402,43 @@ class ParquetDataLoaderTest(TestCase):
         assert isinstance(loaded.edge_index, torch.Tensor)
         self.assertEqual(loaded.node_features.shape, (_NUM_NODES - 26, _FEATURE_DIM))
         self.assertTrue(loaded.edge_index.is_shared())
+
+    def test_load_torch_tensors_from_tf_record_reads_parquet_with_high_fd_numbers(
+        self,
+    ) -> None:
+        metadata, edge_index = self._write_local_graph()
+        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard_limit, 4096), hard_limit))
+        held_fds: list[int] = []
+        log_path = self.root / "child.log"
+        saved_stdout = os.dup(1)
+        saved_stderr = os.dup(2)
+        log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT)
+        try:
+            for _ in range(_FD_SETSIZE + 100):
+                held_fds.append(os.open(os.devnull, os.O_RDONLY))
+            # Spawned children inherit the redirected stdout and stderr, which carry their log lines.
+            os.dup2(log_fd, 1)
+            os.dup2(log_fd, 2)
+            loaded = load_torch_tensors_from_tf_record(
+                world_size=1,
+                serialized_graph_metadata=metadata,
+                should_load_tensors_in_parallel=True,
+                rank=0,
+            )
+        finally:
+            os.dup2(saved_stdout, 1)
+            os.dup2(saved_stderr, 2)
+            for fd in [saved_stdout, saved_stderr, log_fd, *held_fds]:
+                os.close(fd)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft_limit, hard_limit))
+
+        assert_close(loaded.node_ids, torch.from_numpy(self.data["node_id"]))
+        assert_close(loaded.edge_index, torch.from_numpy(edge_index))
+        fd_counts = re.findall(r"fd_count=(\d+)", log_path.read_text())
+        self.assertNotEqual(fd_counts, [])
+        for fd_count in fd_counts:
+            self.assertLess(int(fd_count), _FD_SETSIZE)
 
 
 class _FailingReadsFile(io.RawIOBase):
@@ -779,6 +820,8 @@ class ParquetRowCountManifestTest(TestCase):
 
 _PARQUET_ONLY_SCRIPT = """
 import os
+import re
+import resource
 import sys
 
 import numpy as np
