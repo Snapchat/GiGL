@@ -62,7 +62,7 @@ Example:
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Final, Optional
+from typing import Final, NamedTuple, Optional
 
 import torch
 from jaxtyping import Float, Float32, Shaped, UInt8
@@ -120,6 +120,20 @@ def narrowest_integer_encoding(low: int, high: int) -> Optional[str]:
     return None
 
 
+class _ColumnRun(NamedTuple):
+    """Columns that are next to each other both in the original matrix and in their group.
+
+    Decode copies a run as one slice, not one column at a time.
+    """
+
+    # Original column index of the first column of the run.
+    first_column: int
+    # Position of that column within its group.
+    first_position: int
+    # Number of columns in the run.
+    length: int
+
+
 @dataclass(frozen=True)
 class _Group:
     encoding: str
@@ -127,9 +141,7 @@ class _Group:
     bias: int
     byte_offset: int
     columns: tuple[int, ...]
-    # (first original column, first column within the group, length) of each maximal run of
-    # columns that are consecutive both in the original matrix and in the group.
-    runs: tuple[tuple[int, int, int], ...]
+    runs: tuple[_ColumnRun, ...]
 
     @property
     def num_bytes(self) -> int:
@@ -170,12 +182,20 @@ class FeatureCodec:
             if not columns:
                 continue
             encoding_spec = _ENCODINGS[encoding]
-            runs: list[tuple[int, int, int]] = []
+            # Split the group's columns into runs. Positions within a group always go up by one, so a column
+            # extends the last run if it comes right after that run's last original column.
+            # For example, group columns (2, 3, 4, 7) give two runs: original columns 2-4 at group
+            # positions 0-2, and original column 7 at group position 3.
+            runs: list[_ColumnRun] = []
             for position, column in enumerate(columns):
-                if runs and runs[-1][0] + runs[-1][2] == column:
-                    runs[-1] = (runs[-1][0], runs[-1][1], runs[-1][2] + 1)
+                if runs and runs[-1].first_column + runs[-1].length == column:
+                    runs[-1] = runs[-1]._replace(length=runs[-1].length + 1)
                 else:
-                    runs.append((column, position, 1))
+                    runs.append(
+                        _ColumnRun(
+                            first_column=column, first_position=position, length=1
+                        )
+                    )
             group = _Group(
                 encoding,
                 encoding_spec.dtype,
