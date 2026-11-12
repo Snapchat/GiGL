@@ -14,6 +14,11 @@ from tfx_bsl.public import tfxio
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
+from gigl.common.data.parquet_format import (
+    EDGE_DST_COLUMN,
+    EDGE_SRC_COLUMN,
+    NODE_ID_COLUMN,
+)
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
@@ -30,12 +35,7 @@ from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
     NODE_PACKED_FEATURE_KEY,
     apply_feature_quantization_transform,
 )
-from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
-    EDGE_DST_COLUMN,
-    EDGE_SRC_COLUMN,
-    NODE_ID_COLUMN,
-    WriteDenseParquet,
-)
+from gigl.src.data_preprocessor.lib.transform.parquet_writer import WriteDenseParquet
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,

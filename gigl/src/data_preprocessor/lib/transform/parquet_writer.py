@@ -1,18 +1,11 @@
 """Writes TFT output record batches as dense Parquet files.
 
-Nodes are stored as ``node_id`` plus an optional ``features`` column, edges as ``src`` and ``dst`` plus an optional
-``features`` column. ``features`` is a ``FixedSizeList<float32>`` whose slots follow ``feature_keys`` order, with every
-feature cast to float32 and vectors flattened, matching the tensors the TFRecord loader builds. Each label key is its own
-column (float32 for scalar labels, ``FixedSizeList<float32>`` for vector labels). Quantized features are stored as one
-``FixedSizeBinary`` column of packed bytes per row, named after the packed feature key recorded in the quantization
-metadata.
+The column layout and file naming are described in ``gigl.common.data.parquet_format``.
 
-Files are named ``<parquet_uri_prefix>part-XXXXX-of-YYYYY.parquet``, for example::
-
-    gs://my-bucket/user/part-00000-of-00004.parquet
-    gs://my-bucket/user/part-00001-of-00004.parquet
-    gs://my-bucket/user/part-00002-of-00004.parquet
-    gs://my-bucket/user/part-00003-of-00004.parquet
+``features`` slots follow ``feature_keys`` order, with every feature cast to float32 and vectors flattened, matching the
+tensors the TFRecord loader builds. Each label key is its own column (float32 for scalar labels,
+``FixedSizeList<float32>`` for vector labels). Quantized features are one ``FixedSizeBinary`` column of packed bytes per
+row, named after the packed feature key recorded in the quantization metadata.
 
 A node entity with three features (one scalar, one 3-vector, one scalar), a packed column and a label has the schema::
 
@@ -26,13 +19,6 @@ An edge entity with features and no label has the schema::
     src: int64
     dst: int64
     features: fixed_size_list<item: float>[5]
-
-A file can be read back into a ``[rows, width]`` numpy matrix with pyarrow:
-
-    >>> table = pq.read_table("gs://my-bucket/user/part-00000-of-00004.parquet")
-    >>> features = table.column("features").combine_chunks().flatten().to_numpy().reshape(table.num_rows, -1)
-    >>> features.shape
-    (100000, 5)
 """
 
 import os
@@ -46,14 +32,9 @@ from apache_beam.io import filebasedsink
 from apache_beam.io.filesystem import CompressionTypes
 from apache_beam.io.filesystems import FileSystems
 
+from gigl.common.data.parquet_format import FEATURES_COLUMN, PARQUET_FILE_SUFFIX
 from gigl.src.data_preprocessor.lib.transform.arrow_utils import list_column_to_numpy
 
-NODE_ID_COLUMN: Final[str] = "node_id"
-EDGE_SRC_COLUMN: Final[str] = "src"
-EDGE_DST_COLUMN: Final[str] = "dst"
-FEATURES_COLUMN: Final[str] = "features"
-
-PARQUET_FILE_NAME_SUFFIX: Final[str] = ".parquet"
 PARQUET_FILE_PREFIX: Final[str] = "part"
 PARQUET_CODEC: Final[str] = "zstd"
 # Ids and float features are close to unique, so dictionary encoding is wasted work that falls back to plain encoding.
@@ -308,7 +289,7 @@ class _ParquetSink(filebasedsink.FileBasedSink):
         """
         super().__init__(
             file_path_prefix,
-            file_name_suffix=PARQUET_FILE_NAME_SUFFIX,
+            file_name_suffix=PARQUET_FILE_SUFFIX,
             num_shards=num_shards,
             coder=None,
             mime_type="application/x-parquet",
@@ -320,9 +301,7 @@ class _ParquetSink(filebasedsink.FileBasedSink):
 
     def open_writer(self, init_result: str, uid: str) -> _ParquetSinkWriter:
         suffix = (
-            "."
-            + os.path.basename(self.file_path_prefix.get())
-            + PARQUET_FILE_NAME_SUFFIX
+            "." + os.path.basename(self.file_path_prefix.get()) + PARQUET_FILE_SUFFIX
         )
         return _ParquetSinkWriter(self, FileSystems.join(init_result, uid) + suffix)
 
