@@ -33,11 +33,6 @@ import pyarrow as pa
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 
-# Blocks CVE-2023-47248: pyarrow before 14.0.1 can run arbitrary code when it reads untrusted IPC, Feather or Parquet
-# data. The import patches pyarrow for the whole process.
-# TODO: Remove once pyarrow is upgraded to 14.0.1 or later.
-import pyarrow_hotfix  # noqa: F401
-
 from gigl.common import GcsUri, Uri
 from gigl.common.data.parquet_format import PARQUET_FILE_SUFFIX
 from gigl.common.logger import Logger
