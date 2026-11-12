@@ -54,6 +54,7 @@ transform = [
   # Apache Beam version has to match with what is specified in `containers/Dockerfile.dataflow.base`
   "apache-beam[gcp]==2.56.0",
   "pyarrow==10.0.1",
+  "pyarrow-hotfix==0.7",
   # Tensorflow transform packages.
   # There is no official MAC support for these packages - thus we ignore them on darwin machines.
   # These packages are also required to be in sync.

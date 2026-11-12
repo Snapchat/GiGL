@@ -25,7 +25,6 @@ The data preprocessor writes one directory per node type and per edge type. The 
 
 import json
 import os
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Any, Final
@@ -34,17 +33,22 @@ import pyarrow as pa
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 
+# Blocks CVE-2023-47248: pyarrow before 14.0.1 can run arbitrary code when it reads untrusted IPC, Feather or Parquet
+# data. The import patches pyarrow for the whole process.
+# TODO: Remove once pyarrow is upgraded to 14.0.1 or later.
+import pyarrow_hotfix  # noqa: F401
+
 from gigl.common import GcsUri, Uri
+from gigl.common.data.parquet_format import PARQUET_FILE_SUFFIX
 from gigl.common.logger import Logger
+from gigl.common.utils.retry import retry
 
 logger = Logger()
 
 MANIFEST_FILE_NAME: Final[str] = "_row_counts.json"
 MANIFEST_VERSION: Final[int] = 1
-PARQUET_SUFFIX: Final[str] = ".parquet"
 GCS_RETRY_TIME_LIMIT: Final[timedelta] = timedelta(seconds=300)
 _DEFAULT_THREADS: Final[int] = 32
-_FOOTER_ATTEMPTS: Final[int] = 3
 
 
 def filesystem_and_path(uri: Uri) -> tuple[pafs.FileSystem, str]:
@@ -54,10 +58,10 @@ def filesystem_and_path(uri: Uri) -> tuple[pafs.FileSystem, str]:
     is resolved by pyarrow.
 
     Args:
-        uri: The location of the directory or file.
+        uri (Uri): The location of the directory or file.
 
     Returns:
-        The filesystem and the scheme-less path within it, such as ``my-bucket/my_job/parquet/``.
+        tuple[pafs.FileSystem, str]: The filesystem and the scheme-less path within it, such as ``my-bucket/my_job/parquet/``.
     """
     if isinstance(uri, GcsUri):
         fs = pafs.GcsFileSystem(retry_time_limit=GCS_RETRY_TIME_LIMIT)
@@ -69,17 +73,17 @@ def list_parquet_files(fs: pafs.FileSystem, path: str) -> list[str]:
     """Returns the sorted paths of the Parquet data files directly under ``path``.
 
     Args:
-        fs: The filesystem that holds ``path``.
-        path: The scheme-less directory path within ``fs``.
+        fs (pafs.FileSystem): The filesystem that holds ``path``.
+        path (str): The scheme-less directory path within ``fs``.
 
     Returns:
-        The sorted full paths of the files that end in ``.parquet``. The manifest itself is not included.
+        list[str]: The sorted full paths of the files that end in ``.parquet``. The manifest itself is not included.
     """
     selector = pafs.FileSelector(path.rstrip("/"), recursive=False)
     infos = fs.get_file_info(selector)
     parquet_files: list[str] = []
     for info in infos:
-        if info.type == pafs.FileType.File and info.path.endswith(PARQUET_SUFFIX):
+        if info.type == pafs.FileType.File and info.path.endswith(PARQUET_FILE_SUFFIX):
             parquet_files.append(info.path)
     return sorted(parquet_files)
 
@@ -88,10 +92,10 @@ def manifest_path(path: str) -> str:
     """Returns the path of the manifest in the directory ``path``.
 
     Args:
-        path: The scheme-less directory path, with or without a trailing slash.
+        path (str): The scheme-less directory path, with or without a trailing slash.
 
     Returns:
-        ``path`` joined with the manifest file name.
+        str: ``path`` joined with the manifest file name.
     """
     return path.rstrip("/") + "/" + MANIFEST_FILE_NAME
 
@@ -102,12 +106,12 @@ def read_manifest_row_groups(
     """Returns the row-group row counts of ``files`` (as listed under ``path``) from the manifest under ``path``.
 
     Args:
-        fs: The filesystem that holds ``path``.
-        path: The scheme-less directory path within ``fs``.
-        files: The data file paths listed under ``path``, as returned by ``list_parquet_files``.
+        fs (pafs.FileSystem): The filesystem that holds ``path``.
+        path (str): The scheme-less directory path within ``fs``.
+        files (list[str]): The data file paths listed under ``path``, as returned by ``list_parquet_files``.
 
     Returns:
-        One list of row-group row counts per entry of ``files``, in the same order.
+        list[list[int]]: One list of row-group row counts per entry of ``files``, in the same order.
 
     Raises:
         FileNotFoundError: If there is no manifest.
@@ -128,20 +132,33 @@ def read_manifest_row_groups(
     return [manifest_files[name] for name in names]
 
 
+@retry(
+    exception_to_check=(OSError, pa.ArrowException),
+    tries=2,
+    delay_s=1,
+    backoff=2,
+    should_throw_original_exception=True,
+)
 def _read_row_groups(fs: pafs.FileSystem, file: str) -> list[int]:
-    """Returns the row counts of the row groups of ``file``, retrying transient read failures."""
-    for attempt in range(_FOOTER_ATTEMPTS):
-        try:
-            metadata = pq.read_metadata(file, filesystem=fs)
-            return [
-                metadata.row_group(i).num_rows for i in range(metadata.num_row_groups)
-            ]
-        except (OSError, pa.ArrowException) as e:
-            if attempt == _FOOTER_ATTEMPTS - 1:
-                raise
-            logger.warning(f"Reading footer of {file} failed, retrying: {e}")
-            time.sleep(2**attempt)
-    raise AssertionError("unreachable")
+    """Reads the row counts of the row groups of a Parquet file from its footer.
+
+    Transient read failures are retried. Up to three attempts are made, one second apart and then two.
+
+    Args:
+        fs (pafs.FileSystem): The filesystem that holds ``file``.
+        file (str): The scheme-less path of the Parquet file within ``fs``.
+
+    Returns:
+        list[int]: The row count of each row group, in file order.
+
+    Raises:
+        OSError, pa.ArrowException: If the footer cannot be read after all attempts.
+    """
+    metadata = pq.read_metadata(file, filesystem=fs)
+    row_counts: list[int] = []
+    for row_group_index in range(metadata.num_row_groups):
+        row_counts.append(metadata.row_group(row_group_index).num_rows)
+    return row_counts
 
 
 def build_manifest(
@@ -150,11 +167,11 @@ def build_manifest(
     """Builds the manifest of the Parquet files under ``uri_prefix`` by reading each footer once.
 
     Args:
-        uri_prefix: The directory that holds the Parquet files.
-        num_threads: The number of threads that read footers in parallel.
+        uri_prefix (Uri): The directory that holds the Parquet files.
+        num_threads (int): The number of threads that read footers in parallel.
 
     Returns:
-        The manifest, with the keys ``version`` and ``files``.
+        dict[str, Any]: The manifest, with the keys ``version`` and ``files``.
     """
     fs, path = filesystem_and_path(uri_prefix)
     files = list_parquet_files(fs, path)
@@ -170,11 +187,11 @@ def write_manifest(
     """Builds the manifest of the Parquet files under ``uri_prefix`` and writes it there.
 
     Args:
-        uri_prefix: The directory that holds the Parquet files.
-        num_threads: The number of threads that read footers in parallel.
+        uri_prefix (Uri): The directory that holds the Parquet files.
+        num_threads (int): The number of threads that read footers in parallel.
 
     Returns:
-        The manifest that was written.
+        dict[str, Any]: The manifest that was written.
     """
     manifest = build_manifest(uri_prefix, num_threads)
     fs, path = filesystem_and_path(uri_prefix)
