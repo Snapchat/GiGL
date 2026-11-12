@@ -5,8 +5,8 @@ Expected layout under ``SerializedTFRecordInfo.parquet_uri_prefix``: ``part-XXXX
 * nodes: ``node_id`` (int64) and, if the node type has features, ``features`` as
   ``FixedSizeList<float32>[feature_dim]`` with slots in ``feature_keys`` order;
 * edges: ``src`` and ``dst`` (int64) and, if the edge type has features, ``features`` as above;
-* if the entity has quantized features, one ``FixedSizeBinary[packed_feature_dim]`` column named ``packed_feature_key``
-  with the packed bytes of each row; ``features`` then holds only the features that are not quantized;
+* if the entity has packed features, one ``FixedSizeBinary[packed_feature_dim]`` column named ``packed_feature_key``
+  with the packed bytes of each row; ``features`` then holds only the features that are not packed;
 * optional label columns named by ``label_keys``, each a numeric scalar or a fixed-size list.
 """
 
@@ -309,15 +309,13 @@ class ParquetDataLoader:
         labels = None
         if info.label_keys:
             labels = torch.empty(0, len(info.label_keys))
-        quantized_features = None
+        packed_features = None
         if info.packed_feature_key is not None:
-            quantized_features = torch.empty(
-                0, info.packed_feature_dim, dtype=torch.uint8
-            )
+            packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)
         return LoadedEntityTensors(
             ids=ids,
             features=features,
-            quantized_features=quantized_features,
+            packed_features=packed_features,
             labels=labels,
         )
 
@@ -330,8 +328,8 @@ class ParquetDataLoader:
             serialized_tf_record_info (SerializedTFRecordInfo): How the entity is stored. Must have
                 ``parquet_uri_prefix`` set.
         Returns:
-            LoadedEntityTensors: The (ids, features, quantized features, labels) of this rank's rows.
-                Quantized features are the uint8 ``[rows, packed_feature_dim]`` packed bytes and are None
+            LoadedEntityTensors: The (ids, features, packed features, labels) of this rank's rows.
+                Packed features are the uint8 ``[rows, packed_feature_dim]`` packed bytes and are None
                 unless ``packed_feature_key`` is set.
         """
         info = serialized_tf_record_info
@@ -426,9 +424,9 @@ class ParquetDataLoader:
                 features = allocate_preshared(
                     (num_rows, info.feature_dim), torch.float32
                 )
-            quantized_features: Optional[torch.Tensor] = None
+            packed_features: Optional[torch.Tensor] = None
             if info.packed_feature_key is not None:
-                quantized_features = allocate_preshared(
+                packed_features = allocate_preshared(
                     (num_rows, info.packed_feature_dim), torch.uint8
                 )
             labels: Optional[torch.Tensor] = None
@@ -440,9 +438,9 @@ class ParquetDataLoader:
             features_np = None
             if features is not None:
                 features_np = features.numpy()
-            quantized_features_np = None
-            if quantized_features is not None:
-                quantized_features_np = quantized_features.numpy()
+            packed_features_np = None
+            if packed_features is not None:
+                packed_features_np = packed_features.numpy()
             labels_np = None
             if labels is not None:
                 labels_np = labels.numpy()
@@ -490,10 +488,10 @@ class ParquetDataLoader:
                     _copy_into(table.column(_DST_COLUMN), ids_np[1, out])
                 if features_np is not None:
                     _copy_into(table.column(_FEATURES_COLUMN), features_np[out])
-                if quantized_features_np is not None:
+                if packed_features_np is not None:
                     _copy_packed_into(
                         table.column(info.packed_feature_key),
-                        quantized_features_np[out],
+                        packed_features_np[out],
                     )
                 if labels_np is not None:
                     label_offset = 0
@@ -532,6 +530,6 @@ class ParquetDataLoader:
         return LoadedEntityTensors(
             ids=ids,
             features=features,
-            quantized_features=quantized_features,
+            packed_features=packed_features,
             labels=labels,
         )

@@ -187,9 +187,9 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_node_features(
             node_features=loaded_graph_tensors.node_features
         )
-    if loaded_graph_tensors.node_quantized_features is not None:
-        partitioner.register_node_quantized_features(
-            node_quantized_features=loaded_graph_tensors.node_quantized_features
+    if loaded_graph_tensors.node_packed_features is not None:
+        partitioner.register_node_packed_features(
+            node_packed_features=loaded_graph_tensors.node_packed_features
         )
     if loaded_graph_tensors.node_labels is not None:
         partitioner.register_node_labels(node_labels=loaded_graph_tensors.node_labels)
@@ -201,9 +201,9 @@ def _load_and_build_partitioned_dataset(
         partitioner.register_edge_features(
             edge_features=loaded_graph_tensors.edge_features
         )
-    if loaded_graph_tensors.edge_quantized_features is not None:
-        partitioner.register_edge_quantized_features(
-            edge_quantized_features=loaded_graph_tensors.edge_quantized_features
+    if loaded_graph_tensors.edge_packed_features is not None:
+        partitioner.register_edge_packed_features(
+            edge_packed_features=loaded_graph_tensors.edge_packed_features
         )
     if loaded_graph_tensors.positive_label is not None:
         partitioner.register_labels(
@@ -220,10 +220,10 @@ def _load_and_build_partitioned_dataset(
     del (
         loaded_graph_tensors.node_ids,
         loaded_graph_tensors.node_features,
-        loaded_graph_tensors.node_quantized_features,
+        loaded_graph_tensors.node_packed_features,
         loaded_graph_tensors.edge_index,
         loaded_graph_tensors.edge_features,
-        loaded_graph_tensors.edge_quantized_features,
+        loaded_graph_tensors.edge_packed_features,
         loaded_graph_tensors.edge_weights,
         loaded_graph_tensors.positive_label,
         loaded_graph_tensors.negative_label,

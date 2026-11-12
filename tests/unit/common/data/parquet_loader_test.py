@@ -207,7 +207,7 @@ class ParquetDataLoaderTest(TestCase):
             self.assertEqual(loaded.ids.dtype, torch.int64)
             self.assertEqual(_present(loaded.features).dtype, torch.float32)
             self.assertEqual(_present(loaded.labels).dtype, torch.float32)
-            self.assertIsNone(loaded.quantized_features)
+            self.assertIsNone(loaded.packed_features)
             rank_sizes.append(loaded.ids.shape[0])
             all_ids.append(loaded.ids)
             all_features.append(loaded.features)
@@ -463,7 +463,7 @@ def _write_packed_entity_files(
 ) -> tuple[Path, Path]:
     """Writes the same rows as Parquet (the preprocessor's column layout) and as TFRecords.
 
-    Quantized features are one ``FixedSizeBinary`` column named after the packed feature key, the remaining
+    Packed features are one ``FixedSizeBinary`` column named after the packed feature key, the remaining
     features are in the float32 ``features`` column.
     """
     parquet_dir = root / "parquet"
@@ -516,7 +516,7 @@ def _write_packed_entity_files(
 
 
 class ParquetPackedFeaturesTest(TestCase):
-    """Quantized (packed) features load from Parquet exactly as they do from TFRecords."""
+    """Packed features load from Parquet exactly as they do from TFRecords."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -590,7 +590,7 @@ class ParquetPackedFeaturesTest(TestCase):
             result = [ids_tensor[..., order]]
             result.append(torch.cat([_present(part.features) for part in parts])[order])
             result.append(
-                torch.cat([_present(part.quantized_features) for part in parts])[order]
+                torch.cat([_present(part.packed_features) for part in parts])[order]
             )
             return result
 
@@ -615,9 +615,9 @@ class ParquetPackedFeaturesTest(TestCase):
                 packed_feature_dim=_PACKED_DIM,
             )
         )
-        quantized = _present(loaded.quantized_features)
-        self.assertEqual(quantized.shape, (0, _PACKED_DIM))
-        self.assertEqual(quantized.dtype, torch.uint8)
+        packed = _present(loaded.packed_features)
+        self.assertEqual(packed.shape, (0, _PACKED_DIM))
+        self.assertEqual(packed.dtype, torch.uint8)
 
     def test_packed_column_of_the_wrong_width_is_rejected(self) -> None:
         pq.write_table(

@@ -314,7 +314,7 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.features, expected_feature_tensor)
 
-        self.assertIsNone(loaded.quantized_features)
+        self.assertIsNone(loaded.packed_features)
 
         assert_close(loaded.labels, expected_label_tensor)
 
@@ -402,7 +402,7 @@ class TFRecordDataLoaderTest(TestCase):
         assert_close(loaded.ids, torch.tensor([0, 1]))
         self.assertIsNone(loaded.features)
         assert_close(
-            loaded.quantized_features,
+            loaded.packed_features,
             torch.tensor(packed_feature_values, dtype=torch.uint8),
         )
         self.assertIsNone(loaded.labels)
@@ -506,7 +506,7 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.ids, expected_node_ids)
         assert_close(loaded.features, expected_features)
-        self.assertIsNone(loaded.quantized_features)
+        self.assertIsNone(loaded.packed_features)
         assert_close(loaded.labels, expected_label_tensor)
 
     @parameterized.expand(

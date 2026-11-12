@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class LoadedEntityTensors(NamedTuple):
     ids: Union[Int64[torch.Tensor, "entities"], Int64[torch.Tensor, "2 entities"]]
     features: Optional[Shaped[torch.Tensor, "entities feature_dim"]]
-    quantized_features: Optional[UInt8[torch.Tensor, "entities packed_feature_dim"]]
+    packed_features: Optional[UInt8[torch.Tensor, "entities packed_feature_dim"]]
     labels: Optional[Shaped[torch.Tensor, "entities labels"]]
 
 
