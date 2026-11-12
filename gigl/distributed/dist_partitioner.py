@@ -876,7 +876,7 @@ class DistPartitioner:
         """
         chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
 
-        # Splits the chunk by destination rank with one stable sort, keeping input order within each rank.
+        # Splits the chunk by destination rank with one stable sort.
         # The stable sort keeps the within-rank order of the input, so each rank's positions equal what masking would select.
         # Valid ranks are in [0, world_size), so the key dtypes below cannot wrap; out-of-range ranks are undefined.
         counts = torch.bincount(chunk_rank, minlength=self._world_size).tolist()
