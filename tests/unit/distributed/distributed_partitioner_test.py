@@ -11,6 +11,7 @@ from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed import DistPartitioner, DistRangePartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.networking import get_free_port
@@ -39,6 +40,7 @@ from tests.test_assets.test_case import TestCase
 
 class DistRandomPartitionerTestCase(TestCase):
     def setUp(self):
+        self.enterContext(freeze_gc())
         self._master_ip_address = "localhost"
 
     def _assert_data_type_correctness(
