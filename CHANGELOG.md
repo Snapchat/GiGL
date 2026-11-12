@@ -74,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `build_csr_from_coo`, and the `build_dataset_from_task_config_uri` runtime args. The memory-lean graph build is used
   only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
   bytes per edge of implicit ids are no longer stored. Callers that need per-edge ids on such graphs must pass
-  `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+  `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/877
 
 ### Fixed
 
