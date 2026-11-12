@@ -117,7 +117,8 @@ def _scatter_in_bands(
     chunk_size: int,
     band_bytes: Optional[int],
     edge_ids: Optional[torch.Tensor] = None,
-    row_start: int = 0,
+    *,
+    row_start: int,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
@@ -196,7 +197,8 @@ def _sort_within_rows(
     indices: torch.Tensor,
     block_edges: int,
     edge_ids: Optional[torch.Tensor] = None,
-    row_start: int = 0,
+    *,
+    row_start: int,
 ) -> None:
     """Sort each row's column slice ascending, in place.
 
@@ -256,7 +258,8 @@ def build_csr_from_coo(
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
     retain_edge_ids: bool = True,
-    row_start: int = 0,
+    *,
+    row_start: int,
 ) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
@@ -367,7 +370,9 @@ def build_csr_from_coo(
             row_start=row_start,
         )
         gc.collect()
-        _sort_within_rows(indptr, indices, sort_block_edges, edge_ids, row_start)
+        _sort_within_rows(
+            indptr, indices, sort_block_edges, edge_ids, row_start=row_start
+        )
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
@@ -405,7 +410,7 @@ class CompactTopology(Topology):
         num_rows: Optional[int] = None,
         *,
         retain_edge_ids: bool = True,
-        row_start: int = 0,
+        row_start: int,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():

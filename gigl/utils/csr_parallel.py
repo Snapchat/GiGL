@@ -116,9 +116,7 @@ def _edge_balanced_row_bounds(
     return np.unique(bounds)
 
 
-def parallel_degrees(
-    row: torch.Tensor, num_rows: int, row_start: int = 0
-) -> torch.Tensor:
+def parallel_degrees(row: torch.Tensor, num_rows: int, row_start: int) -> torch.Tensor:
     """``torch.bincount(row - row_start, minlength=num_rows - row_start)`` across all cores.
 
     Every id in ``row`` must lie in ``[row_start, num_rows)``. Returns int64 degrees of rows
@@ -135,7 +133,7 @@ def parallel_scatter(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     edge_ids: Optional[torch.Tensor],
-    row_start: int = 0,
+    row_start: int,
 ) -> None:
     """Place every edge in its row of ``indices`` (and its COO position in ``edge_ids``).
 
@@ -168,7 +166,7 @@ def parallel_sort_within_rows(
     indptr: torch.Tensor,
     indices: torch.Tensor,
     edge_ids: Optional[torch.Tensor],
-    row_start: int = 0,
+    row_start: int,
 ) -> None:
     """Sort each row's columns ascending in place, permuting ``edge_ids`` alongside.
 

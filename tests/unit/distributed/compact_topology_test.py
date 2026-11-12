@@ -41,14 +41,15 @@ class CompactTopologyTest(TestCase):
         """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed."""
         coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
         self.assertEqual(
-            set(CompactTopology(coo, layout="CSR").__dict__),
+            set(CompactTopology(coo, layout="CSR", row_start=0).__dict__),
             set(Topology(edge_index=coo, layout="CSR").__dict__),
         )
 
     def test_implicit_edge_ids_follow_original_coo_positions(self) -> None:
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
         self.assertEqual(
-            CompactTopology(coo, layout="CSR").edge_ids.tolist(), [3, 1, 2, 0]
+            CompactTopology(coo, layout="CSR", row_start=0).edge_ids.tolist(),
+            [3, 1, 2, 0],
         )
 
     def test_implicit_edge_ids_can_be_omitted_when_sampling_neighbors(self) -> None:
@@ -56,7 +57,9 @@ class CompactTopologyTest(TestCase):
 
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
         compact = Graph(
-            CompactTopology(coo, layout="CSR", retain_edge_ids=False), "CPU", None
+            CompactTopology(coo, layout="CSR", retain_edge_ids=False, row_start=0),
+            "CPU",
+            None,
         )
         compact.lazy_init()
 
@@ -69,7 +72,7 @@ class CompactTopologyTest(TestCase):
 
     def test_a_float_edge_index_is_cast_as_glt_does(self) -> None:
         coo = torch.tensor([[0.0, 2.0, 2.0], [1.0, 0.0, 1.0]])
-        lean = CompactTopology(coo, layout="CSR")
+        lean = CompactTopology(coo, layout="CSR", row_start=0)
         reference = Topology(edge_index=coo, layout="CSR")
         torch.testing.assert_close(lean.indptr, reference.indptr, rtol=0, atol=0)
         torch.testing.assert_close(lean.indices, reference.indices, rtol=0, atol=0)
@@ -78,7 +81,9 @@ class CompactTopologyTest(TestCase):
         """The hash partitioner hands such an edge type over as a float ``(2, 0)`` placeholder."""
         from graphlearn_torch import py_graphlearn_torch as pywrap
 
-        graph = Graph(CompactTopology(torch.empty((2, 0)), layout="CSC"), "CPU", None)
+        graph = Graph(
+            CompactTopology(torch.empty((2, 0)), layout="CSC", row_start=0), "CPU", None
+        )
         graph.lazy_init()
         self.assertEqual(graph.topo.edge_ids.dtype, torch.int64)
         self.assertEqual(graph.topo.edge_ids.numel(), 0)
@@ -323,7 +328,7 @@ class InitializeGraphTest(TestCase):
         self.assertEqual(
             compact_topology.call_args.kwargs["row_start"], expected_row_start
         )
-        expected = CompactTopology(coo, layout="CSR", num_rows=row_end)
+        expected = CompactTopology(coo, layout="CSR", num_rows=row_end, row_start=0)
         assert isinstance(dataset.graph, Graph)
         topo = dataset.graph.topo
         self.assertEqual(topo.indptr.numel(), row_end + 1)
@@ -500,7 +505,7 @@ class SamplingParityTest(TestCase):
 
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=dtype)
         seeds = torch.tensor([0, 1] if layout == "CSR" else [4, 5, 6, 7])
-        compact = Graph(CompactTopology(coo, layout=layout), "CPU", None)
+        compact = Graph(CompactTopology(coo, layout=layout, row_start=0), "CPU", None)
         reference = Graph(Topology(edge_index=coo, layout=layout), "CPU", None)
         compact.lazy_init()
         reference.lazy_init()
@@ -529,7 +534,7 @@ class SamplingParityTest(TestCase):
             [[1, 0, 1, 0] + [0] * 32, [7, 5, 6, 4] + [5] * 32],
             dtype=torch.int64,
         )
-        topology = CompactTopology(coo, layout=layout)
+        topology = CompactTopology(coo, layout=layout, row_start=0)
         self.assertEqual(sorted(topology.edge_ids.tolist()), list(range(coo.size(1))))
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         for row in range(topology.indptr.numel() - 1):
@@ -558,7 +563,9 @@ class SamplingParityTest(TestCase):
         num_nodes = 500
         coo = _random_coo(num_nodes, 4_000, seed=11)
 
-        lean = Graph(CompactTopology(coo.to(dtype), layout=layout), "CPU", None)
+        lean = Graph(
+            CompactTopology(coo.to(dtype), layout=layout, row_start=0), "CPU", None
+        )
         lean.lazy_init()
 
         reference = Graph(Topology(edge_index=coo, layout=layout), "CPU", None)
