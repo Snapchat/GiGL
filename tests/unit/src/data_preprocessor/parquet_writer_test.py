@@ -15,13 +15,13 @@ from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.common import LocalUri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
-from gigl.common.data.dataloaders import (
+from gigl.common.data.loader_types import (
     LoadedEntityTensors,
     SerializedTFRecordInfo,
     TFDatasetOptions,
-    TFRecordDataLoader,
 )
 from gigl.common.data.parquet_manifest import MANIFEST_FILE_NAME, write_manifest
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.src.data_preprocessor.lib.transform import parquet_writer
 from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
