@@ -8,11 +8,8 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
 from torch.multiprocessing import Manager
 
-from gigl.common.data.dataloaders import (
-    SerializedTFRecordInfo,
-    TFDatasetOptions,
-    TFRecordDataLoader,
-)
+from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import (

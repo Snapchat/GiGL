@@ -19,13 +19,13 @@ from graphlearn_torch.distributed import (
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
     remove_sampling_weight_from_edge_quantization_metadata,
 )
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
 from gigl.common.utils.parse import str_to_bool
