@@ -1,15 +1,30 @@
 import asyncio
+import queue
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import Dict, Literal, Optional, Union
 
 import torch
-from graphlearn_torch.channel import SampleMessage
-from graphlearn_torch.data import Graph
+from graphlearn_torch.channel import ChannelBase, SampleMessage
+from graphlearn_torch.data import Feature, Graph
+from graphlearn_torch.distributed import DistDataset
 from graphlearn_torch.distributed import DistNeighborSampler as GLTDistNeighborSampler
 from graphlearn_torch.distributed.dist_feature import DistFeature
-from graphlearn_torch.distributed.event_loop import wrap_torch_future
+from graphlearn_torch.distributed.dist_graph import DistGraph
+from graphlearn_torch.distributed.dist_neighbor_sampler import (
+    RpcSamplingCallee,
+    RpcSubGraphCallee,
+)
+from graphlearn_torch.distributed.event_loop import (
+    ConcurrentEventLoop,
+    wrap_torch_future,
+)
+from graphlearn_torch.distributed.rpc import (
+    RpcDataPartitionRouter,
+    rpc_register,
+    rpc_sync_data_partitions,
+)
 from graphlearn_torch.sampler import (
     HeteroSamplerOutput,
     NeighborOutput,
@@ -17,8 +32,12 @@ from graphlearn_torch.sampler import (
     NodeSamplerInput,
     SamplerOutput,
 )
-from graphlearn_torch.typing import EdgeType, NodeType, as_str
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.typing import EdgeType, NodeType, NumNeighbors, as_str
+from graphlearn_torch.utils import (
+    ensure_device,
+    get_available_device,
+    reverse_edge_type,
+)
 from jaxtyping import Int64
 
 from gigl.common.logger import Logger
@@ -184,6 +203,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         fetched through one ``FusedDistFeature`` per entity kind, with one request per partition per type. They are
         stored in GLT's ``dist_node_feature`` and ``dist_edge_feature`` attributes.
 
+        GLT's constructor runs as :meth:`_init_glt_sampler`, a copy that builds ``self.sampler`` as a
+        ``_GlobalIdNeighborSampler``.
+
         ``GLTDistNeighborSampler`` has no GiGL-owned state; we only add
         ``_sampling_error_sent`` so ``_send_adapter`` can forward at most one
         poison pill per sampler instance. Initializing it here (rather than
@@ -196,29 +218,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # GLT would otherwise build its own DistFeature objects, and register an RPC callee for each, that this class
         # never uses. Re-check this against GLT's constructor on upgrades:
         # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L159-L172
-        super().__init__(*args, **{**kwargs, "collect_features": False})
+        self._init_glt_sampler(*args, **{**kwargs, "collect_features": False})
         self.collect_features = collect_features
         self._sampling_error_sent: bool = False
-
-        # GLT's __init__ builds self.sampler as a NeighborSampler by name and hands that same
-        # object to the RPC callees it registers, so a subclass cannot be passed in. Re-classing
-        # the object applies the overrides of _GlobalIdNeighborSampler to this rank's own
-        # sampling and to the requests other ranks send it.
-        #
-        # This relies on RpcSamplingCallee holding self.sampler itself and calling
-        # sample_one_hop on it per request:
-        # https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L58-L70
-        # If a GLT upgrade gives the callee a different sampler, remote requests reach the
-        # kernels with global ids. Those are at or past the stored row count on most ranks, so
-        # the nodes silently get no neighbors: the job does not fail, but anything that needs
-        # cross-rank neighbors is wrong. range_partitioned_sampling_test compares routed
-        # sampling across ranks against a topology without row offsets and catches this; run
-        # it on every GLT upgrade.
-        if type(self.sampler) is not NeighborSampler:
-            raise TypeError(
-                f"Expected GLT to build a NeighborSampler, got {type(self.sampler)}"
-            )
-        self.sampler.__class__ = _GlobalIdNeighborSampler
 
         self.dist_node_feature: Optional[FusedDistFeature] = None
         self.dist_edge_feature: Optional[FusedDistFeature] = None
@@ -242,6 +244,171 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     self.rpc_router,
                     self.device,
                 )
+
+    def _init_glt_sampler(
+        self,
+        data: DistDataset,
+        num_neighbors: Optional[NumNeighbors] = None,
+        with_edge: bool = False,
+        with_neg: bool = False,
+        with_weight: bool = False,
+        edge_dir: Literal["in", "out"] = "out",
+        collect_features: bool = False,
+        channel: Optional[ChannelBase] = None,
+        use_all2all: bool = False,
+        concurrency: int = 1,
+        device: Optional[torch.device] = None,
+        seed: Optional[int] = None,
+    ) -> None:
+        """Set up GLT's sampler state, building ``self.sampler`` as a ``_GlobalIdNeighborSampler``.
+
+        Copied from ``graphlearn_torch/distributed/dist_neighbor_sampler.py``,
+        ``DistNeighborSampler.__init__`` (GLT 0.2.4):
+        https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L120-L216
+
+        GLT's constructor builds a ``NeighborSampler`` and hands that object to the RPC callees
+        that serve other ranks' requests in the same call, so a subclass cannot be passed in.
+        Two lines differ from GLT:
+
+        - ``self.sampler`` is a ``_GlobalIdNeighborSampler``, so this rank's own sampling and the
+          requests other ranks send it both translate seeds to local rows.
+        - The final ``super().__init__`` call names GLT's base, ``ConcurrentEventLoop``, because
+          ``super()`` here resolves to GLT's ``DistNeighborSampler``.
+
+        The callees are registered in GLT's order; callee ids must match on every rank.
+
+        Args:
+            data: The graph and feature data with partition info.
+            num_neighbors: The number of neighbors to sample on each hop.
+            with_edge: Whether to sample with edge ids.
+            with_neg: Whether to do negative sampling.
+            with_weight: Whether to sample by edge weight.
+            edge_dir: The edge direction to sample along, ``"in"`` or ``"out"``.
+            collect_features: Whether to build GLT's feature lookups for sampled results.
+            channel: The channel to send sampled results to, or ``None`` to return them.
+            use_all2all: Whether to use all2all to collect cross-node features.
+            concurrency: The max number of seed batches sampled at once.
+            device: The device to sample on, or ``None`` for GLT's default.
+            seed: The random seed for the sampler, or ``None`` to leave it unset.
+
+        Raises:
+            ValueError: If ``data`` is not a GLT ``DistDataset``.
+        """
+        self.data = data
+        self.use_all2all = use_all2all
+        self.num_neighbors = num_neighbors
+        self.max_input_size = 0
+        self.with_edge = with_edge
+        self.with_neg = with_neg
+        self.with_weight = with_weight
+        self.edge_dir = edge_dir
+        self.collect_features = collect_features
+        self.channel = channel
+        self.concurrency = concurrency
+        self.device = get_available_device(device)
+        self.seed = seed
+
+        if isinstance(data, DistDataset):
+            partition2workers = rpc_sync_data_partitions(
+                num_data_partitions=self.data.num_partitions,
+                current_partition_idx=self.data.partition_idx,
+            )
+            self.rpc_router = RpcDataPartitionRouter(partition2workers)
+
+            self.dist_graph = DistGraph(
+                data.num_partitions,
+                data.partition_idx,
+                data.graph,
+                data.node_pb,
+                data.edge_pb,
+            )
+
+            self.dist_node_feature = None
+            self.dist_edge_feature = None
+            if self.collect_features:
+                if data.node_features is not None:
+                    self.dist_node_feature = DistFeature(
+                        data.num_partitions,
+                        data.partition_idx,
+                        data.node_features,
+                        data.node_feat_pb,
+                        local_only=False,
+                        rpc_router=self.rpc_router,
+                        device=self.device,
+                    )
+                if self.with_edge and data.edge_features is not None:
+                    self.dist_edge_feature = DistFeature(
+                        data.num_partitions,
+                        data.partition_idx,
+                        data.edge_features,
+                        data.edge_feat_pb,
+                        local_only=False,
+                        rpc_router=self.rpc_router,
+                        device=self.device,
+                    )
+            # dist_node_labels should is initialized as a DistFeature object in the v6d case
+            self.dist_node_labels = self.data.node_labels
+            if self.dist_graph.data_cls == "homo":
+                if self.dist_node_labels is not None and not isinstance(
+                    self.dist_node_labels, torch.Tensor
+                ):
+                    self.dist_node_labels = DistFeature(
+                        self.data.num_partitions,
+                        self.data.partition_idx,
+                        self.dist_node_labels,
+                        self.data.node_feat_pb,
+                        local_only=False,
+                        rpc_router=self.rpc_router,
+                        device=self.device,
+                    )
+            else:
+                assert self.dist_node_labels is None or isinstance(
+                    self.dist_node_labels, Dict
+                )
+                if self.dist_node_labels is not None and all(
+                    isinstance(value, Feature)
+                    for value in self.dist_node_labels.values()
+                ):
+                    self.dist_node_labels = DistFeature(
+                        self.data.num_partitions,
+                        self.data.partition_idx,
+                        self.data.node_labels,
+                        self.data.node_feat_pb,
+                        local_only=False,
+                        rpc_router=self.rpc_router,
+                        device=self.device,
+                    )
+        else:
+            raise ValueError(
+                f"'{self.__class__.__name__}': found invalid input "
+                f"data type '{type(data)}'"
+            )
+
+        self.sampler = _GlobalIdNeighborSampler(
+            self.dist_graph.local_graph,
+            self.num_neighbors,
+            self.device,
+            self.with_edge,
+            self.with_neg,
+            self.with_weight,
+            self.edge_dir,
+            seed=self.seed,
+        )
+        self.inducer_pool = queue.Queue(maxsize=self.concurrency)
+
+        # rpc register
+        rpc_sample_callee = RpcSamplingCallee(self.sampler, self.device)
+        self.rpc_sample_callee_id = rpc_register(rpc_sample_callee)
+        rpc_subgraph_callee = RpcSubGraphCallee(self.sampler, self.device)
+        self.rpc_subgraph_callee_id = rpc_register(rpc_subgraph_callee)
+
+        if self.dist_graph.data_cls == "hetero":
+            self.num_neighbors = self.sampler.num_neighbors
+            self.num_hops = self.sampler.num_hops
+            self.edge_types = self.sampler.edge_types
+
+        ConcurrentEventLoop.__init__(self, self.concurrency)
+        self._loop.call_soon_threadsafe(ensure_device, self.device)
 
     def _prepare_sample_loop_inputs(
         self,
