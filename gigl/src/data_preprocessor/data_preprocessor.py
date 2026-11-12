@@ -304,7 +304,6 @@ class DataPreprocessor:
                         "data_preprocessor_num_shards", "0"
                     )
                 ),
-                gcp_project=get_resource_config().project,
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
             feature_transform_pipeline_result = p.run()

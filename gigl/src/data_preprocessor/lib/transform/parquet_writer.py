@@ -8,7 +8,7 @@ column (float32 for scalar labels, ``FixedSizeList<float32>`` for vector labels)
 metadata.
 """
 
-import math
+import os
 from typing import Optional, Sequence
 
 import apache_beam as beam
@@ -17,6 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from apache_beam.io import filebasedsink
 from apache_beam.io.filesystem import CompressionTypes
+from apache_beam.io.filesystems import FileSystems
 
 NODE_ID_COLUMN = "node_id"
 EDGE_SRC_COLUMN = "src"
@@ -29,11 +30,6 @@ PARQUET_CODEC = "zstd"
 NODE_ROW_GROUP_ROWS = 100_000
 EDGE_ROW_GROUP_ROWS = 1_000_000
 TARGET_BYTES_PER_PARQUET_FILE = 200_000_000
-
-
-def estimate_num_parquet_shards(num_rows: int, bytes_per_row: int) -> int:
-    """Number of output files so that each holds about TARGET_BYTES_PER_PARQUET_FILE of uncompressed data."""
-    return max(1, math.ceil(num_rows * bytes_per_row / TARGET_BYTES_PER_PARQUET_FILE))
 
 
 def _flat_values(column: pa.Array, num_rows: int) -> np.ndarray:
@@ -157,6 +153,7 @@ class _BufferedParquetWriter:
         self._writer: Optional[pq.ParquetWriter] = None
         self._pending: list[pa.Table] = []
         self._pending_rows = 0
+        self.uncompressed_bytes_written = 0
 
     def _get_writer(self, schema: pa.Schema) -> pq.ParquetWriter:
         if self._writer is None:
@@ -166,6 +163,7 @@ class _BufferedParquetWriter:
         return self._writer
 
     def write(self, table: pa.Table) -> None:
+        self.uncompressed_bytes_written += table.nbytes
         self._pending.append(table)
         self._pending_rows += table.num_rows
         if self._pending_rows >= self._row_group_rows:
@@ -200,6 +198,15 @@ class _BufferedParquetWriter:
         self._file_handle.close()
 
 
+class _ParquetSinkWriter(filebasedsink.FileBasedSinkWriter):
+    """Closes the current file once it holds TARGET_BYTES_PER_PARQUET_FILE of uncompressed data."""
+
+    def at_capacity(self) -> bool:
+        return (
+            self.temp_handle.uncompressed_bytes_written >= TARGET_BYTES_PER_PARQUET_FILE
+        )
+
+
 class _ParquetSink(filebasedsink.FileBasedSink):
     def __init__(
         self,
@@ -219,6 +226,14 @@ class _ParquetSink(filebasedsink.FileBasedSink):
         )
         self._row_group_rows = row_group_rows
         self._empty_schema = empty_schema
+
+    def open_writer(self, init_result: str, uid: str) -> _ParquetSinkWriter:
+        suffix = (
+            "."
+            + os.path.basename(self.file_path_prefix.get())
+            + PARQUET_FILE_NAME_SUFFIX
+        )
+        return _ParquetSinkWriter(self, FileSystems.join(init_result, uid) + suffix)
 
     def open(self, temp_path: str) -> _BufferedParquetWriter:
         return _BufferedParquetWriter(
@@ -244,7 +259,8 @@ class WriteDenseParquet(beam.PTransform):
         id_columns: Parquet column names for ``id_keys``.
         feature_keys: TFT output names concatenated into the ``features`` column. Empty for no features.
         label_keys: TFT output names written as one float32 column each.
-        num_shards: Number of output files. 0 lets the runner choose.
+        num_shards: Number of output files. 0 starts a new file whenever the current one holds
+            ``TARGET_BYTES_PER_PARQUET_FILE`` of uncompressed data.
         packed_feature_key: TFT output name of the packed quantized bytes. ``None`` when features are not quantized.
         packed_feature_dim: Number of packed bytes per row. Required when ``packed_feature_key`` is set.
     """

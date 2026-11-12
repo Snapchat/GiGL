@@ -18,7 +18,6 @@ from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.dataflow import init_beam_pipeline_options
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.data_preprocessor.lib.ingest.reference import (
@@ -36,7 +35,6 @@ from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
     EDGE_SRC_COLUMN,
     NODE_ID_COLUMN,
     WriteDenseParquet,
-    estimate_num_parquet_shards,
 )
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
@@ -222,43 +220,12 @@ class WriteTFSchema(beam.PTransform):
         )
 
 
-def _estimate_parquet_num_shards(
-    data_reference: DataReference,
-    raw_feature_spec: FeatureSpecDict,
-    num_id_columns: int,
-    value_keys: list[str],
-    gcp_project: str,
-) -> int:
-    """
-    Estimates the number of Parquet files from the row count of the BigQuery input table and the uncompressed row size.
-    Returns 0 (runner-chosen) if the input is not a BigQuery table. Output widths come from the raw feature spec, which
-    is exact for transforms that preserve feature widths and an approximation otherwise.
-    """
-    reference_uri = getattr(data_reference, "reference_uri", None)
-    if reference_uri is None:
-        return 0
-    num_values = 0
-    for key in value_keys:
-        shape = getattr(raw_feature_spec.get(key), "shape", None)
-        if shape:
-            num_values += math.prod(shape)
-        else:
-            num_values += 1
-    num_rows = BqUtils(project=gcp_project).count_number_of_rows_in_bq_table(
-        bq_table=reference_uri
-    )
-    return estimate_num_parquet_shards(
-        num_rows=num_rows, bytes_per_row=8 * num_id_columns + 4 * num_values
-    )
-
-
 def get_load_data_and_transform_pipeline_component(
     applied_task_identifier: AppliedTaskIdentifier,
     data_reference: DataReference,
     preprocessing_spec: Union[NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec],
     transformed_features_info: TransformedFeaturesInfo,
     num_shards: int,
-    gcp_project: str,
     custom_worker_image_uri: Optional[str] = None,
 ) -> beam.Pipeline:
     """
@@ -459,22 +426,13 @@ def get_load_data_and_transform_pipeline_component(
                     len(quantization_spec.feature_keys) * quantization_spec.bits / 8
                 )
             label_keys = list(preprocessing_spec.labels_outputs or [])
-            parquet_num_shards = num_shards
-            if parquet_num_shards == 0:
-                parquet_num_shards = _estimate_parquet_num_shards(
-                    data_reference=data_reference,
-                    raw_feature_spec=raw_feature_spec,
-                    num_id_columns=len(id_keys),
-                    value_keys=feature_keys + label_keys,
-                    gcp_project=gcp_project,
-                )
             transformed_features | "Write parquet files" >> WriteDenseParquet(
                 parquet_uri_prefix=transformed_features_info.transformed_features_parquet_prefix.uri,
                 id_keys=id_keys,
                 id_columns=id_columns,
                 feature_keys=feature_keys,
                 label_keys=label_keys,
-                num_shards=parquet_num_shards,
+                num_shards=num_shards,
                 packed_feature_key=packed_feature_key,
                 packed_feature_dim=packed_feature_dim,
             )

@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import tempfile
+from unittest import mock
 
 import apache_beam as beam
 import numpy as np
@@ -22,6 +23,7 @@ from gigl.common.data.dataloaders import (
 )
 from gigl.common.data.parquet_manifest import MANIFEST_FILE_NAME, write_manifest
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
+from gigl.src.data_preprocessor.lib.transform import parquet_writer
 from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
     WriteDenseParquet,
 )
@@ -344,3 +346,27 @@ class ParquetWriterRoundTripTest(TestCase):
             )
             order = np.argsort(table["node_id"].to_numpy())
             np.testing.assert_array_equal(written[order], packed)
+
+    def test_unset_num_shards_splits_files_by_uncompressed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parquet_dir = os.path.join(temp_dir, "parquet") + "/"
+            with mock.patch.object(
+                parquet_writer, "TARGET_BYTES_PER_PARQUET_FILE", 1_000
+            ):
+                with TestPipeline() as pipeline:
+                    _ = (
+                        pipeline
+                        | beam.Create(_make_batches(["node_id"], 100, [25] * 4))
+                        | WriteDenseParquet(
+                            parquet_uri_prefix=parquet_dir,
+                            id_keys=["node_id"],
+                            id_columns=["node_id"],
+                            feature_keys=_FEATURE_KEYS,
+                            label_keys=_LABEL_KEYS,
+                            num_shards=0,
+                        )
+                    )
+            paths = glob.glob(f"{parquet_dir}*.parquet")
+            self.assertGreater(len(paths), 1)
+            total_rows = sum(pq.ParquetFile(path).metadata.num_rows for path in paths)
+            self.assertEqual(total_rows, 100)
