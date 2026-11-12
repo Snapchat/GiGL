@@ -38,11 +38,11 @@ The Data Preprocessor undertakes the following actions
 - For each node and edge type, spins up a Dataflow job which manifests a Tensorflow Transform pipeline to operationalize
   the user-defined transformations specified in the `get_nodes_preprocessing_spec` and `get_edges_preprocessing_spec`
   functions inside the user-specified `DataPreprocessorConfig` instance. The pipelines write out transformed features as
-  Parquet files (or TFRecords, see below), and a schema to help parse them, the inferred Tensorflow transform function
+  TFRecords (or Parquet files, see below), and a schema to help parse them, the inferred Tensorflow transform function
   for each feature-set, and other metadata to GCS.
 
 The output format is chosen with the `data_preprocessor_output_format` feature flag in the task config, which defaults
-to `parquet`; set it to `tfrecord` to write TFRecords instead. Parquet files are split by size (about 1 GB of
+to `tfrecord`; set it to `parquet` to write Parquet files instead. Parquet files are split by size (about 1 GB of
 uncompressed data each) unless `data_preprocessor_num_shards` fixes the file count.
 
 ## How do I run it?

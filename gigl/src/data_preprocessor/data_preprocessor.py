@@ -169,7 +169,7 @@ class DataPreprocessor:
         self.__output_format = DataPreprocessorOutputFormat(
             self.gbml_config_pb_wrapper.gbml_config_pb.feature_flags.get(
                 "data_preprocessor_output_format",
-                DataPreprocessorOutputFormat.PARQUET.value,
+                DataPreprocessorOutputFormat.TFRECORD.value,
             )
         )
         self.__prepare_staging_paths()
