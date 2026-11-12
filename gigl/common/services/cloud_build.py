@@ -1,10 +1,21 @@
 """Cancel Cloud Build builds by tag through the ``google-cloud-build`` library."""
 
+import time
+from typing import Final, Sequence
+
 from google.cloud.devtools import cloudbuild_v1
 
 from gigl.common.logger import Logger
 
 logger = Logger()
+
+_ACTIVE_BUILD_STATUSES: Final[frozenset[cloudbuild_v1.Build.Status]] = frozenset(
+    {
+        cloudbuild_v1.Build.Status.PENDING,
+        cloudbuild_v1.Build.Status.QUEUED,
+        cloudbuild_v1.Build.Status.WORKING,
+    }
+)
 
 
 class CloudBuildService:
@@ -73,3 +84,46 @@ class CloudBuildService:
                 f"{len(errors)} Cloud Build cancel(s) failed for tag {tag}", errors
             )
         return cancelled
+
+    def wait_for_builds_to_stop(
+        self,
+        build_ids: Sequence[str],
+        timeout_s: float,
+        poll_interval_s: float = 10.0,
+    ) -> None:
+        """Wait until none of the builds is pending, queued, or working.
+
+        A build can keep running for some seconds after a cancel request.
+
+        Example:
+            >>> service.wait_for_builds_to_stop(["6c1d0e5a-..."], timeout_s=300)
+
+        Args:
+            build_ids: Ids of the builds to wait for.
+            timeout_s: Seconds to wait before giving up.
+            poll_interval_s: Seconds between status reads.
+
+        Raises:
+            TimeoutError: If a build is still active after ``timeout_s``.
+        """
+        deadline = time.monotonic() + timeout_s
+        active_ids = list(build_ids)
+        while True:
+            still_active: list[str] = []
+            for build_id in active_ids:
+                build = self._client.get_build(
+                    request=cloudbuild_v1.GetBuildRequest(
+                        project_id=self._project, id=build_id
+                    )
+                )
+                if build.status in _ACTIVE_BUILD_STATUSES:
+                    still_active.append(build_id)
+            active_ids = still_active
+            if not active_ids:
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Cloud Builds {active_ids} are still active after {timeout_s}s."
+                )
+            logger.info(f"Waiting for Cloud Builds {active_ids} to stop.")
+            time.sleep(poll_interval_s)

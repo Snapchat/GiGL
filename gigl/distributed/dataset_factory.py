@@ -67,7 +67,7 @@ def _load_and_build_partitioned_dataset(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
-    retain_edge_ids: bool = True,
+    retain_edge_ids: bool = False,
 ) -> DistDataset:
     """
     Given some information about serialized TFRecords, loads and builds a partitioned dataset into a DistDataset class.
@@ -88,13 +88,12 @@ def _load_and_build_partitioned_dataset(
             sampling weights. The column is extracted from the feature tensor and registered separately via
             ``DistPartitioner.register_edge_weights()``; it is removed from the feature matrix to avoid duplication.
             Supply a single string to use the same column name for all edge types, or a per-edge-type dict.
-        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
-            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
-            and edge features remain available.
-
-            Set this to ``False`` for graphs without edge features. GiGL loaders already
-            sample them with ``with_edge=False``, so the retained IDs only cost memory.
-            The default is ``True`` only for backwards compatibility.
+        retain_edge_ids (bool): Whether the memory-lean build of graphs without edge
+            features, explicit edge IDs, or edge weights stores implicit edge IDs, at a cost
+            of 8 bytes per edge. Defaults to ``False``: GiGL loaders sample those graphs with
+            ``with_edge=False``, so nothing reads the IDs. Pass ``True`` only if you sample
+            such a graph with ``with_edge=True``. Explicit IDs and edge features are
+            unaffected.
 
     Returns:
         DistDataset: Initialized dataset with partitioned graph information
@@ -270,7 +269,7 @@ def _build_dataset_process(
     splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
     _ssl_positive_label_percentage: Optional[float] = None,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
-    retain_edge_ids: bool = True,
+    retain_edge_ids: bool = False,
 ) -> None:
     """
     This function is spawned by a single process per machine and is responsible for:
@@ -380,7 +379,7 @@ def build_dataset(
         int
     ] = None,  # WARNING: This field will be deprecated in the future
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
-    retain_edge_ids: bool = True,
+    retain_edge_ids: bool = False,
 ) -> DistDataset:
     """
     Launches a spawned process for building and returning a DistDataset instance provided some
@@ -417,13 +416,13 @@ def build_dataset(
             as sampling weights. The column is extracted from the feature tensor and registered separately; it is
             removed from the feature matrix to avoid memory duplication. Supply a single string to apply to all
             edge types, or a per-edge-type dict. (default: ``None``)
-        retain_edge_ids (bool): Retain implicit edge IDs by default, at a cost of 8 bytes
-            per edge. Use ``False`` only when sampling with ``with_edge=False``. Explicit IDs
-            and edge features remain available.
-
-            Set this to ``False`` for graphs without edge features. GiGL loaders already
-            sample them with ``with_edge=False``, so the retained IDs only cost memory.
-            The default is ``True`` only for backwards compatibility.
+        retain_edge_ids (bool): Whether the memory-lean build of graphs without edge
+            features, explicit edge IDs, or edge weights stores implicit edge IDs, at a cost
+            of 8 bytes per edge. Defaults to ``False``: GiGL loaders sample those graphs with
+            ``with_edge=False``, so nothing reads the IDs. Pass ``True`` only if you sample
+            such a graph with ``with_edge=True``. Explicit IDs and edge features are
+            unaffected.
+            TODO(kmonte): remove retain_edge_ids once internal callers no longer set it.
 
     Node feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
     ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
@@ -569,10 +568,9 @@ def build_dataset_from_task_config_uri(
         Slotted for refactor once this functionality is available in the transductive `splitter` directly.
     - max_labels_per_anchor_node (Optional[int]): Cap for how many labels to
       materialize per anchor node for ABLP label fetching.
-    - retain_edge_ids (bool): Retain implicit edge IDs for sampling, defaulting to True.
-      Set to False only when sampling with ``with_edge=False``.
-      Set this to False for graphs without edge features. GiGL loaders already sample them
-      with ``with_edge=False``. The default is True only for backwards compatibility.
+    - retain_edge_ids (bool): Whether the memory-lean build stores implicit edge IDs,
+      defaulting to False. Set to True only to sample a graph without edge features,
+      explicit IDs, or weights using ``with_edge=True``.
     If training there are two additional arguments:
     - num_val (float): Percentage of edges to use for validation, defaults to 0.1. Must in in range [0, 1].
     - num_test (float): Percentage of edges to use for testing, defaults to 0.1. Must be in range [0, 1].
@@ -664,7 +662,7 @@ def build_dataset_from_task_config_uri(
     should_load_tensors_in_parallel = str_to_bool(
         args.get("should_load_tensors_in_parallel", "True")
     )
-    retain_edge_ids = str_to_bool(args.get("retain_edge_ids", "True"))
+    retain_edge_ids = str_to_bool(args.get("retain_edge_ids", "False"))
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."

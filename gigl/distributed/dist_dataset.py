@@ -684,7 +684,7 @@ class DistDataset(glt.distributed.DistDataset):
         ],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         edge_features_registered: bool,
-        retain_edge_ids: bool = True,
+        retain_edge_ids: bool = False,
     ) -> None:
         """Initializes the graph structure from partition output.
 
@@ -700,7 +700,7 @@ class DistDataset(glt.distributed.DistDataset):
             edge_features_registered: Whether any edge features or packed edge features were
                 partitioned. They need explicit edge IDs rather than the compact build's
                 partition-local COO positions, so their presence forces GLT's build.
-            retain_edge_ids: Whether to retain implicit edge IDs for sampling.
+            retain_edge_ids: Whether the memory-lean build stores implicit edge IDs.
         """
 
         # Edge Index refers to the [2, num_edges] tensor representing pairs of nodes connecting each edge
@@ -809,7 +809,7 @@ class DistDataset(glt.distributed.DistDataset):
         self,
         edge_index: dict[EdgeType, torch.Tensor],
         node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
-        retain_edge_ids: bool = True,
+        retain_edge_ids: bool = False,
     ) -> dict[EdgeType, Graph]:
         """Build one GLT ``Graph`` per edge type, releasing each COO before starting the next.
 
@@ -834,7 +834,7 @@ class DistDataset(glt.distributed.DistDataset):
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
                 destructively: entries are removed as they are converted.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
-            retain_edge_ids: Whether to retain implicit edge IDs for sampling.
+            retain_edge_ids: Whether the memory-lean build stores implicit edge IDs.
 
         Returns:
             dict[EdgeType, Graph]: One initialized CPU ``Graph`` per edge type.
@@ -1149,7 +1149,7 @@ class DistDataset(glt.distributed.DistDataset):
         self,
         partition_output: PartitionOutput,
         splitter: Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]] = None,
-        retain_edge_ids: bool = True,
+        retain_edge_ids: bool = False,
     ) -> None:
         """
         Provided some partition graph information, this method stores these tensors inside of the class for
@@ -1164,9 +1164,10 @@ class DistDataset(glt.distributed.DistDataset):
                                                             * a tuple of train, val, and test node ids, if heterogeneous
                                                             * a dict[NodeType, tuple[train, val, test]] of node ids, if homogeneous
                                                Optional as not all datasets need to be split on, e.g. if we're doing inference.
-            retain_edge_ids (bool): Retain implicit edge IDs for sampling. Use ``False`` only
-                when sampling with ``with_edge=False``. Explicit IDs and edge features use
-                GLT's build regardless of this setting.
+            retain_edge_ids (bool): Whether the memory-lean build stores implicit edge IDs
+                (default ``False``). Pass ``True`` only to sample with ``with_edge=True`` on a
+                graph without edge features, explicit IDs, or weights. Those graphs use GLT's
+                build regardless of this setting.
         """
         logger.info(
             f"Rank {self._rank} starting building dataset class from partitioned graph ..."
