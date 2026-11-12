@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
@@ -26,6 +27,13 @@ FeatureVocabDict = dict[str, list[str]]
 DEFAULT_TF_INT_DTYPE = tf.int64
 DEFAULT_TF_FLOAT_DTYPE = tf.float32
 DEFAULT_TF_STRING_DTYPE = tf.string
+
+
+class DataPreprocessorOutputFormat(str, Enum):
+    """Storage format of the transformed features written by the data preprocessor."""
+
+    TFRECORD = "tfrecord"
+    PARQUET = "parquet"
 
 
 class FeatureSchema(NamedTuple):

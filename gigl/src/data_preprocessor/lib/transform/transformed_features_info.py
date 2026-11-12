@@ -7,6 +7,7 @@ from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.features import FeatureTypes
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.data_preprocessor.lib.types import (
+    DataPreprocessorOutputFormat,
     EdgeOutputIdentifier,
     NodeOutputIdentifier,
 )
@@ -22,6 +23,7 @@ class TransformedFeaturesInfo:
     raw_data_schema_file_path: GcsUri
     tft_temp_directory_path: GcsUri
     transformed_features_file_prefix: GcsUri
+    transformed_features_parquet_prefix: GcsUri
     feature_quantization_metadata_path: GcsUri
     feature_quantization_enabled: bool
     transformed_features_schema_path: GcsUri
@@ -34,6 +36,7 @@ class TransformedFeaturesInfo:
     label_outputs: Optional[list[str]] = None
     feature_dim_output: Optional[int] = None
     custom_identifier: Optional[str] = None
+    output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.TFRECORD
 
     def __init__(
         self,
@@ -42,7 +45,9 @@ class TransformedFeaturesInfo:
         entity_type: Union[NodeType, EdgeType],
         custom_identifier: str = "",
         feature_quantization_enabled: bool = False,
+        output_format: DataPreprocessorOutputFormat = DataPreprocessorOutputFormat.TFRECORD,
     ) -> None:
+        self.output_format = output_format
         self.feature_type = feature_type
         self.entity_type = entity_type
 
@@ -89,6 +94,14 @@ class TransformedFeaturesInfo:
 
         self.transformed_features_file_prefix = (
             gcs_constants.get_transformed_features_file_prefix(
+                applied_task_identifier=applied_task_identifier,
+                feature_type=feature_type,
+                entity_type=entity_type,
+                custom_identifier=custom_identifier,
+            )
+        )
+        self.transformed_features_parquet_prefix = (
+            gcs_constants.get_transformed_features_parquet_prefix(
                 applied_task_identifier=applied_task_identifier,
                 feature_type=feature_type,
                 entity_type=entity_type,

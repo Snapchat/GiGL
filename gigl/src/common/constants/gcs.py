@@ -405,6 +405,33 @@ def get_transformed_features_file_prefix(
     return GcsUri.join(transformed_features_path, "features/")
 
 
+def get_transformed_features_parquet_prefix(
+    applied_task_identifier: AppliedTaskIdentifier,
+    feature_type: FeatureTypes,
+    entity_type: Union[NodeType, EdgeType],
+    custom_identifier: str = "",
+) -> GcsUri:
+    """
+    Returns the GCS directory prefix for transformed features written as Parquet.
+
+    Args:
+        applied_task_identifier (AppliedTaskIdentifier): The job name.
+        feature_type (FeatureTypes): The type of the feature.
+        entity_type (Union[NodeType, EdgeType]): The type of the entity.
+        custom_identifier (Optional[str]): Custom identifier for the file prefix. Defaults to "".
+
+    Returns:
+        GcsUri: The GCS directory prefix for transformed features in Parquet format.
+    """
+    transformed_features_path = get_transformed_features_directory_path(
+        applied_task_identifier=applied_task_identifier,
+        feature_type=feature_type,
+        entity_type=entity_type,
+        custom_identifier=custom_identifier,
+    )
+    return GcsUri.join(transformed_features_path, "parquet/")
+
+
 def get_preprocessed_metadata_proto_gcs_path(
     applied_task_identifier: AppliedTaskIdentifier,
 ) -> GcsUri:

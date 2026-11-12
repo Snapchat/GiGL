@@ -19,6 +19,7 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 import gigl.src.data_preprocessor.lib.transform.utils as transform_utils
 from gigl.analytics.graph_validation import BQGraphValidator
 from gigl.common import Uri, UriFactory
+from gigl.common.data.parquet_manifest import write_manifest
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
@@ -63,6 +64,7 @@ from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
 )
 from gigl.src.data_preprocessor.lib.types import (
     DEFAULT_TF_INT_DTYPE,
+    DataPreprocessorOutputFormat,
     EdgeDataPreprocessingSpec,
     EdgeOutputIdentifier,
     FeatureSpecDict,
@@ -104,6 +106,13 @@ def _load_feature_quantization_metadata_pb(
         quantization_metadata.multi_bit_state.clip_min = metadata["clip_min"]
         quantization_metadata.multi_bit_state.clip_max = metadata["clip_max"]
     return quantization_metadata
+
+
+def _get_parquet_uri_prefix(transformed_features_info: TransformedFeaturesInfo) -> str:
+    """Parquet prefix to record in the metadata, empty when the features were not written as Parquet."""
+    if transformed_features_info.output_format == DataPreprocessorOutputFormat.PARQUET:
+        return transformed_features_info.transformed_features_parquet_prefix.uri
+    return ""
 
 
 class PreprocessedMetadataReferences(NamedTuple):
@@ -164,6 +173,12 @@ class DataPreprocessor:
         )
         self.__data_preprocessor_config = self.__import_data_preprocessor_config()
         self.__custom_worker_image_uri = custom_worker_image_uri
+        self.__output_format = DataPreprocessorOutputFormat(
+            self.gbml_config_pb_wrapper.gbml_config_pb.feature_flags.get(
+                "data_preprocessor_output_format",
+                DataPreprocessorOutputFormat.TFRECORD.value,
+            )
+        )
         self.__prepare_staging_paths()
 
     def __prepare_staging_paths(self) -> None:
@@ -267,6 +282,7 @@ class DataPreprocessor:
             entity_type=entity_type,
             custom_identifier=custom_identifier,
             feature_quantization_enabled=feature_quantization_enabled,
+            output_format=self.__output_format,
         )
 
         def __get_feature_preprocessing_job_msgs(
@@ -288,6 +304,7 @@ class DataPreprocessor:
                         "data_preprocessor_num_shards", "0"
                     )
                 ),
+                gcp_project=get_resource_config().project,
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
             feature_transform_pipeline_result = p.run()
@@ -304,6 +321,9 @@ class DataPreprocessor:
                 is_start=False,
             )
         )
+        parquet_uri_prefix = _get_parquet_uri_prefix(transformed_features_info)
+        if parquet_uri_prefix:
+            write_manifest(parquet_uri_prefix)
 
         def __get_feature_dimension_for_single_data_reference(
             schema_path: Uri, feature_outputs: list[str]
@@ -467,6 +487,7 @@ class DataPreprocessor:
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo:
         output = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
             tfrecord_uri_prefix=transformed_features_info.transformed_features_file_prefix.uri,
+            parquet_uri_prefix=_get_parquet_uri_prefix(transformed_features_info),
             schema_uri=transformed_features_info.transformed_features_schema_path.uri,
             feature_keys=transformed_features_info.features_outputs,
             label_keys=transformed_features_info.label_outputs,
@@ -526,6 +547,9 @@ class DataPreprocessor:
 
             node_metadata_output_pb = preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput(
                 tfrecord_uri_prefix=node_transformed_features_info.transformed_features_file_prefix.uri,
+                parquet_uri_prefix=_get_parquet_uri_prefix(
+                    node_transformed_features_info
+                ),
                 schema_uri=node_transformed_features_info.transformed_features_schema_path.uri,
                 node_id_key=str(node_identifier_output),
                 feature_keys=features_outputs,

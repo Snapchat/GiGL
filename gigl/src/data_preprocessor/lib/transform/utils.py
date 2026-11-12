@@ -1,3 +1,4 @@
+import math
 from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
 import apache_beam as beam
@@ -17,6 +18,7 @@ from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
+from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.dataflow import init_beam_pipeline_options
 from gigl.src.common.utils.time import current_formatted_datetime
 from gigl.src.data_preprocessor.lib.ingest.reference import (
@@ -29,11 +31,19 @@ from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
     NODE_PACKED_FEATURE_KEY,
     apply_feature_quantization_transform,
 )
+from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
+    EDGE_DST_COLUMN,
+    EDGE_SRC_COLUMN,
+    NODE_ID_COLUMN,
+    WriteDenseParquet,
+    estimate_num_parquet_shards,
+)
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
+    DataPreprocessorOutputFormat,
     EdgeDataPreprocessingSpec,
     FeatureQuantizationSpec,
     FeatureSpecDict,
@@ -212,12 +222,43 @@ class WriteTFSchema(beam.PTransform):
         )
 
 
+def _estimate_parquet_num_shards(
+    data_reference: DataReference,
+    raw_feature_spec: FeatureSpecDict,
+    num_id_columns: int,
+    value_keys: list[str],
+    gcp_project: str,
+) -> int:
+    """
+    Estimates the number of Parquet files from the row count of the BigQuery input table and the uncompressed row size.
+    Returns 0 (runner-chosen) if the input is not a BigQuery table. Output widths come from the raw feature spec, which
+    is exact for transforms that preserve feature widths and an approximation otherwise.
+    """
+    reference_uri = getattr(data_reference, "reference_uri", None)
+    if reference_uri is None:
+        return 0
+    num_values = 0
+    for key in value_keys:
+        shape = getattr(raw_feature_spec.get(key), "shape", None)
+        if shape:
+            num_values += math.prod(shape)
+        else:
+            num_values += 1
+    num_rows = BqUtils(project=gcp_project).count_number_of_rows_in_bq_table(
+        bq_table=reference_uri
+    )
+    return estimate_num_parquet_shards(
+        num_rows=num_rows, bytes_per_row=8 * num_id_columns + 4 * num_values
+    )
+
+
 def get_load_data_and_transform_pipeline_component(
     applied_task_identifier: AppliedTaskIdentifier,
     data_reference: DataReference,
     preprocessing_spec: Union[NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec],
     transformed_features_info: TransformedFeaturesInfo,
     num_shards: int,
+    gcp_project: str,
     custom_worker_image_uri: Optional[str] = None,
 ) -> beam.Pipeline:
     """
@@ -393,14 +434,51 @@ def get_load_data_and_transform_pipeline_component(
                 )
             )
 
-        transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
-            file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
-            max_bytes_per_shard=int(2e8),  # 200mb,
-            transformed_metadata=resolved_transformed_metadata,
-            # TODO(mkolodner-sc): Right now, a non-zero value for num_shards overrides the max_bytes_per_shard condition. We need to implement
-            # a solution where num_shards specified is just a minimum, causing the max_bytes_per_shard rule taking precedent over the num_shards rule. This will require
-            # dynamically determining the number of shards produced by max_bytes_per_shard and setting it to be equal to min_num_shards if the value is less than it.
-            num_shards=num_shards,
-        )
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            if quantization_spec is not None:
+                raise ValueError(
+                    "Parquet output does not support feature quantization."
+                )
+            if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
+                id_keys = [
+                    str(preprocessing_spec.identifier_output.src_node),
+                    str(preprocessing_spec.identifier_output.dst_node),
+                ]
+                id_columns = [EDGE_SRC_COLUMN, EDGE_DST_COLUMN]
+            else:
+                id_keys = [str(preprocessing_spec.identifier_output)]
+                id_columns = [NODE_ID_COLUMN]
+            feature_keys = list(preprocessing_spec.features_outputs or [])
+            label_keys = list(preprocessing_spec.labels_outputs or [])
+            parquet_num_shards = num_shards
+            if parquet_num_shards == 0:
+                parquet_num_shards = _estimate_parquet_num_shards(
+                    data_reference=data_reference,
+                    raw_feature_spec=raw_feature_spec,
+                    num_id_columns=len(id_keys),
+                    value_keys=feature_keys + label_keys,
+                    gcp_project=gcp_project,
+                )
+            transformed_features | "Write parquet files" >> WriteDenseParquet(
+                parquet_uri_prefix=transformed_features_info.transformed_features_parquet_prefix.uri,
+                id_keys=id_keys,
+                id_columns=id_columns,
+                feature_keys=feature_keys,
+                label_keys=label_keys,
+                num_shards=parquet_num_shards,
+            )
+        else:
+            transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
+                file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
+                max_bytes_per_shard=int(2e8),  # 200mb,
+                transformed_metadata=resolved_transformed_metadata,
+                # TODO(mkolodner-sc): Right now, a non-zero value for num_shards overrides the max_bytes_per_shard condition. We need to implement
+                # a solution where num_shards specified is just a minimum, causing the max_bytes_per_shard rule taking precedent over the num_shards rule. This will require
+                # dynamically determining the number of shards produced by max_bytes_per_shard and setting it to be equal to min_num_shards if the value is less than it.
+                num_shards=num_shards,
+            )
 
         return p
