@@ -247,7 +247,9 @@ class _BufferedParquetWriter:
         if final and remainder.num_rows > 0:
             self._writer.write_table(remainder, row_group_size=self._row_group_rows)
             remainder = remainder.slice(remainder.num_rows)
-        self._pending = [remainder] if remainder.num_rows > 0 else []
+        self._pending = []
+        if remainder.num_rows > 0:
+            self._pending.append(remainder)
         self._pending_rows = remainder.num_rows
 
     def close(self) -> None:
