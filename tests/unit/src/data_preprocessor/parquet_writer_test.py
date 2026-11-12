@@ -272,7 +272,7 @@ class ParquetWriterRoundTripTest(TestCase):
                         num_shards=4,
                     )
                 )
-            write_manifest(parquet_dir)
+            write_manifest(LocalUri(parquet_dir))
             with open(os.path.join(parquet_dir, MANIFEST_FILE_NAME)) as manifest_file:
                 manifest = json.load(manifest_file)
             expected = {}

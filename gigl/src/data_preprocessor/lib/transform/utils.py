@@ -406,6 +406,8 @@ def get_load_data_and_transform_pipeline_component(
             transformed_features_info.output_format
             == DataPreprocessorOutputFormat.PARQUET
         ):
+            id_keys: list[str]
+            id_columns: list[str]
             if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
                 id_keys = [
                     str(preprocessing_spec.identifier_output.src_node),
@@ -415,17 +417,21 @@ def get_load_data_and_transform_pipeline_component(
             else:
                 id_keys = [str(preprocessing_spec.identifier_output)]
                 id_columns = [NODE_ID_COLUMN]
-            feature_keys = list(preprocessing_spec.features_outputs or [])
+            feature_keys: list[str] = list(preprocessing_spec.features_outputs or [])
             packed_feature_dim = 0
             if quantization_spec is not None:
+                # Quantized features are written as one packed binary column, not as float32 features.
                 quantized_keys = set(quantization_spec.feature_keys)
-                feature_keys = [
-                    key for key in feature_keys if key not in quantized_keys
-                ]
+                unquantized_feature_keys: list[str] = []
+                for key in feature_keys:
+                    if key not in quantized_keys:
+                        unquantized_feature_keys.append(key)
+                feature_keys = unquantized_feature_keys
+                # Each key takes `bits` bits, rounded up to whole bytes.
                 packed_feature_dim = math.ceil(
                     len(quantization_spec.feature_keys) * quantization_spec.bits / 8
                 )
-            label_keys = list(preprocessing_spec.labels_outputs or [])
+            label_keys: list[str] = list(preprocessing_spec.labels_outputs or [])
             transformed_features | "Write parquet files" >> WriteDenseParquet(
                 parquet_uri_prefix=transformed_features_info.transformed_features_parquet_prefix.uri,
                 id_keys=id_keys,

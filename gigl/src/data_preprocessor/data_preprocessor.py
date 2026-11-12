@@ -108,13 +108,6 @@ def _load_feature_quantization_metadata_pb(
     return quantization_metadata
 
 
-def _get_parquet_uri_prefix(transformed_features_info: TransformedFeaturesInfo) -> str:
-    """Parquet prefix to record in the metadata, empty when the features were not written as Parquet."""
-    if transformed_features_info.output_format == DataPreprocessorOutputFormat.PARQUET:
-        return transformed_features_info.transformed_features_parquet_prefix.uri
-    return ""
-
-
 class PreprocessedMetadataReferences(NamedTuple):
     node_data: dict[NodeDataReference, TransformedFeaturesInfo]
     edge_data: dict[EdgeDataReference, TransformedFeaturesInfo]
@@ -320,9 +313,13 @@ class DataPreprocessor:
                 is_start=False,
             )
         )
-        parquet_uri_prefix = _get_parquet_uri_prefix(transformed_features_info)
-        if parquet_uri_prefix:
-            write_manifest(parquet_uri_prefix)
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            write_manifest(
+                transformed_features_info.transformed_features_parquet_prefix
+            )
 
         def __get_feature_dimension_for_single_data_reference(
             schema_path: Uri, feature_outputs: list[str]
@@ -486,7 +483,6 @@ class DataPreprocessor:
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo:
         output = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
             tfrecord_uri_prefix=transformed_features_info.transformed_features_file_prefix.uri,
-            parquet_uri_prefix=_get_parquet_uri_prefix(transformed_features_info),
             schema_uri=transformed_features_info.transformed_features_schema_path.uri,
             feature_keys=transformed_features_info.features_outputs,
             label_keys=transformed_features_info.label_outputs,
@@ -494,6 +490,13 @@ class DataPreprocessor:
             feature_dim=transformed_features_info.feature_dim_output,
             transform_fn_assets_uri=transformed_features_info.transformed_features_transform_fn_assets_path.uri,
         )
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            output.parquet_uri_prefix = (
+                transformed_features_info.transformed_features_parquet_prefix.uri
+            )
         if transformed_features_info.feature_quantization_enabled:
             quantization_metadata = _load_feature_quantization_metadata_pb(
                 metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
@@ -546,9 +549,6 @@ class DataPreprocessor:
 
             node_metadata_output_pb = preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput(
                 tfrecord_uri_prefix=node_transformed_features_info.transformed_features_file_prefix.uri,
-                parquet_uri_prefix=_get_parquet_uri_prefix(
-                    node_transformed_features_info
-                ),
                 schema_uri=node_transformed_features_info.transformed_features_schema_path.uri,
                 node_id_key=str(node_identifier_output),
                 feature_keys=features_outputs,
@@ -558,6 +558,11 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
+            if (
+                node_transformed_features_info.output_format
+                == DataPreprocessorOutputFormat.PARQUET
+            ):
+                node_metadata_output_pb.parquet_uri_prefix = node_transformed_features_info.transformed_features_parquet_prefix.uri
             if node_transformed_features_info.feature_quantization_enabled:
                 quantized_feature_metadata_pb = _load_feature_quantization_metadata_pb(
                     metadata_path=node_transformed_features_info.feature_quantization_metadata_path.uri,
