@@ -778,7 +778,6 @@ pyg27-torch28-cu128 = [
 transform = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "pyarrow" },
-    { name = "pyarrow-hotfix" },
     { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
     { name = "tensorflow-transform", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
@@ -899,7 +898,6 @@ requires-dist = [
     { name = "pip", specifier = "~=25.3" },
     { name = "protobuf" },
     { name = "pyarrow", marker = "extra == 'transform'", specifier = "==10.0.1" },
-    { name = "pyarrow-hotfix", marker = "extra == 'transform'", specifier = "==0.7" },
     { name = "pyg-lib", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "pyg-lib", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", index = "https://data.pyg.org/whl/torch-2.8.0+cu128.html", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "python-dotenv" },
