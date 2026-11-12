@@ -51,7 +51,9 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (50_000,), generator=generator).to(dtype)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        result = build_csr_from_coo(row, col, num_rows=num_rows, chunk_size=chunk_size)
+        result = build_csr_from_coo(
+            row, col, num_rows=num_rows, chunk_size=chunk_size, row_start=0
+        )
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(
@@ -68,14 +70,16 @@ class BuildCsrFromCooTest(TestCase):
         row = torch.tensor([1, 0, 1, 0], dtype=torch.int64)
         col = torch.tensor([3, 5, 1, 2], dtype=torch.int64)
 
-        result = build_csr_from_coo(row, col, num_rows=2)
+        result = build_csr_from_coo(row, col, num_rows=2, row_start=0)
 
         self.assertIsNotNone(result.edge_ids)
         torch.testing.assert_close(result.indptr, torch.tensor([0, 2, 4]))
         torch.testing.assert_close(result.indices, torch.tensor([2, 5, 1, 3]))
         torch.testing.assert_close(result.edge_ids, torch.tensor([3, 1, 2, 0]))
 
-        omitted = build_csr_from_coo(row, col, num_rows=2, retain_edge_ids=False)
+        omitted = build_csr_from_coo(
+            row, col, num_rows=2, retain_edge_ids=False, row_start=0
+        )
         self.assertIsNone(omitted.edge_ids)
         torch.testing.assert_close(omitted.indptr, result.indptr)
         torch.testing.assert_close(omitted.indices, result.indices)
@@ -87,7 +91,7 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (200,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        result = build_csr_from_coo(row, col, num_rows=num_rows)
+        result = build_csr_from_coo(row, col, num_rows=num_rows, row_start=0)
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
@@ -107,7 +111,12 @@ class BuildCsrFromCooTest(TestCase):
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
         result = build_csr_from_coo(
-            row, col, num_rows=num_rows, chunk_size=512, sort_block_edges=64
+            row,
+            col,
+            num_rows=num_rows,
+            chunk_size=512,
+            sort_block_edges=64,
+            row_start=0,
         )
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
@@ -121,7 +130,9 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (400,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
-        result = build_csr_from_coo(row, col, num_rows=num_rows, sort_block_edges=7)
+        result = build_csr_from_coo(
+            row, col, num_rows=num_rows, sort_block_edges=7, row_start=0
+        )
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
@@ -132,7 +143,7 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, 3, (10_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(row, col, 4)
-        result = build_csr_from_coo(row, col, num_rows=4, chunk_size=333)
+        result = build_csr_from_coo(row, col, num_rows=4, chunk_size=333, row_start=0)
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
@@ -149,7 +160,7 @@ class BuildCsrFromCooTest(TestCase):
         row = torch.randint(0, 100, (5_000,), generator=generator)
         col = torch.randint(0, 100, (5_000,), generator=generator)
 
-        result = build_csr_from_coo(row, col, num_rows=4096)
+        result = build_csr_from_coo(row, col, num_rows=4096, row_start=0)
 
         self.assertEqual(result.indptr.numel(), 4097)
         self.assertEqual(int(result.indptr[-1]), 5_000)
@@ -181,7 +192,11 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (4_000,), generator=generator)
 
         result = build_csr_from_coo(
-            row, col, num_rows=num_rows, sort_block_edges=1 << 30
+            row,
+            col,
+            num_rows=num_rows,
+            sort_block_edges=1 << 30,
+            row_start=0,
         )
 
         for row_id in occupied.tolist():
@@ -205,7 +220,7 @@ class BuildCsrFromCooTest(TestCase):
         col = torch.randint(0, num_rows, (20_000,), generator=generator)
 
         expected_indptr, expected_indices = _reference_csr(col, row, num_rows)
-        result = build_csr_from_coo(col, row, num_rows=num_rows)
+        result = build_csr_from_coo(col, row, num_rows=num_rows, row_start=0)
 
         torch.testing.assert_close(result.indptr, expected_indptr, rtol=0, atol=0)
         torch.testing.assert_close(result.indices, expected_indices, rtol=0, atol=0)
@@ -213,7 +228,7 @@ class BuildCsrFromCooTest(TestCase):
     def test_empty_input(self) -> None:
         empty = torch.empty(0, dtype=torch.int64)
 
-        result = build_csr_from_coo(empty, empty, num_rows=10)
+        result = build_csr_from_coo(empty, empty, num_rows=10, row_start=0)
 
         self.assertEqual(result.indptr.numel(), 11)
         self.assertEqual(int(result.indptr.sum()), 0)
@@ -223,12 +238,122 @@ class BuildCsrFromCooTest(TestCase):
         assert edge_ids is not None
         self.assertEqual(edge_ids.numel(), 0)
         self.assertIsNone(
-            build_csr_from_coo(empty, empty, retain_edge_ids=False).edge_ids
+            build_csr_from_coo(
+                empty, empty, retain_edge_ids=False, row_start=0
+            ).edge_ids
         )
 
     def test_row_id_beyond_num_rows_raises(self) -> None:
         with self.assertRaises(ValueError):
-            build_csr_from_coo(torch.tensor([5]), torch.tensor([0]), num_rows=3)
+            build_csr_from_coo(
+                torch.tensor([5]), torch.tensor([0]), num_rows=3, row_start=0
+            )
+
+    def test_row_id_below_row_start_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            build_csr_from_coo(
+                torch.tensor([1, 5]), torch.tensor([0, 0]), num_rows=8, row_start=2
+            )
+
+    @parameterized.expand(
+        [
+            param("int64_with_ids", dtype=torch.int64, retain_edge_ids=True),
+            param("int32_with_ids", dtype=torch.int32, retain_edge_ids=True),
+            param("int64_no_ids", dtype=torch.int64, retain_edge_ids=False),
+            param("int32_no_ids", dtype=torch.int32, retain_edge_ids=False),
+        ]
+    )
+    def test_row_start_matches_full_range_build(
+        self, _name: str, dtype: torch.dtype, retain_edge_ids: bool
+    ) -> None:
+        generator = torch.Generator().manual_seed(11)
+        num_rows, row_start = 5000, 3700
+        row = torch.randint(row_start, num_rows, (40_000,), generator=generator)
+        col = torch.randint(0, num_rows, (40_000,), generator=generator)
+        row, col = row.to(dtype), col.to(dtype)
+
+        expected = build_csr_from_coo(
+            row,
+            col,
+            num_rows=num_rows,
+            retain_edge_ids=retain_edge_ids,
+            row_start=0,
+        )
+        result = build_csr_from_coo(
+            row,
+            col,
+            num_rows=num_rows,
+            retain_edge_ids=retain_edge_ids,
+            row_start=row_start,
+        )
+
+        torch.testing.assert_close(result.indptr, expected.indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected.indices, rtol=0, atol=0)
+        self.assertEqual(result.indices.dtype, dtype)
+        if retain_edge_ids:
+            torch.testing.assert_close(
+                result.edge_ids, expected.edge_ids, rtol=0, atol=0
+            )
+        else:
+            self.assertIsNone(result.edge_ids)
+
+    def test_row_start_with_no_edges(self) -> None:
+        empty = torch.empty(0, dtype=torch.int64)
+        result = build_csr_from_coo(empty, empty, num_rows=6, row_start=4)
+        torch.testing.assert_close(result.indptr, torch.zeros(7, dtype=torch.int64))
+
+    def test_row_start_at_num_rows_builds_an_empty_range(self) -> None:
+        empty = torch.empty(0, dtype=torch.int64)
+        result = build_csr_from_coo(empty, empty, num_rows=6, row_start=6)
+        torch.testing.assert_close(result.indptr, torch.zeros(7, dtype=torch.int64))
+        self.assertEqual(result.indices.numel(), 0)
+
+    def test_row_start_with_all_edges_in_the_last_row(self) -> None:
+        row = torch.tensor([5, 5, 5])
+        col = torch.tensor([2, 0, 1])
+        result = build_csr_from_coo(row, col, num_rows=6, row_start=5)
+        torch.testing.assert_close(result.indptr, torch.tensor([0, 0, 0, 0, 0, 0, 3]))
+        torch.testing.assert_close(result.indices, torch.tensor([0, 1, 2]))
+
+    @parameterized.expand([param("negative", -1, 10), param("past_num_rows", 11, 10)])
+    def test_row_start_outside_the_row_range_raises(
+        self, _name: str, row_start: int, num_rows: int
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "row_start"):
+            build_csr_from_coo(
+                torch.tensor([3]),
+                torch.tensor([1]),
+                num_rows=num_rows,
+                row_start=row_start,
+            )
+
+    def test_disk_backed_build_orders_duplicate_edges_the_same_for_any_row_start(
+        self,
+    ) -> None:
+        """Exactly duplicated edges keep their COO order, so edge ids do not depend on row_start."""
+        generator = torch.Generator().manual_seed(0)
+        num_rows, row_start = 300, 112
+        row = torch.randint(row_start, num_rows, (500,), generator=generator)
+        col = torch.randint(0, 5, (500,), generator=generator)
+        with mock.patch("gigl.utils.csr.is_disk_backed", return_value=True):
+            expected = build_csr_from_coo(
+                row,
+                col,
+                num_rows=num_rows,
+                sort_block_edges=64,
+                chunk_size=13,
+                row_start=0,
+            )
+            result = build_csr_from_coo(
+                row,
+                col,
+                num_rows=num_rows,
+                sort_block_edges=64,
+                chunk_size=13,
+                row_start=row_start,
+            )
+
+        torch.testing.assert_close(result.edge_ids, expected.edge_ids, rtol=0, atol=0)
 
     def test_parallel_scatter_raises_when_degrees_disagree_with_edges(self) -> None:
         # indptr claims row 0 holds one edge, but two edges name row 0.
@@ -239,11 +364,14 @@ class BuildCsrFromCooTest(TestCase):
                 indptr=torch.tensor([0, 1, 2]),
                 indices=torch.empty(2, dtype=torch.int64),
                 edge_ids=None,
+                row_start=0,
             )
 
     def test_mismatched_lengths_raise(self) -> None:
         with self.assertRaises(ValueError):
-            build_csr_from_coo(torch.tensor([0, 1]), torch.tensor([0]), num_rows=2)
+            build_csr_from_coo(
+                torch.tensor([0, 1]), torch.tensor([0]), num_rows=2, row_start=0
+            )
 
     def test_non_one_dimensional_input_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -251,6 +379,7 @@ class BuildCsrFromCooTest(TestCase):
                 torch.zeros((2, 4), dtype=torch.int64),
                 torch.zeros((2, 4), dtype=torch.int64),
                 num_rows=4,
+                row_start=0,
             )
 
 
@@ -289,6 +418,7 @@ class ScatterPlacementTest(TestCase):
             indices=indices,
             chunk_size=chunk_size,
             band_bytes=band_bytes,
+            row_start=0,
         )
         return indices
 
@@ -349,7 +479,7 @@ class ScatterPlacementTest(TestCase):
     ):
         row, col = self._random_coo(rows, edges)
         row, col = row.to(dtype), col.to(dtype)
-        indptr = build_csr_from_coo(row=row, col=col, num_rows=rows).indptr
+        indptr = build_csr_from_coo(row=row, col=col, num_rows=rows, row_start=0).indptr
 
         torch.testing.assert_close(
             self._scatter(row, col, indptr, chunk_size=7, band_bytes=band_bytes),
@@ -360,7 +490,7 @@ class ScatterPlacementTest(TestCase):
         """A supernode cannot be split, so its band is oversized by design."""
         row = torch.cat([torch.zeros(300, dtype=torch.int64), torch.arange(1, 20)])
         col = torch.arange(row.numel(), dtype=torch.int64) % 19
-        indptr = build_csr_from_coo(row=row, col=col, num_rows=20).indptr
+        indptr = build_csr_from_coo(row=row, col=col, num_rows=20, row_start=0).indptr
 
         torch.testing.assert_close(
             # A couple of elements at most: forces a band per row.
@@ -410,7 +540,7 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
             ),
         ):
-            topology = CompactTopology(coo, layout="CSR")
+            topology = CompactTopology(coo, layout="CSR", row_start=0)
             edge_ids_ptr = topology.edge_ids.data_ptr()
             self.assertTrue(topology.edge_ids.is_shared())
             topology.share_memory_()
@@ -445,12 +575,36 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1024
             ),
         ):
-            result = build_csr_from_coo(row=row, col=col, num_rows=64, band_bytes=256)
+            result = build_csr_from_coo(
+                row=row, col=col, num_rows=64, band_bytes=256, row_start=0
+            )
 
         self.assertTrue(is_disk_backed(result.indices))
         reference_indptr, reference_indices = _reference_csr(row, col, 64)
         torch.testing.assert_close(result.indptr, reference_indptr)
         torch.testing.assert_close(result.indices, reference_indices)
+
+    def test_a_disk_backed_build_with_row_start_matches_row_start_zero(self):
+        generator = torch.Generator().manual_seed(29)
+        row = torch.randint(40, 64, (500,), generator=generator)
+        col = torch.randint(0, 64, (500,), generator=generator)
+        with (
+            self._spilling(GIGL_TENSOR_SPILL_MIN_BYTES="1024"),
+            mock.patch(
+                "gigl.utils.share_memory.available_memory_bytes", return_value=1024
+            ),
+        ):
+            expected = build_csr_from_coo(
+                row=row, col=col, num_rows=64, band_bytes=256, row_start=0
+            )
+            result = build_csr_from_coo(
+                row=row, col=col, num_rows=64, band_bytes=256, row_start=40
+            )
+
+        self.assertTrue(is_disk_backed(result.indices))
+        torch.testing.assert_close(result.indptr, expected.indptr, rtol=0, atol=0)
+        torch.testing.assert_close(result.indices, expected.indices, rtol=0, atol=0)
+        torch.testing.assert_close(result.edge_ids, expected.edge_ids, rtol=0, atol=0)
 
     def test_banded_disk_outputs_keep_edge_ids_aligned(self):
         order = torch.randperm(128, generator=torch.Generator().manual_seed(23))
@@ -468,6 +622,7 @@ class ScatterPlacementTest(TestCase):
                 num_rows=8,
                 chunk_size=17,
                 band_bytes=128,
+                row_start=0,
             )
 
         edge_ids = result.edge_ids

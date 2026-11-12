@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
+- Speed up `DistPartitioner` edge, feature, and label partitioning: each chunk is split by destination rank with one
+  stable sort instead of one boolean-mask pass per rank, and `gc.freeze()` keeps the per-chunk `gc.collect()` from
+  scanning long-lived objects while it holds the GIL. Each rank receives the same items in the same order as before by
+  @kmontemayor2-sc
 
 ### Changed
 
@@ -70,6 +74,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- `DistDataset` builds each rank's CSR/CSC over only that rank's row range under range partitioning:
+  `build_csr_from_coo` and `CompactTopology` take `row_start`, and the degree count, scatter and sort (including the
+  disk-backed paths) skip the empty rows below it. The output, including the zero-prefixed `indptr` and edge ids, is
+  identical to the full-range build by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
 
 ### Fixed
 
