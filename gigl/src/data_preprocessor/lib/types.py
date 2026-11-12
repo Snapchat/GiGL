@@ -30,7 +30,10 @@ DEFAULT_TF_STRING_DTYPE = tf.string
 
 
 class DataPreprocessorOutputFormat(str, Enum):
-    """Storage format of the transformed features written by the data preprocessor."""
+    """Storage format of the transformed features written by the data preprocessor.
+
+    Selected with the ``data_preprocessor_output_format`` feature flag, which defaults to ``parquet``.
+    """
 
     TFRECORD = "tfrecord"
     PARQUET = "parquet"
