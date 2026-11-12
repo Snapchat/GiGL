@@ -75,6 +75,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
   bytes per edge of implicit ids are no longer stored. Callers that need per-edge ids on such graphs must pass
   `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/877
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
 
 ### Fixed
 
