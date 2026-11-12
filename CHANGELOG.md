@@ -48,6 +48,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep GraphLearn-Torch's `init_rpc` and its
   default channels; they still share `basic` with every other process. A unit test hashes the upstream source so a
   GraphLearn-Torch upgrade that changes it is noticed
+- Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
+  neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
+  releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop
+  thread. For integer partition books the ids and their order are the same as before, including for ids no partition
+  owns, which both routings drop; negative partition ids are now dropped like the mask drops them, and float partition
+  ids are no longer supported. With 2 partitions the sort is about as fast as the loop at 200 to 2,000 ids (20 to 50
+  microseconds slower per call) and 0.8x to 1.4x at 200,000 ids; with 4 to 60 partitions it is 1.0x to 16x faster (mean
+  of 100 calls, `int64` partition ids, `tests/benchmark/partition_routing_benchmark.py`). A custom `id_select` on the
+  dataset keeps GraphLearn-Torch's mask loop. Unit tests hash the copied upstream `_sample_one_hop` and
+  `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is noticed
 
 ### Changed
 
