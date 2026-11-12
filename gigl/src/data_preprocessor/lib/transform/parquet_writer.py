@@ -94,7 +94,7 @@ class RecordBatchToDenseArrowTable(beam.DoFn):
         label_keys: Sequence[str],
         packed_feature_key: Optional[str] = None,
         packed_feature_dim: int = 0,
-    ):
+    ) -> None:
         """Initializes the converter.
 
         Args:
@@ -191,7 +191,7 @@ class _BufferedParquetWriter:
         codec: str,
         row_group_rows: int,
         empty_schema: pa.Schema,
-    ):
+    ) -> None:
         """Initializes the writer.
 
         Args:
@@ -206,8 +206,8 @@ class _BufferedParquetWriter:
         self._empty_schema = empty_schema
         self._writer: Optional[pq.ParquetWriter] = None
         self._pending: list[pa.Table] = []
-        self._pending_rows = 0
-        self.uncompressed_bytes_written = 0
+        self._pending_rows: int = 0
+        self.uncompressed_bytes_written: int = 0
 
     def _open_writer(self, schema: pa.Schema) -> pq.ParquetWriter:
         """Returns a Parquet writer for ``schema`` on the file handle."""
@@ -278,7 +278,7 @@ class _ParquetSink(filebasedsink.FileBasedSink):
         num_shards: int,
         row_group_rows: int,
         empty_schema: pa.Schema,
-    ):
+    ) -> None:
         """Initializes the sink.
 
         Args:
@@ -333,7 +333,7 @@ class WriteDenseParquet(beam.PTransform):
         num_shards: int,
         packed_feature_key: Optional[str] = None,
         packed_feature_dim: int = 0,
-    ):
+    ) -> None:
         """Initializes the transform.
 
         Args:

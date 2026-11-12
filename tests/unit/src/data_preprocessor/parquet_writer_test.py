@@ -96,7 +96,7 @@ def _load_parquet(prefix: str, id_columns: list[str]) -> LoadedEntityTensors:
     )
     labels = torch.from_numpy(table["label"].to_numpy()).unsqueeze(-1)
     return LoadedEntityTensors(
-        ids=ids, features=features, quantized_features=None, labels=labels
+        ids=ids, features=features, packed_features=None, labels=labels
     )
 
 
@@ -113,7 +113,7 @@ def _sort_by_id(tensors: LoadedEntityTensors) -> LoadedEntityTensors:
     return LoadedEntityTensors(
         ids=ids,
         features=tensors.features[order],
-        quantized_features=None,
+        packed_features=None,
         labels=tensors.labels[order],
     )
 
