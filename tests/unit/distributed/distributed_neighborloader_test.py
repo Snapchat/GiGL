@@ -873,7 +873,7 @@ class DistributedNeighborLoaderTest(TestCase):
                 feats=raw_node_features,
                 ids=torch.arange(2),
             ),
-            partitioned_node_quantized_features=FeaturePartitionData(
+            partitioned_node_packed_features=FeaturePartitionData(
                 feats=packed_quantized_node_features,
                 ids=torch.arange(2),
             ),
@@ -927,7 +927,7 @@ class DistributedNeighborLoaderTest(TestCase):
                     feats=torch.tensor([[20.0]]), ids=torch.tensor([0])
                 ),
             },
-            partitioned_node_quantized_features={
+            partitioned_node_packed_features={
                 _USER: FeaturePartitionData(
                     feats=torch.tensor([[0]], dtype=torch.uint8),
                     ids=torch.tensor([0]),
@@ -1429,7 +1429,7 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
                     feats=torch.tensor([[10.0]]), ids=torch.tensor([0])
                 ),
             },
-            partitioned_edge_quantized_features={
+            partitioned_edge_packed_features={
                 _USER_TO_STORY: FeaturePartitionData(
                     feats=torch.tensor([[0]], dtype=torch.uint8),
                     ids=torch.tensor([0]),
@@ -1481,7 +1481,7 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
                     feats=torch.tensor([[10.0, 20.0]]), ids=torch.tensor([0])
                 )
             },
-            partitioned_edge_quantized_features={
+            partitioned_edge_packed_features={
                 _USER_TO_STORY: FeaturePartitionData(
                     # The high-order 2-bit codes unpack to [0, 3] in feature
                     # slots 0 and 2; raw [10, 20] therefore yields [0, 10, 3, 20].
