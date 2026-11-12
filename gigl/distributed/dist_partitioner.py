@@ -854,6 +854,15 @@ class DistPartitioner:
         """
         Partitions a single chunk of data across multiple machines. First, the partition function is used to lookup or compute the rank of the current input.
         Then, the positions are stably sorted by rank and split into one compact piece per rank. We then send each piece to its machine using the partition manager.
+
+        Flow for a chunk of 6 items on 3 machines::
+
+            chunk_rank                  [2, 0, 1, 0, 2, 1]   rank of each item, from partition_function
+            counts                      [2, 2, 2]            items per rank, from bincount
+            order (stable argsort)      [1, 3, 2, 5, 0, 4]   positions grouped by rank, input order kept within a rank
+            order.split(counts)         [1, 3] [2, 5] [0, 4] one position tensor per rank
+            index_select(input_data, p) gathers each rank's items into its own compact tensor
+            partition_mgr.process(...)  sends piece i to machine i
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned on the current chunk, which any information that should be partitioned across machines.
             rank_indices (torch.Tensor): torch tensor of indices which are used to determine the rank of each item to be partitioned on the current chunk
@@ -2029,6 +2038,8 @@ class DistPartitioner:
         if not gc_frozen_by_caller:
             gc.freeze()
 
+        # The try/finally does not handle errors; it guarantees the gc.unfreeze() below runs
+        # when any partitioning step raises, so the process is not left with a frozen collector.
         try:
             # Node partition should happen at the very beginning, as edge partition
             # and label partition depends on node partition book.
