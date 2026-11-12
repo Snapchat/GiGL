@@ -416,6 +416,7 @@ def get_load_data_and_transform_pipeline_component(
             preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
         ):
             quantization_spec = preprocessing_spec.feature_quantization_spec
+        packed_feature_key: Optional[str] = None
         if quantization_spec is not None:
             if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
                 packed_feature_key = EDGE_PACKED_FEATURE_KEY
@@ -438,10 +439,6 @@ def get_load_data_and_transform_pipeline_component(
             transformed_features_info.output_format
             == DataPreprocessorOutputFormat.PARQUET
         ):
-            if quantization_spec is not None:
-                raise ValueError(
-                    "Parquet output does not support feature quantization."
-                )
             if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
                 id_keys = [
                     str(preprocessing_spec.identifier_output.src_node),
@@ -452,6 +449,15 @@ def get_load_data_and_transform_pipeline_component(
                 id_keys = [str(preprocessing_spec.identifier_output)]
                 id_columns = [NODE_ID_COLUMN]
             feature_keys = list(preprocessing_spec.features_outputs or [])
+            packed_feature_dim = 0
+            if quantization_spec is not None:
+                quantized_keys = set(quantization_spec.feature_keys)
+                feature_keys = [
+                    key for key in feature_keys if key not in quantized_keys
+                ]
+                packed_feature_dim = math.ceil(
+                    len(quantization_spec.feature_keys) * quantization_spec.bits / 8
+                )
             label_keys = list(preprocessing_spec.labels_outputs or [])
             parquet_num_shards = num_shards
             if parquet_num_shards == 0:
@@ -469,6 +475,8 @@ def get_load_data_and_transform_pipeline_component(
                 feature_keys=feature_keys,
                 label_keys=label_keys,
                 num_shards=parquet_num_shards,
+                packed_feature_key=packed_feature_key,
+                packed_feature_dim=packed_feature_dim,
             )
         else:
             transformed_features | "Write tf record files" >> BetterWriteToTFRecord(

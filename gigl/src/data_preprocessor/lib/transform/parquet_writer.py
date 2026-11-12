@@ -3,7 +3,9 @@
 Nodes are stored as ``node_id`` plus an optional ``features`` column, edges as ``src`` and ``dst`` plus an optional
 ``features`` column. ``features`` is a ``FixedSizeList<float32>`` whose slots follow ``feature_keys`` order, with every
 feature cast to float32 and vectors flattened, matching the tensors the TFRecord loader builds. Each label key is its own
-column (float32 for scalar labels, ``FixedSizeList<float32>`` for vector labels).
+column (float32 for scalar labels, ``FixedSizeList<float32>`` for vector labels). Quantized features are stored as one
+``FixedSizeBinary`` column of packed bytes per row, named after the packed feature key recorded in the quantization
+metadata.
 """
 
 import math
@@ -48,6 +50,22 @@ def _fixed_size_list(values: np.ndarray) -> pa.Array:
     )
 
 
+def _fixed_size_binary(column: pa.Array, num_rows: int, width: int) -> pa.Array:
+    """Returns a one-binary-value-per-row list column as a ``FixedSizeBinary(width)`` array.
+
+    Arrow cannot cast variable-length binary to fixed-size binary, so the value bytes are reused directly.
+    """
+    values = column.flatten()
+    offsets = np.frombuffer(values.buffers()[1], dtype=np.int32)
+    offsets = offsets[values.offset : values.offset + num_rows + 1]
+    if not np.array_equal(np.diff(offsets), np.full(num_rows, width)):
+        raise ValueError(f"Packed feature values must all be {width} bytes long.")
+    data = values.buffers()[2].slice(int(offsets[0]), num_rows * width)
+    return pa.FixedSizeBinaryArray.from_buffers(
+        pa.binary(width), num_rows, [None, data]
+    )
+
+
 class RecordBatchToDenseArrowTable(beam.DoFn):
     """Converts a TFT ``pa.RecordBatch`` into a ``pa.Table`` with the dense Parquet schema.
 
@@ -56,6 +74,9 @@ class RecordBatchToDenseArrowTable(beam.DoFn):
         id_columns: Parquet column names for ``id_keys``.
         feature_keys: TFT output names concatenated, in order, into the ``features`` column.
         label_keys: TFT output names written as one float32 column each.
+        packed_feature_key: TFT output name of the packed quantized bytes, written as a ``FixedSizeBinary`` column of the
+            same name. ``None`` when features are not quantized.
+        packed_feature_dim: Number of packed bytes per row. Required when ``packed_feature_key`` is set.
     """
 
     def __init__(
@@ -64,11 +85,15 @@ class RecordBatchToDenseArrowTable(beam.DoFn):
         id_columns: Sequence[str],
         feature_keys: Sequence[str],
         label_keys: Sequence[str],
+        packed_feature_key: Optional[str] = None,
+        packed_feature_dim: int = 0,
     ):
         self._id_keys = list(id_keys)
         self._id_columns = list(id_columns)
         self._feature_keys = list(feature_keys)
         self._label_keys = list(label_keys)
+        self._packed_feature_key = packed_feature_key
+        self._packed_feature_dim = packed_feature_dim
 
     def process(self, batch: pa.RecordBatch):
         num_rows = batch.num_rows
@@ -91,6 +116,14 @@ class RecordBatchToDenseArrowTable(beam.DoFn):
             ]
             names.append(FEATURES_COLUMN)
             arrays.append(_fixed_size_list(np.concatenate(feature_blocks, axis=1)))
+        if self._packed_feature_key is not None:
+            packed = batch.column(
+                batch.schema.get_field_index(self._packed_feature_key)
+            )
+            names.append(self._packed_feature_key)
+            arrays.append(
+                _fixed_size_binary(packed, num_rows, self._packed_feature_dim)
+            )
         for key in self._label_keys:
             labels = _flat_values(
                 batch.column(batch.schema.get_field_index(key)), num_rows
@@ -212,6 +245,8 @@ class WriteDenseParquet(beam.PTransform):
         feature_keys: TFT output names concatenated into the ``features`` column. Empty for no features.
         label_keys: TFT output names written as one float32 column each.
         num_shards: Number of output files. 0 lets the runner choose.
+        packed_feature_key: TFT output name of the packed quantized bytes. ``None`` when features are not quantized.
+        packed_feature_dim: Number of packed bytes per row. Required when ``packed_feature_key`` is set.
     """
 
     def __init__(
@@ -222,6 +257,8 @@ class WriteDenseParquet(beam.PTransform):
         feature_keys: Sequence[str],
         label_keys: Sequence[str],
         num_shards: int,
+        packed_feature_key: Optional[str] = None,
+        packed_feature_dim: int = 0,
     ):
         self._parquet_uri_prefix = parquet_uri_prefix
         self._id_keys = id_keys
@@ -229,6 +266,8 @@ class WriteDenseParquet(beam.PTransform):
         self._feature_keys = feature_keys
         self._label_keys = label_keys
         self._num_shards = num_shards
+        self._packed_feature_key = packed_feature_key
+        self._packed_feature_dim = packed_feature_dim
 
     def expand(self, record_batches):
         if len(self._id_columns) == 1:
@@ -247,6 +286,8 @@ class WriteDenseParquet(beam.PTransform):
                     id_columns=self._id_columns,
                     feature_keys=self._feature_keys,
                     label_keys=self._label_keys,
+                    packed_feature_key=self._packed_feature_key,
+                    packed_feature_dim=self._packed_feature_dim,
                 )
             )
             | "Write Parquet files"

@@ -21,6 +21,7 @@ from gigl.common.data.dataloaders import (
     TFRecordDataLoader,
 )
 from gigl.common.data.parquet_manifest import MANIFEST_FILE_NAME, write_manifest
+from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.src.data_preprocessor.lib.transform.parquet_writer import (
     WriteDenseParquet,
 )
@@ -283,3 +284,63 @@ class ParquetWriterRoundTripTest(TestCase):
             self.assertEqual(sum(sum(rows) for rows in expected.values()), 25)
             # Empty shards are listed with no row groups.
             self.assertIn([], expected.values())
+
+    def test_packed_features_are_fixed_size_binary(self) -> None:
+        num_rows = 25
+        rng = np.random.default_rng(1)
+        packed = quantize_ndarray(
+            rng.normal(size=(num_rows, 10)).astype(np.float32),
+            bits=2,
+            clip_min=-2.0,
+            clip_max=2.0,
+        )
+        self.assertEqual(packed.shape, (num_rows, 3))
+        batch = pa.RecordBatch.from_pydict(
+            {
+                "node_id": pa.array(
+                    [[i] for i in range(num_rows)], type=pa.list_(pa.int64())
+                ),
+                "float_feature": pa.array(
+                    [[float(i)] for i in range(num_rows)], type=pa.list_(pa.float32())
+                ),
+                "label": pa.array(
+                    [[i % 5] for i in range(num_rows)], type=pa.list_(pa.int64())
+                ),
+                "node_packed_features": pa.array(
+                    [[row.tobytes()] for row in packed], type=pa.list_(pa.binary())
+                ),
+            }
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parquet_dir = os.path.join(temp_dir, "parquet") + "/"
+            with TestPipeline() as pipeline:
+                _ = (
+                    pipeline
+                    | beam.Create([batch.slice(0, 10), batch.slice(10, 15)])
+                    | WriteDenseParquet(
+                        parquet_uri_prefix=parquet_dir,
+                        id_keys=["node_id"],
+                        id_columns=["node_id"],
+                        feature_keys=["float_feature"],
+                        label_keys=_LABEL_KEYS,
+                        num_shards=1,
+                        packed_feature_key="node_packed_features",
+                        packed_feature_dim=3,
+                    )
+                )
+            path = glob.glob(f"{parquet_dir}*.parquet")[0]
+            table = pq.read_table(path)
+            self.assertEqual(
+                table.schema.field("node_packed_features").type, pa.binary(3)
+            )
+            self.assertEqual(
+                table.schema.field("features").type, pa.list_(pa.float32(), 1)
+            )
+            written = np.stack(
+                [
+                    np.frombuffer(value, dtype=np.uint8)
+                    for value in table["node_packed_features"].to_pylist()
+                ]
+            )
+            order = np.argsort(table["node_id"].to_numpy())
+            np.testing.assert_array_equal(written[order], packed)
