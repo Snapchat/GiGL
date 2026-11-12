@@ -647,9 +647,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -722,7 +721,7 @@ class TFRecordDataLoaderTest(TestCase):
 
         with self.assertRaises(ValueError):
             load_torch_tensors_from_tf_record(
-                tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
+                world_size=1,
                 serialized_graph_metadata=serialized_graph_metadata,
                 should_load_tensors_in_parallel=False,
                 weight_edge_feat_name="quantized_weight",
@@ -878,9 +877,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -968,9 +966,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
         loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
