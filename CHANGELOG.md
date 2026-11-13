@@ -88,6 +88,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
   `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
   columns by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
 
 ### Fixed
 

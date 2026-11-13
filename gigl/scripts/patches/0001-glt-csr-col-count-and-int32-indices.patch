@@ -21,15 +21,20 @@ One patch because the parts rewrite the same regions of graph.cc and random_samp
 them separately duplicates that text and lets an edit to one silently break the other's context.
 
 diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
-index cd8b4ba..59694fd 100644
+index cd8b4ba..bd68965 100644
 --- a/graphlearn_torch/csrc/cpu/graph.cc
 +++ b/graphlearn_torch/csrc/cpu/graph.cc
-@@ -16,8 +16,82 @@ limitations under the License.
+@@ -16,8 +16,148 @@ limitations under the License.
  #include "graphlearn_torch/include/graph.h"
  #include "graphlearn_torch/include/common.h"
 
 +#include <algorithm>
++#include <atomic>
 +#include <cstdint>
++#include <limits>
++#include <memory>
++#include <system_error>
++#include <thread>
 +#include <vector>
 +
  namespace graphlearn_torch {
@@ -41,7 +46,7 @@ index cd8b4ba..59694fd 100644
 +// edges) -- ~94 GiB at a 4.2B-edge partition, which OOM-kills billion-edge CPU deployments
 +// whose host budget assumes graph init holds no second copy of the topology.
 +//
-+// A seen-bitmap over [0, max_col] gives the identical count in two sequential passes using
++// A seen-bitmap over [0, max_col] gives the identical count in two multi-threaded passes using
 +// max_col/8 + 1 bytes (~115 MiB at 1e9 nodes). It is only VALID for non-negative ids in
 +// contiguous storage, and only CHEAPER when the id domain is dense relative to the edge count.
 +// Both preconditions are checked rather than assumed: an unchecked negative id would cast to a
@@ -53,39 +58,100 @@ index cd8b4ba..59694fd 100644
 +// requiring contiguity makes col_count_ agree with what sampling actually traverses --
 +// upstream's _unique(indices) followed the view's strides and could disagree with its own
 +// samplers.
++
++// Runs fn(begin, end, thread_index) over `count` items split into contiguous chunks, one per
++// thread. This extension is not compiled with OpenMP, so ATen's parallel_for would run serially;
++// plain threads do not depend on the build flags. fn must not throw.
++// TODO: switch to an OpenMP / at::parallel_for construct once GLT is built with OpenMP.
++template <typename Fn>
++void ParallelChunks(int64_t count, int64_t num_threads, Fn fn) {
++  const int64_t per_thread = (count + num_threads - 1) / num_threads;
++  auto run_chunk = [&](int64_t t) {
++    const int64_t begin = std::min(t * per_thread, count);
++    fn(begin, std::min(begin + per_thread, count), t);
++  };
++  std::vector<std::thread> workers;
++  workers.reserve(num_threads);
++  try {
++    for (int64_t t = 1; t < num_threads; ++t) {
++      workers.emplace_back(run_chunk, t);
++    }
++  } catch (const std::system_error&) {
++    // The OS refused a thread (EAGAIN). Destroying a joinable thread would terminate the
++    // process, so join the ones started and run the chunks that never got a thread below.
++  }
++  run_chunk(0);
++  for (int64_t t = static_cast<int64_t>(workers.size()) + 1; t < num_threads; ++t) {
++    run_chunk(t);
++  }
++  for (auto& worker : workers) {
++    worker.join();
++  }
++}
++
 +template <typename ColT>
 +int64_t CountDistinctColsImpl(const torch::Tensor& indices,
 +                              const ColT* col,
 +                              int64_t edge_count) {
-+  int64_t max_col = -1;
-+  for (int64_t i = 0; i < edge_count; ++i) {
-+    const int64_t c = static_cast<int64_t>(col[i]);
-+    TORCH_CHECK(c >= 0,
-+                "InitCPUGraphFromCSR requires non-negative column ids (they are node ids), "
-+                "got ", c, " at position ", i);
-+    max_col = std::max(max_col, c);
-+  }
++  // Small inputs are not worth the thread start-up.
++  constexpr int64_t kMinEdgesPerThread = 1 << 20;
++  const int64_t num_threads = std::max<int64_t>(
++      1, std::min<int64_t>(at::get_num_threads(), edge_count / kMinEdgesPerThread));
++
++  // Pass 1: largest id, and the smallest id to reject negatives. Per-thread results, so the
++  // threads share nothing.
++  std::vector<int64_t> thread_max(num_threads, -1);
++  std::vector<int64_t> thread_min(num_threads, std::numeric_limits<int64_t>::max());
++  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t t) {
++    int64_t local_max = -1;
++    int64_t local_min = std::numeric_limits<int64_t>::max();
++    for (int64_t i = begin; i < end; ++i) {
++      const int64_t c = static_cast<int64_t>(col[i]);
++      local_max = std::max(local_max, c);
++      local_min = std::min(local_min, c);
++    }
++    thread_max[t] = local_max;
++    thread_min[t] = local_min;
++  });
++  const int64_t min_col = *std::min_element(thread_min.begin(), thread_min.end());
++  TORCH_CHECK(min_col >= 0,
++              "InitCPUGraphFromCSR requires non-negative column ids (they are node ids), "
++              "got ", min_col);
++  const int64_t max_col = *std::max_element(thread_max.begin(), thread_max.end());
 +  if (max_col < 0) {
 +    // No edges. at::_unique of an empty tensor is also empty.
 +    return 0;
 +  }
-+  const uint64_t bitmap_bytes = (static_cast<uint64_t>(max_col) >> 3) + 1;
-+  if (bitmap_bytes >
++  const uint64_t bitmap_words = (static_cast<uint64_t>(max_col) >> 6) + 1;
++  if (bitmap_words * 8 >
 +      static_cast<uint64_t>(edge_count) * static_cast<uint64_t>(sizeof(ColT))) {
 +    // Domain so sparse that the bitmap would exceed what `indices` itself occupies; the sort
 +    // is the cheaper peak here.
 +    return std::get<0>(at::_unique(indices)).size(0);
 +  }
-+  std::vector<uint8_t> seen(bitmap_bytes, 0);
-+  int64_t distinct_cols = 0;
-+  for (int64_t i = 0; i < edge_count; ++i) {
-+    const uint64_t c = static_cast<uint64_t>(col[i]);
-+    uint8_t& byte = seen[c >> 3];
-+    const uint8_t bit = static_cast<uint8_t>(1u << (c & 7));
-+    if (!(byte & bit)) {
-+      byte |= bit;
-+      ++distinct_cols;
++  // Pass 2: threads set bits with fetch_or; the thread that flips a bit from 0 to 1 counts it,
++  // so every distinct id is counted exactly once. `new T[n]()` zero-initializes the atomics.
++  std::unique_ptr<std::atomic<uint64_t>[]> seen(new std::atomic<uint64_t>[bitmap_words]());
++  std::vector<int64_t> thread_distinct(num_threads, 0);
++  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t t) {
++    int64_t local_distinct = 0;
++    for (int64_t i = begin; i < end; ++i) {
++      const uint64_t c = static_cast<uint64_t>(col[i]);
++      const uint64_t mask = uint64_t{1} << (c & 63);
++      std::atomic<uint64_t>& word = seen[c >> 6];
++      // The plain load skips the read-modify-write for the many repeated ids.
++      if (word.load(std::memory_order_relaxed) & mask) {
++        continue;
++      }
++      if (!(word.fetch_or(mask, std::memory_order_relaxed) & mask)) {
++        ++local_distinct;
++      }
 +    }
++    thread_distinct[t] = local_distinct;
++  });
++  int64_t distinct_cols = 0;
++  for (int64_t d : thread_distinct) {
++    distinct_cols += d;
 +  }
 +  return distinct_cols;
 +}
@@ -107,7 +173,7 @@ index cd8b4ba..59694fd 100644
  void Graph::InitCPUGraphFromCSR(
      const torch::Tensor& indptr,
      const torch::Tensor& indices,
-@@ -27,10 +101,23 @@ void Graph::InitCPUGraphFromCSR(
+@@ -27,10 +167,23 @@ void Graph::InitCPUGraphFromCSR(
    CheckEq<int64_t>(indices.dim(), 1);
 
    row_ptr_ = indptr.data_ptr<int64_t>();
