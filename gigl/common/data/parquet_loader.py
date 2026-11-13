@@ -22,9 +22,9 @@ One node file::
     part-00000-of-00003.parquet
     +-- row group 0 (100000 rows)
     |     column chunk  node_id               int64
-    |     column chunk  features              fixed_size_list<float32>[feature_dim]        optional
-    |     column chunk  <packed_feature_key>  fixed_size_binary[packed_feature_dim]   optional
-    |     column chunk  <label key>           float32 or fixed_size_list<float32>     optional, one per label
+    |     column chunk  features              fixed_size_list<float32>[feature_dim]  optional
+    |     column chunk  <packed_feature_key>  fixed_size_binary[packed_feature_dim]  optional
+    |     column chunk  <label key>           float32 or fixed_size_list<float32>    optional, one per label
     +-- row group 1 (100000 rows)             same column chunks
     +-- row group 2 (523 rows)                same column chunks
     +-- footer
