@@ -11,6 +11,7 @@ from torch_geometric.data import HeteroData
 
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
+    _build_sequence_layout_from_ppr_edges,
     _get_k_hop_neighbors_sparse,
     heterodata_to_graph_transformer_input,
     tensors_to_graph_transformer_input,
@@ -963,6 +964,74 @@ class TestHeteroToGraphTransformerInput(TestCase):
         )
         self.assertTrue(
             torch.equal(valid_mask[1], torch.tensor([True, True, True, False]))
+        )
+
+
+class TestBuildSequenceLayoutFromPprEdges(TestCase):
+    """Anchor 0's edges, in edge order, are 0->5 (0.5), 0->3 (0.9), 0->0 (0.7, a
+    self edge), 0->6 (0.5), 0->4 (0.9) and 0->7 (0.1), so by descending weight
+    with ties in edge order it ranks 3, 4, 0, 5, 6, 7. Anchor 1 has the single
+    edge 1->2. The edge 2->0 starts at a non-anchor and is ignored. The second
+    edge feature column is the edge position plus one."""
+
+    def _build(self, max_seq_len: int, include_anchor_first: bool):
+        edge_index = torch.tensor([[0, 0, 0, 2, 0, 1, 0, 0], [5, 3, 0, 0, 6, 2, 4, 7]])
+        weights = torch.tensor([0.5, 0.9, 0.7, 0.99, 0.5, 0.3, 0.9, 0.1])
+        edge_attr = torch.stack([weights, torch.arange(8) + 1.0], dim=1)
+        return _build_sequence_layout_from_ppr_edges(
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            anchor_indices=torch.tensor([0, 1]),
+            max_seq_len=max_seq_len,
+            include_anchor_first=include_anchor_first,
+            num_nodes=8,
+            device=torch.device("cpu"),
+            return_edge_weights=True,
+            return_relation_features=True,
+        )
+
+    def test_anchor_first_drops_self_edge_and_orders_by_weight(self):
+        nodes, valid_mask, weights, relation = self._build(6, True)
+        self.assert_tensor_equality(
+            nodes, torch.tensor([[0, 3, 4, 5, 6, 7], [1, 2, -1, -1, -1, -1]])
+        )
+        self.assert_tensor_equality(
+            valid_mask,
+            torch.tensor([[True] * 6, [True, True] + [False] * 4]),
+        )
+        self.assert_tensor_equality(
+            weights[:, :, 0],
+            torch.tensor(
+                [[0.0, 0.9, 0.9, 0.5, 0.5, 0.1], [0.0, 0.3, 0.0, 0.0, 0.0, 0.0]]
+            ),
+        )
+        self.assert_tensor_equality(
+            relation[:, :, 0],
+            torch.tensor([[0.0, 2.0, 7.0, 1.0, 5.0, 8.0], [0.0, 6.0, 0, 0, 0, 0]]),
+        )
+
+    def test_anchor_first_truncates_at_max_seq_len(self):
+        nodes, valid_mask, _, _ = self._build(4, True)
+        self.assert_tensor_equality(nodes, torch.tensor([[0, 3, 4, 5], [1, 2, -1, -1]]))
+        self.assert_tensor_equality(
+            valid_mask, torch.tensor([[True] * 4, [True, True, False, False]])
+        )
+
+    def test_without_anchor_first_keeps_self_edge(self):
+        nodes, valid_mask, weights, relation = self._build(5, False)
+        self.assert_tensor_equality(
+            nodes, torch.tensor([[3, 4, 0, 5, 6], [2, -1, -1, -1, -1]])
+        )
+        self.assert_tensor_equality(
+            valid_mask, torch.tensor([[True] * 5, [True] + [False] * 4])
+        )
+        self.assert_tensor_equality(
+            weights[:, :, 0],
+            torch.tensor([[0.9, 0.9, 0.7, 0.5, 0.5], [0.3, 0.0, 0.0, 0.0, 0.0]]),
+        )
+        self.assert_tensor_equality(
+            relation[:, :, 0],
+            torch.tensor([[2.0, 7.0, 3.0, 1.0, 5.0], [6.0, 0, 0, 0, 0]]),
         )
 
 

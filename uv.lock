@@ -802,13 +802,14 @@ wheels = [
 
 [[package]]
 name = "gigl"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
     { name = "chardet" },
     { name = "gigl-core" },
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-build" },
     { name = "google-cloud-dataflow-client" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
@@ -924,6 +925,7 @@ docs = [
 ]
 gh-actions = [
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-build" },
     { name = "google-cloud-logging" },
 ]
 gigl-core-build-backend = [
@@ -960,6 +962,7 @@ requires-dist = [
     { name = "fbgemm-gpu", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "~=1.3.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "gigl-core", directory = "gigl-core" },
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-build" },
     { name = "google-cloud-dataflow-client" },
     { name = "google-cloud-dataproc" },
     { name = "google-cloud-logging" },
@@ -1064,6 +1067,7 @@ docs = [
 ]
 gh-actions = [
     { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-build" },
     { name = "google-cloud-logging" },
 ]
 gigl-core-build-backend = [
@@ -1091,7 +1095,7 @@ typing-stubs = [
 
 [[package]]
 name = "gigl-core"
-version = "0.3.1"
+version = "0.3.2"
 source = { directory = "gigl-core" }
 
 [[package]]
@@ -1296,6 +1300,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6d/e0/ca8eec9f50a651032a5b5beaa72d204e534fc4e558f5eb0be09ac58ec6cd/google_cloud_build-3.39.0.tar.gz", hash = "sha256:4afe959637aad6ce39b49f4ef5b8c80932a9a3aeae9c32258938406369be1d45", size = 242733, upload-time = "2026-08-25T19:18:38.927Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2d/ad/fa0f90a2830f4a0e49897b998afd55694439e0760dbafcbbfca692628852/google_cloud_build-3.39.0-py3-none-any.whl", hash = "sha256:e96877072823396d2b59455036ba6cad93675dda26df73877d3414ea44b3e471", size = 187542, upload-time = "2026-08-24T21:55:22.802Z" },
+]
+
+[[package]]
+name = "google-cloud-build"
+version = "3.37.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/16/71/504d4c885c1c4e52c7f3752eadcc8c7e1e71d7f57f0950715e7cbbff14ba/google_cloud_build-3.37.0.tar.gz", hash = "sha256:38a119fa1ab0461c930233ad6c98bc2534e375f033b52269e1a75ebe2e08cb98", size = 241305, upload-time = "2026-06-03T15:13:06.382Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/6e/456d7bd5006cd1f2666a95259b70b74d3e74f415aa00c1280f6ba7c9d16a/google_cloud_build-3.37.0-py3-none-any.whl", hash = "sha256:5b06bb2831e1ed74b13eb72c420c7416ec7cd166dd8b97f257843c0da2d21e3a", size = 187280, upload-time = "2026-06-03T15:12:22.318Z" },
 ]
 
 [[package]]
