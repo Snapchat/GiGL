@@ -26,7 +26,7 @@ import time
 from collections import Counter
 from dataclasses import replace
 from enum import Enum
-from typing import Final, Hashable, Mapping, Optional, TypeVar, Union
+from typing import Final, Hashable, Mapping, Optional, TypeVar, Union, cast
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
@@ -43,6 +43,7 @@ from gigl.types.graph import FeatureQuantizationMetadata
 logger = Logger()
 
 _Key = TypeVar("_Key", bound=Hashable)
+_Value = TypeVar("_Value")
 
 _UNCOMPRESSED_ENCODING = "float32"
 
@@ -186,6 +187,39 @@ def compress_lossless_columns(
     return remaining, packed, new_metadata
 
 
+def _to_by_type(
+    value: Optional[Union[_Value, Mapping[_Key, _Value]]], default_key: _Key
+) -> dict[_Key, _Value]:
+    """Returns a tensor or metadata value, or a mapping of them, as a dict by type.
+
+    A single value belongs to ``default_key``, and None means no types.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(cast(Mapping[_Key, _Value], value))
+    return {default_key: value}
+
+
+def _from_by_type(
+    by_type: dict[_Key, _Value], is_homogeneous: bool, default_key: _Key
+) -> Optional[Union[_Value, dict[_Key, _Value]]]:
+    """Inverse of ``_to_by_type``: the ``default_key`` value (or None) if homogeneous, else the dict (or None if empty)."""
+    if is_homogeneous:
+        return by_type.get(default_key)
+    return by_type or None
+
+
+def _set_or_drop(
+    mapping: dict[_Key, _Value], key: _Key, value: Optional[_Value]
+) -> None:
+    """Sets ``mapping[key]`` to ``value``, or removes the key if ``value`` is None."""
+    if value is None:
+        mapping.pop(key, None)
+    else:
+        mapping[key] = value
+
+
 def compress_loaded_features(
     features: Optional[Union[torch.Tensor, Mapping[_Key, torch.Tensor]]],
     quantized_features: Optional[Union[torch.Tensor, Mapping[_Key, torch.Tensor]]],
@@ -216,35 +250,40 @@ def compress_loaded_features(
     sidecars, until the caller releases the inputs.
 
     Args:
-        features: Raw float matrix, or one per type for heterogeneous graphs. May already be keyed by ``default_key``
-            for a homogeneous graph. A type missing here has no rows on this rank.
+        features: Raw float matrix, or one per type for heterogeneous graphs. A type missing here has no rows on this
+            rank.
         quantized_features: Existing packed sidecar(s) from preprocessing.
         metadata: Existing quantization metadata, a single value for homogeneous graphs.
         is_homogeneous: Whether the graph is homogeneous, which decides the form of ``metadata``.
-        default_key: Key the homogeneous graph's single type uses when tensors are keyed.
+        default_key: Key the homogeneous graph's single type uses internally.
 
     Returns:
         ``features``, ``quantized_features`` and ``metadata`` after compression, in the same form as the inputs
-        (``metadata`` is a single value for homogeneous graphs).
+        (single values for homogeneous graphs, dicts for heterogeneous graphs, None if empty).
+
+    Raises:
+        ValueError: If a homogeneous input is a mapping, or a heterogeneous input is a single value.
     """
     start_time = time.time()
-    metadata_by_type: dict[_Key, FeatureQuantizationMetadata] = {}
-    if isinstance(metadata, FeatureQuantizationMetadata):
-        metadata_by_type[default_key] = metadata
-    elif metadata is not None:
-        metadata_by_type.update(metadata)
+    for name, value in (
+        ("features", features),
+        ("quantized_features", quantized_features),
+        ("metadata", metadata),
+    ):
+        if value is None:
+            continue
+        if is_homogeneous and isinstance(value, Mapping):
+            raise ValueError(
+                f"{name} must be a single value for a homogeneous graph, got {type(value)}"
+            )
+        if not is_homogeneous and not isinstance(value, Mapping):
+            raise ValueError(
+                f"{name} must be a mapping by type for a heterogeneous graph, got {type(value)}"
+            )
 
-    def by_type(
-        tensors: Optional[Union[torch.Tensor, Mapping[_Key, torch.Tensor]]],
-    ) -> dict[_Key, torch.Tensor]:
-        if tensors is None:
-            return {}
-        if isinstance(tensors, torch.Tensor):
-            return {default_key: tensors}
-        return dict(tensors)
-
-    features_by_type = by_type(features)
-    quantized_by_type = by_type(quantized_features)
+    features_by_type = _to_by_type(features, default_key)
+    quantized_by_type = _to_by_type(quantized_features, default_key)
+    metadata_by_type = _to_by_type(metadata, default_key)
 
     local_stats: dict[_Key, ColumnStats] = {}
     for key, raw in features_by_type.items():
@@ -275,15 +314,9 @@ def compress_loaded_features(
             merged_by_type[key],
             str(key),
         )
-        for tensors, value in ((new_features, remaining), (new_quantized, packed)):
-            if value is None:
-                tensors.pop(key, None)
-            else:
-                tensors[key] = value
-        if updated is None:
-            new_metadata.pop(key, None)
-        else:
-            new_metadata[key] = updated
+        _set_or_drop(new_features, key, remaining)
+        _set_or_drop(new_quantized, key, packed)
+        _set_or_drop(new_metadata, key, updated)
     end_time = time.time()
     logger.info(
         f"Lossless feature compression took {end_time - start_time:.2f}s on this rank: "
@@ -293,25 +326,8 @@ def compress_loaded_features(
         f"torch threads {torch.get_num_threads()}"
     )
 
-    keyed = not is_homogeneous
-    for original in (features, quantized_features):
-        if original is not None and not isinstance(original, torch.Tensor):
-            keyed = True
-
-    def restore(
-        tensors: dict[_Key, torch.Tensor],
-    ) -> Optional[Union[torch.Tensor, dict[_Key, torch.Tensor]]]:
-        if not tensors:
-            return None
-        return tensors if keyed else tensors[default_key]
-
-    restored_metadata: Optional[
-        Union[FeatureQuantizationMetadata, dict[_Key, FeatureQuantizationMetadata]]
-    ]
-    if not new_metadata:
-        restored_metadata = None
-    elif is_homogeneous:
-        restored_metadata = new_metadata[default_key]
-    else:
-        restored_metadata = new_metadata
-    return restore(new_features), restore(new_quantized), restored_metadata
+    return (
+        _from_by_type(new_features, is_homogeneous, default_key),
+        _from_by_type(new_quantized, is_homogeneous, default_key),
+        _from_by_type(new_metadata, is_homogeneous, default_key),
+    )
