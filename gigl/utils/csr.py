@@ -251,7 +251,7 @@ def build_csr_from_coo(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
-    retain_edge_ids: bool = True,
+    retain_edge_ids: bool = False,
 ) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
@@ -274,9 +274,9 @@ def build_csr_from_coo(
             columns ascending as ``coo_to_csr`` does.
         band_bytes (int): Destination window for the scatter, used only when ``indices`` could
             not be placed in memory.
-        retain_edge_ids (bool): Retain original COO positions in CSR order by default.
-            The int64 IDs cost 8 bytes per edge. Set to ``False`` when callers do not
-            sample edge IDs.
+        retain_edge_ids (bool): Whether to return original COO positions in CSR order
+            (default ``False``). The int64 IDs cost 8 bytes per edge; pass ``True`` only
+            when callers sample edge IDs.
 
     Returns:
         CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
@@ -370,9 +370,9 @@ class CompactTopology(Topology):
         layout (Literal["CSR", "CSC"]): The layout GLT samples from.
         num_rows (Optional[int]): Size of the compressed dimension. Defaults to the largest
             compressed id + 1, as GLT's ``Topology`` does.
-        retain_edge_ids (bool): Retain COO-position IDs for edge sampling by default,
-            at a cost of 8 bytes per edge. Use ``False`` only when callers sample
-            without edge IDs.
+        retain_edge_ids (bool): Whether to keep COO-position IDs for edge sampling
+            (default ``False``), at a cost of 8 bytes per edge. Pass ``True`` only when
+            callers sample with edge IDs.
     """
 
     def __init__(
@@ -381,7 +381,7 @@ class CompactTopology(Topology):
         layout: Literal["CSR", "CSC"],
         num_rows: Optional[int] = None,
         *,
-        retain_edge_ids: bool = True,
+        retain_edge_ids: bool = False,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
