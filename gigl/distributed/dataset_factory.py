@@ -27,6 +27,7 @@ from gigl.common.data.load_torch_tensors import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.common.utils.parse import str_to_bool
 from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
@@ -253,6 +254,7 @@ def _load_and_build_partitioned_dataset(
     return dataset
 
 
+@freeze_gc()
 def _build_dataset_process(
     process_number_on_current_machine: int,
     output_dict: MutableMapping[str, DistDataset],
@@ -286,6 +288,8 @@ def _build_dataset_process(
     propogated to the parent process.
 
     This step currently only is supported on CPU.
+
+    The import-time heap is frozen via `freeze_gc` during the build, so `gc.collect()` calls during the build only scan objects created by the build.
 
     Args:
         process_number_on_current_machine (int): Process number on current machine. This parameter is required and provided by mp.spawn.
