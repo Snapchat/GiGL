@@ -67,19 +67,7 @@ GPUs*) via: `docker run -it --gpus all <YOUR_DOCKER_IMAGE_TAG> /bin/bash`
 
 which will launch an interactive container with the given tagged image and expose the GPUs inside the Docker container.
 
-(2) If during building Docker images, you observe an error related to multiarchitecture emulation e.g.:
-
-```bash
-.buildkit_qemu_emulator: /bin/bash: Invalid ELF image for this architecture
-```
-
-the below command is a fix:
-
-```bash
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-```
-
-(3) If you observe the below error on kfp
+(2) If you observe the below error on kfp
 
 ```
 ImagePullBackOff: Back-off pulling image "<IMAGE_NAME>"

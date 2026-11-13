@@ -42,7 +42,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
   Next, ssh into your instance. It might ask you to install gpu drivers, follow instructions and do so.
 
   2. Install some pre-reqs on your instance. The script below tries to automate installation of the following pre-reqs:
-  `make, unzip, qemu-user-static, docker, docker-buildx, mamba/conda`
+  `make, unzip, docker, docker-buildx, mamba/conda`
   ```bash
     bash -c "$(curl -s https://raw.githubusercontent.com/Snapchat/GiGL/refs/heads/main/scripts/scripts/startup_dev_instance.sh)"
   ```
@@ -57,23 +57,7 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
   1. If on MAC, Install [Homebrew](https://brew.sh/).
 
-  2. Install [Docker](https://docs.docker.com/desktop/) and the relevant `buildx` drivers (if using old versions of docker):
-
-      Once installed, ensure you can run multiarch docker builds by running following command:
-
-      Linux:
-      ```bash
-      docker buildx create --driver=docker-container --use
-      sudo apt-get install qemu-user-static
-      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-      ```
-
-      Mac:
-      ```bash
-      docker buildx create --driver=docker-container --use
-      brew install qemu
-      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-      ```
+  2. Install [Docker](https://docs.docker.com/desktop/).
 
   4. Ensure you have make installed.
 
