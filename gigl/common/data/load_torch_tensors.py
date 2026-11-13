@@ -165,6 +165,19 @@ def _validate_weight_edge_feature_name(
             )
 
 
+def _shift_indices_past_removed_column(
+    indices: tuple[int, ...], removed_index: int
+) -> tuple[int, ...]:
+    """Shifts every index after ``removed_index`` one position to the left."""
+    shifted_indices: list[int] = []
+    for index in indices:
+        if index > removed_index:
+            shifted_indices.append(index - 1)
+        else:
+            shifted_indices.append(index)
+    return tuple(shifted_indices)
+
+
 def remove_sampling_weight_from_edge_quantization_metadata(
     serialized_graph_metadata: SerializedGraphMetadata,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
@@ -236,19 +249,28 @@ def remove_sampling_weight_from_edge_quantization_metadata(
                 break
             feature_spec = edge_info.feature_spec[feature_name]
             raw_column_offset += feature_spec.shape[-1] if feature_spec.shape else 1
-        # The sampling-weight column is removed before reconstruction, shifting
-        # every following logical feature index one position to the left.
+        # The sampling weight must stay an uncompressed raw column, and the loader removes it from the edge
+        # features. Every logical column after it moves one position to the left, so the packed column indices
+        # must move with it. Lossless indices are logical column indices too, so they shift like the quantized
+        # ones; otherwise a lossless column after the weight column decodes into the wrong position.
+        #
+        # Example, with 5 logical columns:
+        #   before: 0 age (raw), 1 weight (raw), 2 country (quantized), 3 is_new (lossless), 4 score (raw)
+        #   after:  0 age (raw), 1 country (quantized), 2 is_new (lossless), 3 score (raw)
+        # So feature_dim goes from 5 to 4, quantized_feature_indices from (2,) to (1,), and
+        # lossless_feature_indices from (3,) to (2,). raw_feature_indices is derived from these, so it follows.
         weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
-        adjusted_quantized_feature_indices = tuple(
-            quantized_feature_index - 1
-            if quantized_feature_index > weight_logical_index
-            else quantized_feature_index
-            for quantized_feature_index in metadata.quantized_feature_indices
+        adjusted_quantized_feature_indices = _shift_indices_past_removed_column(
+            metadata.quantized_feature_indices, weight_logical_index
+        )
+        adjusted_lossless_feature_indices = _shift_indices_past_removed_column(
+            metadata.lossless_feature_indices, weight_logical_index
         )
         adjusted_metadata[edge_type] = replace(
             metadata,
             feature_dim=metadata.feature_dim - 1,
             quantized_feature_indices=adjusted_quantized_feature_indices,
+            lossless_feature_indices=adjusted_lossless_feature_indices,
         )
 
     if is_homogeneous:
@@ -319,7 +341,7 @@ def _data_loading_process(
 
         ids: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
-        quantized_features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
+        packed_features: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         labels: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         weights: dict[Union[NodeType, EdgeType], torch.Tensor] = {}
         for (
@@ -340,7 +362,7 @@ def _data_loading_process(
             )
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
-            entity_quantized_features = loaded_entity.quantized_features
+            entity_packed_features = loaded_entity.packed_features
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
@@ -356,14 +378,14 @@ def _data_loading_process(
                     f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
-            if entity_quantized_features is not None:
-                quantized_features[graph_type] = entity_quantized_features
+            if entity_packed_features is not None:
+                packed_features[graph_type] = entity_packed_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} quantized features of shape {entity_quantized_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} packed features of shape {entity_packed_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} quantized features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} packed features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
@@ -444,11 +466,11 @@ def _data_loading_process(
             share_memory(features)
             # We convert the features back to homogeneous from the default heterogeneous setup if our provided input was homogeneous
 
-        if quantized_features:
+        if packed_features:
             logger.info(
-                f"Rank {rank} is attempting to share {entity_type} quantized feature memory for tfrecord directories: {all_tf_record_uris}"
+                f"Rank {rank} is attempting to share {entity_type} packed feature memory for tfrecord directories: {all_tf_record_uris}"
             )
-            share_memory(quantized_features)
+            share_memory(packed_features)
 
         if labels:
             logger.info(
@@ -469,11 +491,11 @@ def _data_loading_process(
             output_dict[_FEATURE_FMT.format(entity=entity_type)] = (
                 list(features.values())[0] if is_input_homogeneous else features
             )
-        if quantized_features:
+        if packed_features:
             output_dict[_PACKED_FEATURE_FMT.format(entity=entity_type)] = (
-                list(quantized_features.values())[0]
+                list(packed_features.values())[0]
                 if is_input_homogeneous
-                else quantized_features
+                else packed_features
             )
         if labels:
             output_dict[_LABEL_FMT.format(entity=entity_type)] = (
@@ -650,14 +672,14 @@ def load_torch_tensors_from_tf_record(
 
     node_ids = node_output_dict[_ID_FMT.format(entity=_NODE_KEY)]
     node_features = node_output_dict.get(_FEATURE_FMT.format(entity=_NODE_KEY), None)
-    node_quantized_features = node_output_dict.get(
+    node_packed_features = node_output_dict.get(
         _PACKED_FEATURE_FMT.format(entity=_NODE_KEY), None
     )
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
     edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
-    edge_quantized_features = edge_output_dict.get(
+    edge_packed_features = edge_output_dict.get(
         _PACKED_FEATURE_FMT.format(entity=_EDGE_KEY), None
     )
     edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
@@ -683,11 +705,11 @@ def load_torch_tensors_from_tf_record(
     return LoadedGraphTensors(
         node_ids=node_ids,
         node_features=node_features,
-        node_quantized_features=node_quantized_features,
+        node_packed_features=node_packed_features,
         node_labels=node_labels,
         edge_index=edge_index,
         edge_features=edge_features,
-        edge_quantized_features=edge_quantized_features,
+        edge_packed_features=edge_packed_features,
         positive_label=positive_labels,
         negative_label=negative_labels,
         edge_weights=edge_weights,

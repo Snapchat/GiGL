@@ -137,15 +137,15 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         self.dist_node_labels = None
         if data is not None:
             node_features = None
-            node_quantized_features = None
+            node_packed_features = None
             if collect_features:
                 node_features = data.node_features
-                node_quantized_features = data.node_quantized_features
+                node_packed_features = data.node_packed_features
             self.dist_node_feature = build_fused_dist_feature(
                 data.num_partitions,
                 data.partition_idx,
                 node_features,
-                node_quantized_features,
+                node_packed_features,
                 data.node_feat_pb,
                 self.rpc_router,
                 self.device,
@@ -157,7 +157,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     data.num_partitions,
                     data.partition_idx,
                     data.edge_features,
-                    data.edge_quantized_features,
+                    data.edge_packed_features,
                     data.edge_feat_pb,
                     self.rpc_router,
                     self.device,
