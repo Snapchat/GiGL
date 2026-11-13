@@ -315,6 +315,44 @@ class ParquetDataLoaderTest(TestCase):
         self.assertEqual(sum(sizes), _NUM_NODES)
         self.assertIn(0, sizes)
 
+    def test_features_narrower_than_feature_dim_are_rejected(self) -> None:
+        directory = self.root / "nodes"
+        directory.mkdir()
+        table = pa.table(
+            {
+                "node_id": pa.array(self.data["node_id"]),
+                "features": pa.FixedSizeListArray.from_arrays(
+                    pa.array(self.data["feature_a"]), 1
+                ),
+            }
+        )
+        pq.write_table(table, directory / "part-00000-of-00001.parquet")
+        parquet_manifest.write_manifest(UriFactory.create_uri(directory))
+        info = _node_info(directory, parquet=True, with_labels=False)
+
+        with self.assertRaisesRegex(ValueError, "values per row"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(info)
+
+    def test_null_values_inside_feature_lists_are_rejected(self) -> None:
+        directory = self.root / "nodes"
+        directory.mkdir()
+        flat_features: list[Optional[float]] = [0.5] * (_NUM_NODES * _FEATURE_DIM)
+        flat_features[4] = None
+        table = pa.table(
+            {
+                "node_id": pa.array(self.data["node_id"]),
+                "features": pa.FixedSizeListArray.from_arrays(
+                    pa.array(flat_features, pa.float32()), _FEATURE_DIM
+                ),
+            }
+        )
+        pq.write_table(table, directory / "part-00000-of-00001.parquet")
+        parquet_manifest.write_manifest(UriFactory.create_uri(directory))
+        info = _node_info(directory, parquet=True, with_labels=False)
+
+        with self.assertRaisesRegex(ValueError, "null"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(info)
+
     def test_empty_directory_gives_empty_tensors(self) -> None:
         directory = self.root / "empty"
         directory.mkdir()
@@ -818,21 +856,28 @@ class _CountingLoader(ParquetDataLoader):
         return pafs.PyFileSystem(self._handler), uri.uri
 
 
-class _FlakyOpenHandler(_CountingHandler):
-    """Fails the first ``failures_remaining`` opens with a generic ``pa.ArrowException``."""
+class _FailingCountingFile(_CountingFile):
+    """A ``_CountingFile`` whose reads all raise ``OSError``."""
 
-    def __init__(self, failures_remaining: int) -> None:
-        super().__init__(_OpenHandleCounter())
-        self.failures_remaining = failures_remaining
+    def readinto(self, buffer) -> int:
+        raise OSError("injected read failure")
+
+
+class _RowGroupReadsFailHandler(_CountingHandler):
+    """Counts open files; files opened after the first ``footer_opens`` opens fail every read."""
+
+    def __init__(self, counter: _OpenHandleCounter, footer_opens: int) -> None:
+        super().__init__(counter)
+        self._footer_opens = footer_opens
+        self._opens = 0
 
     def open_input_file(self, path: str):
-        if (
-            path.endswith(parquet_format.PARQUET_FILE_SUFFIX)
-            and self.failures_remaining > 0
-        ):
-            self.failures_remaining -= 1
-            raise pa.ArrowException("Unknown error: transient storage failure")
-        return super().open_input_file(path)
+        if not path.endswith(parquet_format.PARQUET_FILE_SUFFIX):
+            return self._local.open_input_file(path)
+        self._opens += 1
+        if self._opens <= self._footer_opens:
+            return pa.PythonFile(_CountingFile(path, self._counter), mode="r")
+        return pa.PythonFile(_FailingCountingFile(path, self._counter), mode="r")
 
 
 class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
@@ -914,16 +959,27 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
         self.assertEqual(counter.currently_open, 0)
         self.assertLessEqual(counter.max_open, 2)
 
+    def test_failed_row_group_read_raises_and_closes_every_handle(self) -> None:
+        counter = _OpenHandleCounter()
+        handler = _RowGroupReadsFailHandler(counter, footer_opens=len(_ROWS_PER_FILE))
+        info = _node_info(self.root, parquet=True)
+        with mock.patch(_RETRY_SLEEP):
+            with self.assertRaises(OSError):
+                _CountingLoader(handler, 0, 1, num_threads=1).load_as_torch_tensors(
+                    info
+                )
+        self.assertGreater(counter.total_opens, len(_ROWS_PER_FILE))
+        self.assertEqual(counter.currently_open, 0)
+
     @parameterized.expand(
         [
-            ("unknown_arrow_error", pa.ArrowException("unknown error"), OSError, 3),
             ("os_error", OSError("connection reset"), OSError, 3),
-            ("file_not_found", FileNotFoundError("gone"), FileNotFoundError, 1),
-            ("permission_denied", PermissionError("denied"), PermissionError, 1),
-            ("invalid_data", pa.ArrowInvalid("bad"), pa.ArrowInvalid, 1),
+            ("file_not_found", FileNotFoundError("gone"), FileNotFoundError, 3),
+            ("value_error", ValueError("bad"), ValueError, 1),
+            ("arrow_exception", pa.ArrowException("unknown"), pa.ArrowException, 1),
         ]
     )
-    def test_open_failures_are_retried_only_when_transient(
+    def test_open_failures_are_retried_only_for_os_errors(
         self,
         _name: str,
         error: Exception,
@@ -940,18 +996,6 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
         self.assertGreater(len(counter.attempts_by_path), 0)
         for attempts in counter.attempts_by_path.values():
             self.assertEqual(attempts, expected_attempts)
-
-    def test_arrow_exception_during_reads_is_retried_and_data_is_correct(
-        self,
-    ) -> None:
-        handler = _FlakyOpenHandler(failures_remaining=2)
-        info = _node_info(self.root, parquet=True)
-        with mock.patch(_RETRY_SLEEP):
-            loaded = _CountingLoader(
-                handler, 0, 1, num_threads=1
-            ).load_as_torch_tensors(info)
-        self.assertEqual(handler.failures_remaining, 0)
-        assert_close(loaded.ids, torch.from_numpy(self.data["node_id"]))
 
     def test_persistent_read_failures_raise(self) -> None:
         failures = _Failures(remaining=10_000)
@@ -987,6 +1031,18 @@ class ParquetRequiredManifestTest(TestCase):
             self.root / "part-00004-of-00004.parquet",
         )
         with self.assertRaises(ValueError):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(self.info)
+
+    def test_manifest_with_row_counts_that_differ_from_the_footers_raises(
+        self,
+    ) -> None:
+        manifest = json.loads(self.manifest_path.read_text())
+        row_counts = manifest["files"]["part-00000-of-00004.parquet"]
+        self.assertEqual(row_counts, [7, 7, 6])
+        # The same total, so only the row-group boundaries are wrong.
+        manifest["files"]["part-00000-of-00004.parquet"] = [6, 7, 7]
+        self.manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "footer"):
             ParquetDataLoader(0, 1).load_as_torch_tensors(self.info)
 
     def test_manifest_with_unknown_version_raises(self) -> None:

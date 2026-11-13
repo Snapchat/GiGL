@@ -93,3 +93,38 @@ class TFDatasetOptions:
     num_parallel_file_reads: int = 64
     ram_budget_multiplier: float = 0.5
     log_every_n_batch: int = 1000
+
+
+def empty_entity_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
+    """Returns the tensors of an entity with no rows, shaped as a load of ``info`` with rows would be.
+
+    Args:
+        info (SerializedTFRecordInfo): How the entity is stored.
+
+    Returns:
+        LoadedEntityTensors: Zero-row tensors:
+
+            - ids: int64 ``[0]`` for nodes, ``[2, 0]`` for edges.
+            - features: ``[0, feature_dim]``, or None without ``feature_keys``.
+            - packed_features: uint8 ``[0, packed_feature_dim]``, or None without ``packed_feature_key``.
+            - labels: ``[0, len(label_keys)]``, or None without ``label_keys``.
+    """
+    if info.is_node_entity:
+        ids = torch.empty(0, dtype=torch.int64)
+    else:
+        ids = torch.empty(2, 0, dtype=torch.int64)
+    features: Optional[torch.Tensor] = None
+    if info.feature_keys:
+        features = torch.empty(0, info.feature_dim)
+    labels: Optional[torch.Tensor] = None
+    if info.label_keys:
+        labels = torch.empty(0, len(info.label_keys))
+    packed_features: Optional[torch.Tensor] = None
+    if info.packed_feature_key is not None:
+        packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)
+    return LoadedEntityTensors(
+        ids=ids,
+        features=features,
+        packed_features=packed_features,
+        labels=labels,
+    )
