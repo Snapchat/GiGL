@@ -1,9 +1,13 @@
 import os
-from typing import Optional, cast
+import tempfile
+from pathlib import Path
+from typing import Optional, Union, cast
 from unittest import mock
 
 import numpy as np
+import tensorflow as tf
 import torch
+import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.data import Feature
@@ -12,6 +16,9 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 import gigl.distributed.utils
+from gigl.common import UriFactory
+from gigl.common.data.dataloaders import SerializedTFRecordInfo
+from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.feature_quantization.lossless import ColumnStats
 from gigl.common.utils.feature_quantization.lossless_compression import (
     FEATURE_COMPRESSION_ENV,
@@ -20,13 +27,13 @@ from gigl.common.utils.feature_quantization.lossless_compression import (
 )
 from gigl.common.utils.feature_quantization.numpy_ops import quantize_ndarray
 from gigl.common.utils.feature_quantization.torch_ops import dequantize_torch_tensor
+from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
-    DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -52,8 +59,17 @@ _STORY = NodeType("story")
 _USER_TO_STORY = EdgeType(_USER, Relation("to"), _STORY)
 _AUTHOR, _PAPER, _TERM = NodeType("author"), NodeType("paper"), NodeType("term")
 _AUTHOR_TO_PAPER = EdgeType(_AUTHOR, Relation("to"), _PAPER)
+_PAPER_TO_TERM = EdgeType(_PAPER, Relation("to"), _TERM)
 
 _NUM_NODES = 40
+
+# Column names of the small heterogeneous dataset written by _write_small_heterogeneous_dataset.
+_AUTHOR_COLUMNS = [f"flag_{i}" for i in range(6)]  # 0/1 values
+_PAPER_COLUMNS = [f"count_{i}" for i in range(5)]  # small non-negative counts
+_TERM_COLUMNS = [f"real_{i}" for i in range(3)]  # real valued
+_AUTHOR_TO_PAPER_COLUMNS = ["weight", "count_a", "count_b", "flag"]  # weight is real
+_PAPER_TO_TERM_COLUMNS = ["real_a", "real_b"]  # real valued
+_SAMPLING_WEIGHT_COLUMN = "weight"
 
 
 def _id_features(
@@ -76,6 +92,123 @@ def _compress(
 ):
     stats = ColumnStats.from_features(features)
     return compress_lossless_columns(features, quantized, metadata, stats, "test")
+
+
+def _write_tfrecord(
+    directory: Path,
+    columns: dict[str, torch.Tensor],
+    id_columns: dict[str, torch.Tensor],
+) -> None:
+    """Writes one example per row: int64 id columns followed by float32 feature columns."""
+    num_rows = len(next(iter(id_columns.values())))
+    with tf.io.TFRecordWriter(str(directory / "data.tfrecord")) as writer:
+        for row in range(num_rows):
+            feature: dict[str, tf.train.Feature] = {}
+            for name, ids in id_columns.items():
+                feature[name] = tf.train.Feature(
+                    int64_list=tf.train.Int64List(value=[int(ids[row])])
+                )
+            for name, values in columns.items():
+                feature[name] = tf.train.Feature(
+                    float_list=tf.train.FloatList(value=[float(values[row])])
+                )
+            writer.write(
+                tf.train.Example(
+                    features=tf.train.Features(feature=feature)
+                ).SerializeToString()
+            )
+
+
+def _serialized_info(
+    directory: Path, column_names: list[str], entity_key: Union[str, tuple[str, str]]
+) -> SerializedTFRecordInfo:
+    feature_spec = {
+        name: tf.io.FixedLenFeature([], tf.float32) for name in column_names
+    }
+    keys = [entity_key] if isinstance(entity_key, str) else list(entity_key)
+    for key in keys:
+        feature_spec[key] = tf.io.FixedLenFeature([], tf.int64)
+    return SerializedTFRecordInfo(
+        tfrecord_uri_prefix=UriFactory.create_uri(str(directory)),
+        feature_keys=column_names,
+        feature_spec=feature_spec,
+        feature_dim=len(column_names),
+        entity_key=entity_key,
+        tfrecord_uri_pattern=r".*\.tfrecord$",
+    )
+
+
+def _write_small_heterogeneous_dataset(root: Path) -> SerializedGraphMetadata:
+    """Writes a tiny heterogeneous graph of local TFRecords and returns the metadata that loads it.
+
+    Node types: author (30 rows, 0/1 columns), paper (40 rows, small counts) and term (20 rows, real values).
+    Edge types: author-to-paper (60 edges; a real-valued sampling weight plus two count columns and a 0/1 column)
+    and paper-to-term (50 edges; real values only).
+    The largest tensor is 60 x 4 float32 values, so the dataset is far smaller than any shared memory limit.
+    """
+    generator = torch.Generator().manual_seed(0)
+    node_columns: dict[NodeType, dict[str, torch.Tensor]] = {
+        _AUTHOR: {},
+        _PAPER: {},
+        _TERM: {},
+    }
+    for name in _AUTHOR_COLUMNS:
+        node_columns[_AUTHOR][name] = torch.randint(
+            0, 2, (30,), generator=generator
+        ).float()
+    for name in _PAPER_COLUMNS:
+        node_columns[_PAPER][name] = torch.randint(
+            0, 21, (40,), generator=generator
+        ).float()
+    for name in _TERM_COLUMNS:
+        node_columns[_TERM][name] = torch.randn(20, generator=generator)
+    node_names = {
+        _AUTHOR: _AUTHOR_COLUMNS,
+        _PAPER: _PAPER_COLUMNS,
+        _TERM: _TERM_COLUMNS,
+    }
+    node_info: dict[NodeType, SerializedTFRecordInfo] = {}
+    for node_type, columns in node_columns.items():
+        directory = root / f"node_{node_type}"
+        directory.mkdir()
+        num_nodes = len(columns[node_names[node_type][0]])
+        _write_tfrecord(directory, columns, {"node_id": torch.arange(num_nodes)})
+        node_info[node_type] = _serialized_info(
+            directory, node_names[node_type], "node_id"
+        )
+
+    author_to_paper_columns = {
+        "weight": torch.rand(60, generator=generator) + 0.5,
+        "count_a": torch.randint(0, 9, (60,), generator=generator).float(),
+        "count_b": torch.randint(-1, 70, (60,), generator=generator).float(),
+        "flag": torch.randint(0, 2, (60,), generator=generator).float(),
+    }
+    paper_to_term_columns = {
+        name: torch.randn(50, generator=generator) for name in _PAPER_TO_TERM_COLUMNS
+    }
+    edge_specs = {
+        _AUTHOR_TO_PAPER: (
+            author_to_paper_columns,
+            torch.arange(60) % 30,
+            (torch.arange(60) * 7 + torch.arange(60) // 30) % 40,
+        ),
+        _PAPER_TO_TERM: (
+            paper_to_term_columns,
+            torch.arange(50) % 40,
+            (torch.arange(50) * 3) % 20,
+        ),
+    }
+    edge_info: dict[EdgeType, SerializedTFRecordInfo] = {}
+    for edge_type, (columns, sources, destinations) in edge_specs.items():
+        directory = root / f"edge_{edge_type.src_node_type}_{edge_type.dst_node_type}"
+        directory.mkdir()
+        _write_tfrecord(directory, columns, {"src": sources, "dst": destinations})
+        edge_info[edge_type] = _serialized_info(
+            directory, list(columns), ("src", "dst")
+        )
+    return SerializedGraphMetadata(
+        node_entity_info=node_info, edge_entity_info=edge_info
+    )
 
 
 def _ring_edges() -> torch.Tensor:
@@ -487,6 +620,37 @@ class LosslessCompressionLoaderTest(TestCase):
 class BuildDatasetLosslessCompressionTest(TestCase):
     """``build_dataset`` infers the encoding of every node feature column from the real partitioned data on every rank."""
 
+    def _build_small_heterogeneous(
+        self,
+        feature_compression: FeatureCompression,
+        weight_edge_feat_name: Optional[dict[EdgeType, str]] = None,
+        should_load_tensors_in_parallel: bool = True,
+    ) -> DistDataset:
+        """Builds the small local heterogeneous dataset, so no large dataset has to fit in shared memory."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        serialized_graph_metadata = _write_small_heterogeneous_dataset(
+            Path(directory.name)
+        )
+        dist.init_process_group(
+            backend="gloo",
+            init_method=f"tcp://127.0.0.1:{gigl.distributed.utils.get_free_port()}",
+            rank=0,
+            world_size=1,
+        )
+        try:
+            with mock.patch.dict(
+                os.environ, {FEATURE_COMPRESSION_ENV: feature_compression.value}
+            ):
+                return build_dataset(
+                    serialized_graph_metadata=serialized_graph_metadata,
+                    sample_edge_direction="out",
+                    should_load_tensors_in_parallel=should_load_tensors_in_parallel,
+                    weight_edge_feat_name=weight_edge_feat_name,
+                )
+        finally:
+            dist.destroy_process_group()
+
     def _build(
         self,
         info,
@@ -551,11 +715,10 @@ class BuildDatasetLosslessCompressionTest(TestCase):
     def test_heterogeneous_node_types_get_encodings_from_their_own_data(
         self,
     ) -> None:
-        info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        reference = self._build(info, feature_compression=FeatureCompression.OFF)
-        # author features are 0/1 (334 columns) and paper features are small counts (4231 columns);
-        # term features (50 columns) are real valued, so they stay float32.
-        dataset = self._build(info, feature_compression=FeatureCompression.AUTO)
+        reference = self._build_small_heterogeneous(FeatureCompression.OFF)
+        # author features are 0/1 (6 columns) and paper features are small counts (5 columns);
+        # term features (3 columns) are real valued, so they stay float32.
+        dataset = self._build_small_heterogeneous(FeatureCompression.AUTO)
 
         node_metadata = cast(
             dict[NodeType, FeatureQuantizationMetadata],
@@ -580,7 +743,10 @@ class BuildDatasetLosslessCompressionTest(TestCase):
                 node_type: node_metadata[node_type].feature_dim
                 for node_type in node_metadata
             },
-            {_AUTHOR: 334, _PAPER: 4231},
+            {
+                _AUTHOR: len(_AUTHOR_COLUMNS),
+                _PAPER: len(_PAPER_COLUMNS),
+            },
         )
 
 
