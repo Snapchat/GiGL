@@ -17,6 +17,7 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed import DistPartitioner
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -801,6 +802,7 @@ class DistributedWeightedSamplingTest(TestCase):
 
     def setUp(self) -> None:
         super().setUp()
+        self.enterContext(freeze_gc())
         self._world_size = 1
 
     def tearDown(self) -> None:
