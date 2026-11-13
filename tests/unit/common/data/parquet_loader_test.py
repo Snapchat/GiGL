@@ -315,6 +315,24 @@ class ParquetDataLoaderTest(TestCase):
         self.assertEqual(sum(sizes), _NUM_NODES)
         self.assertIn(0, sizes)
 
+    def test_features_narrower_than_feature_dim_are_rejected(self) -> None:
+        directory = self.root / "nodes"
+        directory.mkdir()
+        table = pa.table(
+            {
+                "node_id": pa.array(self.data["node_id"]),
+                "features": pa.FixedSizeListArray.from_arrays(
+                    pa.array(self.data["feature_a"]), 1
+                ),
+            }
+        )
+        pq.write_table(table, directory / "part-00000-of-00001.parquet")
+        parquet_manifest.write_manifest(UriFactory.create_uri(directory))
+        info = _node_info(directory, parquet=True, with_labels=False)
+
+        with self.assertRaisesRegex(ValueError, "values per row"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(info)
+
     def test_empty_directory_gives_empty_tensors(self) -> None:
         directory = self.root / "empty"
         directory.mkdir()

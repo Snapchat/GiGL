@@ -299,18 +299,31 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
 
     Fixed-size-list columns fill ``[rows, width]`` destinations and scalar columns fill ``[rows]`` or
     ``[rows, 1]`` ones.
+
+    Raises:
+        ValueError: If the column has null rows, or its width is not the width of ``destination``.
+            numpy would otherwise repeat a width-1 column across a wider destination.
     """
+    if destination.ndim == 2:
+        destination_width = destination.shape[1]
+    else:
+        destination_width = 1
     offset = 0
     for chunk in column.chunks:
         if chunk.null_count:
             raise ValueError(f"Parquet column has {chunk.null_count} null values")
         if pa.types.is_fixed_size_list(chunk.type):
+            width = chunk.type.list_size
             values = chunk.flatten().to_numpy(zero_copy_only=False)
-            values = values.reshape(len(chunk), chunk.type.list_size)
         else:
+            width = 1
             values = chunk.to_numpy(zero_copy_only=False)
-            if destination.ndim == 2:
-                values = values.reshape(len(chunk), 1)
+        if width != destination_width:
+            raise ValueError(
+                f"Parquet column has {width} values per row but {destination_width} were expected"
+            )
+        if destination.ndim == 2:
+            values = values.reshape(len(chunk), width)
         destination[offset : offset + len(chunk)] = values
         offset += len(chunk)
 
