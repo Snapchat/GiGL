@@ -1,104 +1,104 @@
 """Loads node and edge tensors from Parquet files.
 
-``ParquetDataLoader`` reads the files of one entity under ``SerializedTFRecordInfo.parquet_uri_prefix``.
-The file layout is described in ``gigl.common.data.parquet_format``.
+``ParquetDataLoader`` reads the files of one entity (one node type or one edge type) under
+``SerializedTFRecordInfo.parquet_uri_prefix``. Column names and types are defined in
+``gigl.common.data.parquet_format``.
 
-How ``ParquetDataLoader.load_as_torch_tensors`` works
-=====================================================
+An entity directory::
 
-Every rank reads a contiguous slice of the entity's rows, and all ranks together read every row exactly once::
+    <parquet_uri_prefix>/
+        _row_counts.json                  the manifest
+        part-00000-of-00003.parquet       row groups of 100000, 100000, 523 rows
+        part-00001-of-00003.parquet       row groups of 100000, 4100 rows
+        part-00002-of-00003.parquet       one row group of 61 rows
 
-    list the .parquet files under parquet_uri_prefix (sorted)
-                         |
-                         v
-    read the manifest: row counts of each row group of each file
-                         |
-                         v
-    compute this rank's row range [range_start, range_end)
-                         |
-                         v
-    plan read tasks: one per row group that overlaps the range,
-    sliced where the range starts or ends inside a row group
-                         |
-                         v
-    read the footers of only the files this rank's tasks touch
-                         |
-                         v
-    allocate each output tensor once, at its final size (allocate_preshared)
-                         |
-                         v
-    take numpy views of the output tensors (same memory, no copy)
-                         |
-                         v
-    thread pool: read each task's row group and copy its columns
-    into the numpy views at the task's out_offset
-                         |
-                         v
-    return the output tensors as LoadedEntityTensors
+    _row_counts.json:
+        {"version": 1, "files": {"part-00000-of-00003.parquet": [100000, 100000, 523],
+                                 "part-00001-of-00003.parquet": [100000, 4100],
+                                 "part-00002-of-00003.parquet": [61]}}
+
+One node file::
+
+    part-00000-of-00003.parquet
+    +-- row group 0 (100000 rows)
+    |     column chunk  node_id               int64
+    |     column chunk  features              fixed_size_list<float32>[feature_dim]        optional
+    |     column chunk  <packed_feature_key>  fixed_size_binary[packed_feature_dim]   optional
+    |     column chunk  <label key>           float32 or fixed_size_list<float32>     optional, one per label
+    +-- row group 1 (100000 rows)             same column chunks
+    +-- row group 2 (523 rows)                same column chunks
+    +-- footer
+          schema
+          per row group: row count, byte range of each column chunk
+
+Edge files have the same layout with ``src`` and ``dst`` (int64) in place of ``node_id``.
+
+The writer (``gigl.src.data_preprocessor.lib.transform.parquet_writer``) targets:
+
+- row groups of 100,000 rows for nodes and 1,000,000 rows for edges (the last row group of a file is smaller),
+- files of 1 GB of uncompressed data. Files are zstd-compressed and also end when a Beam bundle ends, so many files
+  are much smaller than this.
 
 Terms:
 
-- **Row group**: the unit a Parquet file is divided into.
-  A row group is a horizontal chunk of rows, stored column by column, whose byte ranges are recorded in the footer.
+- **Row group**: a block of consecutive rows, stored column by column.
   It is the smallest unit pyarrow reads on its own, so it is the unit of work here.
-  The writer targets row groups of about 100k rows for nodes and 1M rows for edges, in files of about 1 GB, so one
-  file holds many row groups.
-- **Footer (file metadata)**: the block at the end of a Parquet file that holds the schema and, for each row group,
-  its row count and the byte ranges of its columns.
+- **Column chunk**: one column's values within one row group. Only the requested columns' chunks are read.
+- **Footer**: the schema and, per row group, the row count and the byte range of each column chunk.
   Reading it costs a storage request, so only the footers of files this rank reads from are fetched.
-  ``pq.ParquetFile`` gets the footer passed in and does not fetch it again for each row group.
-- **Manifest**: ``_row_counts.json`` written once next to the data files, listing the row count of
-  every row group of every file (see ``gigl.common.data.parquet_manifest``).
-  It lets every rank compute every rank's range without reading every footer.
-  Loading fails if the manifest is missing or does not list exactly the files found.
-- **Row range per rank**: the rows of all files, concatenated in sorted file order, split into ``world_size``
-  contiguous ranges that differ in size by at most one row.
-  Rank ``r`` keeps rows ``[r * total // world_size, (r + 1) * total // world_size)``.
-- **Read tasks (the plan)**: a list of ``_ReadTask``, one per row group that overlaps the rank's range:
+- **Manifest**: ``_row_counts.json``, the row count of every row group of every file
+  (see ``gigl.common.data.parquet_manifest``).
+  Every rank computes its row range from it without reading other ranks' footers.
+  Loading fails if it is missing or does not list exactly the files found.
+- **Row range**: the rank's contiguous slice of all rows, counted in sorted file order.
+  Rank ``r`` of ``world_size`` keeps rows ``[r * total // world_size, (r + 1) * total // world_size)``.
+- **Read task / plan**: the plan is a list of ``_ReadTask``, one per row group that overlaps the row range:
 
-  - ``file_index``: which file, as an index into the sorted file list.
-  - ``row_group``: which row group of that file.
-  - ``row_offset``: the first row of the row group to keep. 0 unless the range starts inside the row group.
-  - ``num_rows``: how many rows of the row group to keep.
-  - ``out_offset``: the output row the first kept row is written to.
+  - ``file_index``: index into the sorted file list.
+  - ``row_group``: row group of that file.
+  - ``row_offset``: first row of the row group to keep (0 unless the range starts inside it).
+  - ``num_rows``: rows of the row group to keep.
+  - ``out_offset``: output row that the first kept row is written to.
 
-  Tasks do not overlap in the output, so threads write to disjoint rows and need no lock around the copies.
-- **Shared handles** (``_SharedHandles``): one open file handle per file, shared by all tasks of that file and closed
-  after its last task, so a file is opened once rather than once per row group.
+  Tasks write disjoint output rows, so the copies need no lock.
+- **Shared handle**: one open file handle per file, used by all of that file's tasks (see ``_SharedHandles``).
 
-Worked example: three files with row groups ``a.parquet: [4, 4]``, ``b.parquet: [2]``, ``c.parquet: [4]`` hold 14
-rows, and 2 ranks split them into rows ``[0, 7)`` and ``[7, 14)``.
-The second row group of ``a.parquet`` covers rows ``[4, 8)`` and so lies on the boundary; both ranks read it::
+``ParquetDataLoader.load_as_torch_tensors``::
+
+    list .parquet files (sorted) -> read manifest -> row range -> plan tasks
+        -> read footers of this rank's files
+        -> allocate each output tensor once, at its final size
+        -> thread pool: read each task's row group, copy its columns into the outputs at out_offset
+        -> LoadedEntityTensors
+
+Example: files ``a: [4, 4]``, ``b: [2]``, ``c: [4]`` (row counts per row group) hold 14 rows; 2 ranks keep rows
+``[0, 7)`` and ``[7, 14)``. Row group ``a[1]`` straddles the boundary, so both ranks read it::
 
     global rows    0 1 2 3 | 4 5 6 7 | 8 9 | 10 11 12 13
     row group      a[0]    | a[1]    | b[0]| c[0]
     rank 0         x x x x   x x x
     rank 1                         x   x x   x  x  x  x
 
-    rank 0 tasks: (a, 0, row_offset=0, num_rows=4, out_offset=0)
-                  (a, 1, row_offset=0, num_rows=3, out_offset=4)
-    rank 1 tasks: (a, 1, row_offset=3, num_rows=1, out_offset=0)
-                  (b, 0, row_offset=0, num_rows=2, out_offset=1)
-                  (c, 0, row_offset=0, num_rows=4, out_offset=3)
+    (file, row_group, row_offset, num_rows, out_offset)
+    rank 0: (a, 0, 0, 4, 0)  (a, 1, 0, 3, 4)
+    rank 1: (a, 1, 3, 1, 0)  (b, 0, 0, 2, 1)  (c, 0, 0, 4, 3)
 
-Rank 0 reads only the footer of ``a.parquet``.
+Rank 0 reads only the footer of ``a``.
 
-Outputs are allocated once with ``gigl.utils.share_memory.allocate_preshared``, which picks the tensor's final home:
+Outputs are allocated with ``gigl.utils.share_memory.allocate_preshared``, which picks the tensor's final home:
 
 - a file-backed tensor in ``GIGL_TENSOR_SPILL_DIR`` if that is set and the tensor is at least
   ``GIGL_TENSOR_SPILL_MIN_BYTES`` (2 GiB by default),
 - an ordinary in-memory tensor if it is smaller than that threshold,
 - otherwise a tensor in POSIX shared memory.
 
-The large outputs never need a later copy into shared memory, and no per-row-group batches are kept to concatenate.
-
-The copies go through numpy views of the output tensors.
-pyarrow converts a column to a numpy array, and assigning it into a numpy view of an output writes straight into the
-tensor's memory, with no intermediate torch tensor per row group.
+So large outputs are never copied into shared memory later, and no per-row-group batches are kept to concatenate.
+Columns are copied as numpy arrays into numpy views of the outputs, which write straight into the tensors' memory.
 
 The loader runs in a process started with ``spawn`` (see ``gigl.common.data.load_torch_tensors``).
-The bundled curl in pyarrow 10 waits on sockets with ``select()``, which fails for file descriptors numbered 1024 or
-above, and a freshly spawned process starts with few open descriptors.
+pyarrow 10's HTTP client cannot use a socket whose file-descriptor number is 1024 or higher.
+The training process already has thousands of descriptors open (RPC connections), so new sockets get high numbers and
+reads fail; a freshly spawned process starts near zero.
 The log line at the end of a load reports the descriptor count at its start.
 """
 
@@ -214,17 +214,29 @@ def _retry_transient(description: str, operation: Callable[[], _T]) -> _T:
 
 
 class _SharedHandles:
-    """One lazily opened handle per file, shared by concurrent reads and closed after the file's last task.
+    """One handle per file, shared by all of the file's read tasks and closed after the last one.
 
-    Opening a file is expensive on GCS with pyarrow 10: it costs an extra metadata request and a new TLS connection,
-    about 70 ms each.
-    Files hold many row groups (the writer targets files of about 1 GB with 100k-row node and 1M-row edge row groups),
-    so each file is opened once and that handle serves every row-group read of the file.
-    The manifest only saves reading the footers of other ranks' files; this rank still opens its own files.
+    A file has many row groups, each read as its own task, and opening a file on GCS is a network round trip (an object
+    metadata request, plus a new TLS connection on pyarrow 10).
+    An open takes about 130 ms (median) on pyarrow 10 and 29 ms on pyarrow 25; open plus first read takes about 134 ms
+    on both.
+    Opening a fresh handle per row-group read instead of sharing one per file is slower on both versions (GCS, one node
+    and one edge directory, median of 3 runs):
 
-    Tasks run in file order on a pool, so at most as many files as pool threads are open at once.
+    - pyarrow 10: nodes within noise, edges 1.2-1.3x slower.
+    - pyarrow 25: nodes 1.2-1.4x slower, edges 3.5-4.8x slower (2.98 s vs 0.62 s at 48 threads).
 
-    TODO: Re-measure and remove once pyarrow is upgraded (the open cost may drop).
+    Each open handle also holds a socket or file descriptor.
+    Tasks start in file order and a file's handle closes after its last task, so the number of open files stays near
+    the number of reader threads instead of growing with the number of row groups.
+    A slow task can keep an earlier file open while later files are opened.
+
+    This is not what avoids pyarrow 10's limit on descriptor numbers; running in a spawned process does (see the module
+    docstring).
+
+    ``get`` opens a file's handle on first use, under a per-file lock.
+    ``finish_task`` counts down the file's remaining tasks and closes the handle after the last one.
+    ``close_all`` closes the handles left open when tasks are cancelled; call it only once no task is running.
     """
 
     def __init__(
@@ -587,11 +599,12 @@ class ParquetDataLoader:
             # Iterating drains the map: it waits for the tasks in order and re-raises the first exception here,
             # cancelling the tasks that have not started.
             # Each file's handle closes after its last task; close_all closes the handles of files whose last task was
-            # cancelled.
+            # cancelled, once shutdown has waited for the tasks still running.
             try:
                 for _ in pool.map(read_task, tasks):
                     pass
             finally:
+                pool.shutdown(wait=True)
                 shared_handles.close_all()
             read_s = time.perf_counter() - read_start
 

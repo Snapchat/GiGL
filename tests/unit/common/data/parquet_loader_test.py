@@ -835,6 +835,30 @@ class _FlakyOpenHandler(_CountingHandler):
         return super().open_input_file(path)
 
 
+class _FailingCountingFile(_CountingFile):
+    """A ``_CountingFile`` whose reads all raise ``OSError``."""
+
+    def readinto(self, buffer) -> int:
+        raise OSError("injected read failure")
+
+
+class _RowGroupReadsFailHandler(_CountingHandler):
+    """Counts open files; files opened after the first ``footer_opens`` opens fail every read."""
+
+    def __init__(self, counter: _OpenHandleCounter, footer_opens: int) -> None:
+        super().__init__(counter)
+        self._footer_opens = footer_opens
+        self._opens = 0
+
+    def open_input_file(self, path: str):
+        if not path.endswith(parquet_format.PARQUET_FILE_SUFFIX):
+            return self._local.open_input_file(path)
+        self._opens += 1
+        if self._opens <= self._footer_opens:
+            return pa.PythonFile(_CountingFile(path, self._counter), mode="r")
+        return pa.PythonFile(_FailingCountingFile(path, self._counter), mode="r")
+
+
 class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -913,6 +937,18 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
         self.assertGreater(counter.total_opens, 0)
         self.assertEqual(counter.currently_open, 0)
         self.assertLessEqual(counter.max_open, 2)
+
+    def test_failed_row_group_read_raises_and_closes_every_handle(self) -> None:
+        counter = _OpenHandleCounter()
+        handler = _RowGroupReadsFailHandler(counter, footer_opens=len(_ROWS_PER_FILE))
+        info = _node_info(self.root, parquet=True)
+        with mock.patch(_RETRY_SLEEP):
+            with self.assertRaises(OSError):
+                _CountingLoader(handler, 0, 1, num_threads=1).load_as_torch_tensors(
+                    info
+                )
+        self.assertGreater(counter.total_opens, len(_ROWS_PER_FILE))
+        self.assertEqual(counter.currently_open, 0)
 
     @parameterized.expand(
         [
