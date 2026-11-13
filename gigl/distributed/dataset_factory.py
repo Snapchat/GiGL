@@ -24,7 +24,6 @@ from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
     load_torch_tensors_from_tf_record,
-    remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -122,6 +121,8 @@ def _load_and_build_partitioned_dataset(
         weight_edge_feat_name=weight_edge_feat_name,
     )
 
+    node_quantization_metadata = loaded_graph_tensors.node_quantization_metadata
+    edge_quantization_metadata = loaded_graph_tensors.edge_quantization_metadata
     # TODO (mkolodner-sc): Move this code block (from here up to start of partitioning) to transductive splitter once that is ready
     if _ssl_positive_label_percentage is not None:
         if (
@@ -240,11 +241,8 @@ def _load_and_build_partitioned_dataset(
         rank=rank,
         world_size=world_size,
         edge_dir=edge_dir,
-        node_quantization_metadata=serialized_graph_metadata.node_quantization_metadata,
-        edge_quantization_metadata=remove_sampling_weight_from_edge_quantization_metadata(
-            serialized_graph_metadata=serialized_graph_metadata,
-            weight_edge_feat_name=weight_edge_feat_name,
-        ),
+        node_quantization_metadata=node_quantization_metadata,
+        edge_quantization_metadata=edge_quantization_metadata,
     )
 
     dataset.build(
@@ -429,6 +427,13 @@ def build_dataset(
             such a graph with ``with_edge=True``. Explicit IDs and edge features are
             unaffected.
             TODO(kmonte): remove retain_edge_ids once internal callers no longer set it.
+
+    Node feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
+    ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
+    one-hot columns and categorical ids) is stored as the narrowest integer encoding that holds its values, and other
+    columns stay float32. The encodings are inferred from the data, columns that preprocessing already quantized are left
+    alone, and batches are unchanged because loaders decode back to float32. Any other value raises ``ValueError``.
+    See :mod:`gigl.common.utils.feature_quantization.lossless` for the encodings and an example.
 
     Returns:
         DistDataset: Built GraphLearn-for-PyTorch Dataset class

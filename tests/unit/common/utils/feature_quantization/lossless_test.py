@@ -5,9 +5,11 @@ from unittest import mock
 
 import torch
 from absl.testing import absltest
+from parameterized import parameterized
 
 from gigl.common.utils.feature_quantization import lossless
 from gigl.common.utils.feature_quantization.lossless import (
+    ColumnStats,
     FeatureCodec,
     chunk_rows,
     narrowest_integer_encoding,
@@ -64,16 +66,8 @@ def _features(num_rows: int, seed: int) -> torch.Tensor:
     return features
 
 
-def _declared(dense_dtype: str = "float32") -> FeatureCodec:
-    """Declares the narrowest encoding that holds each id block's domain, and ``dense_dtype`` for the rest."""
-    encodings: list[str] = []
-    for _, width, domain in _FEATURES:
-        encoding = (
-            dense_dtype if domain is None else narrowest_integer_encoding(*domain)
-        )
-        assert encoding is not None
-        encodings += [encoding] * width
-    return FeatureCodec(tuple(encodings))
+def _fit(features: torch.Tensor) -> FeatureCodec:
+    return FeatureCodec.from_stats(ColumnStats.from_features(features))
 
 
 def _same_bits(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -84,7 +78,7 @@ class FeatureCodecTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
         self.features = _features(1000, seed=0)
-        self.codec = _declared()
+        self.codec = _fit(self.features)
 
     def test_narrowest_encoding_is_chosen_per_column_and_rows_shrink(self) -> None:
         self.assertEqual(list(self.codec.column_encodings), _EXPECTED_ENCODINGS)
@@ -127,7 +121,7 @@ class FeatureCodecTest(TestCase):
         features[:, column] = torch.tensor(
             [-1.0, 0.0, 255.0, 256.0, 65535.0, 65536.0, 265771.0, -1.0]
         )
-        codec = _declared()
+        codec = _fit(features)
         self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
 
     def test_decode_handles_gathered_strided_misaligned_and_column_strided_rows(
@@ -183,7 +177,124 @@ class FeatureCodecTest(TestCase):
         decoded = self.codec.decode(self.codec.encode(empty))
         self.assertEqual(decoded.shape, (0, _NUM_COLUMNS))
 
-    def test_hand_written_spec_round_trips_every_encoding(self) -> None:
+    @parameterized.expand(
+        [
+            ("fractional", 6, 1.5, "float32"),
+            ("nan", 6, float("nan"), "float32"),
+            ("infinite", 6, float("inf"), "float32"),
+            ("beyond_int32", 6, 2.0**40, "float32"),
+            ("widens_to_uint8_bias1", 6, 200.0, "uint8_bias1"),
+            ("widens_to_int16", 11, -2.0, "int16"),
+        ]
+    )
+    def test_column_encoding_follows_the_values_it_holds(
+        self, _: str, column: int, bad_value: float, expected_encoding: str
+    ) -> None:
+        features = _features(50, seed=2)
+        features[7, column] = bad_value
+        codec = _fit(features)
+        expected = list(_EXPECTED_ENCODINGS)
+        expected[column] = expected_encoding
+        self.assertEqual(list(codec.column_encodings), expected)
+        self.assertTrue(_same_bits(codec.decode(codec.encode(features)), features))
+
+    def test_integral_columns_are_packed_without_any_declaration(self) -> None:
+        features = _features(50, seed=3)
+        features[:, 0] = 3.0  # a "dense" column that happens to hold one whole number
+        self.assertEqual(_fit(features).column_encodings[0], "int8")
+
+    def test_stats_merged_over_partitions_decide_the_codec(self) -> None:
+        first, second = _features(50, seed=5), _features(50, seed=6)
+        second[3, 6] = 1000.0  # does not fit int8
+        merged = FeatureCodec.from_stats(
+            ColumnStats.merge(
+                [ColumnStats.from_features(first), ColumnStats.from_features(second)]
+            )
+        )
+        alone = _fit(first)
+        self.assertEqual(merged.column_encodings[6], "int16")
+        self.assertEqual(alone.column_encodings[6], "int8")
+        for features in (first, second):
+            self.assertTrue(
+                _same_bits(merged.decode(merged.encode(features)), features)
+            )
+
+    def test_negative_zero_keeps_a_column_float32_so_decoding_is_bit_exact(
+        self,
+    ) -> None:
+        features = torch.tensor([[0.0, 1.0, 5.0], [0.0, 0.0, 2.0], [0.0, 1.0, 3.0]])
+        other_rank = torch.tensor([[-0.0, 1.0, 4.0]])
+        merged = FeatureCodec.from_stats(
+            ColumnStats.merge(
+                [
+                    ColumnStats.from_features(features),
+                    ColumnStats.from_features(other_rank),
+                ]
+            )
+        )
+        # Column 0 holds a -0.0 only on the other rank; every rank must still keep it float32.
+        self.assertEqual(merged.column_encodings, ("float32", "bit", "int8"))
+        for part in (features, other_rank):
+            self.assertTrue(_same_bits(merged.decode(merged.encode(part)), part))
+
+    def test_float64_columns_are_checked_in_float64(self) -> None:
+        # 2**24 + 1 is a whole number only in float64; as float32 it would round to 2**24.
+        ids = torch.tensor(
+            [[16777217.0, 1.0], [-3.0, 1.0 + 2.0**-40]], dtype=torch.float64
+        )
+        stats = ColumnStats.from_features(ids)
+        self.assertEqual(stats.integral.tolist(), [True, False])
+        self.assertEqual(
+            FeatureCodec.from_stats(stats).column_encodings, ("int32", "float32")
+        )
+
+    @parameterized.expand(
+        [
+            ("float32", torch.float32),
+            ("float64", torch.float64),
+            ("float16", torch.float16),
+            ("bfloat16", torch.bfloat16),
+        ]
+    )
+    def test_stats_report_extremes_integrality_and_negative_zero(
+        self, _: str, dtype: torch.dtype
+    ) -> None:
+        # Columns: whole numbers, a -0.0 among zeros, a fraction, a NaN, and only +0.0.
+        nan = float("nan")
+        features = torch.tensor(
+            [
+                [-3.0, 0.0, 0.5, 1.0, 0.0],
+                [7.0, -0.0, 2.0, nan, 0.0],
+                [2.0, 0.0, -1.0, 4.0, 0.0],
+            ],
+            dtype=dtype,
+        )
+        stats = ColumnStats.from_features(features)
+        for column, (low, high) in {
+            0: (-3, 7),
+            1: (0, 0),
+            2: (-1, 2),
+            4: (0, 0),
+        }.items():
+            self.assertEqual(stats.minimum[column].item(), low)
+            self.assertEqual(stats.maximum[column].item(), high)
+        self.assertTrue(stats.minimum[3].isnan() and stats.maximum[3].isnan())
+        self.assertEqual(stats.integral.tolist(), [True, True, False, False, True])
+        self.assertEqual(
+            stats.has_negative_zero.tolist(), [False, True, False, False, False]
+        )
+
+    def test_stats_find_a_negative_zero_in_a_late_chunk_of_a_column_slice(
+        self,
+    ) -> None:
+        width = 64
+        rows = 3 * chunk_rows(width, 4) + 5
+        features = torch.ones(rows, width + 2)
+        features[rows - 1, 11] = -0.0
+        stats = ColumnStats.from_features(features[:, 1:-1])
+        self.assertEqual(stats.has_negative_zero.nonzero().flatten().tolist(), [10])
+
+    def test_hand_written_spec_packs_without_any_schema(self) -> None:
         codec = FeatureCodec(("float32", "int8", "uint8", "int16", "uint8_bias1"))
         features = torch.tensor(
             [[0.5, -128.0, 255.0, -32768.0, -1.0], [-0.0, 127.0, 0.0, 32767.0, 254.0]]
@@ -196,7 +307,11 @@ class FeatureCodecTest(TestCase):
     def test_bfloat16_dense_columns_round_to_bfloat16_and_ids_stay_exact(
         self,
     ) -> None:
-        codec = _declared("bfloat16")
+        encodings = [
+            "bfloat16" if encoding == "float32" else encoding
+            for encoding in _EXPECTED_ENCODINGS
+        ]
+        codec = FeatureCodec(tuple(encodings))
         decoded = codec.decode(codec.encode(self.features))
         dense = [
             c
@@ -215,7 +330,7 @@ class FeatureCodecTest(TestCase):
 
     def test_encode_and_decode_refuse_inputs_the_codec_cannot_represent(self) -> None:
         features = self.features.clone()
-        features[0, 6] = 300.0  # the codec declares int8 for this column
+        features[0, 6] = 300.0  # codec was fitted with int8 for this column
         with self.assertRaises(ValueError):
             self.codec.encode(features)
         features = self.features.clone()

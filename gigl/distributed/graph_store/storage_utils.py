@@ -62,6 +62,10 @@ def build_storage_dataset(
     all storage nodes before calling this function so that the dataset can
     be partitioned correctly.
 
+    Node features are losslessly compressed unless ``GIGL_FEATURE_COMPRESSION`` is ``off`` (see
+    :func:`~gigl.distributed.dataset_factory.build_dataset`). Clients pick up the compressed layout from the
+    quantization metadata the storage server serves, so compute nodes need no configuration.
+
     Args:
         task_config_uri: URI pointing to a frozen ``GbmlConfig`` protobuf.
         sample_edge_direction: Direction for edge sampling (``"in"`` or
