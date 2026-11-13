@@ -1,6 +1,8 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <c10/util/ArrayRef.h>
+#include <c10/util/flat_hash_map.h>
 
 #include <cstdint>
 #include <optional>
@@ -40,23 +42,30 @@ struct OriginalEdgeExtractTensors {
 };
 using OriginalEdgeExtractResult = std::unordered_map<int32_t, OriginalEdgeExtractTensors>;
 
+// Non-owning pointer+length view of one node type's total out-degree tensor, resolved
+// once at construction. Exactly one of degreesInt32 / degreesInt64 is non-empty unless
+// the tensor is empty, in which case both are empty and every node has degree 0.
+struct DegreeView {
+    c10::ArrayRef<int32_t> degreesInt32;
+    c10::ArrayRef<int64_t> degreesInt64;
+};
+
 struct ResidualState {
     double residual; // unabsorbed mass waiting to push
     int32_t minHop;  // minimum discovered hop within one seed's traversal
+    bool queued;     // true while the node sits in its seed's live queue (not in the drained snapshot)
 };
 
 // Per-seed, per-node-type PPR algorithm state.
 // Grouping all four containers into one struct is a logical convenience: a single
 // _state[seedIdx][nodeTypeId] access reaches all state for a given (seed, ntype)
-// pair, rather than indexing four separate 2D arrays.  Note that unordered_map and
-// unordered_set heap-allocate their bucket storage, so the actual key-value data is
-// not co-located in memory — only the control-plane metadata (size, bucket pointer)
-// lives inside the struct.
+// pair, rather than indexing four separate 2D arrays.  Each container
+// heap-allocates its elements, so only sizes and pointers live inside the struct.
 struct SeedNodeTypeState {
-    std::unordered_map<int32_t, double> pprScores;             // absorbed PPR mass
-    std::unordered_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
-    std::unordered_set<int32_t> queue;                         // nodes queued for the next drain
-    std::unordered_set<int32_t> queuedNodes;                   // snapshot captured by drainQueue()
+    ska::flat_hash_map<int32_t, double> pprScores;             // absorbed PPR mass
+    ska::flat_hash_map<int32_t, ResidualState> residualStates; // unabsorbed mass and discovered hop
+    std::vector<int32_t> queue;                                // nodes queued for the next drain, each at most once
+    std::vector<int32_t> queuedNodes;                          // ascending-id snapshot captured by drainQueue()
 };
 
 // Cached adjacency payload stored in PPRForwardPush::_neighborCache.
@@ -184,9 +193,6 @@ public:
         bool includeEdgeIds);
 
 private:
-    // Total out-degree of a node across all edge types. Returns 0 for sink nodes.
-    [[nodiscard]] int32_t getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const;
-
     double _alpha;
     double _requeueThresholdFactor; // alpha * eps; per-node requeue threshold = factor * degree
 
@@ -206,6 +212,7 @@ private:
     std::vector<int32_t> _edgeTypeToDstNtypeId;
     std::vector<int32_t> _edgeTypeToSrcNtypeId;
     std::vector<torch::Tensor> _degreeTensors;
+    std::vector<DegreeView> _degreeViews; // aligned with _degreeTensors; points into their storage
 
     // Per-seed, per-node-type PPR state.  Indexed as _state[seedIdx][nodeTypeId].
     // 2D vector: both dimensions are dense sequential integers bounded at construction,
@@ -222,7 +229,7 @@ private:
     // Neighbor lists keyed by packKey(nodeId, edgeTypeId).
     // Hash map: nodeId is a sparse graph ID from a large graph, so a dense array is
     // impractical (contrast with _state above).  Populated incrementally; avoids re-fetching.
-    std::unordered_map<uint64_t, CachedNeighborList> _neighborCache;
+    ska::flat_hash_map<uint64_t, CachedNeighborList> _neighborCache;
 };
 
 // Helper function for draining several independent channel states for one

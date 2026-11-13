@@ -849,3 +849,15 @@ TEST(PPRForwardPush, OutputIsIndependentOfNeighborOrder) {
     EXPECT_TRUE(torch::equal(topk.at(0).ids, reversedTopk.at(0).ids));
     EXPECT_TRUE(torch::equal(topk.at(0).weights, reversedTopk.at(0).weights));
 }
+
+// Degree tensors must be int32 or int64; any other dtype is rejected at construction.
+TEST(PPRForwardPush, ConstructorRejectsUnsupportedDegreeDtype) {
+    EXPECT_THROW(PPRForwardPush(torch::tensor(std::vector<int64_t>{0}, torch::kLong),
+                                /*seedNodeTypeId=*/0,
+                                /*alpha=*/0.15,
+                                /*requeueThresholdFactor=*/1e-6,
+                                /*nodeTypeToEdgeTypeIds=*/{{0}},
+                                /*edgeTypeToDstNtypeId=*/{0},
+                                {torch::tensor(std::vector<float>{1.0F}, torch::kFloat)}),
+                 c10::Error);
+}
