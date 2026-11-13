@@ -1,4 +1,5 @@
 import os
+from enum import Enum
 
 # KFP doesn't support list[str] for runtime parameters, so we need to use List instead.
 from typing import Final, List, Optional
@@ -14,6 +15,7 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
+from gigl.orchestration.kubeflow.cleanup_component import cleanup_child_jobs_op
 from gigl.orchestration.kubeflow.utils.log_metrics import log_metrics_to_ui
 from gigl.orchestration.kubeflow.utils.resource import add_task_resource_requirements
 from gigl.src.common.constants.components import GiGLComponents
@@ -25,6 +27,22 @@ _COMPONENTS_BASE_PATH: Final[str] = os.path.join(
 )
 
 logger = Logger()
+
+
+class ExitTask(str, Enum):
+    """What the pipeline runs when it exits, whatever the outcome.
+
+    A KFP pipeline has exactly one exit task, so this is an either/or choice made at
+    compile time.
+
+    EMAIL: Send a Vertex AI notification email to ``notification_emails``.
+    CLEANUP: Cancel the Vertex AI, Dataflow, and Dataproc jobs the run launched.
+        Meant for CI, where nobody reads the email and orphaned jobs hold capacity.
+    """
+
+    EMAIL = "email"
+    CLEANUP = "cleanup"
+
 
 SPECED_COMPONENTS: Final[list[str]] = [
     GiGLComponents.ConfigValidator.value,
@@ -242,12 +260,15 @@ def _generate_component_tasks(
 def generate_pipeline(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     tag: Optional[str] = None,
+    exit_task: ExitTask = ExitTask.EMAIL,
 ):
     """
     Generates a KFP pipeline definition for GiGL.
     Args:
         common_pipeline_component_configs (CommonPipelineComponentConfigs): Shared configuration between components.
         tag (Optiona[str]): Optional tag, which is provided will be used to tag the pipeline description.
+        exit_task (ExitTask): What runs when the pipeline exits. Defaults to the email notification.
+            With ``ExitTask.CLEANUP`` the ``notification_emails`` parameter is accepted but unused.
 
 
     Returns:
@@ -266,10 +287,14 @@ def generate_pipeline(
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
     ):
-        with kfp.dsl.ExitHandler(
-            VertexNotificationEmailOp(recipients=notification_emails),
-            name="Gigl Alerts",
-        ):
+        if exit_task == ExitTask.CLEANUP:
+            exit_op = cleanup_child_jobs_op(
+                job_name=job_name, resource_config_uri=resource_config_uri
+            )
+            add_task_resource_requirements(exit_op, common_pipeline_component_configs)
+        else:
+            exit_op = VertexNotificationEmailOp(recipients=notification_emails)
+        with kfp.dsl.ExitHandler(exit_op, name="Gigl Alerts"):
             _generate_component_tasks(
                 job_name=job_name,
                 template_or_frozen_config_uri=template_or_frozen_config_uri,
