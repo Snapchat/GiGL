@@ -6,6 +6,8 @@ CPP_SOURCES := $(shell find core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null
 # clang-tidy 15 does not fully support CUDA syntax (e.g. <<<...>>>, __global__).
 # Exclude .cu files from tidy targets; clang-format and clangd handle them fine.
 CPP_SOURCES_NO_CUDA := $(filter-out %.cu,$(CPP_SOURCES))
+# Formatting also covers headers, tests, and benchmarks.
+CPP_FORMAT_SOURCES := $(shell find core tests benchmarks \( -name "*.cpp" -o -name "*.cu" -o -name "*.h" -o -name "*.cuh" \) 2>/dev/null)
 
 # Stamp-file guard: uv pip install -e gigl-core/ triggers a full CMake configure-and-build
 # cycle even when nothing changed. By making the stamp file depend on C++ sources and
@@ -27,11 +29,21 @@ unit_test_cpp: .cache/cpp_tests/.configured
 	cmake --build .cache/cpp_tests --parallel
 	ctest --test-dir .cache/cpp_tests --output-on-failure
 
+# Builds the optimized kernel microbenchmarks into .cache/cpp_benchmarks.
+# Run a benchmark directly, e.g.
+#   .cache/cpp_benchmarks/benchmarks/ppr_forward_push_benchmark --help
+.cache/cpp_benchmarks/.configured: CMakeLists.txt benchmarks/CMakeLists.txt .cache/cmake_build/CMakeInit.txt
+	cmake -C .cache/cmake_build/CMakeInit.txt -S . -B .cache/cpp_benchmarks -DGIGL_CORE_BUILD_BENCHMARKS=ON
+	touch .cache/cpp_benchmarks/.configured
+
+benchmark_cpp: .cache/cpp_benchmarks/.configured
+	cmake --build .cache/cpp_benchmarks --parallel
+
 check_format_cpp:
-	clang-format-15 --dry-run --Werror --style=file $(CPP_SOURCES)
+	clang-format-15 --dry-run --Werror --style=file $(CPP_FORMAT_SOURCES)
 
 format_cpp:
-	clang-format-15 -i --style=file $(CPP_SOURCES)
+	clang-format-15 -i --style=file $(CPP_FORMAT_SOURCES)
 
 # Not part of `make format`: clang-tidy --fix rewrites logic (renames identifiers,
 # changes expressions, adds/removes keywords), not just style. Run manually and
@@ -51,11 +63,11 @@ fix_lint_cpp: build_cpp_extensions
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
 # after switching between branches with substantially different CMakeLists.txt structure.
 clean_cpp:
-	rm -rf .cache/cpp_tests .cache/cmake_build
+	rm -rf .cache/cpp_tests .cache/cpp_benchmarks .cache/cmake_build
 
 clean_build_files_cpp:
 	rm -rf .cache/cpp_tests
 
 # Declare targets as phony so make always runs their recipes, even if a file or
 # directory with the same name happens to exist on disk.
-.PHONY: build_cpp_extensions unit_test_cpp check_format_cpp format_cpp check_lint_cpp fix_lint_cpp clean_cpp clean_build_files_cpp
+.PHONY: build_cpp_extensions unit_test_cpp benchmark_cpp check_format_cpp format_cpp check_lint_cpp fix_lint_cpp clean_cpp clean_build_files_cpp
