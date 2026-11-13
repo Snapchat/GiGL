@@ -14,6 +14,9 @@ def freeze_gc() -> Iterator[None]:
     If the heap is already frozen by an outer caller, this does nothing, so nested use
     does not unfreeze the outer freeze early.
 
+    The freeze applies to the whole process and is not reference counted, so do not
+    use this from more than one thread at a time.
+
     Can be used as a context manager or as a decorator.
 
     Example:
