@@ -3,8 +3,103 @@
 ``ParquetDataLoader`` reads the files of one entity under ``SerializedTFRecordInfo.parquet_uri_prefix``.
 The file layout is described in ``gigl.common.data.parquet_format``.
 
-Every directory of Parquet files must have a row-count manifest (see ``gigl.common.data.parquet_manifest``).
-Loading fails if the manifest is missing or does not match the files.
+How ``ParquetDataLoader.load_as_torch_tensors`` works
+=====================================================
+
+Every rank reads a contiguous slice of the entity's rows, and all ranks together read every row exactly once::
+
+    list the .parquet files under parquet_uri_prefix (sorted)
+                         |
+                         v
+    read the manifest: row counts of each row group of each file
+                         |
+                         v
+    compute this rank's row range [range_start, range_end)
+                         |
+                         v
+    plan read tasks: one per row group that overlaps the range,
+    sliced where the range starts or ends inside a row group
+                         |
+                         v
+    read the footers of only the files this rank's tasks touch
+                         |
+                         v
+    allocate each output tensor once, at its final size (allocate_preshared)
+                         |
+                         v
+    take numpy views of the output tensors (same memory, no copy)
+                         |
+                         v
+    thread pool: read each task's row group and copy its columns
+    into the numpy views at the task's out_offset
+                         |
+                         v
+    return the output tensors as LoadedEntityTensors
+
+Terms:
+
+- **Row group**: the unit a Parquet file is divided into.
+  A row group is a horizontal chunk of rows, stored column by column, whose byte ranges are recorded in the footer.
+  It is the smallest unit pyarrow reads on its own, so it is the unit of work here.
+  The writer targets row groups of about 100k rows for nodes and 1M rows for edges, in files of about 1 GB, so one
+  file holds many row groups.
+- **Footer (file metadata)**: the block at the end of a Parquet file that holds the schema and, for each row group,
+  its row count and the byte ranges of its columns.
+  Reading it costs a storage request, so only the footers of files this rank reads from are fetched.
+  ``pq.ParquetFile`` gets the footer passed in and does not fetch it again for each row group.
+- **Manifest**: ``_row_counts.json`` written once next to the data files, listing the row count of
+  every row group of every file (see ``gigl.common.data.parquet_manifest``).
+  It lets every rank compute every rank's range without reading every footer.
+  Loading fails if the manifest is missing or does not list exactly the files found.
+- **Row range per rank**: the rows of all files, concatenated in sorted file order, split into ``world_size``
+  contiguous ranges that differ in size by at most one row.
+  Rank ``r`` keeps rows ``[r * total // world_size, (r + 1) * total // world_size)``.
+- **Read tasks (the plan)**: a list of ``_ReadTask``, one per row group that overlaps the rank's range:
+
+  - ``file_index``: which file, as an index into the sorted file list.
+  - ``row_group``: which row group of that file.
+  - ``row_offset``: the first row of the row group to keep. 0 unless the range starts inside the row group.
+  - ``num_rows``: how many rows of the row group to keep.
+  - ``out_offset``: the output row the first kept row is written to.
+
+  Tasks do not overlap in the output, so threads write to disjoint rows and need no lock around the copies.
+- **Shared handles** (``_SharedHandles``): one open file handle per file, shared by all tasks of that file and closed
+  after its last task, so a file is opened once rather than once per row group.
+
+Worked example: three files with row groups ``a.parquet: [4, 4]``, ``b.parquet: [2]``, ``c.parquet: [4]`` hold 14
+rows, and 2 ranks split them into rows ``[0, 7)`` and ``[7, 14)``.
+The second row group of ``a.parquet`` covers rows ``[4, 8)`` and so lies on the boundary; both ranks read it::
+
+    global rows    0 1 2 3 | 4 5 6 7 | 8 9 | 10 11 12 13
+    row group      a[0]    | a[1]    | b[0]| c[0]
+    rank 0         x x x x   x x x
+    rank 1                         x   x x   x  x  x  x
+
+    rank 0 tasks: (a, 0, row_offset=0, num_rows=4, out_offset=0)
+                  (a, 1, row_offset=0, num_rows=3, out_offset=4)
+    rank 1 tasks: (a, 1, row_offset=3, num_rows=1, out_offset=0)
+                  (b, 0, row_offset=0, num_rows=2, out_offset=1)
+                  (c, 0, row_offset=0, num_rows=4, out_offset=3)
+
+Rank 0 reads only the footer of ``a.parquet``.
+
+Outputs are allocated once with ``gigl.utils.share_memory.allocate_preshared``, which picks the tensor's final home:
+
+- a file-backed tensor in ``GIGL_TENSOR_SPILL_DIR`` if that is set and the tensor is at least
+  ``GIGL_TENSOR_SPILL_MIN_BYTES`` (2 GiB by default),
+- an ordinary in-memory tensor if it is smaller than that threshold,
+- otherwise a tensor in POSIX shared memory.
+
+The large outputs never need a later copy into shared memory, and no per-row-group batches are kept to concatenate.
+
+The copies go through numpy views of the output tensors.
+pyarrow converts a column to a numpy array, and assigning it into a numpy view of an output writes straight into the
+tensor's memory, with no intermediate torch tensor per row group.
+
+The loader runs in a process started with ``spawn`` (see ``gigl.common.data.load_torch_tensors``).
+The bundled curl in pyarrow 10 waits on sockets with ``select()``, which fails for file descriptors numbered 1024 or
+above, and a freshly spawned process starts with few open descriptors.
+The log line at the end of a load reports the descriptor count at its start.
 """
 
 import os
@@ -22,7 +117,11 @@ import torch
 
 from gigl.common import Uri
 from gigl.common.data import parquet_manifest
-from gigl.common.data.loader_types import LoadedEntityTensors, SerializedTFRecordInfo
+from gigl.common.data.loader_types import (
+    LoadedEntityTensors,
+    SerializedTFRecordInfo,
+    empty_entity_tensors,
+)
 from gigl.common.data.parquet_format import (
     EDGE_DST_COLUMN,
     EDGE_SRC_COLUMN,
@@ -230,20 +329,10 @@ class ParquetDataLoader:
 
     Produces the same ``LoadedEntityTensors`` as ``TFRecordDataLoader.load_as_torch_tensors`` for the same data.
 
-    The two loaders split the data across ranks differently.
     ``TFRecordDataLoader`` gives each rank whole files.
     Dataflow ends files early at bundle boundaries, so file sizes vary and whole-file assignment gives uneven ranks.
-    This loader instead splits the rows of all files, in sorted file order, into ``world_size`` contiguous ranges that
-    differ by at most one row, so every rank gets the same number of rows.
-    Each rank reads the row groups that overlap its range.
-    A row group on a range boundary is read by both neighboring ranks, which each keep their own rows.
-
-    Row counts come from the manifest next to the files, see ``gigl.common.data.parquet_manifest``.
-    The manifest is required.
-
-    Outputs are allocated once from those counts, in shared memory (or spilled to disk, see
-    ``gigl.utils.share_memory.allocate_preshared``), and filled by a thread pool.
-    No intermediate batches are kept and the outputs need no later copy into shared memory.
+    This loader instead gives each rank a contiguous range of rows, so ranks differ by at most one row.
+    The module docstring describes how a rank's range is planned, read and copied into its outputs.
 
     Args:
         rank (int): Rank of the current machine.
@@ -267,7 +356,16 @@ class ParquetDataLoader:
     def _plan_tasks(
         self, row_groups_per_file: Sequence[Sequence[int]]
     ) -> list[_ReadTask]:
-        """Returns the row groups (and slices of boundary row groups) that make up this rank's row range."""
+        """Returns the read tasks that make up this rank's row range, in file and row-group order.
+
+        See the module docstring for the row range and a worked example.
+
+        Args:
+            row_groups_per_file (Sequence[Sequence[int]]): Row counts of each row group of each file, in file order.
+
+        Returns:
+            list[_ReadTask]: One task per row group that overlaps the range.
+        """
         total_rows = sum(sum(file_rows) for file_rows in row_groups_per_file)
         range_start = self._rank * total_rows // self._world_size
         range_end = (self._rank + 1) * total_rows // self._world_size
@@ -291,29 +389,6 @@ class ParquetDataLoader:
                     )
                 group_start = group_end
         return tasks
-
-    @staticmethod
-    def _empty_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
-        ids: torch.Tensor
-        if info.is_node_entity:
-            ids = torch.empty(0, dtype=torch.int64)
-        else:
-            ids = torch.empty(2, 0, dtype=torch.int64)
-        features: Optional[torch.Tensor] = None
-        if info.feature_keys:
-            features = torch.empty(0, info.feature_dim)
-        labels: Optional[torch.Tensor] = None
-        if info.label_keys:
-            labels = torch.empty(0, len(info.label_keys))
-        packed_features: Optional[torch.Tensor] = None
-        if info.packed_feature_key is not None:
-            packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)
-        return LoadedEntityTensors(
-            ids=ids,
-            features=features,
-            packed_features=packed_features,
-            labels=labels,
-        )
 
     def load_as_torch_tensors(
         self, serialized_tf_record_info: SerializedTFRecordInfo
@@ -350,7 +425,7 @@ class ParquetDataLoader:
             logger.warning(
                 f"Found no Parquet files under {info.parquet_uri_prefix.uri}"
             )
-            return self._empty_tensors(info)
+            return empty_entity_tensors(info)
 
         # Reads with pre_buffer=True run on pyarrow's I/O pool, which caps the number of in-flight requests.
         pa.set_io_thread_count(max(pa.io_thread_count(), self._num_threads))
@@ -388,9 +463,8 @@ class ParquetDataLoader:
             num_rows = sum(task.num_rows for task in tasks)
             if num_rows == 0:
                 logger.info(f"No rows to load for rank: {self._rank}.")
-                return self._empty_tensors(info)
+                return empty_entity_tensors(info)
 
-            id_columns: list[str]
             if info.is_node_entity:
                 id_columns = [NODE_ID_COLUMN]
             else:
@@ -410,7 +484,6 @@ class ParquetDataLoader:
                 label_widths.append(_column_width(schema.field(key)))
             num_label_columns = sum(label_widths)
 
-            ids: torch.Tensor
             if info.is_node_entity:
                 ids = allocate_preshared((num_rows,), torch.int64)
             else:
@@ -511,6 +584,10 @@ class ParquetDataLoader:
                         label_offset += width
 
             read_start = time.perf_counter()
+            # Iterating drains the map: it waits for the tasks in order and re-raises the first exception here,
+            # cancelling the tasks that have not started.
+            # Each file's handle closes after its last task; close_all closes the handles of files whose last task was
+            # cancelled.
             try:
                 for _ in pool.map(read_task, tasks):
                     pass
