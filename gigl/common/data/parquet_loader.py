@@ -42,10 +42,11 @@ The writer (``gigl.src.data_preprocessor.lib.transform.parquet_writer``) targets
 Terms:
 
 - **Row group**: a block of consecutive rows, stored column by column.
-  It is the smallest unit pyarrow reads on its own, so it is the unit of work here.
+  pyarrow can read one row group without the others but not part of one, so it is the unit of work here.
 - **Column chunk**: one column's values within one row group. Only the requested columns' chunks are read.
+  pyarrow also reads a gap of up to 8 KiB between two requested chunks instead of making a second request.
 - **Footer**: the schema and, per row group, the row count and the byte range of each column chunk.
-  Reading it costs a storage request, so only the footers of files this rank reads from are fetched.
+  Reading it costs storage requests, so only the footers of files this rank reads from are fetched.
 - **Manifest**: ``_row_counts.json``, the row count of every row group of every file
   (see ``gigl.common.data.parquet_manifest``).
   Every rank computes its row range from it without reading other ranks' footers.
@@ -90,15 +91,18 @@ Outputs are allocated with ``gigl.utils.share_memory.allocate_preshared``, which
 - a file-backed tensor in ``GIGL_TENSOR_SPILL_DIR`` if that is set and the tensor is at least
   ``GIGL_TENSOR_SPILL_MIN_BYTES`` (2 GiB by default),
 - an ordinary in-memory tensor if it is smaller than that threshold,
-- otherwise a tensor in POSIX shared memory.
+- otherwise a tensor in POSIX shared memory. Allocation fails if the shared-memory mount lacks the room.
 
 So large outputs are never copied into shared memory later, and no per-row-group batches are kept to concatenate.
 Columns are copied as numpy arrays into numpy views of the outputs, which write straight into the tensors' memory.
 
 The loader runs in a process started with ``spawn`` (see ``gigl.common.data.load_torch_tensors``).
-pyarrow 10's HTTP client cannot use a socket whose file-descriptor number is 1024 or higher.
-The training process already has thousands of descriptors open (RPC connections), so new sockets get high numbers and
-reads fail; a freshly spawned process starts near zero.
+The libcurl inside the pyarrow 10 wheels waits on sockets with ``select()``, which cannot take a file-descriptor number
+of 1024 or higher.
+A training process can hold more than 1024 open descriptors, so its new sockets get numbers above the limit and GCS
+requests fail with a ``pa.ArrowException`` that mentions ``select/poll``.
+A freshly spawned process starts with a few dozen descriptors.
+The pyarrow wheels use ``poll()`` from version 13.
 The log line at the end of a load reports the descriptor count at its start.
 """
 
@@ -169,10 +173,10 @@ class _ReadTask:
 class _SharedHandles:
     """One handle per file, shared by all of the file's read tasks and closed after the last one.
 
-    A file has many row groups, each read as its own task, and opening a file on GCS is a network round trip (an object
-    metadata request, plus a new TLS connection on pyarrow 10).
-    An open takes about 130 ms (median) on pyarrow 10 and 29 ms on pyarrow 25; open plus first read takes about 134 ms
-    on both.
+    A file has many row groups, each read as its own task, and opening a file on GCS costs an object metadata request
+    (pyarrow 10 also starts a read of the object).
+    An open takes about 130 ms (median) on pyarrow 10 and 29 ms on pyarrow 25.
+    An open followed by a footer read takes about 150 ms on pyarrow 10 and 134 ms on pyarrow 25.
     Opening a fresh handle per row-group read instead of sharing one per file is slower on both versions (GCS, one node
     and one edge directory, median of 3 runs):
 
@@ -392,6 +396,7 @@ class ParquetDataLoader:
             ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version or
                 does not list exactly the files found.
             FileNotFoundError: If the manifest is missing.
+            OSError: If listing the files or reading a footer or row group still fails after the retries.
         """
         info = serialized_tf_record_info
         if info.parquet_uri_prefix is None:
@@ -410,7 +415,8 @@ class ParquetDataLoader:
             )
             return empty_entity_tensors(info)
 
-        # Reads with pre_buffer=True run on pyarrow's I/O pool, which caps the number of in-flight requests.
+        # Reads with pre_buffer=True run on pyarrow's I/O pool, which caps the number of in-flight requests
+        # (8 threads by default).
         pa.set_io_thread_count(max(pa.io_thread_count(), self._num_threads))
 
         with ThreadPoolExecutor(self._num_threads) as pool:
