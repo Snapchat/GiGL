@@ -1,4 +1,3 @@
-import unittest
 from collections import defaultdict
 from typing import Literal, Optional, Union, cast
 
@@ -1123,8 +1122,6 @@ class DistABLPLoaderTest(TestCase):
             ),
         )
 
-    # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_dblp_supervised(self):
         create_test_process_group()
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
