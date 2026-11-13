@@ -393,8 +393,8 @@ class ParquetDataLoader:
                 unless ``packed_feature_key`` is set.
 
         Raises:
-            ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version or
-                does not list exactly the files found.
+            ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version,
+                does not list exactly the files found, or lists row counts that differ from a file's footer.
             FileNotFoundError: If the manifest is missing.
             OSError: If listing the files or reading a footer or row group still fails after the retries.
         """
@@ -443,6 +443,17 @@ class ParquetDataLoader:
             metadatas: dict[int, pq.FileMetaData] = dict(
                 zip(footer_file_indices, footer_list)
             )
+            # The plan is built from the manifest. If a footer disagrees with it, a task would copy fewer rows than
+            # planned and leave output rows unset, or read rows that belong to another rank.
+            for file_index, metadata in metadatas.items():
+                footer_row_counts: list[int] = []
+                for row_group in range(metadata.num_row_groups):
+                    footer_row_counts.append(metadata.row_group(row_group).num_rows)
+                if footer_row_counts != list(row_groups_per_file[file_index]):
+                    raise ValueError(
+                        f"Manifest lists row groups of {list(row_groups_per_file[file_index])} rows for "
+                        f"{files[file_index]} but its footer has {footer_row_counts}"
+                    )
             footers_s = time.perf_counter() - footer_start
             num_rows = sum(task.num_rows for task in tasks)
             if num_rows == 0:

@@ -1033,6 +1033,18 @@ class ParquetRequiredManifestTest(TestCase):
         with self.assertRaises(ValueError):
             ParquetDataLoader(0, 1).load_as_torch_tensors(self.info)
 
+    def test_manifest_with_row_counts_that_differ_from_the_footers_raises(
+        self,
+    ) -> None:
+        manifest = json.loads(self.manifest_path.read_text())
+        row_counts = manifest["files"]["part-00000-of-00004.parquet"]
+        self.assertEqual(row_counts, [7, 7, 6])
+        # The same total, so only the row-group boundaries are wrong.
+        manifest["files"]["part-00000-of-00004.parquet"] = [6, 7, 7]
+        self.manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "footer"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(self.info)
+
     def test_manifest_with_unknown_version_raises(self) -> None:
         manifest = json.loads(self.manifest_path.read_text())
         manifest["version"] = parquet_manifest.MANIFEST_VERSION + 1
