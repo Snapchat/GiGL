@@ -117,8 +117,6 @@ def _scatter_in_bands(
     chunk_size: int,
     band_bytes: Optional[int],
     edge_ids: Optional[torch.Tensor] = None,
-    *,
-    row_start: int,
 ) -> None:
     """Fill ``indices`` one band of rows at a time, scanning the whole input once per band.
 
@@ -138,7 +136,7 @@ def _scatter_in_bands(
         band_elements = max(band_bytes // bytes_per_edge, 1)
     placed = 0
     bands = 0
-    first_row = row_start
+    first_row = 0
     while first_row < num_rows:
         # The first row boundary past band_elements edges, clamped to at least one row so a row
         # with more edges than a band forms an oversized band of its own rather than looping
@@ -197,8 +195,6 @@ def _sort_within_rows(
     indices: torch.Tensor,
     block_edges: int,
     edge_ids: Optional[torch.Tensor] = None,
-    *,
-    row_start: int,
 ) -> None:
     """Sort each row's column slice ascending, in place.
 
@@ -216,25 +212,23 @@ def _sort_within_rows(
     for a single row larger than a block, which is sorted whole: O(degree) for that row.
     """
     num_rows = indptr.numel() - 1
-    block_start = row_start
-    while block_start < num_rows:
+    row_start = 0
+    while row_start < num_rows:
         row_end = int(
-            torch.searchsorted(indptr, indptr[block_start] + block_edges).item()
+            torch.searchsorted(indptr, indptr[row_start] + block_edges).item()
         )
         # Capping rows too keeps `counts` and `rows_expanded` bounded across long runs of
         # empty rows, which the edge budget alone does not.
-        row_end = min(
-            max(row_end, block_start + 1), block_start + block_edges, num_rows
-        )
-        edge_start = int(indptr[block_start].item())
+        row_end = min(max(row_end, row_start + 1), row_start + block_edges, num_rows)
+        edge_start = int(indptr[row_start].item())
         edge_end = int(indptr[row_end].item())
         if edge_end > edge_start:
-            counts = indptr[block_start + 1 : row_end + 1] - indptr[block_start:row_end]
+            counts = indptr[row_start + 1 : row_end + 1] - indptr[row_start:row_end]
             rows_expanded = torch.repeat_interleave(
-                torch.arange(row_end - block_start, dtype=torch.int64), counts
+                torch.arange(row_end - row_start, dtype=torch.int64), counts
             )
             del counts
-            by_column = torch.argsort(indices[edge_start:edge_end], stable=True)
+            by_column = torch.argsort(indices[edge_start:edge_end])
             columns = indices[edge_start:edge_end][by_column]
             if edge_ids is not None:
                 sorted_edge_ids = edge_ids[edge_start:edge_end][by_column]
@@ -247,7 +241,7 @@ def _sort_within_rows(
                 edge_ids[edge_start:edge_end] = sorted_edge_ids[by_row]
                 del sorted_edge_ids
             del columns, by_row
-        block_start = row_end
+        row_start = row_end
 
 
 def build_csr_from_coo(
@@ -303,16 +297,9 @@ def build_csr_from_coo(
     num_edges = row.numel()
     # The partitioners pass int32 when ids fit; GiGL's patched GLT build (#761) samples int32 columns.
     indices_dtype = torch.int32 if col.dtype == torch.int32 else torch.int64
-    # Every row below the smallest row id is empty, so the degree count, scatter and sort start
-    # at that row instead of scanning the empty rows below it (a rank that owns a high id range).
-    row_start = 0
     row_max = -1
     if num_edges:
-        row_min_tensor, row_max_tensor = torch.aminmax(row)
-        row_start = int(row_min_tensor.item())
-        row_max = int(row_max_tensor.item())
-        if row_start < 0:
-            raise ValueError(f"Row id {row_start} is negative")
+        row_max = int(row.max().item())
     if num_rows is None:
         num_rows = row_max + 1
     elif row_max >= num_rows:
@@ -332,10 +319,8 @@ def build_csr_from_coo(
             indices=torch.empty(0, dtype=indices_dtype),
             edge_ids=edge_ids,
         )
-    indptr[: row_start + 1] = 0
-    torch.cumsum(
-        parallel_degrees(row, num_rows, row_start), dim=0, out=indptr[row_start + 1 :]
-    )
+    indptr[0] = 0
+    torch.cumsum(parallel_degrees(row, num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
@@ -348,8 +333,8 @@ def build_csr_from_coo(
     if is_disk_backed(indices) or (edge_ids is not None and is_disk_backed(edge_ids)):
         scatter_band_bytes = band_bytes
     if scatter_band_bytes is None:
-        parallel_scatter(row, col, indptr, indices, edge_ids, row_start)
-        parallel_sort_within_rows(indptr, indices, edge_ids, row_start)
+        parallel_scatter(row, col, indptr, indices, edge_ids)
+        parallel_sort_within_rows(indptr, indices, edge_ids)
     else:
         _scatter_in_bands(
             row=row,
@@ -359,12 +344,9 @@ def build_csr_from_coo(
             chunk_size=chunk_size,
             band_bytes=scatter_band_bytes,
             edge_ids=edge_ids,
-            row_start=row_start,
         )
         gc.collect()
-        _sort_within_rows(
-            indptr, indices, sort_block_edges, edge_ids, row_start=row_start
-        )
+        _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "

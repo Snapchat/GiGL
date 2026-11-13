@@ -79,10 +79,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
   `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
   columns by @kmontemayor2-sc
-- `build_csr_from_coo` (and so `CompactTopology` and `DistDataset`) starts the degree count, scatter and sort at the
-  smallest row id present, skipping the empty rows below it, which speeds up a rank that owns a high id range under
-  range partitioning. There is no API change, and the output, including the zero-prefixed `indptr` and edge ids, is
-  identical to a build from row 0 by @kmontemayor2-sc
 - Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
   longer grows with rank id. `CompactTopology` takes a required `row_offset`, the global id of its first row. GiGL's
   distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo` add the
