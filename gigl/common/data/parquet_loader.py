@@ -301,7 +301,7 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
     ``[rows, 1]`` ones.
 
     Raises:
-        ValueError: If the column has null rows, or its width is not the width of ``destination``.
+        ValueError: If the column has null values, or its width is not the width of ``destination``.
             numpy would otherwise repeat a width-1 column across a wider destination.
     """
     if destination.ndim == 2:
@@ -314,7 +314,13 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
             raise ValueError(f"Parquet column has {chunk.null_count} null values")
         if pa.types.is_fixed_size_list(chunk.type):
             width = chunk.type.list_size
-            values = chunk.flatten().to_numpy(zero_copy_only=False)
+            flat_values = chunk.flatten()
+            # The null count of a list array does not include null values inside the lists.
+            if flat_values.null_count:
+                raise ValueError(
+                    f"Parquet column has {flat_values.null_count} null list values"
+                )
+            values = flat_values.to_numpy(zero_copy_only=False)
         else:
             width = 1
             values = chunk.to_numpy(zero_copy_only=False)

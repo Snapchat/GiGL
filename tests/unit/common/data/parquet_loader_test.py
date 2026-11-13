@@ -333,6 +333,26 @@ class ParquetDataLoaderTest(TestCase):
         with self.assertRaisesRegex(ValueError, "values per row"):
             ParquetDataLoader(0, 1).load_as_torch_tensors(info)
 
+    def test_null_values_inside_feature_lists_are_rejected(self) -> None:
+        directory = self.root / "nodes"
+        directory.mkdir()
+        flat_features: list[Optional[float]] = [0.5] * (_NUM_NODES * _FEATURE_DIM)
+        flat_features[4] = None
+        table = pa.table(
+            {
+                "node_id": pa.array(self.data["node_id"]),
+                "features": pa.FixedSizeListArray.from_arrays(
+                    pa.array(flat_features, pa.float32()), _FEATURE_DIM
+                ),
+            }
+        )
+        pq.write_table(table, directory / "part-00000-of-00001.parquet")
+        parquet_manifest.write_manifest(UriFactory.create_uri(directory))
+        info = _node_info(directory, parquet=True, with_labels=False)
+
+        with self.assertRaisesRegex(ValueError, "null"):
+            ParquetDataLoader(0, 1).load_as_torch_tensors(info)
+
     def test_empty_directory_gives_empty_tensors(self) -> None:
         directory = self.root / "empty"
         directory.mkdir()
