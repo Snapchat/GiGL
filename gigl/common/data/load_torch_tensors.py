@@ -165,6 +165,19 @@ def _validate_weight_edge_feature_name(
             )
 
 
+def _shift_indices_past_removed_column(
+    indices: tuple[int, ...], removed_index: int
+) -> tuple[int, ...]:
+    """Shifts every index after ``removed_index`` one position to the left."""
+    shifted_indices: list[int] = []
+    for index in indices:
+        if index > removed_index:
+            shifted_indices.append(index - 1)
+        else:
+            shifted_indices.append(index)
+    return tuple(shifted_indices)
+
+
 def remove_sampling_weight_from_edge_quantization_metadata(
     serialized_graph_metadata: SerializedGraphMetadata,
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]],
@@ -236,19 +249,28 @@ def remove_sampling_weight_from_edge_quantization_metadata(
                 break
             feature_spec = edge_info.feature_spec[feature_name]
             raw_column_offset += feature_spec.shape[-1] if feature_spec.shape else 1
-        # The sampling-weight column is removed before reconstruction, shifting
-        # every following logical feature index one position to the left.
+        # The sampling weight must stay an uncompressed raw column, and the loader removes it from the edge
+        # features. Every logical column after it moves one position to the left, so the packed column indices
+        # must move with it. Lossless indices are logical column indices too, so they shift like the quantized
+        # ones; otherwise a lossless column after the weight column decodes into the wrong position.
+        #
+        # Example, with 5 logical columns:
+        #   before: 0 age (raw), 1 weight (raw), 2 country (quantized), 3 is_new (lossless), 4 score (raw)
+        #   after:  0 age (raw), 1 country (quantized), 2 is_new (lossless), 3 score (raw)
+        # So feature_dim goes from 5 to 4, quantized_feature_indices from (2,) to (1,), and
+        # lossless_feature_indices from (3,) to (2,). raw_feature_indices is derived from these, so it follows.
         weight_logical_index = metadata.raw_feature_indices[raw_column_offset]
-        adjusted_quantized_feature_indices = tuple(
-            quantized_feature_index - 1
-            if quantized_feature_index > weight_logical_index
-            else quantized_feature_index
-            for quantized_feature_index in metadata.quantized_feature_indices
+        adjusted_quantized_feature_indices = _shift_indices_past_removed_column(
+            metadata.quantized_feature_indices, weight_logical_index
+        )
+        adjusted_lossless_feature_indices = _shift_indices_past_removed_column(
+            metadata.lossless_feature_indices, weight_logical_index
         )
         adjusted_metadata[edge_type] = replace(
             metadata,
             feature_dim=metadata.feature_dim - 1,
             quantized_feature_indices=adjusted_quantized_feature_indices,
+            lossless_feature_indices=adjusted_lossless_feature_indices,
         )
 
     if is_homogeneous:
