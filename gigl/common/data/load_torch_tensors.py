@@ -541,10 +541,10 @@ def load_torch_tensors_from_tf_record(
     # By default, torch processes are created using the `fork` method, which makes a copy of the entire process. This can be problematic in multi-threaded settings,
     # especially when working with TensorFlow, since this includes all threads, which can lead to deadlocks or other synchronization issues. As a result, we set the
     # start method to spawn, which creates a new Python interpreter process and is much safer with multi-threading applications.
-    # Parquet is also read in these processes. pyarrow 10's bundled curl waits on sockets with select(), which fails for
-    # socket file descriptors numbered 1024 or above, and a fresh spawned process starts with few open descriptors while
-    # this one may hold many (for example RPC connections).
-    # TODO: Read Parquet inline in this process once pyarrow is upgraded past 13.
+    # Parquet is also read in these processes. The libcurl inside the pyarrow 10 wheels waits on sockets with select(),
+    # which cannot take a file-descriptor number of 1024 or higher. This process can hold more than 1024 open
+    # descriptors, while a freshly spawned process starts with a few dozen (see gigl.common.data.parquet_loader).
+    # TODO: Read Parquet inline in this process once pyarrow is 13 or newer, whose wheels use poll().
     ctx = mp.get_context("spawn")
 
     node_output_dict: MutableMapping[

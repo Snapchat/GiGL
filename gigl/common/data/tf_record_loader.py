@@ -12,6 +12,7 @@ from gigl.common.data.loader_types import (
     LoadedEntityTensors,
     SerializedTFRecordInfo,
     TFDatasetOptions,
+    empty_entity_tensors,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -410,35 +411,7 @@ class TFRecordDataLoader:
             logger.info(
                 f"No files to load for rank: {self._rank} and entity type: {entity_type.name}, returning empty tensors."
             )
-            empty_entity = (
-                torch.empty(0, dtype=torch.int64)
-                if entity_type == FeatureTypes.NODE
-                else torch.empty(2, 0, dtype=torch.int64)
-            )
-            if feature_keys:
-                empty_feature = torch.empty(0, serialized_tf_record_info.feature_dim)
-            else:
-                empty_feature = None
-
-            if packed_feature_key is not None:
-                empty_packed_feature = torch.empty(
-                    (0, serialized_tf_record_info.packed_feature_dim),
-                    dtype=torch.uint8,
-                )
-            else:
-                empty_packed_feature = None
-
-            if label_keys:
-                empty_label = torch.empty(0, len(label_keys))
-            else:
-                empty_label = None
-
-            return LoadedEntityTensors(
-                ids=empty_entity,
-                features=empty_feature,
-                packed_features=empty_packed_feature,
-                labels=empty_label,
-            )
+            return empty_entity_tensors(serialized_tf_record_info)
 
         dataset = TFRecordDataLoader._build_dataset_for_uris(
             uris=uris,

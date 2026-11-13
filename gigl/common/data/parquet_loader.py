@@ -1,10 +1,109 @@
 """Loads node and edge tensors from Parquet files.
 
-``ParquetDataLoader`` reads the files of one entity under ``SerializedTFRecordInfo.parquet_uri_prefix``.
-The file layout is described in ``gigl.common.data.parquet_format``.
+``ParquetDataLoader`` reads the files of one entity (one node type or one edge type) under
+``SerializedTFRecordInfo.parquet_uri_prefix``. Column names and types are defined in
+``gigl.common.data.parquet_format``.
 
-Every directory of Parquet files must have a row-count manifest (see ``gigl.common.data.parquet_manifest``).
-Loading fails if the manifest is missing or does not match the files.
+An entity directory::
+
+    <parquet_uri_prefix>/
+        _row_counts.json                  the manifest
+        part-00000-of-00003.parquet       row groups of 100000, 100000, 523 rows
+        part-00001-of-00003.parquet       row groups of 100000, 4100 rows
+        part-00002-of-00003.parquet       one row group of 61 rows
+
+    _row_counts.json:
+        {"version": 1, "files": {"part-00000-of-00003.parquet": [100000, 100000, 523],
+                                 "part-00001-of-00003.parquet": [100000, 4100],
+                                 "part-00002-of-00003.parquet": [61]}}
+
+One node file::
+
+    part-00000-of-00003.parquet
+    +-- row group 0 (100000 rows)
+    |     column chunk  node_id               int64
+    |     column chunk  features              fixed_size_list<float32>[feature_dim]  optional
+    |     column chunk  <packed_feature_key>  fixed_size_binary[packed_feature_dim]  optional
+    |     column chunk  <label key>           float32 or fixed_size_list<float32>    optional, one per label
+    +-- row group 1 (100000 rows)             same column chunks
+    +-- row group 2 (523 rows)                same column chunks
+    +-- footer
+          schema
+          per row group: row count, byte range of each column chunk
+
+Edge files have the same layout with ``src`` and ``dst`` (int64) in place of ``node_id``.
+
+The writer (``gigl.src.data_preprocessor.lib.transform.parquet_writer``) targets:
+
+- row groups of 100,000 rows for nodes and 1,000,000 rows for edges (the last row group of a file is smaller),
+- files of 1 GB of uncompressed data. Files are zstd-compressed and also end when a Beam bundle ends, so many files
+  are much smaller than this.
+
+Terms:
+
+- **Row group**: a block of consecutive rows, stored column by column.
+  pyarrow can read one row group without the others but not part of one, so it is the unit of work here.
+- **Column chunk**: one column's values within one row group. Only the requested columns' chunks are read.
+  pyarrow also reads a gap of up to 8 KiB between two requested chunks instead of making a second request.
+- **Footer**: the schema and, per row group, the row count and the byte range of each column chunk.
+  Reading it costs storage requests, so only the footers of files this rank reads from are fetched.
+- **Manifest**: ``_row_counts.json``, the row count of every row group of every file
+  (see ``gigl.common.data.parquet_manifest``).
+  Every rank computes its row range from it without reading other ranks' footers.
+  Loading fails if it is missing or does not list exactly the files found.
+- **Row range**: the rank's contiguous slice of all rows, counted in sorted file order.
+  Rank ``r`` of ``world_size`` keeps rows ``[r * total // world_size, (r + 1) * total // world_size)``.
+- **Read task / plan**: the plan is a list of ``_ReadTask``, one per row group that overlaps the row range:
+
+  - ``file_index``: index into the sorted file list.
+  - ``row_group``: row group of that file.
+  - ``row_offset``: first row of the row group to keep (0 unless the range starts inside it).
+  - ``num_rows``: rows of the row group to keep.
+  - ``out_offset``: output row that the first kept row is written to.
+
+  Tasks write disjoint output rows, so the copies need no lock.
+- **Shared handle**: one open file handle per file, used by all of that file's tasks (see ``_SharedHandles``).
+
+``ParquetDataLoader.load_as_torch_tensors``::
+
+    list .parquet files (sorted) -> read manifest -> row range -> plan tasks
+        -> read footers of this rank's files
+        -> allocate each output tensor once, at its final size
+        -> thread pool: read each task's row group, copy its columns into the outputs at out_offset
+        -> LoadedEntityTensors
+
+Example: files ``a: [4, 4]``, ``b: [2]``, ``c: [4]`` (row counts per row group) hold 14 rows; 2 ranks keep rows
+``[0, 7)`` and ``[7, 14)``. Row group ``a[1]`` straddles the boundary, so both ranks read it::
+
+    global rows    0 1 2 3 | 4 5 6 7 | 8 9 | 10 11 12 13
+    row group      a[0]    | a[1]    | b[0]| c[0]
+    rank 0         x x x x   x x x
+    rank 1                         x   x x   x  x  x  x
+
+    (file, row_group, row_offset, num_rows, out_offset)
+    rank 0: (a, 0, 0, 4, 0)  (a, 1, 0, 3, 4)
+    rank 1: (a, 1, 3, 1, 0)  (b, 0, 0, 2, 1)  (c, 0, 0, 4, 3)
+
+Rank 0 reads only the footer of ``a``.
+
+Outputs are allocated with ``gigl.utils.share_memory.allocate_preshared``, which picks the tensor's final home:
+
+- a file-backed tensor in ``GIGL_TENSOR_SPILL_DIR`` if that is set and the tensor is at least
+  ``GIGL_TENSOR_SPILL_MIN_BYTES`` (2 GiB by default),
+- an ordinary in-memory tensor if it is smaller than that threshold,
+- otherwise a tensor in POSIX shared memory. Allocation fails if the shared-memory mount lacks the room.
+
+So large outputs are never copied into shared memory later, and no per-row-group batches are kept to concatenate.
+Columns are copied as numpy arrays into numpy views of the outputs, which write straight into the tensors' memory.
+
+The loader runs in a process started with ``spawn`` (see ``gigl.common.data.load_torch_tensors``).
+The libcurl inside the pyarrow 10 wheels waits on sockets with ``select()``, which cannot take a file-descriptor number
+of 1024 or higher.
+A training process can hold more than 1024 open descriptors, so its new sockets get numbers above the limit and GCS
+requests fail with a ``pa.ArrowException`` that mentions ``select/poll``.
+A freshly spawned process starts with a few dozen descriptors.
+The pyarrow wheels use ``poll()`` from version 13.
+The log line at the end of a load reports the descriptor count at its start.
 """
 
 import os
@@ -12,7 +111,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Final, Optional, Sequence, TypeVar
+from typing import Final, Optional, Sequence
 
 import numpy as np
 import pyarrow as pa
@@ -22,7 +121,11 @@ import torch
 
 from gigl.common import Uri
 from gigl.common.data import parquet_manifest
-from gigl.common.data.loader_types import LoadedEntityTensors, SerializedTFRecordInfo
+from gigl.common.data.loader_types import (
+    LoadedEntityTensors,
+    SerializedTFRecordInfo,
+    empty_entity_tensors,
+)
 from gigl.common.data.parquet_format import (
     EDGE_DST_COLUMN,
     EDGE_SRC_COLUMN,
@@ -36,13 +139,24 @@ from gigl.utils.share_memory import allocate_preshared
 logger = Logger()
 
 _MAX_THREADS: Final[int] = 64
-# Each retried read makes ``_RETRY_TRIES + 1`` attempts in total, sleeping 2s and then 8s between them.
 _RETRY_TRIES: Final[int] = 2
 _RETRY_DELAY_SECONDS: Final[int] = 2
 _RETRY_BACKOFF: Final[int] = 4
 _RETRY_MAX_DELAY_SECONDS: Final[int] = 30
-
-_T = TypeVar("_T")
+# Retries a call that raises ``OSError``, which is what pyarrow raises for I/O failures.
+# The call is made ``_RETRY_TRIES + 1`` times in total, with sleeps of 2s and then 8s in between.
+# ``FileNotFoundError`` and ``PermissionError`` are ``OSError`` too, so they are also retried before they are raised.
+# Other pyarrow errors are not retried.
+# The GCS client retries connection failures, timeouts and HTTP 408, 429 and 5xx responses itself; when it gives up,
+# pyarrow raises them as ``OSError``.
+_retry_on_os_error = retry(
+    exception_to_check=OSError,
+    tries=_RETRY_TRIES,
+    delay_s=_RETRY_DELAY_SECONDS,
+    backoff=_RETRY_BACKOFF,
+    max_delay_s=_RETRY_MAX_DELAY_SECONDS,
+    should_throw_original_exception=True,
+)
 
 
 @dataclass(frozen=True)
@@ -56,76 +170,30 @@ class _ReadTask:
     out_offset: int
 
 
-class _TransientReadError(OSError):
-    """A read failed with an error that a retry with a fresh file handle may not hit again."""
-
-
-def _is_retryable(error: Exception) -> bool:
-    """Whether ``error`` is a transient I/O failure worth retrying with a fresh handle.
-
-    Missing files and permission errors are permanent.
-    Generic ``pa.ArrowException`` is what pyarrow raises for storage-client failures without a more specific status
-    (for example an unknown error from the GCS client).
-    Its subclasses (invalid data, type errors, ...) are not transient.
-
-    Args:
-        error (Exception): The error raised by a read.
-
-    Returns:
-        bool: True if the read should be retried.
-    """
-    if isinstance(error, (FileNotFoundError, PermissionError)):
-        return False
-    if isinstance(error, OSError):
-        return True
-    return type(error) is pa.ArrowException
-
-
-@retry(
-    exception_to_check=_TransientReadError,
-    tries=_RETRY_TRIES,
-    delay_s=_RETRY_DELAY_SECONDS,
-    backoff=_RETRY_BACKOFF,
-    max_delay_s=_RETRY_MAX_DELAY_SECONDS,
-    should_throw_original_exception=True,
-)
-def _retry_transient(description: str, operation: Callable[[], _T]) -> _T:
-    """Runs ``operation``, retrying it when it fails with a transient I/O error.
-
-    Transient failures are raised as ``_TransientReadError`` so that ``retry`` retries them, for three attempts in total.
-    Other errors propagate unchanged and are not retried.
-    ``operation`` must open any file handle it uses so that every retry starts with a fresh one.
-
-    Args:
-        description (str): What the operation does, for the error message.
-        operation (Callable[[], _T]): The read to run.
-
-    Returns:
-        _T: The result of ``operation``.
-
-    Raises:
-        _TransientReadError: If every attempt failed with a transient error.
-    """
-    try:
-        return operation()
-    except Exception as e:
-        if _is_retryable(e):
-            raise _TransientReadError(f"{description} failed: {e}") from e
-        raise
-
-
 class _SharedHandles:
-    """One lazily opened handle per file, shared by concurrent reads and closed after the file's last task.
+    """One handle per file, shared by all of the file's read tasks and closed after the last one.
 
-    Opening a file is expensive on GCS with pyarrow 10: it costs an extra metadata request and a new TLS connection,
-    about 70 ms each.
-    Files hold many row groups (the writer targets files of about 1 GB with 100k-row node and 1M-row edge row groups),
-    so each file is opened once and that handle serves every row-group read of the file.
-    The manifest only saves reading the footers of other ranks' files; this rank still opens its own files.
+    A file has many row groups, each read as its own task, and opening a file on GCS costs an object metadata request
+    (pyarrow 10 also starts a read of the object).
+    An open takes about 130 ms (median) on pyarrow 10 and 29 ms on pyarrow 25.
+    An open followed by a footer read takes about 150 ms on pyarrow 10 and 134 ms on pyarrow 25.
+    Opening a fresh handle per row-group read instead of sharing one per file is slower on both versions (GCS, one node
+    and one edge directory, median of 3 runs):
 
-    Tasks run in file order on a pool, so at most as many files as pool threads are open at once.
+    - pyarrow 10: nodes within noise, edges 1.2-1.3x slower.
+    - pyarrow 25: nodes 1.2-1.4x slower, edges 3.5-4.8x slower (2.98 s vs 0.62 s at 48 threads).
 
-    TODO: Re-measure and remove once pyarrow is upgraded (the open cost may drop).
+    Each open handle also holds a socket or file descriptor.
+    Tasks start in file order and a file's handle closes after its last task, so the number of open files stays near
+    the number of reader threads instead of growing with the number of row groups.
+    A slow task can keep an earlier file open while later files are opened.
+
+    This is not what avoids pyarrow 10's limit on descriptor numbers; running in a spawned process does (see the module
+    docstring).
+
+    ``get`` opens a file's handle on first use, under a per-file lock.
+    ``finish_task`` counts down the file's remaining tasks and closes the handle after the last one.
+    ``close_all`` closes the handles left open when tasks are cancelled; call it only once no task is running.
     """
 
     def __init__(
@@ -188,18 +256,37 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
 
     Fixed-size-list columns fill ``[rows, width]`` destinations and scalar columns fill ``[rows]`` or
     ``[rows, 1]`` ones.
+
+    Raises:
+        ValueError: If the column has null values, or its width is not the width of ``destination``.
+            numpy would otherwise repeat a width-1 column across a wider destination.
     """
+    if destination.ndim == 2:
+        destination_width = destination.shape[1]
+    else:
+        destination_width = 1
     offset = 0
     for chunk in column.chunks:
         if chunk.null_count:
             raise ValueError(f"Parquet column has {chunk.null_count} null values")
         if pa.types.is_fixed_size_list(chunk.type):
-            values = chunk.flatten().to_numpy(zero_copy_only=False)
-            values = values.reshape(len(chunk), chunk.type.list_size)
+            width = chunk.type.list_size
+            flat_values = chunk.flatten()
+            # The null count of a list array does not include null values inside the lists.
+            if flat_values.null_count:
+                raise ValueError(
+                    f"Parquet column has {flat_values.null_count} null list values"
+                )
+            values = flat_values.to_numpy(zero_copy_only=False)
         else:
+            width = 1
             values = chunk.to_numpy(zero_copy_only=False)
-            if destination.ndim == 2:
-                values = values.reshape(len(chunk), 1)
+        if width != destination_width:
+            raise ValueError(
+                f"Parquet column has {width} values per row but {destination_width} were expected"
+            )
+        if destination.ndim == 2:
+            values = values.reshape(len(chunk), width)
         destination[offset : offset + len(chunk)] = values
         offset += len(chunk)
 
@@ -230,20 +317,10 @@ class ParquetDataLoader:
 
     Produces the same ``LoadedEntityTensors`` as ``TFRecordDataLoader.load_as_torch_tensors`` for the same data.
 
-    The two loaders split the data across ranks differently.
     ``TFRecordDataLoader`` gives each rank whole files.
     Dataflow ends files early at bundle boundaries, so file sizes vary and whole-file assignment gives uneven ranks.
-    This loader instead splits the rows of all files, in sorted file order, into ``world_size`` contiguous ranges that
-    differ by at most one row, so every rank gets the same number of rows.
-    Each rank reads the row groups that overlap its range.
-    A row group on a range boundary is read by both neighboring ranks, which each keep their own rows.
-
-    Row counts come from the manifest next to the files, see ``gigl.common.data.parquet_manifest``.
-    The manifest is required.
-
-    Outputs are allocated once from those counts, in shared memory (or spilled to disk, see
-    ``gigl.utils.share_memory.allocate_preshared``), and filled by a thread pool.
-    No intermediate batches are kept and the outputs need no later copy into shared memory.
+    This loader instead gives each rank a contiguous range of rows, so ranks differ by at most one row.
+    The module docstring describes how a rank's range is planned, read and copied into its outputs.
 
     Args:
         rank (int): Rank of the current machine.
@@ -267,7 +344,16 @@ class ParquetDataLoader:
     def _plan_tasks(
         self, row_groups_per_file: Sequence[Sequence[int]]
     ) -> list[_ReadTask]:
-        """Returns the row groups (and slices of boundary row groups) that make up this rank's row range."""
+        """Returns the read tasks that make up this rank's row range, in file and row-group order.
+
+        See the module docstring for the row range and a worked example.
+
+        Args:
+            row_groups_per_file (Sequence[Sequence[int]]): Row counts of each row group of each file, in file order.
+
+        Returns:
+            list[_ReadTask]: One task per row group that overlaps the range.
+        """
         total_rows = sum(sum(file_rows) for file_rows in row_groups_per_file)
         range_start = self._rank * total_rows // self._world_size
         range_end = (self._rank + 1) * total_rows // self._world_size
@@ -292,29 +378,6 @@ class ParquetDataLoader:
                 group_start = group_end
         return tasks
 
-    @staticmethod
-    def _empty_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
-        ids: torch.Tensor
-        if info.is_node_entity:
-            ids = torch.empty(0, dtype=torch.int64)
-        else:
-            ids = torch.empty(2, 0, dtype=torch.int64)
-        features: Optional[torch.Tensor] = None
-        if info.feature_keys:
-            features = torch.empty(0, info.feature_dim)
-        labels: Optional[torch.Tensor] = None
-        if info.label_keys:
-            labels = torch.empty(0, len(info.label_keys))
-        packed_features: Optional[torch.Tensor] = None
-        if info.packed_feature_key is not None:
-            packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)
-        return LoadedEntityTensors(
-            ids=ids,
-            features=features,
-            packed_features=packed_features,
-            labels=labels,
-        )
-
     def load_as_torch_tensors(
         self, serialized_tf_record_info: SerializedTFRecordInfo
     ) -> LoadedEntityTensors:
@@ -330,9 +393,10 @@ class ParquetDataLoader:
                 unless ``packed_feature_key`` is set.
 
         Raises:
-            ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version or
-                does not list exactly the files found.
+            ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version,
+                does not list exactly the files found, or lists row counts that differ from a file's footer.
             FileNotFoundError: If the manifest is missing.
+            OSError: If listing the files or reading a footer or row group still fails after the retries.
         """
         info = serialized_tf_record_info
         if info.parquet_uri_prefix is None:
@@ -341,36 +405,31 @@ class ParquetDataLoader:
         wall_start = time.perf_counter()
 
         fs, path = self._filesystem_and_path(info.parquet_uri_prefix)
-        files: list[str] = _retry_transient(
-            "Listing Parquet files",
-            lambda: parquet_manifest.list_parquet_files(fs, path),
+        files: list[str] = _retry_on_os_error(parquet_manifest.list_parquet_files)(
+            fs, path
         )
         list_s = time.perf_counter() - wall_start
         if not files:
             logger.warning(
                 f"Found no Parquet files under {info.parquet_uri_prefix.uri}"
             )
-            return self._empty_tensors(info)
+            return empty_entity_tensors(info)
 
-        # Reads with pre_buffer=True run on pyarrow's I/O pool, which caps the number of in-flight requests.
+        # Reads with pre_buffer=True run on pyarrow's I/O pool, which caps the number of in-flight requests
+        # (8 threads by default).
         pa.set_io_thread_count(max(pa.io_thread_count(), self._num_threads))
 
         with ThreadPoolExecutor(self._num_threads) as pool:
             footer_start = time.perf_counter()
 
+            @_retry_on_os_error
             def read_footer(file: str) -> pq.FileMetaData:
                 """Opens ``file``, reads its footer and closes it again."""
-
-                def open_and_read_footer() -> pq.FileMetaData:
-                    handle = fs.open_input_file(file)
-                    try:
-                        return pq.read_metadata(handle)
-                    finally:
-                        handle.close()
-
-                return _retry_transient(
-                    f"Reading footer of {file}", open_and_read_footer
-                )
+                handle = fs.open_input_file(file)
+                try:
+                    return pq.read_metadata(handle)
+                finally:
+                    handle.close()
 
             row_groups_per_file = parquet_manifest.read_manifest_row_groups(
                 fs, path, files
@@ -384,13 +443,23 @@ class ParquetDataLoader:
             metadatas: dict[int, pq.FileMetaData] = dict(
                 zip(footer_file_indices, footer_list)
             )
+            # The plan is built from the manifest. If a footer disagrees with it, a task would copy fewer rows than
+            # planned and leave output rows unset, or read rows that belong to another rank.
+            for file_index, metadata in metadatas.items():
+                footer_row_counts: list[int] = []
+                for row_group in range(metadata.num_row_groups):
+                    footer_row_counts.append(metadata.row_group(row_group).num_rows)
+                if footer_row_counts != list(row_groups_per_file[file_index]):
+                    raise ValueError(
+                        f"Manifest lists row groups of {list(row_groups_per_file[file_index])} rows for "
+                        f"{files[file_index]} but its footer has {footer_row_counts}"
+                    )
             footers_s = time.perf_counter() - footer_start
             num_rows = sum(task.num_rows for task in tasks)
             if num_rows == 0:
                 logger.info(f"No rows to load for rank: {self._rank}.")
-                return self._empty_tensors(info)
+                return empty_entity_tensors(info)
 
-            id_columns: list[str]
             if info.is_node_entity:
                 id_columns = [NODE_ID_COLUMN]
             else:
@@ -410,7 +479,6 @@ class ParquetDataLoader:
                 label_widths.append(_column_width(schema.field(key)))
             num_label_columns = sum(label_widths)
 
-            ids: torch.Tensor
             if info.is_node_entity:
                 ids = allocate_preshared((num_rows,), torch.int64)
             else:
@@ -443,7 +511,10 @@ class ParquetDataLoader:
 
             shared_handles = _SharedHandles(fs, files, tasks)
 
-            def read_with_shared_handle(task: _ReadTask) -> pa.Table:
+            # A retry reads through the same shared handle.
+            # Every positional read opens its own request, so a failed read leaves nothing behind in the handle.
+            @_retry_on_os_error
+            def read_row_group(task: _ReadTask) -> pa.Table:
                 parquet_file = pq.ParquetFile(
                     shared_handles.get(task.file_index),
                     metadata=metadatas[task.file_index],
@@ -451,35 +522,6 @@ class ParquetDataLoader:
                 )
                 return parquet_file.read_row_group(
                     task.row_group, columns=columns, use_threads=False
-                )
-
-            def read_with_fresh_handle(task: _ReadTask) -> pa.Table:
-                handle = fs.open_input_file(files[task.file_index])
-                try:
-                    parquet_file = pq.ParquetFile(
-                        handle,
-                        metadata=metadatas[task.file_index],
-                        pre_buffer=True,
-                    )
-                    return parquet_file.read_row_group(
-                        task.row_group, columns=columns, use_threads=False
-                    )
-                finally:
-                    handle.close()
-
-            def read_row_group(task: _ReadTask) -> pa.Table:
-                description = (
-                    f"Reading row group {task.row_group} of {files[task.file_index]}"
-                )
-                # Concurrent reads share one handle (positional reads). Retries each open a fresh handle.
-                try:
-                    return read_with_shared_handle(task)
-                except Exception as e:
-                    if not _is_retryable(e):
-                        raise
-                    logger.warning(f"{description} failed, retrying: {e}")
-                return _retry_transient(
-                    description, lambda: read_with_fresh_handle(task)
                 )
 
             def read_task(task: _ReadTask) -> None:
@@ -511,10 +553,15 @@ class ParquetDataLoader:
                         label_offset += width
 
             read_start = time.perf_counter()
+            # Iterating drains the map: it waits for the tasks in order and re-raises the first exception here,
+            # cancelling the tasks that have not started.
+            # Each file's handle closes after its last task; close_all closes the handles of files whose last task was
+            # cancelled, once shutdown has waited for the tasks still running.
             try:
                 for _ in pool.map(read_task, tasks):
                     pass
             finally:
+                pool.shutdown(wait=True)
                 shared_handles.close_all()
             read_s = time.perf_counter() - read_start
 
