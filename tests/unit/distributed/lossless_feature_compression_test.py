@@ -821,9 +821,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
     def test_heterogeneous_edge_features_are_compressed_and_decode_exactly(
         self, _, should_load_tensors_in_parallel: bool
     ) -> None:
-        info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        reference = self._build(
-            info,
+        reference = self._build_small_heterogeneous(
             FeatureCompression.OFF,
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         )
@@ -835,8 +833,7 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             reference_edge_store.lazy_init_with_ipc_handle()
             self.assertEqual(reference_edge_store.feature_tensor.dtype, torch.float32)
 
-        dataset = self._build(
-            info,
+        dataset = self._build_small_heterogeneous(
             FeatureCompression.AUTO,
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         )
@@ -846,45 +843,67 @@ class BuildDatasetLosslessCompressionTest(TestCase):
             dataset.edge_quantization_metadata,
         )
         self.assertIn(_AUTHOR_TO_PAPER, edge_metadata)
+        self.assertNotIn(_PAPER_TO_TERM, edge_metadata)
         edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
         reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
-        for edge_type in edge_metadata:
-            edge_store[edge_type].lazy_init_with_ipc_handle()
-            reference_edges[edge_type].lazy_init_with_ipc_handle()
-            self.assertTrue(
-                torch.equal(
-                    dequantize_torch_tensor(
-                        edge_store[edge_type].feature_tensor, edge_metadata[edge_type]
-                    ),
-                    reference_edges[edge_type].feature_tensor,
-                )
+        dataset_edges = cast(dict[EdgeType, Feature], dataset.edge_features)
+        # author-to-paper is partly compressed: its count and flag columns are packed and its real "weight"
+        # column stays in the raw store. Each part must match the reference columns it holds.
+        author_to_paper_metadata = edge_metadata[_AUTHOR_TO_PAPER]
+        edge_store[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        reference_edges[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        dataset_edges[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
+        reference_author_to_paper = reference_edges[_AUTHOR_TO_PAPER].feature_tensor
+        self.assertEqual(
+            author_to_paper_metadata.raw_feature_indices,
+            (_AUTHOR_TO_PAPER_COLUMNS.index("weight"),),
+        )
+        self.assertTrue(
+            torch.equal(
+                dequantize_torch_tensor(
+                    edge_store[_AUTHOR_TO_PAPER].feature_tensor,
+                    author_to_paper_metadata,
+                ),
+                reference_author_to_paper[
+                    :, list(author_to_paper_metadata.packed_feature_indices)
+                ],
             )
+        )
+        self.assertTrue(
+            torch.equal(
+                dataset_edges[_AUTHOR_TO_PAPER].feature_tensor,
+                reference_author_to_paper[
+                    :, list(author_to_paper_metadata.raw_feature_indices)
+                ],
+            )
+        )
         # The dataset still describes every edge type's logical float32 features.
         self.assertEqual(dataset.edge_feature_info, reference.edge_feature_info)
         # Edge types with no integral column keep their raw features.
-        dataset_edges = cast(dict[EdgeType, Feature], dataset.edge_features)
         for edge_type in reference_edges:
             if edge_type not in edge_metadata:
                 self.assertIn(edge_type, dataset_edges)
 
     def test_edge_compression_excludes_the_sampling_weight_feature(self) -> None:
-        info = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
-        # Feature f0 of author-to-paper edges is the sampling weight; f1..f4 are small counts.
-        weights = {_AUTHOR_TO_PAPER: "f0"}
-        reference = self._build(
-            info, FeatureCompression.OFF, weight_edge_feat_name=weights
+        # The author-to-paper "weight" column is the sampling weight; the other columns are counts and a flag.
+        weights = {_AUTHOR_TO_PAPER: _SAMPLING_WEIGHT_COLUMN}
+        reference = self._build_small_heterogeneous(
+            FeatureCompression.OFF, weight_edge_feat_name=weights
         )
 
-        dataset = self._build(
-            info, FeatureCompression.AUTO, weight_edge_feat_name=weights
+        dataset = self._build_small_heterogeneous(
+            FeatureCompression.AUTO, weight_edge_feat_name=weights
         )
 
         edge_metadata = cast(
             dict[EdgeType, FeatureQuantizationMetadata],
             dataset.edge_quantization_metadata,
         )
-        # Four columns, so the weight column was removed before the statistics were taken.
-        self.assertEqual(edge_metadata[_AUTHOR_TO_PAPER].feature_dim, 4)
+        # Three columns remain, so the weight column was removed before the statistics were taken.
+        self.assertEqual(
+            edge_metadata[_AUTHOR_TO_PAPER].feature_dim,
+            len(_AUTHOR_TO_PAPER_COLUMNS) - 1,
+        )
         edge_store = cast(dict[EdgeType, Feature], dataset.edge_packed_features)
         edge_store[_AUTHOR_TO_PAPER].lazy_init_with_ipc_handle()
         reference_edges = cast(dict[EdgeType, Feature], reference.edge_features)
