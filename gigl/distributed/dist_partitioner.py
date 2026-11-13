@@ -849,8 +849,16 @@ class DistPartitioner:
     ) -> None:
         """
         Partitions a single chunk of data across multiple machines. First, the partition function is used to lookup or compute the rank of the current input.
-        Then, we loop over all the ranks and, for each rank, the inputs are masked to only contain the information belonging to that rank. We then send that
-        information to other machines using the partition manager.
+        Then, the positions are stably sorted by rank and split into one compact piece per rank. We then send each piece to its machine using the partition manager.
+
+        Flow for a chunk of 6 items on 3 machines::
+
+            chunk_rank                  [2, 0, 1, 0, 2, 1]   rank of each item, from partition_function
+            counts                      [2, 2, 2]            items per rank, from bincount
+            order (stable argsort)      [1, 3, 2, 5, 0, 4]   positions grouped by rank, input order kept within a rank
+            order.split(counts)         [1, 3] [2, 5] [0, 4] one position tensor per rank
+            index_select(input_data, p) gathers each rank's items into its own compact tensor
+            partition_mgr.process(...)  sends piece i to machine i
         Args:
             input_data (Optional[Tuple[torch.Tensor, ...]]): generic data type of items to be partitioned on the current chunk, which any information that should be partitioned across machines.
             rank_indices (torch.Tensor): torch tensor of indices which are used to determine the rank of each item to be partitioned on the current chunk
@@ -861,27 +869,36 @@ class DistPartitioner:
             chunk_end_pos (int): The ending position of the current chunk being partitioned
             generate_pb (bool): Whether a partition book should be generated. If set to False, will not send the indexed `rank_indices`
                 for the current rank to the partition manager to make the rpc communication easier
-
         """
-        # chunk_res is a list where index `i` corresponds to Tuple[input_data_on_i, rank_indices_on_i]
+        chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
+
+        # Splits the chunk by destination rank with one stable sort.
+        # The stable sort keeps the within-rank order of the input, so each rank's positions equal what masking would select.
+        # Valid ranks are in [0, world_size), so the key dtypes below cannot wrap; out-of-range ranks are undefined.
+        counts = torch.bincount(chunk_rank, minlength=self._world_size).tolist()
+        if self._world_size <= 256:
+            sort_key = chunk_rank.to(torch.uint8)
+        elif self._world_size <= 2**15:
+            sort_key = chunk_rank.to(torch.int16)
+        else:
+            sort_key = chunk_rank.to(torch.int32)
+        order = torch.argsort(sort_key, stable=True)
+        del sort_key
+
+        # Each rank's piece is gathered from the unsorted input into its own compact tensor.
+        # Views of one sorted buffer would be sent whole by rpc when a piece covers more than half of it,
+        # and would pin the buffer on the receiver until the final concatenation.
         chunk_res: list[
             Tuple[Optional[Tuple[torch.Tensor, ...]], Optional[torch.Tensor]]
         ] = []
-        chunk_length = chunk_end_pos - chunk_start_pos
-        chunk_rank = partition_function(rank_indices, (chunk_start_pos, chunk_end_pos))
+        for rank_positions in order.split(counts):
+            rank_data = index_select(input_data, rank_positions)
+            rank_rank_indices = None
+            if generate_pb:
+                rank_rank_indices = rank_indices[rank_positions]
+            chunk_res.append((rank_data, rank_rank_indices))
+        del order
 
-        input_indices = torch.arange(chunk_length, dtype=torch.int64)
-
-        for rank in range(self._world_size):
-            # Filtering for items in chunk which are on the current partition `rank`
-            current_rank_mask = chunk_rank == rank
-            per_rank_indices = torch.masked_select(input_indices, current_rank_mask)
-            chunk_res.append(
-                (
-                    index_select(input_data, per_rank_indices),
-                    rank_indices[per_rank_indices] if generate_pb else None,
-                )
-            )
         self._partition_mgr.process(chunk_res)
 
     def _partition_by_chunk(
@@ -2007,50 +2024,65 @@ class DistPartitioner:
         logger.info(f"Rank {self._rank} starting partitioning ...")
         start_time = time.time()
 
-        # Node partition should happen at the very beginning, as edge partition
-        # and label partition depends on node partition book.
-        node_partition_book = self.partition_node()
+        # The imported modules and registered inputs hold on the order of a million tracked objects, and every `gc.collect()` call during
+        # partitioning scans them while holding the GIL, which also stalls the rpc handlers serving other machines.
+        # Freezing moves them out of the collector's view; the collections that remain only scan objects created afterwards.
+        # Objects frozen by the caller are left frozen.
+        gc_frozen_by_caller = gc.get_freeze_count() > 0
+        gc.collect()
+        if not gc_frozen_by_caller:
+            gc.freeze()
 
-        # Partition edge and clean up input edge data.
-        (
-            partitioned_edge_index,
-            partitioned_edge_features,
-            partitioned_edge_packed_features,
-            edge_partition_book,
-        ) = self.partition_edge_index_and_edge_features(
-            node_partition_book=node_partition_book
-        )
+        # The try/finally does not handle errors; it guarantees the gc.unfreeze() below runs
+        # when any partitioning step raises, so the process is not left with a frozen collector.
+        try:
+            # Node partition should happen at the very beginning, as edge partition
+            # and label partition depends on node partition book.
+            node_partition_book = self.partition_node()
 
-        if (
-            self._node_feat is not None
-            or self._node_packed_feat is not None
-            or self._node_labels is not None
-        ):
+            # Partition edge and clean up input edge data.
             (
-                partitioned_node_features,
-                partitioned_node_packed_features,
-                partitioned_node_labels,
-            ) = self.partition_node_features_and_labels(
+                partitioned_edge_index,
+                partitioned_edge_features,
+                partitioned_edge_packed_features,
+                edge_partition_book,
+            ) = self.partition_edge_index_and_edge_features(
                 node_partition_book=node_partition_book
             )
-        else:
-            partitioned_node_features = None
-            partitioned_node_packed_features = None
-            partitioned_node_labels = None
 
-        if self._positive_label_edge_index is not None:
-            partitioned_positive_edge_index = self.partition_labels(
-                node_partition_book=node_partition_book, is_positive=True
-            )
-        else:
-            partitioned_positive_edge_index = None
+            if (
+                self._node_feat is not None
+                or self._node_packed_feat is not None
+                or self._node_labels is not None
+            ):
+                (
+                    partitioned_node_features,
+                    partitioned_node_packed_features,
+                    partitioned_node_labels,
+                ) = self.partition_node_features_and_labels(
+                    node_partition_book=node_partition_book
+                )
+            else:
+                partitioned_node_features = None
+                partitioned_node_packed_features = None
+                partitioned_node_labels = None
 
-        if self._negative_label_edge_index is not None:
-            partitioned_negative_edge_index = self.partition_labels(
-                node_partition_book=node_partition_book, is_positive=False
-            )
-        else:
-            partitioned_negative_edge_index = None
+            if self._positive_label_edge_index is not None:
+                partitioned_positive_edge_index = self.partition_labels(
+                    node_partition_book=node_partition_book, is_positive=True
+                )
+            else:
+                partitioned_positive_edge_index = None
+
+            if self._negative_label_edge_index is not None:
+                partitioned_negative_edge_index = self.partition_labels(
+                    node_partition_book=node_partition_book, is_positive=False
+                )
+            else:
+                partitioned_negative_edge_index = None
+        finally:
+            if not gc_frozen_by_caller:
+                gc.unfreeze()
 
         logger.info(
             f"Rank {self._rank} finished partitioning in {time.time() - start_time:.2f} seconds"
