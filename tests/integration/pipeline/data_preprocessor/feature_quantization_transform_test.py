@@ -153,15 +153,15 @@ class FeatureQuantizationTransformTest(TestCase):
             )
 
             assert loaded.features is not None
-            assert loaded.quantized_features is not None
+            assert loaded.packed_features is not None
             self.assert_tensor_equality(loaded.ids, torch.tensor([[0, 1], [1, 0]]))
             self.assert_tensor_equality(loaded.features, torch.tensor([[10.0], [20.0]]))
             self.assert_tensor_equality(
-                loaded.quantized_features, torch.tensor([[0], [192]], dtype=torch.uint8)
+                loaded.packed_features, torch.tensor([[0], [192]], dtype=torch.uint8)
             )
             materialized, remaining_metadata = materialize_quantized_edge_features(
                 data=Data(edge_index=loaded.ids, edge_attr=loaded.features),
-                metadata={EDGE_PACKED_FEATURES_METADATA_KEY: loaded.quantized_features},
+                metadata={EDGE_PACKED_FEATURES_METADATA_KEY: loaded.packed_features},
                 edge_quantization_metadata=serialized_metadata.edge_quantization_metadata,
             )
             self.assert_tensor_equality(

@@ -29,6 +29,7 @@ from gigl.src.common.utils.metrics_service_provider import (
 from gigl.src.common.utils.spark_job_manager import (
     DataprocClusterInitData,
     SparkJobManager,
+    build_subgraph_sampler_cluster_name,
 )
 from gigl.src.subgraph_sampler.lib.ingestion_protocol import BaseIngestion
 
@@ -163,12 +164,12 @@ class SubgraphSampler:
             logger.info("Ingestion complete. Cleaning up...")
             graph_db_ingestion_config.clean_up()
 
-        # must match pattern (?:[a-z](?:[-a-z0-9]{0,49}[a-z0-9])?)
-        if not cluster_name:
-            cluster_name = f"sgs_{applied_task_identifier}"
-        cluster_name = cluster_name.replace("_", "-")[:50]
-        if cluster_name.endswith("-"):
-            cluster_name = cluster_name[:-1] + "Z"
+        if cluster_name:
+            cluster_name = SparkJobManager.get_sanitized_dataproc_cluster_name(
+                cluster_name
+            )
+        else:
+            cluster_name = build_subgraph_sampler_cluster_name(applied_task_identifier)
 
         gcs_utils = GcsUtils()
 

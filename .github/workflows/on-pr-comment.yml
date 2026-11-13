@@ -142,8 +142,17 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        # No fail fast here: a PR author wants to see every failing pipeline in one pass.
+        # GITHUB_RUN_ID labels the pipeline runs so the cancel step below can find them.
         command: |
-          make run_all_e2e_tests
+          make run_all_e2e_tests GITHUB_RUN_ID=${{ github.run_id }}
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: snapchat/gigl/.github/actions/cancel-ci-gcp-resources@main
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
   notebooks-e2e-test:
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/notebook_tests') }}

@@ -15,7 +15,8 @@ from types import FunctionType, UnionType
 from typing import Any, Callable, Final, Optional, Union, cast, get_args, get_origin
 
 import jaxtyping
-from jaxtyping import AbstractArray, install_import_hook
+import torch
+from jaxtyping import AbstractArray, Float, install_import_hook
 from typeguard import typechecked
 
 from gigl.common.logger import Logger
@@ -139,6 +140,56 @@ def _jaxtyped_shape_contracts_only(*args: Any, **kwargs: Any) -> Any:
     return decorator
 
 
+# The config class is private to Jaxtyping, so it is read from the config object.
+_JaxtypingConfig: Any = cast(Any, type(jaxtyping.config))
+
+
+class _SkipWhileCompilingConfig(_JaxtypingConfig):
+    """Jaxtyping config whose ``jaxtyping_disable`` reads true while Dynamo traces.
+
+    Jaxtyping's wrapper returns the undecorated function when ``jaxtyping_disable``
+    is true, before it binds arguments or pushes a shape memo. Dynamo cannot trace
+    that bookkeeping or Typeguard, and guards on it cause recompiles. Eager calls
+    read the configured value, so they are still checked.
+    """
+
+    @property
+    def jaxtyping_disable(self) -> bool:
+        if torch.compiler.is_compiling():
+            return True
+        return self._eager_jaxtyping_disable
+
+    @jaxtyping_disable.setter
+    def jaxtyping_disable(self, value: bool) -> None:
+        self._eager_jaxtyping_disable = value
+
+
+def _skip_shape_checks_while_compiling() -> None:
+    """Keeps Shape Contract wrappers out of ``torch.compile``.
+
+    Inside a compiled frame, ``jaxtyping.config`` reads ``jaxtyping_disable`` as
+    true, so the inlined wrapper calls the undecorated function.
+
+    Every wrapped function shares the code object of Jaxtyping's wrapper. Dynamo
+    caches compiled frames per code object, so a wrapper that starts a frame
+    after a graph break would count each contracted function as a recompile of
+    the same code. ``skip_code`` runs that frame eagerly, with its checks, and
+    compiles the function it calls as its own frame.
+    """
+    config = jaxtyping.config
+    if isinstance(config, _SkipWhileCompilingConfig):
+        return
+    eager_jaxtyping_disable = config.__dict__.pop("jaxtyping_disable")
+    config.__class__ = _SkipWhileCompilingConfig
+    config.jaxtyping_disable = eager_jaxtyping_disable
+
+    def probe(x: Float[torch.Tensor, "_"]) -> Float[torch.Tensor, "_"]:
+        return x
+
+    wrapper = jaxtyping.jaxtyped(typechecker=shape_contract_typechecker)(probe)
+    torch._dynamo.eval_frame.skip_code(wrapper.__code__)
+
+
 def install_runtime_typechecking() -> None:
     """Enable test-only runtime checks for tensor Shape Contracts.
 
@@ -154,6 +205,8 @@ def install_runtime_typechecking() -> None:
     cannot be used with ``isinstance``. The custom typechecker filters those out
     so Typeguard enforces Shape Contracts only.
 
+    Checks run in eager calls and are skipped while ``torch.compile`` traces.
+
     Repeated calls are safe. Runtime checking remains scoped to the current
     process and modules imported after this function runs. A contract violation
     raises ``jaxtyping.TypeCheckError`` at the call site, so an uncaught
@@ -161,6 +214,7 @@ def install_runtime_typechecking() -> None:
     """
     global _import_hook
     if _import_hook is None:
+        _skip_shape_checks_while_compiling()
         # Hooked modules look up ``jaxtyping.jaxtyped`` when each decorator runs.
         setattr(jaxtyping, "jaxtyped", _jaxtyped_shape_contracts_only)
         _import_hook = install_import_hook(
