@@ -2,7 +2,7 @@
 name = "gigl"
 description = "GIgantic Graph Learning Library"
 readme = "README.md"
-version = "0.3.1"
+version = "0.3.2"
 classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
@@ -20,8 +20,9 @@ dependencies = [
   "chardet",
   # gigl-core hosts all C++ / CUDA / pybind11 extensions. Separate wheel per torch
   # variant (cpu/cu128). Version must match gigl exactly.
-  "gigl-core==0.3.1",
+  "gigl-core==0.3.2",
   "google-cloud-aiplatform",
+  "google-cloud-build",
   "google-cloud-dataflow-client",
   "google-cloud-dataproc",
   "google-cloud-logging",
@@ -136,6 +137,7 @@ glt-build-backend = ["ninja", "setuptools>=70.1"]
 # only when a script needs it; these must also stay in [project].dependencies.
 gh-actions = [
   "google-cloud-aiplatform",
+  "google-cloud-build",
   "google-cloud-logging",
 ]
 dev = [
