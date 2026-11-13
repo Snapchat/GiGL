@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
+- Speed up `DistPartitioner` edge, feature, and label partitioning: each chunk is split by destination rank with one
+  stable sort instead of one boolean-mask pass per rank, and `gc.freeze()` keeps the per-chunk `gc.collect()` from
+  scanning long-lived objects while it holds the GIL. Each rank receives the same items in the same order as before by
+  @kmontemayor2-sc
 - Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
   (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`), including a 1-bit encoding for 0/1 columns such as
   one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
