@@ -1049,21 +1049,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(edge_features, Mapping):
-            self._edge_feature_info = {}
-            for edge_type, edge_features_per_edge_type in edge_features.items():
-                assert isinstance(edge_type, EdgeType)
-                self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
             )
         else:
-            self._edge_feature_info = FeatureInfo(
-                dim=edge_features.size(1),
-                dtype=edge_features.dtype,
-            )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
     def _initialize_edge_packed_features(
@@ -1101,11 +1090,6 @@ class DistDataset(glt.distributed.DistDataset):
                 with_gpu=False,
                 dtype=torch.uint8,
             )
-        self._edge_feature_info = _with_logical_feature_info(
-            self._edge_feature_info,
-            self._edge_packed_features,
-            self._edge_quantization_metadata,
-        )
 
     def build(
         self,
@@ -1245,6 +1229,12 @@ class DistDataset(glt.distributed.DistDataset):
         )
         partition_output.partitioned_edge_packed_features = None
         gc.collect()
+
+        self._edge_feature_info = _build_feature_info(
+            raw_features=self._edge_features,
+            packed_features=self._edge_packed_features,
+            metadata=self._edge_quantization_metadata,
+        )
 
         self._node_partition_book = partition_output.node_partition_book
         self._edge_partition_book = partition_output.edge_partition_book
@@ -1629,47 +1619,6 @@ def _prepare_feature_data(
         return features_per_entity_type, id_to_index_per_entity_type
     else:
         return None, None
-
-
-def _with_logical_feature_info(
-    feature_info: Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]],
-    packed_features: Optional[Union[Feature, dict[_EntityType, Feature]]],
-    metadata: Optional[
-        Union[
-            FeatureQuantizationMetadata, dict[_EntityType, FeatureQuantizationMetadata]
-        ]
-    ],
-) -> Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]]:
-    """Reports the logical float32 width of every entity type that has packed columns.
-
-    The raw float store only holds the columns that are not packed, but loaders and models see (and placeholders for
-    unsampled types must have) the full logical feature width.
-
-    Args:
-        feature_info: Feature info derived from the raw float store.
-        packed_features: Packed sidecar store(s) of the dataset.
-        metadata: Quantization metadata describing the packed columns; a single value applies to every type.
-
-    Returns:
-        ``feature_info`` with the entries of packed types replaced by their logical width.
-    """
-    if metadata is None or packed_features is None:
-        return feature_info
-    if isinstance(packed_features, Mapping):
-        logical_info: dict[_EntityType, FeatureInfo] = {}
-        if feature_info is not None and not isinstance(feature_info, FeatureInfo):
-            logical_info.update(feature_info)
-        for entity_type in packed_features:
-            if isinstance(metadata, FeatureQuantizationMetadata):
-                entity_metadata = metadata
-            else:
-                entity_metadata = metadata[entity_type]
-            logical_info[entity_type] = FeatureInfo(
-                dim=entity_metadata.feature_dim, dtype=torch.float32
-            )
-        return logical_info
-    assert isinstance(metadata, FeatureQuantizationMetadata)
-    return FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
 
 
 ## Pickling Registration
