@@ -373,6 +373,11 @@ class CompactTopology(Topology):
         retain_edge_ids (bool): Whether to keep COO-position IDs for edge sampling
             (default ``False``), at a cost of 8 bytes per edge. Pass ``True`` only when
             callers sample with edge IDs.
+        row_offset (int): The global id that compressed id 0 of ``edge_index`` stands for.
+            A rank that owns the id range ``[row_offset, row_offset + num_rows)`` passes ids
+            relative to its range start, so ``indptr`` has no rows for the ids below it.
+            GLT's samplers index ``indptr`` directly, so seeds must be translated with
+            :func:`to_local_rows` first. ``to_coo`` adds the offset back.
     """
 
     def __init__(
@@ -382,6 +387,7 @@ class CompactTopology(Topology):
         num_rows: Optional[int] = None,
         *,
         retain_edge_ids: bool = False,
+        row_offset: int,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
@@ -392,6 +398,7 @@ class CompactTopology(Topology):
         else:
             compressed, other = 1, 0
         self._layout = layout
+        self.row_offset = row_offset
         csr = build_csr_from_coo(
             row=edge_index[compressed],
             col=edge_index[other],
@@ -404,3 +411,60 @@ class CompactTopology(Topology):
             csr.edge_ids,
         )
         self._edge_weights = None
+
+    def to_coo(
+        self,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]
+    ]:
+        """Convert to COO with global compressed ids.
+
+        Returns:
+            Row ids, column ids, edge ids and edge weights, as GLT's ``Topology.to_coo``.
+        """
+        row, col, edge_ids, edge_weights = super().to_coo()
+        if self.row_offset:
+            if self._layout == "CSR":
+                row = row + self.row_offset
+            else:
+                col = col + self.row_offset
+        return row, col, edge_ids, edge_weights
+
+
+def get_row_offset(topology: Topology) -> int:
+    """Return the global id that row 0 of ``topology.indptr`` holds.
+
+    It is 0 for every topology except a :class:`CompactTopology` built with a ``row_offset``.
+
+    Args:
+        topology: A GLT topology.
+
+    Returns:
+        int: The row offset.
+    """
+    if isinstance(topology, CompactTopology):
+        return topology.row_offset
+    return 0
+
+
+def to_local_rows(ids: torch.Tensor, row_offset: int, num_rows: int) -> torch.Tensor:
+    """Translate global compressed ids to rows of a topology that starts at ``row_offset``.
+
+    Ids outside ``[row_offset, row_offset + num_rows)`` map to ``num_rows``.
+    GLT's samplers return no neighbors for a row at or past the row count, so these ids sample
+    nothing, as they do on the empty rows of an ``indptr`` that starts at id 0.
+
+    Example:
+        >>> to_local_rows(torch.tensor([3, 5, 9, 12]), row_offset=5, num_rows=5)
+        tensor([5, 0, 4, 5])
+
+    Args:
+        ids: Global compressed ids.
+        row_offset: The global id of row 0.
+        num_rows: The number of stored rows.
+
+    Returns:
+        torch.Tensor: Local row ids, same shape and dtype as ``ids``.
+    """
+    local = ids - row_offset
+    return torch.where((local >= 0) & (local < num_rows), local, num_rows)

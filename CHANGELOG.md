@@ -88,6 +88,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
   `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
   columns by @kmontemayor2-sc
+- Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
+  longer grows with rank id. `CompactTopology` takes a required `row_offset`, the global id of its first row. GiGL's
+  distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo` add the
+  offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with GLT's
+  `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
 
 ### Fixed
 

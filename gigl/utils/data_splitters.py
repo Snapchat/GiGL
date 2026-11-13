@@ -27,6 +27,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     reverse_edge_type,
 )
+from gigl.utils.csr import get_row_offset
 
 logger = Logger()
 
@@ -711,13 +712,18 @@ def _get_padded_labels(
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
+    # Row 0 of indptr holds anchor id row_offset. Ids below it have no stored row and no labels.
+    row_offset = get_row_offset(topo)
     extra_nodes_to_pad = 0
     if allow_non_existant_node_ids:
-        valid_ids = anchor_node_ids < (indptr.size(0) - 1)
+        valid_ids = anchor_node_ids < (indptr.size(0) - 1 + row_offset)
         extra_nodes_to_pad = int(torch.count_nonzero(~valid_ids).item())
         anchor_node_ids = anchor_node_ids[valid_ids]
-    starts = indptr[anchor_node_ids]  # [N]
-    ends = indptr[anchor_node_ids + 1]  # [N]
+    local_rows = anchor_node_ids - row_offset
+    below_offset = local_rows < 0
+    local_rows = local_rows.clamp(min=0)
+    starts = indptr[local_rows]  # [N]
+    ends = torch.where(below_offset, starts, indptr[local_rows + 1])  # [N]
 
     max_range = int(torch.max(ends - starts).item())
     if max_labels_per_anchor_node is not None:

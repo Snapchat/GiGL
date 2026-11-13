@@ -412,7 +412,9 @@ class ScatterPlacementTest(TestCase):
                 "gigl.utils.share_memory.available_memory_bytes", return_value=1 << 50
             ),
         ):
-            topology = CompactTopology(coo, layout="CSR", retain_edge_ids=True)
+            topology = CompactTopology(
+                coo, layout="CSR", retain_edge_ids=True, row_offset=0
+            )
             edge_ids_ptr = topology.edge_ids.data_ptr()
             self.assertTrue(topology.edge_ids.is_shared())
             topology.share_memory_()

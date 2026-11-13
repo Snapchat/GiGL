@@ -39,7 +39,7 @@ from collections import Counter
 from typing import Final, Union, overload
 
 import torch
-from graphlearn_torch.data import Graph
+from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.typing import NodeType
 from torch_geometric.typing import EdgeType
 
@@ -47,6 +47,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 from gigl.types.graph import is_label_edge_type
+from gigl.utils.csr import get_row_offset
 
 logger = Logger()
 
@@ -98,7 +99,7 @@ def compute_and_broadcast_degree_tensor(
             raise ValueError("Topology/indptr not available for graph.")
 
         # Homogeneous graphs keep the usual GiGL shape: a single tensor.
-        result = _all_reduce_degrees(_compute_degrees_from_indptr(topo.indptr))
+        result = _all_reduce_degrees(_compute_degrees_from_topology(topo))
         if result.numel() > 0:
             logger.info(
                 f"{result.size(0)} nodes, max={result.max().item()}, min={result.min().item()}"
@@ -121,7 +122,7 @@ def compute_and_broadcast_degree_tensor(
             )
             degrees = torch.empty(0, dtype=torch.int32)
         else:
-            degrees = _compute_degrees_from_indptr(topo.indptr)
+            degrees = _compute_degrees_from_topology(topo)
 
         if anchor_type in local_dict:
             existing = local_dict[anchor_type]
@@ -168,6 +169,20 @@ def _clamp_to_int32(tensor: torch.Tensor) -> torch.Tensor:
 def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
     """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
     return _clamp_to_int32(indptr[1:] - indptr[:-1])
+
+
+def _compute_degrees_from_topology(topo: Topology) -> torch.Tensor:
+    """Compute degrees indexed by global compressed id.
+
+    A topology with a row offset stores no rows below it, so those ids get degree 0.
+    """
+    local_degrees = _compute_degrees_from_indptr(topo.indptr)
+    row_offset = get_row_offset(topo)
+    if not row_offset:
+        return local_degrees
+    degrees = torch.zeros(row_offset + local_degrees.numel(), dtype=local_degrees.dtype)
+    degrees[row_offset:] = local_degrees
+    return degrees
 
 
 def _get_degree_reduce_context() -> tuple[int, torch.device]:
