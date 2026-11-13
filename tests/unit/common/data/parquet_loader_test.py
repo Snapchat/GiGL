@@ -856,23 +856,6 @@ class _CountingLoader(ParquetDataLoader):
         return pafs.PyFileSystem(self._handler), uri.uri
 
 
-class _FlakyOpenHandler(_CountingHandler):
-    """Fails the first ``failures_remaining`` opens with a generic ``pa.ArrowException``."""
-
-    def __init__(self, failures_remaining: int) -> None:
-        super().__init__(_OpenHandleCounter())
-        self.failures_remaining = failures_remaining
-
-    def open_input_file(self, path: str):
-        if (
-            path.endswith(parquet_format.PARQUET_FILE_SUFFIX)
-            and self.failures_remaining > 0
-        ):
-            self.failures_remaining -= 1
-            raise pa.ArrowException("Unknown error: transient storage failure")
-        return super().open_input_file(path)
-
-
 class _FailingCountingFile(_CountingFile):
     """A ``_CountingFile`` whose reads all raise ``OSError``."""
 
@@ -990,14 +973,13 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
 
     @parameterized.expand(
         [
-            ("unknown_arrow_error", pa.ArrowException("unknown error"), OSError, 3),
             ("os_error", OSError("connection reset"), OSError, 3),
-            ("file_not_found", FileNotFoundError("gone"), FileNotFoundError, 1),
-            ("permission_denied", PermissionError("denied"), PermissionError, 1),
-            ("invalid_data", pa.ArrowInvalid("bad"), pa.ArrowInvalid, 1),
+            ("file_not_found", FileNotFoundError("gone"), FileNotFoundError, 3),
+            ("value_error", ValueError("bad"), ValueError, 1),
+            ("arrow_exception", pa.ArrowException("unknown"), pa.ArrowException, 1),
         ]
     )
-    def test_open_failures_are_retried_only_when_transient(
+    def test_open_failures_are_retried_only_for_os_errors(
         self,
         _name: str,
         error: Exception,
@@ -1014,18 +996,6 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
         self.assertGreater(len(counter.attempts_by_path), 0)
         for attempts in counter.attempts_by_path.values():
             self.assertEqual(attempts, expected_attempts)
-
-    def test_arrow_exception_during_reads_is_retried_and_data_is_correct(
-        self,
-    ) -> None:
-        handler = _FlakyOpenHandler(failures_remaining=2)
-        info = _node_info(self.root, parquet=True)
-        with mock.patch(_RETRY_SLEEP):
-            loaded = _CountingLoader(
-                handler, 0, 1, num_threads=1
-            ).load_as_torch_tensors(info)
-        self.assertEqual(handler.failures_remaining, 0)
-        assert_close(loaded.ids, torch.from_numpy(self.data["node_id"]))
 
     def test_persistent_read_failures_raise(self) -> None:
         failures = _Failures(remaining=10_000)

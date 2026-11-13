@@ -107,7 +107,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Final, Optional, Sequence, TypeVar
+from typing import Final, Optional, Sequence
 
 import numpy as np
 import pyarrow as pa
@@ -135,13 +135,24 @@ from gigl.utils.share_memory import allocate_preshared
 logger = Logger()
 
 _MAX_THREADS: Final[int] = 64
-# Each retried read makes ``_RETRY_TRIES + 1`` attempts in total, sleeping 2s and then 8s between them.
 _RETRY_TRIES: Final[int] = 2
 _RETRY_DELAY_SECONDS: Final[int] = 2
 _RETRY_BACKOFF: Final[int] = 4
 _RETRY_MAX_DELAY_SECONDS: Final[int] = 30
-
-_T = TypeVar("_T")
+# Retries a call that raises ``OSError``, which is what pyarrow raises for I/O failures.
+# The call is made ``_RETRY_TRIES + 1`` times in total, with sleeps of 2s and then 8s in between.
+# ``FileNotFoundError`` and ``PermissionError`` are ``OSError`` too, so they are also retried before they are raised.
+# Other pyarrow errors are not retried.
+# The GCS client retries connection failures, timeouts and HTTP 408, 429 and 5xx responses itself; when it gives up,
+# pyarrow raises them as ``OSError``.
+_retry_on_os_error = retry(
+    exception_to_check=OSError,
+    tries=_RETRY_TRIES,
+    delay_s=_RETRY_DELAY_SECONDS,
+    backoff=_RETRY_BACKOFF,
+    max_delay_s=_RETRY_MAX_DELAY_SECONDS,
+    should_throw_original_exception=True,
+)
 
 
 @dataclass(frozen=True)
@@ -153,64 +164,6 @@ class _ReadTask:
     row_offset: int
     num_rows: int
     out_offset: int
-
-
-class _TransientReadError(OSError):
-    """A read failed with an error that a retry with a fresh file handle may not hit again."""
-
-
-def _is_retryable(error: Exception) -> bool:
-    """Whether ``error`` is a transient I/O failure worth retrying with a fresh handle.
-
-    Missing files and permission errors are permanent.
-    Generic ``pa.ArrowException`` is what pyarrow raises for storage-client failures without a more specific status
-    (for example an unknown error from the GCS client).
-    Its subclasses (invalid data, type errors, ...) are not transient.
-
-    Args:
-        error (Exception): The error raised by a read.
-
-    Returns:
-        bool: True if the read should be retried.
-    """
-    if isinstance(error, (FileNotFoundError, PermissionError)):
-        return False
-    if isinstance(error, OSError):
-        return True
-    return type(error) is pa.ArrowException
-
-
-@retry(
-    exception_to_check=_TransientReadError,
-    tries=_RETRY_TRIES,
-    delay_s=_RETRY_DELAY_SECONDS,
-    backoff=_RETRY_BACKOFF,
-    max_delay_s=_RETRY_MAX_DELAY_SECONDS,
-    should_throw_original_exception=True,
-)
-def _retry_transient(description: str, operation: Callable[[], _T]) -> _T:
-    """Runs ``operation``, retrying it when it fails with a transient I/O error.
-
-    Transient failures are raised as ``_TransientReadError`` so that ``retry`` retries them, for three attempts in total.
-    Other errors propagate unchanged and are not retried.
-    ``operation`` must open any file handle it uses so that every retry starts with a fresh one.
-
-    Args:
-        description (str): What the operation does, for the error message.
-        operation (Callable[[], _T]): The read to run.
-
-    Returns:
-        _T: The result of ``operation``.
-
-    Raises:
-        _TransientReadError: If every attempt failed with a transient error.
-    """
-    try:
-        return operation()
-    except Exception as e:
-        if _is_retryable(e):
-            raise _TransientReadError(f"{description} failed: {e}") from e
-        raise
 
 
 class _SharedHandles:
@@ -447,9 +400,8 @@ class ParquetDataLoader:
         wall_start = time.perf_counter()
 
         fs, path = self._filesystem_and_path(info.parquet_uri_prefix)
-        files: list[str] = _retry_transient(
-            "Listing Parquet files",
-            lambda: parquet_manifest.list_parquet_files(fs, path),
+        files: list[str] = _retry_on_os_error(parquet_manifest.list_parquet_files)(
+            fs, path
         )
         list_s = time.perf_counter() - wall_start
         if not files:
@@ -464,19 +416,14 @@ class ParquetDataLoader:
         with ThreadPoolExecutor(self._num_threads) as pool:
             footer_start = time.perf_counter()
 
+            @_retry_on_os_error
             def read_footer(file: str) -> pq.FileMetaData:
                 """Opens ``file``, reads its footer and closes it again."""
-
-                def open_and_read_footer() -> pq.FileMetaData:
-                    handle = fs.open_input_file(file)
-                    try:
-                        return pq.read_metadata(handle)
-                    finally:
-                        handle.close()
-
-                return _retry_transient(
-                    f"Reading footer of {file}", open_and_read_footer
-                )
+                handle = fs.open_input_file(file)
+                try:
+                    return pq.read_metadata(handle)
+                finally:
+                    handle.close()
 
             row_groups_per_file = parquet_manifest.read_manifest_row_groups(
                 fs, path, files
@@ -547,7 +494,10 @@ class ParquetDataLoader:
 
             shared_handles = _SharedHandles(fs, files, tasks)
 
-            def read_with_shared_handle(task: _ReadTask) -> pa.Table:
+            # A retry reads through the same shared handle.
+            # Every positional read opens its own request, so a failed read leaves nothing behind in the handle.
+            @_retry_on_os_error
+            def read_row_group(task: _ReadTask) -> pa.Table:
                 parquet_file = pq.ParquetFile(
                     shared_handles.get(task.file_index),
                     metadata=metadatas[task.file_index],
@@ -555,35 +505,6 @@ class ParquetDataLoader:
                 )
                 return parquet_file.read_row_group(
                     task.row_group, columns=columns, use_threads=False
-                )
-
-            def read_with_fresh_handle(task: _ReadTask) -> pa.Table:
-                handle = fs.open_input_file(files[task.file_index])
-                try:
-                    parquet_file = pq.ParquetFile(
-                        handle,
-                        metadata=metadatas[task.file_index],
-                        pre_buffer=True,
-                    )
-                    return parquet_file.read_row_group(
-                        task.row_group, columns=columns, use_threads=False
-                    )
-                finally:
-                    handle.close()
-
-            def read_row_group(task: _ReadTask) -> pa.Table:
-                description = (
-                    f"Reading row group {task.row_group} of {files[task.file_index]}"
-                )
-                # Concurrent reads share one handle (positional reads). Retries each open a fresh handle.
-                try:
-                    return read_with_shared_handle(task)
-                except Exception as e:
-                    if not _is_retryable(e):
-                        raise
-                    logger.warning(f"{description} failed, retrying: {e}")
-                return _retry_transient(
-                    description, lambda: read_with_fresh_handle(task)
                 )
 
             def read_task(task: _ReadTask) -> None:
