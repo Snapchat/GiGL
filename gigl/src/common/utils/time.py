@@ -33,9 +33,12 @@ def new_test_run_id(prefix: str) -> str:
     The ID is ``<prefix>_<UTC YYYYmmdd_HHMMSS>_<6 random hex chars>``. The random
     suffix keeps runs that start in the same second from sharing GCS paths,
     BigQuery tables, or Dataflow job names. When ``prefix`` is lowercase
-    ``[a-z0-9_]``, so is the ID, which makes it valid as a KFP job name, BigQuery
-    table name, GCS path component, and (after Dataflow's own sanitizing) Dataflow
-    job name.
+    ``[a-z0-9_]``, so is the ID, which makes it valid as:
+
+    - a KFP job name
+    - a BigQuery table name
+    - a GCS path component
+    - a Dataflow job name, after Dataflow's own sanitizing
 
     Args:
         prefix: Leading text that identifies the test.

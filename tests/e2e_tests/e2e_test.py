@@ -82,8 +82,9 @@ class E2ETest:
     Args:
         task_config_uri: The URI of the task config to use.
         resource_config_uri: The URI of the resource config to use.
-        name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
-            where <test_name> is the key in :attr:`E2ETestsSpec.tests`.
+        name_suffix: The suffix to add to the job name; job name will be of form:
+            <test_name><name_suffix>_<6 random hex chars>, where <test_name> is the key in
+            :attr:`E2ETestsSpec.tests`.
         start_at: Specify the component where to start the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         stop_after: Specify the component where to stop the pipeline. Choices are defined in:
