@@ -616,10 +616,11 @@ def load_torch_tensors_from_tf_record(
     there is a tradeoff that needs to be made between parallel and sequential tensor loading, which is why we don't parallelize across node and edge types. We enable
     the `should_load_tensors_in_parallel` to allow some customization for loading strategies based on the input data.
 
-    If RPC is initialized, node feature columns are losslessly compressed right after the node loading process joins,
-    unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
-    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, this runs while
-    the edge loading process is still reading.
+    If RPC is initialized, node and edge feature columns are losslessly compressed, each right after its own loading
+    process joins, unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
+    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, node
+    compression runs while the edge loading process is still reading. The sampling-weight edge feature is removed
+    from the edge features before they are compressed, so it is never compressed.
 
     With compression on and RPC initialized, every rank must call this function, with the same
     ``should_load_tensors_in_parallel``, because compression joins a collective RPC ``all_gather``.
@@ -655,6 +656,9 @@ def load_torch_tensors_from_tf_record(
     )
     node_is_homogeneous = isinstance(
         serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
+    )
+    edge_is_homogeneous = isinstance(
+        serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo
     )
     node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
     edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
@@ -764,8 +768,16 @@ def load_torch_tensors_from_tf_record(
             )
         )
         edge_data_loading_process.join()
-        logger.info(
-            f"Rank {rank} {_EDGE_KEY} loading process joined {time.time() - start_time:.2f} seconds after the load started"
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
         )
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.join()
@@ -780,6 +792,17 @@ def load_torch_tensors_from_tf_record(
         # compared with first launching node loading and then launching edge loading.
         edge_data_loading_process.start()
         edge_data_loading_process.join()
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
+        )
         node_data_loading_process.start()
         node_data_loading_process.join()
         node_features, node_packed_features, node_quantization_metadata = (
@@ -813,10 +836,6 @@ def load_torch_tensors_from_tf_record(
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
-    edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
-    edge_packed_features = edge_output_dict.get(
-        _PACKED_FEATURE_FMT.format(entity=_EDGE_KEY), None
-    )
     edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
 
     positive_labels = edge_output_dict.get(

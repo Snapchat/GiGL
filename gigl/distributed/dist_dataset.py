@@ -1049,21 +1049,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(edge_features, Mapping):
-            self._edge_feature_info = {}
-            for edge_type, edge_features_per_edge_type in edge_features.items():
-                assert isinstance(edge_type, EdgeType)
-                self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
             )
         else:
-            self._edge_feature_info = FeatureInfo(
-                dim=edge_features.size(1),
-                dtype=edge_features.dtype,
-            )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
     def _initialize_edge_packed_features(
@@ -1240,6 +1229,12 @@ class DistDataset(glt.distributed.DistDataset):
         )
         partition_output.partitioned_edge_packed_features = None
         gc.collect()
+
+        self._edge_feature_info = _build_feature_info(
+            raw_features=self._edge_features,
+            packed_features=self._edge_packed_features,
+            metadata=self._edge_quantization_metadata,
+        )
 
         self._node_partition_book = partition_output.node_partition_book
         self._edge_partition_book = partition_output.edge_partition_book

@@ -69,7 +69,7 @@ class TestDatasetFactory(TestCase):
                 dataset.val_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
             )
 
-    def test_node_features_are_compressed_by_default_and_off_keeps_float32(
+    def test_node_and_edge_features_are_compressed_by_default_and_off_keeps_float32(
         self,
     ) -> None:
         task_config_uri = get_mocked_dataset_artifact_metadata()[
@@ -101,6 +101,17 @@ class TestDatasetFactory(TestCase):
         self.assertIsNone(compressed.node_features)
         self.assertIsNone(uncompressed.node_quantization_metadata)
         self.assertIsNotNone(uncompressed.node_features)
+
+        edge_metadata = compressed.edge_quantization_metadata
+        assert isinstance(edge_metadata, FeatureQuantizationMetadata)
+        self.assertEqual(edge_metadata.feature_dim, 4)
+        self.assertEqual(
+            edge_metadata.lossless_feature_indices,
+            tuple(range(edge_metadata.feature_dim)),
+        )
+        self.assertIsNone(compressed.edge_features)
+        self.assertIsNone(uncompressed.edge_quantization_metadata)
+        self.assertIsNotNone(uncompressed.edge_features)
 
 
 if __name__ == "__main__":
