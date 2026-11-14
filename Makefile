@@ -339,6 +339,7 @@ run_all_e2e_tests:
 		$(if $(E2E_FAIL_FAST),--fail_fast)
 
 # The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
+# CI runs these on the non-default Python minors.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
 run_glt_e2e_tests: run_all_e2e_tests
 

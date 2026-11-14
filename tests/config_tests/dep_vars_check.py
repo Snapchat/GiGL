@@ -3,6 +3,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import yaml
+
 # We're in GiGL/tests/config_tests, so we need to go up two levels to find GiGL/gigl/dep_vars.env
 REPO_ROOT = Path(__file__).parent.parent.parent
 DEP_VARS_FILE_PATH = Path.joinpath(REPO_ROOT, "gigl", "dep_vars.env")
@@ -95,6 +97,42 @@ def check_per_minor_keys(repo_root: Path = REPO_ROOT) -> None:
     )
 
 
+def _check_passes_minor(job_name: str, job: dict) -> None:
+    """Some step must hand the matrix minor to the builder; otherwise every leg runs in the default one."""
+    assert any(
+        step.get("with", {}).get("python_version") == "${{ matrix.python }}"
+        for step in job["steps"]
+    ), f"{job_name} has no step with `python_version: ${{{{ matrix.python }}}}`"
+
+
+def check_ci_python_matrices() -> None:
+    """Every per-minor leg must pass its minor to the builder, and the merge-queue gates must use always().
+
+    A wrong `needs` or matrix output name already fails loudly when GitHub evaluates the workflow.
+    """
+    workflows = REPO_ROOT / ".github" / "workflows"
+    comment = yaml.safe_load((workflows / "on-pr-comment.yml").read_text())["jobs"]
+    merge = yaml.safe_load((workflows / "on-pr-merge.yml").read_text())["jobs"]
+    release = yaml.safe_load((workflows / "create_release.yml").read_text())["jobs"]
+
+    for job_name, job in [
+        ("unit-test-python", comment["unit-test-python"]),
+        ("integration-e2e-test", comment["integration-e2e-test"]),
+        ("ci-unit-test-python-matrix", merge["ci-unit-test-python-matrix"]),
+        (
+            "ci-integration-e2e-test-nondefault-python-matrix",
+            merge["ci-integration-e2e-test-nondefault-python-matrix"],
+        ),
+        ("release_gigl_kfp_pipeline", release["release_gigl_kfp_pipeline"]),
+    ]:
+        _check_passes_minor(job_name, job)
+    for gate in [
+        "ci-unit-test-python",
+        "ci-integration-e2e-test-nondefault-python",
+    ]:
+        assert "always()" in merge[gate]["if"], f"{gate} `if` must use always()"
+
+
 if __name__ == "__main__":
     assert DEP_VARS_FILE_PATH.exists(), (
         f"File `gigl/dep_vars.env` not found at: {DEP_VARS_FILE_PATH}"
@@ -112,3 +150,5 @@ if __name__ == "__main__":
                 )
     check_supported_python_versions()
     check_per_minor_keys()
+
+    check_ci_python_matrices()
