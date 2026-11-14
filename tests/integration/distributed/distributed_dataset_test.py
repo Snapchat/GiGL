@@ -1,5 +1,7 @@
+import os
 from collections import abc, defaultdict
 from typing import MutableMapping, Optional
+from unittest import mock
 
 import graphlearn_torch as glt
 import torch
@@ -10,6 +12,9 @@ from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 from torch.testing import assert_close
 
+from gigl.common.utils.feature_quantization.lossless_compression import (
+    FEATURE_COMPRESSION_ENV,
+)
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
@@ -86,21 +91,23 @@ class DistDatasetTestCase(TestCase):
         manager = Manager()
         output_dict: MutableMapping[int, DistDataset] = manager.dict()
 
-        mp.spawn(
-            run_distributed_dataset,
-            args=(
-                self._world_size,  # world_size
-                mocked_dataset_info,  # mocked_dataset_info
-                should_load_tensors_in_parallel,  # should_load_tensors_in_parallel
-                output_dict,  # output_dict
-                None,  # partitioner_class
-                None,  # splitter
-                use_process_group,  # _use_process_group
-                master_port if use_process_group else None,  # _port
-            ),
-            nprocs=self._world_size,
-            join=True,
-        )
+        # The test reads the raw feature stores, so keep them uncompressed.
+        with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: "off"}):
+            mp.spawn(
+                run_distributed_dataset,
+                args=(
+                    self._world_size,  # world_size
+                    mocked_dataset_info,  # mocked_dataset_info
+                    should_load_tensors_in_parallel,  # should_load_tensors_in_parallel
+                    output_dict,  # output_dict
+                    None,  # partitioner_class
+                    None,  # splitter
+                    use_process_group,  # _use_process_group
+                    master_port if use_process_group else None,  # _port
+                ),
+                nprocs=self._world_size,
+                join=True,
+            )
 
         for dataset in output_dict.values():
             graph = dataset.graph

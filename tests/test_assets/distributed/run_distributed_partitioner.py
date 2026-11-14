@@ -4,6 +4,7 @@ from typing import Optional, Type, Union, cast
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed import DistPartitioner
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import PartitionOutput
@@ -28,6 +29,7 @@ class InputDataStrategy(Enum):
     )
 
 
+@freeze_gc()
 def run_distributed_partitioner(
     rank: int,
     output_dict: dict[int, PartitionOutput],
