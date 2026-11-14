@@ -7,8 +7,13 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
-requires-python = "==3.11.*" # Kept at 3.11 until the stack is validated on 3.12 and 3.13.
+# Upper bound: TensorFlow publishes no cp314 wheel. The glibc 2.39 floor comes from
+# tensorflow-data-validation's manylinux_2_39 wheels, not from the interpreter.
+# .python-version names the default interpreter (images and full CI).
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
   "argo-workflows",
@@ -122,7 +127,10 @@ no-build-isolation-package = ["gigl-core"]
 gigl-core-build-backend = ["scikit-build-core>=0.10", "pybind11>=2.12"]
 # ninja makes torch's cpp_extension compile GLT (built by gigl/scripts/install_glt.sh) in parallel. The venv's bin
 # is on PATH when the build runs, so the PyPI binary is found.
-glt-build-backend = ["ninja"]
+# setuptools is declared for the GLT build (`python setup.py bdist_wheel` in gigl/scripts/install_glt.sh) rather
+# than left to come in through tensorflow. 70.1 is the first release with bdist_wheel built in, so the `wheel`
+# package is not needed.
+glt-build-backend = ["ninja", "setuptools>=70.1"]
 # What the GitHub Actions scripts under .github/scripts import, without the project, Beam, TensorFlow, or
 # torch: `uv run --frozen --only-group gh-actions python <script>` with PYTHONPATH set to the checkout
 # gives them gigl.common.services.vertex_ai and gigl.common.logger on a bare runner. Add a package here
