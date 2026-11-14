@@ -13,5 +13,5 @@ def get_console_uri_from_pipeline_result(
         f"https://console.cloud.google.com/dataflow/jobs/"
         f"{pipeline_result._job.location}/"
         f"{pipeline_result.job_id()}?"
-        f"project={pipeline_result._job.projectId}"
+        f"project={pipeline_result._job.project_id}"
     )
