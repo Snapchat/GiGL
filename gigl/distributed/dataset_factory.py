@@ -428,11 +428,12 @@ def build_dataset(
             unaffected.
             TODO(kmonte): remove retain_edge_ids once internal callers no longer set it.
 
-    Node feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
+    Node and edge feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
     ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
     one-hot columns and categorical ids) is stored as the narrowest integer encoding that holds its values, and other
     columns stay float32. The encodings are inferred from the data, columns that preprocessing already quantized are left
     alone, and batches are unchanged because loaders decode back to float32. Any other value raises ``ValueError``.
+    The sampling-weight edge feature is not compressed: it is removed from the edge features before they are.
     See :mod:`gigl.common.utils.feature_quantization.lossless` for the encodings and an example.
 
     Returns:
