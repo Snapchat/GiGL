@@ -53,6 +53,7 @@ Examples:
 import argparse
 import os
 import textwrap
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -114,6 +115,11 @@ class E2ETestsSpec:
     tests: dict[str, E2ETest] = field(default_factory=dict)
 
 
+def build_e2e_job_name(job_name: str, name_suffix: str) -> str:
+    """Returns the pipeline job name, with a random suffix so runs started in the same second differ."""
+    return f"{job_name}{name_suffix}_{uuid.uuid4().hex[:6]}"
+
+
 def run_all_e2e_tests(
     tests: dict[str, E2ETest],
     compiled_pipeline_path: Uri,
@@ -123,7 +129,7 @@ def run_all_e2e_tests(
     runs_to_wait_on: list[PipelineJob] = []
     github_run_id = os.environ.get("GITHUB_RUN_ID")
     for job_name, job in tests.items():
-        full_job_name = f"{job_name}{job.name_suffix}"
+        full_job_name = build_e2e_job_name(job_name, job.name_suffix)
         if github_run_id:
             job.run_labels[GITHUB_RUN_ID_LABEL_KEY] = github_run_id
         logger.info(f"Compiling and running job: {full_job_name}")
