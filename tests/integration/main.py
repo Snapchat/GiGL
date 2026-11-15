@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 
 from tests.test_assets.runtime_type_checking import install_runtime_typechecking
@@ -25,5 +26,10 @@ def run(pattern: str = "*_test.py") -> bool:
 
 
 if __name__ == "__main__":
+    # Tests run Beam pipelines on the DirectRunner, which runs them through Prism and
+    # leaves gRPC threads in this process. gRPC is not fork-safe, so a process pool that
+    # forks after such a test (e.g. `GcsUtils.upload_files_to_gcs`) can abort its children
+    # with `BrokenProcessPool`. Forkserver starts children from a clean helper process.
+    multiprocessing.set_start_method("forkserver")
     was_successful: bool = run(pattern=parse_args().test_file_pattern)
     sys.exit(not was_successful)
