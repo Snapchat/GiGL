@@ -96,14 +96,9 @@ Outputs are allocated with ``gigl.utils.share_memory.allocate_preshared``, which
 So large outputs are never copied into shared memory later, and no per-row-group batches are kept to concatenate.
 Columns are copied as numpy arrays into numpy views of the outputs, which write straight into the tensors' memory.
 
-The loader runs in a process started with ``spawn`` (see ``gigl.common.data.load_torch_tensors``).
-The libcurl inside the pyarrow 10 wheels waits on sockets with ``select()``, which cannot take a file-descriptor number
-of 1024 or higher.
-A training process can hold more than 1024 open descriptors, so its new sockets get numbers above the limit and GCS
-requests fail with a ``pa.ArrowException`` that mentions ``select/poll``.
-A freshly spawned process starts with a few dozen descriptors.
-The pyarrow wheels use ``poll()`` from version 13.
-The log line at the end of a load reports the descriptor count at its start.
+The loader runs in the per-entity process that ``gigl.common.data.load_torch_tensors`` starts with ``spawn``, like the
+TFRecord loader.
+The log line at the end of a load reports the process's open file-descriptor count at its start.
 """
 
 import os
@@ -173,25 +168,23 @@ class _ReadTask:
 class _SharedHandles:
     """One handle per file, shared by all of the file's read tasks and closed after the last one.
 
-    A file has many row groups, each read as its own task, and opening a file on GCS costs an object metadata request
-    (pyarrow 10 also starts a read of the object).
-    An open takes about 130 ms (median) on pyarrow 10 and 29 ms on pyarrow 25.
-    An open followed by a footer read takes about 150 ms on pyarrow 10 and 134 ms on pyarrow 25.
-    Opening a fresh handle per row-group read instead of sharing one per file is slower on both versions (GCS, one node
-    and one edge directory, median of 3 runs):
-
-    - pyarrow 10: nodes within noise, edges 1.2-1.3x slower.
-    - pyarrow 25: nodes 1.2-1.4x slower, edges 3.5-4.8x slower (2.98 s vs 0.62 s at 48 threads).
+    A file has many row groups, each read as its own task, and opening a file on GCS costs an object metadata request.
+    An open takes about 29 ms (median), and an open followed by a footer read about 134 ms.
+    Opening a fresh handle per row-group read instead of sharing one per file is slower: nodes 1.2-1.4x, edges
+    3.5-4.8x (2.98 s vs 0.62 s at 48 threads; GCS, one node and one edge directory, median of 3 runs).
 
     Each open handle also holds a socket or file descriptor.
     Tasks start in file order and a file's handle closes after its last task, so the number of open files stays near
     the number of reader threads instead of growing with the number of row groups.
     A slow task can keep an earlier file open while later files are opened.
 
-    This is not what avoids pyarrow 10's limit on descriptor numbers; running in a spawned process does (see the module
-    docstring).
-
-    ``get`` opens a file's handle on first use, under a per-file lock.
+    ``get`` opens a file's handle on first use, under a per-file lock, and reads its ``closed`` property before
+    releasing the lock.
+    For a GCS file, pyarrow's first ``closed`` call opens a read stream on the object and stores it without
+    synchronization, and every ``read_at`` calls ``closed``.
+    Without the read under the lock, concurrent first reads of one handle would race on that store.
+    ``closed`` is true if that stream fails to open; ``get`` then raises ``OSError`` without keeping the handle, so a
+    retry opens the file again.
     ``finish_task`` counts down the file's remaining tasks and closes the handle after the last one.
     ``close_all`` closes the handles left open when tasks are cancelled; call it only once no task is running.
     """
@@ -212,7 +205,10 @@ class _SharedHandles:
         with self._locks[file_index]:
             handle = self._handles[file_index]
             if handle is None:
-                handle = self._fs.open_input_file(self._files[file_index])
+                path = self._files[file_index]
+                handle = self._fs.open_input_file(path)
+                if handle.closed:
+                    raise OSError(f"Could not open a read stream on {path}")
                 self._handles[file_index] = handle
             return handle
 
