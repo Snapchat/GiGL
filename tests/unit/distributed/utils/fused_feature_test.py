@@ -29,7 +29,7 @@ from tests.test_assets.test_case import TestCase
 _NUM_ENTITIES = 12
 _RAW_COLUMNS = 3
 _PACKED_COLUMNS = 5
-_LABEL_COLUMNS = 2
+_NODE_LABEL_COLUMNS = 2
 
 
 class _CountingDistFeature(DistFeature):
@@ -59,12 +59,12 @@ def _features(seed: int) -> tuple[torch.Tensor, torch.Tensor]:
     return raw, packed
 
 
-def _labels(entity_type: Optional[str]) -> torch.Tensor:
-    """Global int64 label matrix of a type, with large values so that a byte or dtype mixup shows."""
+def _node_labels(entity_type: Optional[str]) -> torch.Tensor:
+    """Global int64 node label matrix of a type, with large values so that a byte or dtype mixup shows."""
     seed = 100 + len(str(entity_type))
     generator = torch.Generator().manual_seed(seed)
     return torch.randint(
-        -(2**40), 2**40, (_NUM_ENTITIES, _LABEL_COLUMNS), generator=generator
+        -(2**40), 2**40, (_NUM_ENTITIES, _NODE_LABEL_COLUMNS), generator=generator
     )
 
 
@@ -104,13 +104,13 @@ def _lookup_on_partition(
     def hetero_or_homo(per_type: dict):
         return per_type if is_heterogeneous else per_type[None]
 
-    # Every type but the raw-only "story" has two label columns.
-    label_stores: dict[Optional[str], Feature] = {}
+    # Every type but the raw-only "story" has two node label columns.
+    node_label_stores: dict[Optional[str], Feature] = {}
     for t in types:
         if t == "story":
             continue
-        label_stores[t] = Feature(
-            _labels(t)[_local_ids(rank, owner)],
+        node_label_stores[t] = Feature(
+            _node_labels(t)[_local_ids(rank, owner)],
             id2index=id2idx(_local_ids(rank, owner)),
             with_gpu=False,
             dtype=torch.int64,
@@ -129,7 +129,7 @@ def _lookup_on_partition(
         hetero_or_homo(packed_stores),
         pb,
         router,
-        labels=hetero_or_homo(label_stores),
+        node_labels=hetero_or_homo(node_label_stores),
     )
     assert fused is not None
     # Count the requests the fused feature serves instead of those of a plain one.
@@ -140,13 +140,15 @@ def _lookup_on_partition(
     matches = True
     for t in types:
         expected_raw, expected_packed = globals_by_type[t]
-        fused_raw, fused_packed, fused_labels = counting_fused.async_get(ids, t).wait()
+        fused_raw, fused_packed, fused_node_labels = counting_fused.async_get(
+            ids, t
+        ).wait()
         matches &= fused_raw.is_contiguous()
-        if t in label_stores:
-            assert fused_labels is not None
-            matches &= torch.equal(fused_labels, _labels(t)[ids])
+        if t in node_label_stores:
+            assert fused_node_labels is not None
+            matches &= torch.equal(fused_node_labels, _node_labels(t)[ids])
         else:
-            matches &= fused_labels is None
+            matches &= fused_node_labels is None
         if t in raw_stores:
             raw = separate_raw.async_get(ids, t).wait()
             matches &= torch.equal(raw, expected_raw[ids])
@@ -302,9 +304,11 @@ class FusedFeatureStoreTest(TestCase):
         self.assertEqual(split_raw.dtype, torch.float32)
         self.assertTrue(torch.equal(split_packed, packed[ids]))
 
-    def test_labels_are_served_first_and_split_back_for_every_combination(self) -> None:
+    def test_node_labels_are_served_first_and_split_back_for_every_combination(
+        self,
+    ) -> None:
         raw, packed = _features(5)
-        labels = _labels("user")
+        node_labels = _node_labels("user")
         ids = torch.tensor([3, 0, 11, 3])
 
         def feature(values: torch.Tensor, dtype: Optional[torch.dtype]) -> Feature:
@@ -329,16 +333,16 @@ class FusedFeatureStoreTest(TestCase):
                 if has_packed:
                     packed_feature = feature(packed, torch.uint8)
                 store = FusedFeatureStore(
-                    raw_feature, packed_feature, feature(labels, torch.int64)
+                    raw_feature, packed_feature, feature(node_labels, torch.int64)
                 )
                 served = store.cpu_get(ids)
-                split_raw, split_packed, split_labels = store.split(served)
-                local_raw, local_packed, local_labels = store[ids]
+                split_raw, split_packed, split_node_labels = store.split(served)
+                local_raw, local_packed, local_node_labels = store[ids]
 
                 self.assertEqual(served.shape[1] % 8, 0)
-                assert split_labels is not None and local_labels is not None
-                self.assertTrue(torch.equal(split_labels, labels[ids]))
-                self.assertTrue(torch.equal(local_labels, labels[ids]))
+                assert split_node_labels is not None and local_node_labels is not None
+                self.assertTrue(torch.equal(split_node_labels, node_labels[ids]))
+                self.assertTrue(torch.equal(local_node_labels, node_labels[ids]))
                 if has_raw:
                     self.assertTrue(torch.equal(split_raw, raw.to(raw_dtype)[ids]))
                     self.assertTrue(torch.equal(local_raw, raw.to(raw_dtype)[ids]))
@@ -483,9 +487,9 @@ class BuildFusedDistFeatureTest(TestCase):
         assert isinstance(sidecar_only_types.local_feature, dict)
         self.assertEqual(set(sidecar_only_types.local_feature), {"story"})
 
-    def test_a_type_with_only_labels_is_fused(self) -> None:
-        labels = Feature(
-            _labels("user"),
+    def test_a_type_with_only_node_labels_is_fused(self) -> None:
+        node_labels = Feature(
+            _node_labels("user"),
             id2index=torch.arange(_NUM_ENTITIES),
             with_gpu=False,
             dtype=torch.int64,
@@ -495,10 +499,16 @@ class BuildFusedDistFeatureTest(TestCase):
 
         with patch("gigl.distributed.utils.fused_feature.rpc_register"):
             homogeneous = build_fused_dist_feature(
-                1, 0, None, None, owner, router, labels=labels
+                1, 0, None, None, owner, router, node_labels=node_labels
             )
             heterogeneous = build_fused_dist_feature(
-                1, 0, None, None, {"user": owner}, router, labels={"user": labels}
+                1,
+                0,
+                None,
+                None,
+                {"user": owner},
+                router,
+                node_labels={"user": node_labels},
             )
 
         assert homogeneous is not None and heterogeneous is not None

@@ -136,6 +136,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # Its RPC callee stays registered so callee ids match on every rank.
         self.dist_node_labels = None
         if data is not None:
+            # GLT always fetches node labels and gates only features on collect_features, so the fused node lookup is
+            # built whenever there is data and holds just the labels when features are off.
             node_features = None
             node_packed_features = None
             if collect_features:
@@ -149,7 +151,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 data.node_feat_pb,
                 self.rpc_router,
                 self.device,
-                labels=data.node_labels,
+                node_labels=data.node_labels,
             )
         if collect_features and data is not None:
             if self.with_edge:
@@ -368,8 +370,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 result_map[f"#META.{k}"] = v
 
         futs: dict[str, asyncio.Future[torch.Tensor]] = {}
-        # Result key of each fused lookup's raw matrix -> result key of its label rows, for lookups that return labels.
-        label_keys: dict[str, str] = {}
+        # Result key of each fused lookup's raw matrix -> result key of its node label rows, for lookups that return
+        # node labels.
+        node_label_keys: dict[str, str] = {}
         # Result key of each fused lookup's raw matrix -> result key of its packed sidecar rows.
         packed_keys: dict[str, str] = {}
 
@@ -379,14 +382,14 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             entity_type: Optional[Union[NodeType, EdgeType]],
             raw_key: str,
             packed_key: str,
-            labels_key: Optional[str] = None,
+            node_labels_key: Optional[str] = None,
         ) -> None:
             futs[raw_key] = wrap_torch_future(
                 feature.async_get(ids.to(torch.long), entity_type)
             )
             packed_keys[raw_key] = packed_key
-            if labels_key is not None:
-                label_keys[raw_key] = labels_key
+            if node_labels_key is not None:
+                node_label_keys[raw_key] = node_labels_key
 
         if is_hetero:
             for ntype, nodes in output.node.items():
@@ -414,9 +417,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     if ntype in self.dist_node_feature.local_feature:
                         # Batches carry labels for the seed node type only. A fused row always includes the type's
                         # label bytes, so a non-seed type with labels but no features is not requested at all.
-                        labels_key = None
+                        node_labels_key = None
                         if ntype == input_type:
-                            labels_key = f"{as_str(ntype)}.nlabels"
+                            node_labels_key = f"{as_str(ntype)}.nlabels"
                         elif not self.dist_node_feature.local_feature[
                             ntype
                         ].has_features:
@@ -427,7 +430,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             ntype,
                             f"{as_str(ntype)}.nfeats",
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}",
-                            labels_key,
+                            node_labels_key,
                         )
             if self.dist_edge_feature is not None:
                 for etype in self.edge_types:
@@ -489,10 +492,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         values = await asyncio.gather(*futs.values())
         for result_key, value in zip(futs, values):
-            value, packed, labels = value
+            value, packed, node_labels = value
             if packed is not None:
                 result_map[packed_keys[result_key]] = packed
-            if labels is not None and result_key in label_keys:
+            if node_labels is not None and result_key in node_label_keys:
                 # The fused lookup always returns [N, K]. We collapse K=1 to 1-D
                 # [N] to match GLT's convention and what downstream code
                 # (e.g. CrossEntropyLoss) expects for data.y. Multi-label
@@ -500,9 +503,9 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # TODO (mkolodner-sc): Consider investigating always returning
                 # 2-D — this may be a breaking change for single-label
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
-                if labels.shape[1] == 1:
-                    labels = labels.T[0]
-                result_map[label_keys[result_key]] = labels
+                if node_labels.shape[1] == 1:
+                    node_labels = node_labels.T[0]
+                result_map[node_label_keys[result_key]] = node_labels
             if value.shape[1] > 0 or packed is not None:
                 result_map[result_key] = value
 

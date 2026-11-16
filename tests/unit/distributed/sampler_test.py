@@ -293,9 +293,9 @@ class _CountingFusedDistFeature(FusedDistFeature):
 
 
 def _fused_node_lookup(
-    features: dict[str, torch.Tensor], labels: dict[str, torch.Tensor]
+    features: dict[str, torch.Tensor], node_labels: dict[str, torch.Tensor]
 ) -> FusedDistFeature:
-    """A single-partition fused lookup over the given per-type features and labels."""
+    """A single-partition fused lookup over the given per-type features and node labels."""
     owner = torch.zeros(4, dtype=torch.long)
 
     def store(values: torch.Tensor, dtype: Optional[torch.dtype]) -> Feature:
@@ -307,9 +307,11 @@ def _fused_node_lookup(
             0,
             {key: store(value, None) for key, value in features.items()},
             None,
-            {key: owner for key in features.keys() | labels.keys()},
+            {key: owner for key in features.keys() | node_labels.keys()},
             Mock(spec=RpcDataPartitionRouter),
-            labels={key: store(value, torch.int64) for key, value in labels.items()},
+            node_labels={
+                key: store(value, torch.int64) for key, value in node_labels.items()
+            },
         )
     assert lookup is not None
     lookup.__class__ = _CountingFusedDistFeature
@@ -336,7 +338,7 @@ class TestCollateFnNodeLabels(TestCase):
         # "item" has features and labels, "tag" has labels only; the seeds are "user".
         lookup = _fused_node_lookup(
             features={"user": torch.rand(4, 2), "item": torch.rand(4, 2)},
-            labels={
+            node_labels={
                 "user": torch.tensor([[1], [2], [3], [4]]),
                 "item": torch.tensor([[5], [6], [7], [8]]),
                 "tag": torch.tensor([[9], [9], [9], [9]]),
@@ -363,7 +365,8 @@ class TestCollateFnNodeLabels(TestCase):
 
     def test_a_label_only_seed_type_is_requested(self) -> None:
         lookup = _fused_node_lookup(
-            features={}, labels={"user": torch.tensor([[1, 5], [2, 6], [3, 7], [4, 8]])}
+            features={},
+            node_labels={"user": torch.tensor([[1, 5], [2, 6], [3, 7], [4, 8]])},
         )
         output = HeteroSamplerOutput(
             node={"user": torch.tensor([3, 1])},
@@ -380,7 +383,7 @@ class TestCollateFnNodeLabels(TestCase):
 
     def test_homogeneous_labels_are_squeezed_to_one_dimension(self) -> None:
         lookup = _fused_node_lookup(
-            features={}, labels={"user": torch.tensor([[1], [2], [3], [4]])}
+            features={}, node_labels={"user": torch.tensor([[1], [2], [3], [4]])}
         )
         # A homogeneous store is keyed by a single FusedFeatureStore rather than by type.
         lookup.local_feature = lookup.local_feature["user"]

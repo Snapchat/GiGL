@@ -1,12 +1,12 @@
 """Fetching a raw feature matrix, its packed sidecar and node labels with one request per partition.
 
 A node or edge type can store its columns in a raw float matrix, in a packed ``uint8`` sidecar (feature quantization),
-or in both, and a node type can also have integer labels. Fetching each store through its own ``DistFeature`` costs one
+or in both, and a node type can also have integer node labels. Fetching each store through its own ``DistFeature`` costs one
 RPC per store per remote partition for every batch. ``FusedFeatureStore`` serves whichever stores a type has as one row
-of bytes (the label columns, the float columns reinterpreted as bytes, then the sidecar columns) and
+of bytes (the node label columns, the float columns reinterpreted as bytes, then the sidecar columns) and
 ``FusedDistFeature`` is a ``DistFeature`` over such stores, so one lookup is one request per partition for every type.
-``FusedDistFeature.async_get`` resolves to the raw matrix, the sidecar rows and the label rows, the latter two ``None``
-for a type without them.
+``FusedDistFeature.async_get`` resolves to the raw matrix, the sidecar rows and the node label rows, the latter two
+``None`` for a type without them.
 
 All stores are CPU stores: GiGL builds every ``Feature`` with ``with_gpu=False``.
 """
@@ -25,22 +25,22 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import ensure_device, get_available_device
 from jaxtyping import Float, Int64, UInt8
 
-_LABEL_DTYPE: Final = torch.int64
+_NODE_LABEL_DTYPE: Final = torch.int64
 
 
 class FusedFeatureStore:
     """A raw float store, a packed sidecar and/or node labels, served to other partitions as one ``uint8`` row per entity.
 
-    A served row holds the label columns (``int64``) as bytes, then the raw float columns as bytes, then the sidecar
-    columns, then zero padding up to a multiple of the widest dtype's size (the raw dtype, or 8 bytes with labels).
-    The labels come first and the padding keeps every row aligned, so the label and raw columns of a received row can
-    be read without a copy.
+    A served row holds the node label columns (``int64``) as bytes, then the raw float columns as bytes, then the
+    sidecar columns, then zero padding up to a multiple of the widest dtype's size (the raw dtype, or 8 bytes with node
+    labels). The node labels come first and the padding keeps every row aligned, so the node label and raw columns of a
+    received row can be read without a copy.
 
     A missing or zero-width store contributes no columns. Without a raw store the raw dtype is ``float32``, the dtype
     the raw matrix is later rebuilt as. Without a sidecar the row is the raw bytes alone, which need no padding. A row
     is never narrower than one raw element, so a type with no columns at all is served as one zero element.
 
-    Both stores must be CPU stores.
+    All stores must be CPU stores.
 
     Example:
         A ``float32`` raw store with 3 columns (12 bytes) and a 2-column ``uint8`` sidecar make 14 bytes, padded to 16.
@@ -59,28 +59,28 @@ class FusedFeatureStore:
         torch.Size([2, 16])
         >>> rows[0, 12:].tolist()
         [7, 7, 0, 0]
-        >>> raw_rows, packed_rows, label_rows = store.split(rows)
-        >>> raw_rows.shape, packed_rows.shape, label_rows.shape
+        >>> raw_rows, packed_rows, node_label_rows = store.split(rows)
+        >>> raw_rows.shape, packed_rows.shape, node_label_rows.shape
         (torch.Size([2, 3]), torch.Size([2, 2]), torch.Size([2, 0]))
 
-        With one ``int64`` label column the row grows by 8 bytes, and the label bytes come first.
+        With one ``int64`` node label column the row grows by 8 bytes, and the node label bytes come first.
 
-        >>> labels = Feature(
+        >>> node_labels = Feature(
         ...     torch.arange(4).unsqueeze(1),
         ...     id2index=torch.arange(4),
         ...     with_gpu=False,
         ...     dtype=torch.int64,
         ... )
-        >>> rows = FusedFeatureStore(raw, packed, labels).cpu_get(torch.tensor([0, 2]))
+        >>> rows = FusedFeatureStore(raw, packed, node_labels).cpu_get(torch.tensor([0, 2]))
         >>> rows.shape
         torch.Size([2, 24])
-        >>> FusedFeatureStore(raw, packed, labels).split(rows)[2].tolist()
+        >>> FusedFeatureStore(raw, packed, node_labels).split(rows)[2].tolist()
         [[0], [2]]
 
     Args:
         raw: Raw float feature store, or ``None`` if the type has none.
         packed: Packed ``uint8`` sidecar store with the same ids and id mapping as ``raw``, or ``None``.
-        labels: ``int64`` label store with the same ids and id mapping as ``raw``, or ``None``.
+        node_labels: ``int64`` node label store with the same ids and id mapping as ``raw``, or ``None``.
 
     Raises:
         ValueError: If all stores are ``None``.
@@ -90,32 +90,32 @@ class FusedFeatureStore:
         self,
         raw: Optional[Feature],
         packed: Optional[Feature],
-        labels: Optional[Feature] = None,
+        node_labels: Optional[Feature] = None,
     ) -> None:
-        if raw is None and packed is None and labels is None:
+        if raw is None and packed is None and node_labels is None:
             raise ValueError(
-                "A fused feature store needs a raw store, a sidecar or labels."
+                "A fused feature store needs a raw store, a sidecar or node labels."
             )
         self._raw = raw
         self._packed = packed
-        self._labels = labels
+        self._node_labels = node_labels
 
     def lazy_init_with_ipc_handle(self) -> None:
         """Materializes the stores after an IPC transfer."""
-        for store in (self._raw, self._packed, self._labels):
+        for store in (self._raw, self._packed, self._node_labels):
             if store is not None:
                 store.lazy_init_with_ipc_handle()
 
     @property
     def has_features(self) -> bool:
-        """Whether the store has a raw or packed feature store, rather than labels alone."""
+        """Whether the store has a raw or packed feature store, rather than node labels alone."""
         return self._raw is not None or self._packed is not None
 
     @property
-    def _label_row_bytes(self) -> int:
-        if self._labels is None:
+    def _node_label_row_bytes(self) -> int:
+        if self._node_labels is None:
             return 0
-        return self._labels.shape[1] * _LABEL_DTYPE.itemsize
+        return self._node_labels.shape[1] * _NODE_LABEL_DTYPE.itemsize
 
     @property
     def _raw_dtype(self) -> torch.dtype:
@@ -139,9 +139,9 @@ class FusedFeatureStore:
     @property
     def _row_bytes(self) -> int:
         itemsize = self._raw_dtype.itemsize
-        if self._labels is not None:
-            itemsize = max(itemsize, _LABEL_DTYPE.itemsize)
-        unpadded = self._label_row_bytes + self._raw_row_bytes + self._packed_dim
+        if self._node_labels is not None:
+            itemsize = max(itemsize, _NODE_LABEL_DTYPE.itemsize)
+        unpadded = self._node_label_row_bytes + self._raw_row_bytes + self._packed_dim
         # A row is at least one element wide, as a zero-width byte view cannot be read as floats.
         return max(itemsize, (unpadded + itemsize - 1) // itemsize * itemsize)
 
@@ -152,10 +152,10 @@ class FusedFeatureStore:
         Optional[UInt8[torch.Tensor, "num_ids packed_dim"]],
         Optional[Int64[torch.Tensor, "num_ids label_dim"]],
     ]:
-        """Returns the raw float, packed sidecar and label rows of ids that are local to this store.
+        """Returns the raw float, packed sidecar and node label rows of ids that are local to this store.
 
-        The raw rows have zero columns without a raw store. The sidecar and label rows are ``None`` without those
-        stores.
+        The raw rows have zero columns without a raw store. The sidecar and node label rows are ``None`` without
+        those stores.
         """
         if self._raw is None:
             raw_rows = torch.empty(len(ids), 0, dtype=torch.float32)
@@ -165,11 +165,11 @@ class FusedFeatureStore:
             packed_rows = None
         else:
             packed_rows = self._packed[ids]
-        if self._labels is None:
-            label_rows = None
+        if self._node_labels is None:
+            node_label_rows = None
         else:
-            label_rows = self._labels[ids]
-        return raw_rows, packed_rows, label_rows
+            node_label_rows = self._node_labels[ids]
+        return raw_rows, packed_rows, node_label_rows
 
     def cpu_get(
         self, ids: Int64[torch.Tensor, "num_ids"]
@@ -179,11 +179,11 @@ class FusedFeatureStore:
         Each store is gathered straight into its columns of the output, so every value is copied once.
         """
         rows = torch.empty(len(ids), self._row_bytes, dtype=torch.uint8)
-        raw_rows, packed_rows, label_rows = self.split(rows)
+        raw_rows, packed_rows, node_label_rows = self.split(rows)
         for store, out in (
             (self._raw, raw_rows),
             (self._packed, packed_rows),
-            (self._labels, label_rows),
+            (self._node_labels, node_label_rows),
         ):
             if store is None:
                 continue
@@ -192,7 +192,9 @@ class FusedFeatureStore:
             if store.id2index is not None:
                 index = store.id2index[index]
             torch.index_select(store.feature_tensor, 0, index, out=out)
-        rows[:, self._label_row_bytes + self._raw_row_bytes + self._packed_dim :] = 0
+        rows[
+            :, self._node_label_row_bytes + self._raw_row_bytes + self._packed_dim :
+        ] = 0
         return rows
 
     def split(
@@ -202,21 +204,21 @@ class FusedFeatureStore:
         UInt8[torch.Tensor, "num_rows packed_dim"],
         Int64[torch.Tensor, "num_rows label_dim"],
     ]:
-        """Views served byte rows as the raw float matrix, the sidecar rows and the label rows, without copying.
+        """Views served byte rows as the raw float matrix, the sidecar rows and the node label rows, without copying.
 
         The views have zero columns for a missing store.
         """
-        label_bytes = self._label_row_bytes
-        raw_end = label_bytes + self._raw_row_bytes
-        if label_bytes > 0:
-            label_rows = rows[:, :label_bytes].view(_LABEL_DTYPE)
+        node_label_bytes = self._node_label_row_bytes
+        raw_end = node_label_bytes + self._raw_row_bytes
+        if node_label_bytes > 0:
+            node_label_rows = rows[:, :node_label_bytes].view(_NODE_LABEL_DTYPE)
         else:
             # A zero-width byte view cannot be reinterpreted when the row width is not a multiple of 8 bytes.
-            label_rows = torch.empty(len(rows), 0, dtype=_LABEL_DTYPE)
+            node_label_rows = torch.empty(len(rows), 0, dtype=_NODE_LABEL_DTYPE)
         return (
-            rows[:, label_bytes:raw_end].view(self._raw_dtype),
+            rows[:, node_label_bytes:raw_end].view(self._raw_dtype),
             rows[:, raw_end : raw_end + self._packed_dim],
-            label_rows,
+            node_label_rows,
         )
 
 
@@ -227,9 +229,9 @@ class FusedDistFeature(DistFeature):
     ``FusedFeatureStore`` supports; only the constructor checks the store type, so it is repeated here without that
     check.
 
-    ``async_get`` resolves to the raw float matrix, the packed sidecar rows and the ``int64`` label rows, stitched
-    straight from the local rows and the received byte rows. The sidecar and label rows are ``None`` for a type
-    without them.
+    ``async_get`` resolves to the raw float matrix, the packed sidecar rows and the ``int64`` node label rows, stitched
+    straight from the local rows and the received byte rows. The sidecar and node label rows are ``None`` for a
+    type without them.
 
     Args:
         num_partitions: Number of data partitions.
@@ -293,7 +295,7 @@ class FusedDistFeature(DistFeature):
             Optional[Int64[torch.Tensor, "num_ids label_dim"]],
         ]
     ]:
-        """Looks up the raw float rows, packed sidecar rows and label rows of ids.
+        """Looks up the raw float rows, packed sidecar rows and node label rows of ids.
 
         Args:
             ids: Ids to look up.
@@ -301,8 +303,8 @@ class FusedDistFeature(DistFeature):
 
         Returns:
             A future of the ``[len(ids), raw_dim]`` raw matrix, the ``[len(ids), packed_dim]`` sidecar rows and the
-            ``[len(ids), label_dim]`` label rows. The sidecar rows are ``None`` if the type has no sidecar and the
-            label rows are ``None`` if it has no labels.
+            ``[len(ids), label_dim]`` node label rows. The sidecar rows are ``None`` if the type has no sidecar and the
+            node label rows are ``None`` if it has no labels.
         """
         remote_future = self._remote_selecting_get(ids, input_type)
         local_rows, local_index = self._local_selecting_get(ids, input_type)
@@ -343,20 +345,20 @@ class FusedDistFeature(DistFeature):
         Optional[UInt8[torch.Tensor, "num_ids packed_dim"]],
         Optional[Int64[torch.Tensor, "num_ids label_dim"]],
     ]:
-        """Puts the local rows and the received byte rows into the raw, sidecar and label outputs.
+        """Puts the local rows and the received byte rows into the raw, sidecar and node label outputs.
 
-        The sidecar and label outputs are ``None``, and cost nothing, if the local rows have none.
+        The sidecar and node label outputs are ``None``, and cost nothing, if the local rows have none.
         """
-        local_raw_rows, local_packed_rows, local_label_rows = local_rows
+        local_raw_rows, local_packed_rows, local_node_label_rows = local_rows
         if local_index.numel() == ids.numel():
             # Every id is local, so the local rows are already complete and in order.
             packed_result = None
             if local_packed_rows is not None:
                 packed_result = local_packed_rows.to(self.device)
-            label_result = None
-            if local_label_rows is not None:
-                label_result = local_label_rows.to(self.device)
-            return local_raw_rows.to(self.device), packed_result, label_result
+            node_label_result = None
+            if local_node_label_rows is not None:
+                node_label_result = local_node_label_rows.to(self.device)
+            return local_raw_rows.to(self.device), packed_result, node_label_result
         raw_output = torch.empty(
             ids.shape[0],
             local_raw_rows.shape[1],
@@ -371,42 +373,46 @@ class FusedDistFeature(DistFeature):
                 dtype=local_packed_rows.dtype,
                 device=self.device,
             )
-        label_output = None
-        if local_label_rows is not None:
-            label_output = torch.empty(
+        node_label_output = None
+        if local_node_label_rows is not None:
+            node_label_output = torch.empty(
                 ids.shape[0],
-                local_label_rows.shape[1],
-                dtype=local_label_rows.dtype,
+                local_node_label_rows.shape[1],
+                dtype=local_node_label_rows.dtype,
                 device=self.device,
             )
         local_index = local_index.to(self.device)
         raw_output[local_index] = local_raw_rows.to(self.device)
         if packed_output is not None and local_packed_rows is not None:
             packed_output[local_index] = local_packed_rows.to(self.device)
-        if label_output is not None and local_label_rows is not None:
-            label_output[local_index] = local_label_rows.to(self.device)
-        # Each remote partition answered with byte rows that hold every store the type has: the label columns, then
+        if node_label_output is not None and local_node_label_rows is not None:
+            node_label_output[local_index] = local_node_label_rows.to(self.device)
+        # Each remote partition answered with byte rows that hold every store the type has: the node label columns, then
         # the raw columns, then the sidecar columns. The layout is the one of FusedFeatureStore.split, read here
         # without its per-call lookups.
-        label_bytes = 0
-        if label_output is not None:
-            label_bytes = label_output.shape[1] * label_output.element_size()
-        raw_end = label_bytes + local_raw_rows.shape[1] * local_raw_rows.element_size()
+        node_label_bytes = 0
+        if node_label_output is not None:
+            node_label_bytes = (
+                node_label_output.shape[1] * node_label_output.element_size()
+            )
+        raw_end = (
+            node_label_bytes + local_raw_rows.shape[1] * local_raw_rows.element_size()
+        )
         for remote_rows, remote_index in remotes:
             remote_rows = remote_rows.to(self.device)
             remote_index = remote_index.to(self.device)
-            raw_output[remote_index] = remote_rows[:, label_bytes:raw_end].view(
+            raw_output[remote_index] = remote_rows[:, node_label_bytes:raw_end].view(
                 local_raw_rows.dtype
             )
             if packed_output is not None:
                 packed_output[remote_index] = remote_rows[
                     :, raw_end : raw_end + packed_output.shape[1]
                 ]
-            if label_output is not None:
-                label_output[remote_index] = remote_rows[:, :label_bytes].view(
-                    label_output.dtype
-                )
-        return raw_output, packed_output, label_output
+            if node_label_output is not None:
+                node_label_output[remote_index] = remote_rows[
+                    :, :node_label_bytes
+                ].view(node_label_output.dtype)
+        return raw_output, packed_output, node_label_output
 
 
 def build_fused_dist_feature(
@@ -417,9 +423,12 @@ def build_fused_dist_feature(
     feature_pb: Union[PartitionBook, dict[Union[NodeType, EdgeType], PartitionBook]],
     rpc_router: RpcDataPartitionRouter,
     device: Optional[torch.device] = None,
-    labels: Optional[Union[Feature, dict[Union[NodeType, EdgeType], Feature]]] = None,
+    node_labels: Optional[
+        Union[Feature, dict[Union[NodeType, EdgeType], Feature]]
+    ] = None,
 ) -> Optional[FusedDistFeature]:
-    """Builds a ``FusedDistFeature`` over every entity type that has a raw store, a packed sidecar, labels, or any mix.
+    """Builds a ``FusedDistFeature`` over every entity type that has a raw store, a packed sidecar, node labels, or
+    any mix.
 
     Args:
         num_partitions: Number of data partitions.
@@ -429,12 +438,12 @@ def build_fused_dist_feature(
         feature_pb: Partition book of the entities, or one per type.
         rpc_router: Router used to reach the other partitions.
         device: Device used for computing.
-        labels: ``int64`` node label store, or one per type, with the same ids and id mapping as the features.
+        node_labels: ``int64`` node label store, or one per type, with the same ids and id mapping as the features.
 
     Returns:
         ``None`` if there are no stores at all.
     """
-    if raw_features is None and packed_features is None and labels is None:
+    if raw_features is None and packed_features is None and node_labels is None:
         return None
     local_feature: Union[
         FusedFeatureStore, dict[Union[NodeType, EdgeType], FusedFeatureStore]
@@ -442,20 +451,24 @@ def build_fused_dist_feature(
     if (
         isinstance(raw_features, Feature)
         or isinstance(packed_features, Feature)
-        or isinstance(labels, Feature)
+        or isinstance(node_labels, Feature)
     ):
         assert raw_features is None or isinstance(raw_features, Feature)
         assert packed_features is None or isinstance(packed_features, Feature)
-        assert labels is None or isinstance(labels, Feature)
-        local_feature = FusedFeatureStore(raw_features, packed_features, labels)
+        assert node_labels is None or isinstance(node_labels, Feature)
+        local_feature = FusedFeatureStore(raw_features, packed_features, node_labels)
     else:
         raw_by_type = raw_features or {}
         packed_by_type = packed_features or {}
-        labels_by_type = labels or {}
+        node_labels_by_type = node_labels or {}
         local_feature = {}
-        for key in raw_by_type.keys() | packed_by_type.keys() | labels_by_type.keys():
+        for key in (
+            raw_by_type.keys() | packed_by_type.keys() | node_labels_by_type.keys()
+        ):
             local_feature[key] = FusedFeatureStore(
-                raw_by_type.get(key), packed_by_type.get(key), labels_by_type.get(key)
+                raw_by_type.get(key),
+                packed_by_type.get(key),
+                node_labels_by_type.get(key),
             )
         if not local_feature:
             return None
