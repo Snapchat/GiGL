@@ -69,7 +69,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
   packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
 - The data preprocessor writes Parquet by default; set the `data_preprocessor_output_format` feature flag to `tfrecord`
-  to keep writing TFRecords by @kmontemayor2-sc
+  to keep writing TFRecords. Configs without the GLT backend (`should_run_glt_backend`) must set it to `tfrecord`,
+  because the subgraph sampler reads only TFRecords, and the config validator rejects Parquet output for them. Parquet
+  output leaves `tfrecord_uri_prefix` empty in the preprocessed metadata by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc

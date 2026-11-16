@@ -509,6 +509,30 @@ class TFRecordDataLoaderTest(TestCase):
         self.assertIsNone(loaded.packed_features)
         assert_close(loaded.labels, expected_label_tensor)
 
+    def test_load_rejects_entity_without_tfrecord_prefix(self) -> None:
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        with self.assertRaises(ValueError):
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=None,
+                    parquet_uri_prefix=UriFactory.create_uri("gs://bucket/nodes/"),
+                    feature_spec={},
+                    feature_keys=[],
+                    feature_dim=0,
+                    entity_key="node_id",
+                ),
+            )
+
+    def test_serialized_info_requires_a_data_prefix(self) -> None:
+        with self.assertRaises(ValueError):
+            SerializedTFRecordInfo(
+                tfrecord_uri_prefix=None,
+                feature_spec={},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            )
+
     @parameterized.expand(
         [
             param(

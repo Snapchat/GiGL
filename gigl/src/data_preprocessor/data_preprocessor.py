@@ -63,6 +63,7 @@ from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
     DEFAULT_TF_INT_DTYPE,
     DataPreprocessorOutputFormat,
     EdgeDataPreprocessingSpec,
@@ -168,7 +169,7 @@ class DataPreprocessor:
         self.__custom_worker_image_uri = custom_worker_image_uri
         self.__output_format = DataPreprocessorOutputFormat(
             self.gbml_config_pb_wrapper.gbml_config_pb.feature_flags.get(
-                "data_preprocessor_output_format",
+                DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
                 DataPreprocessorOutputFormat.PARQUET.value,
             )
         )
@@ -494,7 +495,6 @@ class DataPreprocessor:
         enumerated_edge_metadata: EnumeratorEdgeTypeMetadata,
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo:
         output = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
-            tfrecord_uri_prefix=transformed_features_info.transformed_features_file_prefix.uri,
             schema_uri=transformed_features_info.transformed_features_schema_path.uri,
             feature_keys=transformed_features_info.features_outputs,
             label_keys=transformed_features_info.label_outputs,
@@ -508,6 +508,10 @@ class DataPreprocessor:
         ):
             output.parquet_uri_prefix = (
                 transformed_features_info.transformed_features_parquet_prefix.uri
+            )
+        else:
+            output.tfrecord_uri_prefix = (
+                transformed_features_info.transformed_features_file_prefix.uri
             )
         if transformed_features_info.feature_quantization_enabled:
             quantization_metadata = _load_feature_quantization_metadata_pb(
@@ -560,7 +564,6 @@ class DataPreprocessor:
             feature_dim_output = node_transformed_features_info.feature_dim_output
 
             node_metadata_output_pb = preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput(
-                tfrecord_uri_prefix=node_transformed_features_info.transformed_features_file_prefix.uri,
                 schema_uri=node_transformed_features_info.transformed_features_schema_path.uri,
                 node_id_key=str(node_identifier_output),
                 feature_keys=features_outputs,
@@ -575,6 +578,10 @@ class DataPreprocessor:
                 == DataPreprocessorOutputFormat.PARQUET
             ):
                 node_metadata_output_pb.parquet_uri_prefix = node_transformed_features_info.transformed_features_parquet_prefix.uri
+            else:
+                node_metadata_output_pb.tfrecord_uri_prefix = (
+                    node_transformed_features_info.transformed_features_file_prefix.uri
+                )
             if node_transformed_features_info.feature_quantization_enabled:
                 quantized_feature_metadata_pb = _load_feature_quantization_metadata_pb(
                     metadata_path=node_transformed_features_info.feature_quantization_metadata_path.uri,

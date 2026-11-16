@@ -45,6 +45,18 @@ The output format is chosen with the `data_preprocessor_output_format` feature f
 to `parquet`; set it to `tfrecord` to write TFRecords instead. Parquet files are split by size (about 1 GB of
 uncompressed data each) unless `data_preprocessor_num_shards` fixes the file count.
 
+Pipelines that do not use the GLT backend (`should_run_glt_backend` is off) run the subgraph sampler, which reads only
+TFRecords. Their task configs must set the flag to `tfrecord`; the config validator rejects Parquet output for them:
+
+```yaml
+featureFlags:
+  should_run_glt_backend: "False"
+  data_preprocessor_output_format: tfrecord
+```
+
+The preprocessed metadata records where each entity's data is. TFRecord output sets `tfrecord_uri_prefix`, and Parquet
+output sets `parquet_uri_prefix`; the other field is empty.
+
 ## How do I run it?
 
 **Import GiGL**

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Final, NamedTuple, Optional, Tuple
 
 import apache_beam as beam
 import tensorflow as tf
@@ -29,10 +29,16 @@ DEFAULT_TF_FLOAT_DTYPE = tf.float32
 DEFAULT_TF_STRING_DTYPE = tf.string
 
 
+# Task config feature flag that selects the data preprocessor output format.
+DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG: Final[str] = "data_preprocessor_output_format"
+
+
 class DataPreprocessorOutputFormat(str, Enum):
     """Storage format of the transformed features written by the data preprocessor.
 
     Selected with the ``data_preprocessor_output_format`` feature flag, which defaults to ``parquet``.
+
+    Configs that do not use the GLT backend must set it to ``tfrecord``, because the subgraph sampler reads only TFRecords.
     """
 
     TFRECORD = "tfrecord"

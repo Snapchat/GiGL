@@ -72,6 +72,12 @@ def _build_serialized_tfrecord_entity_info(
         key: spec for key, spec in feature_spec_dict.items() if key in serialized_keys
     }
 
+    # The preprocessor sets only the prefix of the format it wrote; the other one is empty.
+    tfrecord_uri_prefix = None
+    if preprocessed_metadata.tfrecord_uri_prefix:
+        tfrecord_uri_prefix = UriFactory.create_uri(
+            preprocessed_metadata.tfrecord_uri_prefix
+        )
     parquet_uri_prefix = None
     if preprocessed_metadata.parquet_uri_prefix:
         parquet_uri_prefix = UriFactory.create_uri(
@@ -79,9 +85,7 @@ def _build_serialized_tfrecord_entity_info(
         )
 
     return SerializedTFRecordInfo(
-        tfrecord_uri_prefix=UriFactory.create_uri(
-            preprocessed_metadata.tfrecord_uri_prefix
-        ),
+        tfrecord_uri_prefix=tfrecord_uri_prefix,
         parquet_uri_prefix=parquet_uri_prefix,
         feature_keys=feature_keys_to_load,
         feature_spec=feature_spec_dict,
