@@ -286,9 +286,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         log the full traceback and forward a one-time poison-pill ``SampleMessage``
         (in channel mode) so the consumer raises promptly, or re-raise (in
         channel-less mode, where GLT's ``run_task`` / torch RPC propagates it).
+
+        Lines marked ``# GiGL:`` differ from GLT 0.2.4; everything else is copied.
         """
+        # GiGL: the try/except surfaces failures instead of hanging the loader. GLT has no error handling here.
         try:
             sampler_output = await async_func(*args, **kwargs)
+            # GiGL: GLT calls the misspelled _colloate_fn here.
             res = await self._collate_fn(sampler_output)
         except Exception:
             logger.exception(
@@ -349,6 +353,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # #META. keys before to_hetero_data to work around a GLT bug where those
         # keys are misinterpreted as edge types).
 
+        Lines marked ``# GiGL:`` differ from GLT 0.2.4; everything else is copied.
+
         Args:
             output: The ``SamplerOutput`` or ``HeteroSamplerOutput`` returned by
                 ``_sample_from_nodes``.
@@ -364,6 +370,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             for k, v in output.metadata.items():
                 result_map[f"#META.{k}"] = v
 
+        # GiGL: futs, label_keys, packed_keys and request_features issue the lookups together. GLT awaits each inline.
         futs: dict[str, asyncio.Future[torch.Tensor]] = {}
         label_keys: set[str] = set()
         # Result key of each fused lookup's raw matrix -> result key of its packed sidecar rows.
@@ -403,6 +410,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             input_type = output.input_type
             assert input_type is not None
             # TODO: fetch node labels in the same fused request as the features (separate PR).
+            # GiGL: the label async_get is started here and awaited in the gather below. GLT awaits it inline.
             if not isinstance(input_type, tuple):
                 if self.dist_node_labels is not None:
                     if isinstance(self.dist_node_labels, DistFeature):
@@ -419,6 +427,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             result_map[f"{as_str(input_type)}.nlabels"] = node_labels[
                                 output.node[input_type].to(node_labels.device)
                             ]
+            # GiGL: node features only for types with local features, through request_features. GLT's use_all2all
+            # branch is dropped.
             if self.dist_node_feature is not None:
                 for ntype, nodes in output.node.items():
                     if ntype in self.dist_node_feature.local_feature:
@@ -429,6 +439,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                             f"{as_str(ntype)}.nfeats",
                             f"#META.{NODE_PACKED_FEATURES_METADATA_KEY}.{as_str(ntype)}",
                         )
+            # GiGL: edge features only for types with local features, through request_features. The packed sidecar
+            # metadata is keyed by the output edge type.
             if self.dist_edge_feature is not None:
                 for etype in self.edge_types:
                     if etype not in self.dist_edge_feature.local_feature:
@@ -467,6 +479,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             if self.with_edge:
                 result_map["eids"] = output.edge
+            # GiGL: the label async_get is started here and awaited in the gather below. GLT awaits it inline.
             if self.dist_node_labels is not None:
                 if isinstance(self.dist_node_labels, DistFeature):
                     futs["nlabels"] = wrap_torch_future(
@@ -477,6 +490,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     result_map["nlabels"] = self.dist_node_labels[
                         output.node.to(self.dist_node_labels.device)
                     ]
+            # GiGL: homogeneous node and edge features go through request_features.
             if self.dist_node_feature is not None:
                 request_features(
                     self.dist_node_feature,
@@ -496,6 +510,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if output.batch is not None:
                 result_map["batch"] = output.batch
 
+        # GiGL: one gather over all requests. Packed sidecar rows go to their #META. keys.
         values = await asyncio.gather(*futs.values())
         for result_key, value in zip(futs, values):
             if result_key in label_keys:
@@ -506,6 +521,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # TODO (mkolodner-sc): Consider investigating always returning
                 # 2-D — this may be a breaking change for single-label
                 # training pipelines (e.g. CrossEntropyLoss expects 1-D data.y).
+                # GiGL: GLT always takes nlabels.T[0], which drops every label column after the first.
                 value = value if value.shape[1] > 1 else value.T[0]
             if result_key in packed_keys:
                 value, packed = value
@@ -515,7 +531,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         return result_map
 
-    def _route_hop(
+    def _group_hop_srcs_by_partition(
         self,
         srcs: Int64[torch.Tensor, "num_srcs"],
         orders: Int64[torch.Tensor, "num_srcs"],
@@ -570,8 +586,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         """Samples one hop of neighbors for ``srcs`` across all partitions.
 
         This is ``graphlearn_torch.distributed.DistNeighborSampler._sample_one_hop`` (GLT 0.2.4) with the
-        per-partition mask loop replaced by ``_route_hop``. A unit test hashes GLT's source so that a change to
-        it is noticed.
+        per-partition mask loop replaced by ``_group_hop_srcs_by_partition``. A unit test hashes GLT's source so that
+        a change to it is noticed.
+
+        Lines marked ``# GiGL:`` differ from GLT 0.2.4; everything else is copied.
 
         Args:
             srcs: Source node ids for this hop.
@@ -583,6 +601,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             when no partition owns any of ``srcs``.
         """
         device: torch.device = self.device
+        # GiGL: no redundant ``srcs is not None`` check; GLT repeats it right after srcs.to(device).
         srcs = srcs.to(device)
         if self.data.graph_caching:
             nbr_out: Optional[NeighborOutput] = None
@@ -593,6 +612,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         orders: Int64[torch.Tensor, "num_srcs"] = torch.arange(
             srcs.size(0), dtype=torch.long, device=device
         )
+        # GiGL: src_ntype starts as None. GLT leaves it unbound when edge_dir is neither "out" nor "in".
         src_ntype: Optional[NodeType] = None
         if etype is not None:
             if self.edge_dir == "out":
@@ -602,13 +622,15 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         partition_ids: Integer[torch.Tensor, "num_srcs"] = (
             self.dist_graph.get_node_partitions(srcs, src_ntype).to(device)
         )
+        # GiGL: resolve the node partition book once, not once per partition.
         node_pb = self.dist_graph.node_pb
         if isinstance(node_pb, dict):
             node_pb = node_pb[src_ntype]
         partition_results: list[PartialNeighborOutput] = []
         remote_orders_list: list[Int64[torch.Tensor, "_num_selected"]] = []
         futs: list[torch.futures.Future[NeighborOutput]] = []
-        for pidx, p_ids, p_orders in self._route_hop(
+        # GiGL: one grouped routing call replaces GLT's per-partition mask loop.
+        for pidx, p_ids, p_orders in self._group_hop_srcs_by_partition(
             srcs, orders, partition_ids, node_pb
         ):
             if pidx == self.data.partition_idx:
@@ -630,6 +652,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if len(partition_results) > 0:
                 return partition_results[0].output
             return torch.tensor([], device=device, dtype=torch.int64)  # type: ignore[return-value]
+        # GiGL: GLT's ``if not len(futs) == 0`` guard is dropped; it is always true here.
         res_fut_list: list[
             torch.futures.Future[NeighborOutput]
         ] = await wrap_torch_future(torch.futures.collect_all(futs))

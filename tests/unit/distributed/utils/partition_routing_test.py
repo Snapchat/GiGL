@@ -182,7 +182,9 @@ class CallerRoutingTest(TestCase):
                 srcs, partition_ids, num_partitions
             )
 
-            routed = list(sampler._route_hop(srcs, orders, partition_ids, None))
+            routed = list(
+                sampler._group_hop_srcs_by_partition(srcs, orders, partition_ids, None)
+            )
 
             expected_partitions = [
                 (local_partition + i) % num_partitions
@@ -209,7 +211,9 @@ class CallerRoutingTest(TestCase):
             num_partitions=2, partition_idx=0, id_select=counting_id_select
         )
 
-        routed = list(sampler._route_hop(srcs, orders, partition_ids, None))
+        routed = list(
+            sampler._group_hop_srcs_by_partition(srcs, orders, partition_ids, None)
+        )
 
         self.assertEqual(len(selections), 2)
         self.assertEqual([r[0] for r in routed], [0, 1])
@@ -228,8 +232,12 @@ class CallerRoutingTest(TestCase):
         feature.num_partitions = 4
         feature.partition_idx = 0
 
-        hops = list(sampler._route_hop(srcs, torch.arange(5), partition_ids, None))
-        remote = list(feature._route_remote(srcs, partition_ids))
+        hops = list(
+            sampler._group_hop_srcs_by_partition(
+                srcs, torch.arange(5), partition_ids, None
+            )
+        )
+        remote = list(feature._group_remote_ids_by_partition(srcs, partition_ids))
 
         self.assertEqual([h[0] for h in hops], [0, 1, 2])
         self.assertEqual([r[0] for r in remote], [1, 2])
@@ -249,7 +257,7 @@ class CallerRoutingTest(TestCase):
                 ids, partition_ids, num_partitions
             )
 
-            routed = list(feature._route_remote(ids, partition_ids))
+            routed = list(feature._group_remote_ids_by_partition(ids, partition_ids))
 
             expected_partitions = [
                 pidx

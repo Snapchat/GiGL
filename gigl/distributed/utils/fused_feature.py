@@ -229,7 +229,7 @@ class FusedDistFeature(DistFeature):
         self.rpc_router = rpc_router
         self.rpc_callee_id = rpc_register(RpcFeatureLookupCallee(self))
 
-    def _route_remote(
+    def _group_remote_ids_by_partition(
         self,
         ids: Int64[torch.Tensor, "num_ids"],
         partition_ids: Integer[torch.Tensor, "num_ids"],
@@ -277,6 +277,8 @@ class FusedDistFeature(DistFeature):
         This is ``DistFeature._remote_selecting_get`` with the per-partition mask loop replaced by
         ``group_by_partition``.
 
+        Lines marked ``# GiGL:`` differ from GLT 0.2.4; everything else is copied.
+
         Args:
             ids: Ids to look up.
             input_type: Node or edge type of the ids for heterogeneous data.
@@ -295,7 +297,11 @@ class FusedDistFeature(DistFeature):
             torch.futures.Future[UInt8[torch.Tensor, "_num_selected row_bytes"]]
         ] = []
         indexes: list[Int64[torch.Tensor, "_num_selected"]] = []
-        for pidx, remote_ids, remote_index in self._route_remote(ids, partition_ids):
+        # GiGL: one grouped routing call replaces GLT's per-partition mask loop. The positions come from
+        # group_by_partition, so GLT's ``input_order = torch.arange(...)`` is gone.
+        for pidx, remote_ids, remote_index in self._group_remote_ids_by_partition(
+            ids, partition_ids
+        ):
             to_worker = self.rpc_router.get_to_worker(pidx)
             args = (remote_ids.cpu(), input_type)
             futs.append(rpc_request_async(to_worker, self.rpc_callee_id, args=args))
@@ -312,6 +318,7 @@ class FusedDistFeature(DistFeature):
 
         def on_done(*_: object) -> None:
             try:
+                # GiGL: a comprehension instead of GLT's for loop. Same behavior.
                 result = [
                     (fut.wait(), indexes[i]) for i, fut in enumerate(collect_fut.wait())
                 ]

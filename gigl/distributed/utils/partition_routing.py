@@ -34,10 +34,20 @@ def group_by_partition(
     of their own, of the same size as ``masked_select`` gives, whereas the positions are views of one sorted
     permutation. A partition that owns none of the ids gets empty tensors.
 
+    Example:
+        >>> ids = torch.tensor([9, 4, 9, 7, 1])
+        >>> partition_ids = torch.tensor([2, 0, 2, 1, 0])
+        >>> ids_by_partition, index_by_partition = group_by_partition(ids, partition_ids, num_partitions=3)
+        >>> ids_by_partition
+        [tensor([4, 1]), tensor([7]), tensor([9, 9])]
+        >>> index_by_partition
+        [tensor([1, 4]), tensor([3]), tensor([0, 2])]
+
     Args:
         ids: Ids to route.
-        partition_ids: Owning partition of each id. A value that is negative or is ``num_partitions`` or more
-            matches no partition, so the id is dropped, as ``partition_ids == p`` is never true for it. Dropped ids
+        partition_ids: Owning partition of each id, in ``[0, num_partitions)``. We do not expect other values:
+            GiGL's partition books do not produce them, but a range partition book gives ``num_partitions`` for an
+            id past its last bound. Ids with any other value are dropped, to mirror GLT's mask loop. Dropped ids
             cost the same as any other id, whatever their value.
         num_partitions: Number of partitions.
 
