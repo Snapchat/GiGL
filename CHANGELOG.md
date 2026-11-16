@@ -123,6 +123,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   GiGL's distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo`
   add the offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with
   GLT's `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
 
 ### Fixed
 
