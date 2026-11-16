@@ -48,8 +48,13 @@ class CompactTopologyTest(TestCase):
     def test_implicit_edge_ids_follow_original_coo_positions(self) -> None:
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
         self.assertEqual(
-            CompactTopology(coo, layout="CSR").edge_ids.tolist(), [3, 1, 2, 0]
+            CompactTopology(coo, layout="CSR", retain_edge_ids=True).edge_ids.tolist(),
+            [3, 1, 2, 0],
         )
+
+    def test_implicit_edge_ids_are_omitted_by_default(self) -> None:
+        coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
+        self.assertIsNone(CompactTopology(coo, layout="CSR").edge_ids)
 
     def test_implicit_edge_ids_can_be_omitted_when_sampling_neighbors(self) -> None:
         from graphlearn_torch import py_graphlearn_torch as pywrap
@@ -78,7 +83,11 @@ class CompactTopologyTest(TestCase):
         """The hash partitioner hands such an edge type over as a float ``(2, 0)`` placeholder."""
         from graphlearn_torch import py_graphlearn_torch as pywrap
 
-        graph = Graph(CompactTopology(torch.empty((2, 0)), layout="CSC"), "CPU", None)
+        graph = Graph(
+            CompactTopology(torch.empty((2, 0)), layout="CSC", retain_edge_ids=True),
+            "CPU",
+            None,
+        )
         graph.lazy_init()
         self.assertEqual(graph.topo.edge_ids.dtype, torch.int64)
         self.assertEqual(graph.topo.edge_ids.numel(), 0)
@@ -199,6 +208,7 @@ class InitializeGraphTest(TestCase):
                 partition_ranges=[(0, 8)], partition_idx=0
             ),
             edge_features_registered=False,
+            retain_edge_ids=True,
         )
 
         assert isinstance(dataset.graph, Graph)
@@ -226,7 +236,7 @@ class InitializeGraphTest(TestCase):
         assert isinstance(dataset.graph, Graph)
         self.assertIsNotNone(dataset.graph.topo.edge_ids)
 
-    def test_build_can_omit_implicit_edge_ids(self) -> None:
+    def test_build_omits_implicit_edge_ids_by_default(self) -> None:
         book = RangePartitionBook(partition_ranges=[(0, 8)], partition_idx=0)
         dataset = self._dataset()
         partition_output = PartitionOutput(
@@ -243,10 +253,32 @@ class InitializeGraphTest(TestCase):
             partitioned_node_labels=None,
         )
 
-        dataset.build(partition_output, retain_edge_ids=False)
+        dataset.build(partition_output)
 
         assert isinstance(dataset.graph, Graph)
         self.assertIsNone(dataset.graph.topo.edge_ids)
+
+    def test_build_can_retain_implicit_edge_ids(self) -> None:
+        book = RangePartitionBook(partition_ranges=[(0, 8)], partition_idx=0)
+        dataset = self._dataset()
+        partition_output = PartitionOutput(
+            node_partition_book=book,
+            edge_partition_book=None,
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=None,
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+
+        dataset.build(partition_output, retain_edge_ids=True)
+
+        assert isinstance(dataset.graph, Graph)
+        self.assertEqual(dataset.graph.topo.edge_ids.tolist(), [3, 1, 2, 0])
 
     def test_a_heterogeneous_partition_builds_one_graph_per_edge_type(self) -> None:
         num_nodes = 40
@@ -403,7 +435,7 @@ class BuildReleasesEachCooTest(TestCase):
 
         alive_at_each_build: list[set[EdgeType]] = []
 
-        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=True):
+        def recording_topology(edge_index, layout, num_rows, retain_edge_ids=False):
             alive_at_each_build.append(
                 {edge_type for edge_type, ref in refs.items() if ref() is not None}
             )
@@ -452,7 +484,9 @@ class SamplingParityTest(TestCase):
 
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=dtype)
         seeds = torch.tensor([0, 1] if layout == "CSR" else [4, 5, 6, 7])
-        compact = Graph(CompactTopology(coo, layout=layout), "CPU", None)
+        compact = Graph(
+            CompactTopology(coo, layout=layout, retain_edge_ids=True), "CPU", None
+        )
         reference = Graph(Topology(edge_index=coo, layout=layout), "CPU", None)
         compact.lazy_init()
         reference.lazy_init()
@@ -481,7 +515,7 @@ class SamplingParityTest(TestCase):
             [[1, 0, 1, 0] + [0] * 32, [7, 5, 6, 4] + [5] * 32],
             dtype=torch.int64,
         )
-        topology = CompactTopology(coo, layout=layout)
+        topology = CompactTopology(coo, layout=layout, retain_edge_ids=True)
         self.assertEqual(sorted(topology.edge_ids.tolist()), list(range(coo.size(1))))
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
         for row in range(topology.indptr.numel() - 1):

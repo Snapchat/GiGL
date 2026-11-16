@@ -589,7 +589,7 @@ class DistributedDatasetTestCase(TestCase):
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
             partitioned_node_labels=None,
-            partitioned_node_quantized_features=FeaturePartitionData(
+            partitioned_node_packed_features=FeaturePartitionData(
                 feats=packed_features, ids=torch.tensor([3, 7])
             ),
         )
@@ -602,12 +602,12 @@ class DistributedDatasetTestCase(TestCase):
         )
         dataset.build(partition_output=partition_output)
 
-        assert isinstance(dataset.node_quantized_features, Feature)
+        assert isinstance(dataset.node_packed_features, Feature)
         self.assert_tensor_equality(
-            dataset.node_quantized_features.feature_tensor, packed_features
+            dataset.node_packed_features.feature_tensor, packed_features
         )
         self.assert_tensor_equality(
-            dataset.node_quantized_features[torch.tensor([7, 3])],
+            dataset.node_packed_features[torch.tensor([7, 3])],
             packed_features.flip(0),
         )
         self.assertEqual(dataset.node_quantization_metadata, quantization_metadata)

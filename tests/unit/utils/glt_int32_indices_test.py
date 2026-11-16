@@ -24,6 +24,7 @@ import unittest
 import torch
 from graphlearn_torch import py_graphlearn_torch as pywrap
 from graphlearn_torch.data import Graph, Topology
+from parameterized import param, parameterized
 
 from gigl.scripts.verify_glt_patches import build_cpu_csr_graph
 from tests.test_assets.test_case import TestCase
@@ -171,6 +172,40 @@ class Int32SamplingParityTest(TestCase):
         bytes64 = self.indices64.numel() * self.indices64.element_size()
         bytes32 = self.indices32.numel() * self.indices32.element_size()
         self.assertEqual(bytes64, 2 * bytes32)
+
+
+@unittest.skipUnless(_HAS_INT32, _SKIP_REASON)
+class ColCountTest(TestCase):
+    """The multi-threaded distinct-count must equal ``torch.unique(indices).numel()``."""
+
+    @parameterized.expand(
+        [
+            param("dense_with_duplicates", max_id=1000, num_edges=5_000_000),
+            param("one_id_repeated", max_id=1, num_edges=3_000_000),
+            param("every_id_once", max_id=3_000_000, num_edges=3_000_000),
+            # Wider than the edge count allows a bitmap for: takes the sort fallback.
+            param("sparse_domain", max_id=2**40, num_edges=3_000_000),
+            param("below_threading_threshold", max_id=50, num_edges=1000),
+            param("empty", max_id=1, num_edges=0),
+        ]
+    )
+    def test_col_count_matches_unique(
+        self, _name: str, max_id: int, num_edges: int
+    ) -> None:
+        generator = torch.Generator().manual_seed(3)
+        indices = torch.randint(0, max_id, (num_edges,), generator=generator)
+        indptr = torch.tensor([0, num_edges], dtype=torch.int64)
+        expected = int(torch.unique(indices).numel())
+
+        self.assertEqual(build_cpu_csr_graph(indptr, indices).col_count, expected)
+        if max_id < 2**31:
+            graph32 = build_cpu_csr_graph(indptr, indices.to(torch.int32))
+            self.assertEqual(graph32.col_count, expected)
+
+    def test_ids_on_bitmap_word_boundaries_are_counted_once(self) -> None:
+        indices = torch.tensor([0, 63, 64, 127, 128, 63, 64], dtype=torch.int64)
+        indptr = torch.tensor([0, indices.numel()], dtype=torch.int64)
+        self.assertEqual(build_cpu_csr_graph(indptr, indices).col_count, 5)
 
 
 @unittest.skipUnless(_HAS_INT32, _SKIP_REASON)
