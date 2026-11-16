@@ -21,10 +21,10 @@ One patch because the parts rewrite the same regions of graph.cc and random_samp
 them separately duplicates that text and lets an edit to one silently break the other's context.
 
 diff --git a/graphlearn_torch/csrc/cpu/graph.cc b/graphlearn_torch/csrc/cpu/graph.cc
-index cd8b4ba..bd68965 100644
+index cd8b4ba..058353e 100644
 --- a/graphlearn_torch/csrc/cpu/graph.cc
 +++ b/graphlearn_torch/csrc/cpu/graph.cc
-@@ -16,8 +16,148 @@ limitations under the License.
+@@ -16,8 +16,149 @@ limitations under the License.
  #include "graphlearn_torch/include/graph.h"
  #include "graphlearn_torch/include/common.h"
 
@@ -66,23 +66,24 @@ index cd8b4ba..bd68965 100644
 +template <typename Fn>
 +void ParallelChunks(int64_t count, int64_t num_threads, Fn fn) {
 +  const int64_t per_thread = (count + num_threads - 1) / num_threads;
-+  auto run_chunk = [&](int64_t t) {
-+    const int64_t begin = std::min(t * per_thread, count);
-+    fn(begin, std::min(begin + per_thread, count), t);
++  auto run_chunk = [&](int64_t thread_index) {
++    const int64_t begin = std::min(thread_index * per_thread, count);
++    fn(begin, std::min(begin + per_thread, count), thread_index);
 +  };
 +  std::vector<std::thread> workers;
 +  workers.reserve(num_threads);
 +  try {
-+    for (int64_t t = 1; t < num_threads; ++t) {
-+      workers.emplace_back(run_chunk, t);
++    for (int64_t thread_index = 1; thread_index < num_threads; ++thread_index) {
++      workers.emplace_back(run_chunk, thread_index);
 +    }
 +  } catch (const std::system_error&) {
 +    // The OS refused a thread (EAGAIN). Destroying a joinable thread would terminate the
 +    // process, so join the ones started and run the chunks that never got a thread below.
 +  }
 +  run_chunk(0);
-+  for (int64_t t = static_cast<int64_t>(workers.size()) + 1; t < num_threads; ++t) {
-+    run_chunk(t);
++  for (int64_t thread_index = static_cast<int64_t>(workers.size()) + 1;
++       thread_index < num_threads; ++thread_index) {
++    run_chunk(thread_index);
 +  }
 +  for (auto& worker : workers) {
 +    worker.join();
@@ -102,16 +103,16 @@ index cd8b4ba..bd68965 100644
 +  // threads share nothing.
 +  std::vector<int64_t> thread_max(num_threads, -1);
 +  std::vector<int64_t> thread_min(num_threads, std::numeric_limits<int64_t>::max());
-+  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t t) {
++  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t thread_index) {
 +    int64_t local_max = -1;
 +    int64_t local_min = std::numeric_limits<int64_t>::max();
 +    for (int64_t i = begin; i < end; ++i) {
-+      const int64_t c = static_cast<int64_t>(col[i]);
-+      local_max = std::max(local_max, c);
-+      local_min = std::min(local_min, c);
++      const int64_t col_id = static_cast<int64_t>(col[i]);
++      local_max = std::max(local_max, col_id);
++      local_min = std::min(local_min, col_id);
 +    }
-+    thread_max[t] = local_max;
-+    thread_min[t] = local_min;
++    thread_max[thread_index] = local_max;
++    thread_min[thread_index] = local_min;
 +  });
 +  const int64_t min_col = *std::min_element(thread_min.begin(), thread_min.end());
 +  TORCH_CHECK(min_col >= 0,
@@ -133,12 +134,12 @@ index cd8b4ba..bd68965 100644
 +  // so every distinct id is counted exactly once. `new T[n]()` zero-initializes the atomics.
 +  std::unique_ptr<std::atomic<uint64_t>[]> seen(new std::atomic<uint64_t>[bitmap_words]());
 +  std::vector<int64_t> thread_distinct(num_threads, 0);
-+  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t t) {
++  ParallelChunks(edge_count, num_threads, [&](int64_t begin, int64_t end, int64_t thread_index) {
 +    int64_t local_distinct = 0;
 +    for (int64_t i = begin; i < end; ++i) {
-+      const uint64_t c = static_cast<uint64_t>(col[i]);
-+      const uint64_t mask = uint64_t{1} << (c & 63);
-+      std::atomic<uint64_t>& word = seen[c >> 6];
++      const uint64_t col_id = static_cast<uint64_t>(col[i]);
++      const uint64_t mask = uint64_t{1} << (col_id & 63);
++      std::atomic<uint64_t>& word = seen[col_id >> 6];
 +      // The plain load skips the read-modify-write for the many repeated ids.
 +      if (word.load(std::memory_order_relaxed) & mask) {
 +        continue;
@@ -147,11 +148,11 @@ index cd8b4ba..bd68965 100644
 +        ++local_distinct;
 +      }
 +    }
-+    thread_distinct[t] = local_distinct;
++    thread_distinct[thread_index] = local_distinct;
 +  });
 +  int64_t distinct_cols = 0;
-+  for (int64_t d : thread_distinct) {
-+    distinct_cols += d;
++  for (int64_t distinct_in_chunk : thread_distinct) {
++    distinct_cols += distinct_in_chunk;
 +  }
 +  return distinct_cols;
 +}
@@ -173,7 +174,7 @@ index cd8b4ba..bd68965 100644
  void Graph::InitCPUGraphFromCSR(
      const torch::Tensor& indptr,
      const torch::Tensor& indices,
-@@ -27,10 +167,23 @@ void Graph::InitCPUGraphFromCSR(
+@@ -27,10 +168,23 @@ void Graph::InitCPUGraphFromCSR(
    CheckEq<int64_t>(indices.dim(), 1);
 
    row_ptr_ = indptr.data_ptr<int64_t>();
