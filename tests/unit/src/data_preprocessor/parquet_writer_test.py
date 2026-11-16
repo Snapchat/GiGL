@@ -279,14 +279,18 @@ class ParquetWriterRoundTripTest(TestCase):
             expected = {}
             for path in sorted(glob.glob(f"{parquet_dir}*.parquet")):
                 metadata = pq.ParquetFile(path).metadata
-                expected[os.path.basename(path)] = [
-                    metadata.row_group(i).num_rows
-                    for i in range(metadata.num_row_groups)
-                ]
+                expected[os.path.basename(path)] = {
+                    "row_groups": [
+                        metadata.row_group(i).num_rows
+                        for i in range(metadata.num_row_groups)
+                    ],
+                    "size_bytes": os.path.getsize(path),
+                }
             self.assertEqual(manifest["files"], expected)
-            self.assertEqual(sum(sum(rows) for rows in expected.values()), 25)
+            row_groups_per_file = [entry["row_groups"] for entry in expected.values()]
+            self.assertEqual(sum(sum(rows) for rows in row_groups_per_file), 25)
             # Empty shards are listed with no row groups.
-            self.assertIn([], expected.values())
+            self.assertIn([], row_groups_per_file)
 
     def test_packed_features_are_fixed_size_binary(self) -> None:
         num_rows = 25

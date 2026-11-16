@@ -114,7 +114,8 @@ def empty_entity_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
             - ids: int64 ``[0]`` for nodes, ``[2, 0]`` for edges.
             - features: ``[0, feature_dim]``, or None without ``feature_keys``.
             - packed_features: uint8 ``[0, packed_feature_dim]``, or None without ``packed_feature_key``.
-            - labels: ``[0, len(label_keys)]``, or None without ``label_keys``.
+            - labels: ``[0, total label width]``, or None without ``label_keys``. The width is the sum of the
+              widths of the label keys in ``feature_spec``: ``shape[0]``, or 1 for a scalar.
     """
     if info.is_node_entity:
         ids = torch.empty(0, dtype=torch.int64)
@@ -125,7 +126,11 @@ def empty_entity_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
         features = torch.empty(0, info.feature_dim)
     labels: Optional[torch.Tensor] = None
     if info.label_keys:
-        labels = torch.empty(0, len(info.label_keys))
+        label_width = 0
+        for key in info.label_keys:
+            shape = info.feature_spec[key].shape
+            label_width += shape[0] if shape else 1
+        labels = torch.empty(0, label_width)
     packed_features: Optional[torch.Tensor] = None
     if info.packed_feature_key is not None:
         packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)

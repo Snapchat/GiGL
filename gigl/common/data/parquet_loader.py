@@ -13,9 +13,10 @@ An entity directory::
         part-00002-of-00003.parquet       one row group of 61 rows
 
     _row_counts.json:
-        {"version": 1, "files": {"part-00000-of-00003.parquet": [100000, 100000, 523],
-                                 "part-00001-of-00003.parquet": [100000, 4100],
-                                 "part-00002-of-00003.parquet": [61]}}
+        {"version": 2,
+         "files": {"part-00000-of-00003.parquet": {"row_groups": [100000, 100000, 523], "size_bytes": 81234567},
+                   "part-00001-of-00003.parquet": {"row_groups": [100000, 4100], "size_bytes": 41733312},
+                   "part-00002-of-00003.parquet": {"row_groups": [61], "size_bytes": 25821}}}
 
 One node file::
 
@@ -47,10 +48,15 @@ Terms:
   pyarrow also reads a gap of up to 8 KiB between two requested chunks instead of making a second request.
 - **Footer**: the schema and, per row group, the row count and the byte range of each column chunk.
   Reading it costs storage requests, so only the footers of files this rank reads from are fetched.
-- **Manifest**: ``_row_counts.json``, the row count of every row group of every file
+- **Manifest**: ``_row_counts.json``, the row count of every row group of every file and the file's byte size
   (see ``gigl.common.data.parquet_manifest``).
   Every rank computes its row range from it without reading other ranks' footers.
-  Loading fails if it is missing or does not list exactly the files found.
+  Loading fails if it is missing, does not list exactly the files found, or lists a size that differs from the
+  directory listing.
+  Each rank also checks the manifest's row counts against the footers of the files it reads.
+  Files with no rows are read by no rank, so only their sizes are checked; rank 0 logs a warning when there are any.
+  The files must not change after the manifest is written. The data preprocessor writes each directory once, under a
+  per-job prefix.
 - **Row range**: the rank's contiguous slice of all rows, counted in sorted file order.
   Rank ``r`` of ``world_size`` keeps rows ``[r * total // world_size, (r + 1) * total // world_size)``.
 - **Read task / plan**: the plan is a list of ``_ReadTask``, one per row group that overlaps the row range:
@@ -390,7 +396,8 @@ class ParquetDataLoader:
 
         Raises:
             ValueError: If ``parquet_uri_prefix`` is not set, or the manifest is malformed, has an unknown version,
-                does not list exactly the files found, or lists row counts that differ from a file's footer.
+                does not list exactly the files found, lists a size that differs from a file's listed size, or lists
+                row counts that differ from a file's footer.
             FileNotFoundError: If the manifest is missing.
             OSError: If listing the files or reading a footer or row group still fails after the retries.
         """
@@ -401,9 +408,10 @@ class ParquetDataLoader:
         wall_start = time.perf_counter()
 
         fs, path = self._filesystem_and_path(info.parquet_uri_prefix)
-        files: list[str] = _retry_on_os_error(parquet_manifest.list_parquet_files)(
-            fs, path
-        )
+        file_infos: list[pafs.FileInfo] = _retry_on_os_error(
+            parquet_manifest.list_parquet_files
+        )(fs, path)
+        files: list[str] = [file_info.path for file_info in file_infos]
         list_s = time.perf_counter() - wall_start
         if not files:
             logger.warning(
@@ -428,8 +436,20 @@ class ParquetDataLoader:
                     handle.close()
 
             row_groups_per_file = parquet_manifest.read_manifest_row_groups(
-                fs, path, files
+                fs, path, file_infos
             )
+            zero_row_file_count = 0
+            for file_rows in row_groups_per_file:
+                if sum(file_rows) == 0:
+                    zero_row_file_count += 1
+            # Every rank reads the same manifest, so one rank's warning covers the load.
+            if zero_row_file_count and self._rank == 0:
+                logger.warning(
+                    f"Manifest at {info.parquet_uri_prefix.uri} lists {zero_row_file_count} of {len(files)} files "
+                    "with no rows. No rank reads their footers, so only their byte sizes are checked against the "
+                    "manifest, not their row counts. Files under a Parquet prefix must not change after the manifest "
+                    "is written."
+                )
             tasks = self._plan_tasks(row_groups_per_file)
             # Reads and the schema need the footers of the files this rank reads from.
             footer_file_indices = sorted({task.file_index for task in tasks})
