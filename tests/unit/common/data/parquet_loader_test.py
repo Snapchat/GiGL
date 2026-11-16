@@ -302,14 +302,19 @@ class ParquetDataLoaderTest(TestCase):
         info = _node_info(directory, parquet=True)
 
         sizes = []
+        label_widths: set[int] = set()
         for rank in range(60):
             loaded = ParquetDataLoader(rank, 60).load_as_torch_tensors(info)
             sizes.append(loaded.ids.shape[0])
+            label_widths.add(_present(loaded.labels).shape[1])
             if loaded.ids.shape[0] == 0:
                 self.assertEqual(_present(loaded.features).shape, (0, _FEATURE_DIM))
-                self.assertEqual(_present(loaded.labels).shape, (0, 2))
+                # label_a is a scalar and label_b has two values.
+                self.assertEqual(_present(loaded.labels).shape, (0, 3))
         self.assertEqual(sum(sizes), _NUM_NODES)
         self.assertIn(0, sizes)
+        # Empty and populated ranks have the same label width.
+        self.assertEqual(label_widths, {3})
 
     def test_features_narrower_than_feature_dim_are_rejected(self) -> None:
         directory = self.root / "nodes"
@@ -966,6 +971,25 @@ class ParquetDataLoaderSharedHandleAndRetryTest(TestCase):
                 ).load_as_torch_tensors(info)
 
 
+def _write_node_id_file(path: Path, first_id: int, num_rows: int) -> None:
+    """Writes a Parquet file of consecutive node ids and nothing else."""
+    ids = pa.array(np.arange(first_id, first_id + num_rows), type=pa.int64())
+    pq.write_table(pa.table({"node_id": ids}), path, row_group_size=_ROW_GROUP_SIZE)
+
+
+def _write_node_ids(directory: Path, rows_per_file: list[int]) -> None:
+    """Writes one id-only Parquet file per entry of ``rows_per_file`` and the manifest."""
+    first_id = 0
+    for file_index, num_rows in enumerate(rows_per_file):
+        _write_node_id_file(
+            directory / f"part-{file_index:05d}-of-{len(rows_per_file):05d}.parquet",
+            first_id,
+            num_rows,
+        )
+        first_id += num_rows
+    parquet_manifest.write_manifest(UriFactory.create_uri(directory))
+
+
 class ParquetRequiredManifestTest(TestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -996,13 +1020,45 @@ class ParquetRequiredManifestTest(TestCase):
         self,
     ) -> None:
         manifest = json.loads(self.manifest_path.read_text())
-        row_counts = manifest["files"]["part-00000-of-00004.parquet"]
-        self.assertEqual(row_counts, [7, 7, 6])
+        entry = manifest["files"]["part-00000-of-00004.parquet"]
+        self.assertEqual(entry["row_groups"], [7, 7, 6])
         # The same total, so only the row-group boundaries are wrong.
-        manifest["files"]["part-00000-of-00004.parquet"] = [6, 7, 7]
+        entry["row_groups"] = [6, 7, 7]
         self.manifest_path.write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "footer"):
             ParquetDataLoader(0, 1).load_as_torch_tensors(self.info)
+
+    def test_replaced_file_with_a_different_size_raises(self) -> None:
+        directory = self.root / "zero_rows"
+        directory.mkdir()
+        _write_node_ids(directory, [20, 0, 17])
+        # The manifest lists no rows for this file, so no rank reads its footer.
+        _write_node_id_file(directory / "part-00001-of-00003.parquet", 100, 5)
+        info = _node_info(
+            directory, parquet=True, with_features=False, with_labels=False
+        )
+        for rank in range(2):
+            with self.assertRaisesRegex(ValueError, "bytes"):
+                ParquetDataLoader(rank, 2).load_as_torch_tensors(info)
+
+    def test_zero_row_files_log_one_warning_on_rank_zero(self) -> None:
+        directory = self.root / "zero_rows"
+        directory.mkdir()
+        _write_node_ids(directory, [20, 0, 17])
+        info = _node_info(
+            directory, parquet=True, with_features=False, with_labels=False
+        )
+
+        with self.assertLogs("root", level="WARNING") as logs:
+            loaded = ParquetDataLoader(0, 2).load_as_torch_tensors(info)
+        self.assertEqual(loaded.ids.shape, (18,))
+        zero_row_warnings = [line for line in logs.output if "with no rows" in line]
+        self.assertEqual(len(zero_row_warnings), 1)
+        self.assertIn("1 of 3 files", zero_row_warnings[0])
+
+        with self.assertNoLogs("root", level="WARNING"):
+            loaded = ParquetDataLoader(1, 2).load_as_torch_tensors(info)
+        self.assertEqual(loaded.ids.shape, (19,))
 
     def test_manifest_with_unknown_version_raises(self) -> None:
         manifest = json.loads(self.manifest_path.read_text())
