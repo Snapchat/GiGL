@@ -8,10 +8,10 @@ These are the current environments supported by GiGL
 | ----------- | --------------- | --------- | ---------- | ------- | --- |
 | 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
 
-Developing on Linux needs glibc 2.39 or later, for example Ubuntu 24.04. `install_py_deps.sh` installs
-`tensorflow-data-validation` 1.21, which ships Linux wheels only for glibc 2.39 and later, so it fails on Ubuntu 22.04
-(glibc 2.35). `create_dev_instance.py` creates Ubuntu 24.04 VMs by default. That image ships CUDA 12.9; GiGL's cu128
-torch runs on it, and the CUDA extensions build with its `nvcc`.
+Linux development needs glibc 2.39 or later, for example Ubuntu 24.04: `install_py_deps.sh` installs
+`tensorflow-data-validation` 1.21, whose Linux wheels need glibc 2.39, so it fails on Ubuntu 22.04 (glibc 2.35). The VMs
+that `create_dev_instance.py` creates run Ubuntu 24.04 with CUDA 12.9; GiGL's cu128 torch runs there, and the CUDA
+extensions build with that `nvcc`.
 
 Python 3.11 is the default, and the full CI suite runs on it. GiGL's Docker images are published for each supported
 minor; see [Docker images and Python versions](#docker-images-and-python-versions).
