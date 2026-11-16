@@ -23,7 +23,7 @@ logger = Logger()
 class LoadedEntityTensors(NamedTuple):
     ids: Union[Int64[torch.Tensor, "entities"], Int64[torch.Tensor, "2 entities"]]
     features: Optional[Shaped[torch.Tensor, "entities feature_dim"]]
-    quantized_features: Optional[UInt8[torch.Tensor, "entities packed_feature_dim"]]
+    packed_features: Optional[UInt8[torch.Tensor, "entities packed_feature_dim"]]
     labels: Optional[Shaped[torch.Tensor, "entities labels"]]
 
 
@@ -411,7 +411,7 @@ class TFRecordDataLoader:
             serialized_tf_record_info (SerializedTFRecordInfo): Information for how TFRecord files are serialized on disk.
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         Returns:
-            LoadedEntityTensors: The (id_tensor, feature_tensor, quantized_feature_tensor, label_tensor) for the loaded entities.
+            LoadedEntityTensors: The (id_tensor, feature_tensor, packed_feature_tensor, label_tensor) for the loaded entities.
         """
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
@@ -492,12 +492,12 @@ class TFRecordDataLoader:
                 empty_feature = None
 
             if packed_feature_key is not None:
-                empty_quantized_feature = torch.empty(
+                empty_packed_feature = torch.empty(
                     (0, serialized_tf_record_info.packed_feature_dim),
                     dtype=torch.uint8,
                 )
             else:
-                empty_quantized_feature = None
+                empty_packed_feature = None
 
             if label_keys:
                 empty_label = torch.empty(0, len(label_keys))
@@ -507,7 +507,7 @@ class TFRecordDataLoader:
             return LoadedEntityTensors(
                 ids=empty_entity,
                 features=empty_feature,
-                quantized_features=empty_quantized_feature,
+                packed_features=empty_packed_feature,
                 labels=empty_label,
             )
 
@@ -521,7 +521,7 @@ class TFRecordDataLoader:
         num_entities_processed = 0
         id_tensors: list[torch.Tensor] = []
         feature_tensors: list[torch.Tensor] = []
-        quantized_feature_tensors: list[tf.Tensor] = []
+        packed_feature_tensors: list[tf.Tensor] = []
         label_tensors: list[torch.Tensor] = []
         for idx, batch in enumerate(dataset):
             id_tensors.append(proccess_id_tensor(batch))
@@ -534,14 +534,14 @@ class TFRecordDataLoader:
                 if label_tensor is not None:
                     label_tensors.append(label_tensor)
             if packed_feature_key is not None:
-                quantized_feature_tensor = tf.io.decode_raw(
+                packed_feature_tensor = tf.io.decode_raw(
                     batch[packed_feature_key], tf.uint8
                 )
-                quantized_feature_tensor = tf.reshape(
-                    quantized_feature_tensor,
+                packed_feature_tensor = tf.reshape(
+                    packed_feature_tensor,
                     [-1, serialized_tf_record_info.packed_feature_dim],
                 )
-                quantized_feature_tensors.append(quantized_feature_tensor)
+                packed_feature_tensors.append(packed_feature_tensor)
             num_entities_processed += (
                 id_tensors[-1].shape[0]
                 if entity_type == FeatureTypes.NODE
@@ -563,15 +563,15 @@ class TFRecordDataLoader:
             id_tensors, num_entities_processed, id_concat_axis, torch.int64
         )
         output_feature_tensor: Optional[torch.Tensor] = None
-        output_quantized_feature_tensor: Optional[torch.Tensor] = None
+        output_packed_feature_tensor: Optional[torch.Tensor] = None
         output_label_tensor: Optional[torch.Tensor] = None
         if feature_tensors:
             output_feature_tensor = _assemble_entity_tensor(
                 feature_tensors, num_entities_processed, 0, torch.float32
             )
-        if quantized_feature_tensors:
-            output_quantized_feature_tensor = _assemble_entity_tensor(
-                quantized_feature_tensors, num_entities_processed, 0, torch.uint8
+        if packed_feature_tensors:
+            output_packed_feature_tensor = _assemble_entity_tensor(
+                packed_feature_tensors, num_entities_processed, 0, torch.uint8
             )
         if label_tensors:
             output_label_tensor = _assemble_entity_tensor(
@@ -590,6 +590,6 @@ class TFRecordDataLoader:
         return LoadedEntityTensors(
             ids=id_tensor,
             features=output_feature_tensor,
-            quantized_features=output_quantized_feature_tensor,
+            packed_features=output_packed_feature_tensor,
             labels=output_label_tensor,
         )

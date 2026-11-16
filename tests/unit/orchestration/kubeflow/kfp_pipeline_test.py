@@ -6,8 +6,34 @@ from absl.testing import absltest
 from kfp.compiler import Compiler
 
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.orchestration.kubeflow.kfp_pipeline import generate_pipeline
+from gigl.orchestration.kubeflow.kfp_pipeline import ExitTask, generate_pipeline
 from tests.test_assets.test_case import TestCase
+
+_COMMON_CONFIGS = CommonPipelineComponentConfigs(
+    cuda_container_image="cuda-image",
+    cpu_container_image="cpu-image",
+    dataflow_container_image="dataflow-image",
+)
+
+
+def _compile(**generate_pipeline_kwargs) -> dict:
+    """Compile the GiGL pipeline and return the pipeline spec as a dict."""
+    pipeline = generate_pipeline(_COMMON_CONFIGS, **generate_pipeline_kwargs)
+    with TemporaryDirectory() as temp_directory:
+        output_path = Path(temp_directory) / "pipeline.yaml"
+        Compiler().compile(pipeline, str(output_path))
+        return yaml.safe_load(output_path.read_text())
+
+
+def _exit_task(pipeline_spec: dict) -> dict:
+    """Return the root DAG task that runs after the exit handler group completes."""
+    root_tasks = pipeline_spec["root"]["dag"]["tasks"]
+    return next(
+        task
+        for task in root_tasks.values()
+        if task.get("triggerPolicy", {}).get("strategy")
+        == "ALL_UPSTREAM_TASKS_COMPLETED"
+    )
 
 
 def _referenced_output_parameters(pipeline_spec: dict) -> set[tuple[str, str]]:
@@ -25,18 +51,27 @@ def _referenced_output_parameters(pipeline_spec: dict) -> set[tuple[str, str]]:
 
 
 class KfpPipelineTest(TestCase):
-    def test_validator_outputs_are_pipeline_inputs_for_downstream_tasks(self) -> None:
-        pipeline = generate_pipeline(
-            CommonPipelineComponentConfigs(
-                cuda_container_image="cuda-image",
-                cpu_container_image="cpu-image",
-                dataflow_container_image="dataflow-image",
-            )
+    def test_email_exit_task_is_the_default(self) -> None:
+        exit_task = _exit_task(_compile())
+
+        self.assertIn("notification-email", exit_task["componentRef"]["name"])
+
+    def test_cleanup_exit_task_replaces_the_email_op(self) -> None:
+        pipeline_spec = _compile(exit_task=ExitTask.CLEANUP)
+
+        exit_task = _exit_task(pipeline_spec)
+        component_name = exit_task["componentRef"]["name"]
+        self.assertIn("cleanup-child-jobs-op", component_name)
+        executor_name = component_name.replace("comp-", "exec-", 1)
+        executor = pipeline_spec["deploymentSpec"]["executors"][executor_name]
+        self.assertEqual(executor["container"]["image"], "cpu-image")
+        self.assertEqual(
+            set(exit_task["inputs"]["parameters"]),
+            {"job_name", "resource_config_uri"},
         )
-        with TemporaryDirectory() as temp_directory:
-            output_path = Path(temp_directory) / "pipeline.yaml"
-            Compiler().compile(pipeline, str(output_path))
-            pipeline_spec = yaml.safe_load(output_path.read_text())
+
+    def test_validator_outputs_are_pipeline_inputs_for_downstream_tasks(self) -> None:
+        pipeline_spec = _compile()
 
         validator_task = pipeline_spec["components"]["comp-exit-handler-1"]["dag"][
             "tasks"
