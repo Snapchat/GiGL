@@ -3,10 +3,18 @@
 Reading the footer of every Parquet file of an entity to learn its row-group sizes costs one storage request per file on
 every rank. The manifest ``_row_counts.json`` is written once, next to the data files, and holds the same information::
 
-    {"version": 1, "files": {"part-00000-of-00002.parquet": [100000, 100000, 523], ...}}
+    {"version": 2,
+     "files": {"part-00000-of-00002.parquet": {"row_groups": [100000, 100000, 523], "size_bytes": 81234567},
+               ...}}
 
-Keys are file names relative to the directory and values are the row counts of the file's row groups, in order. The name
-does not end in ``.parquet``, so file listings of the data never include it.
+Keys are file names relative to the directory. Each value holds:
+
+- ``row_groups``: the row counts of the file's row groups, in order.
+- ``size_bytes``: the file's size. Reading the manifest compares it with the size in the directory listing, so a file
+  rewritten after the manifest was written fails the read unless its size is unchanged. Listings already return sizes,
+  so the check costs no extra storage requests.
+
+The name does not end in ``.parquet``, so file listings of the data never include it.
 
 The data preprocessor writes one directory per node type and per edge type. The manifest sits next to the data files:
 
@@ -41,7 +49,7 @@ from gigl.common.utils.retry import retry
 logger = Logger()
 
 MANIFEST_FILE_NAME: Final[str] = "_row_counts.json"
-MANIFEST_VERSION: Final[int] = 1
+MANIFEST_VERSION: Final[int] = 2
 GCS_RETRY_TIME_LIMIT: Final[timedelta] = timedelta(seconds=300)
 _DEFAULT_THREADS: Final[int] = 32
 
@@ -64,23 +72,24 @@ def filesystem_and_path(uri: Uri) -> tuple[pafs.FileSystem, str]:
     return pafs.FileSystem.from_uri(uri.uri)
 
 
-def list_parquet_files(fs: pafs.FileSystem, path: str) -> list[str]:
-    """Returns the sorted paths of the Parquet data files directly under ``path``.
+def list_parquet_files(fs: pafs.FileSystem, path: str) -> list[pafs.FileInfo]:
+    """Returns the Parquet data files directly under ``path``, sorted by path.
 
     Args:
         fs (pafs.FileSystem): The filesystem that holds ``path``.
         path (str): The scheme-less directory path within ``fs``.
 
     Returns:
-        list[str]: The sorted full paths of the files that end in ``.parquet``. The manifest itself is not included.
+        list[pafs.FileInfo]: The files that end in ``.parquet``, sorted by full path. Each has the ``path`` and
+            ``size`` from the listing. The manifest itself is not included.
     """
     selector = pafs.FileSelector(path.rstrip("/"), recursive=False)
     infos = fs.get_file_info(selector)
-    parquet_files: list[str] = []
+    parquet_files: list[pafs.FileInfo] = []
     for info in infos:
         if info.type == pafs.FileType.File and info.path.endswith(PARQUET_FILE_SUFFIX):
-            parquet_files.append(info.path)
-    return sorted(parquet_files)
+            parquet_files.append(info)
+    return sorted(parquet_files, key=lambda info: info.path)
 
 
 def manifest_path(path: str) -> str:
@@ -96,21 +105,22 @@ def manifest_path(path: str) -> str:
 
 
 def read_manifest_row_groups(
-    fs: pafs.FileSystem, path: str, files: list[str]
+    fs: pafs.FileSystem, path: str, files: list[pafs.FileInfo]
 ) -> list[list[int]]:
     """Returns the row-group row counts of ``files`` (as listed under ``path``) from the manifest under ``path``.
 
     Args:
         fs (pafs.FileSystem): The filesystem that holds ``path``.
         path (str): The scheme-less directory path within ``fs``.
-        files (list[str]): The data file paths listed under ``path``, as returned by ``list_parquet_files``.
+        files (list[pafs.FileInfo]): The data files listed under ``path``, as returned by ``list_parquet_files``.
 
     Returns:
         list[list[int]]: One list of row-group row counts per entry of ``files``, in the same order.
 
     Raises:
         FileNotFoundError: If there is no manifest.
-        ValueError: If the manifest is malformed, has an unknown version, or does not list exactly ``files``.
+        ValueError: If the manifest is malformed, has an unknown version, does not list exactly ``files``, or lists a
+            size that differs from a file's listed size.
     """
     if fs.get_file_info(manifest_path(path)).type == pafs.FileType.NotFound:
         raise FileNotFoundError(manifest_path(path))
@@ -119,12 +129,20 @@ def read_manifest_row_groups(
     if manifest.get("version") != MANIFEST_VERSION:
         raise ValueError(f"unsupported manifest version {manifest.get('version')!r}")
     manifest_files = manifest["files"]
-    names = [os.path.basename(file) for file in files]
+    names = [os.path.basename(file.path) for file in files]
     if set(names) != set(manifest_files):
         raise ValueError(
             f"manifest lists {len(manifest_files)} files but {len(names)} were found"
         )
-    return [manifest_files[name] for name in names]
+    row_groups_per_file: list[list[int]] = []
+    for name, file in zip(names, files):
+        entry = manifest_files[name]
+        if file.size is None or file.size != entry["size_bytes"]:
+            raise ValueError(
+                f"manifest lists {entry['size_bytes']} bytes for {file.path} but the listing has {file.size}"
+            )
+        row_groups_per_file.append(entry["row_groups"])
+    return row_groups_per_file
 
 
 @retry(
@@ -167,13 +185,24 @@ def build_manifest(
 
     Returns:
         dict[str, Any]: The manifest, with the keys ``version`` and ``files``.
+
+    Raises:
+        ValueError: If the listing does not report a file's size.
     """
     fs, path = filesystem_and_path(uri_prefix)
     files = list_parquet_files(fs, path)
+    for file in files:
+        if file.size is None:
+            raise ValueError(f"The listing of {file.path} has no size")
     with ThreadPoolExecutor(num_threads) as pool:
-        row_groups = list(pool.map(lambda file: _read_row_groups(fs, file), files))
-    names = [os.path.basename(file) for file in files]
-    return {"version": MANIFEST_VERSION, "files": dict(zip(names, row_groups))}
+        row_groups = list(pool.map(lambda file: _read_row_groups(fs, file.path), files))
+    manifest_files: dict[str, dict[str, Any]] = {}
+    for file, file_row_groups in zip(files, row_groups):
+        manifest_files[os.path.basename(file.path)] = {
+            "row_groups": file_row_groups,
+            "size_bytes": file.size,
+        }
+    return {"version": MANIFEST_VERSION, "files": manifest_files}
 
 
 def write_manifest(
@@ -187,6 +216,9 @@ def write_manifest(
 
     Returns:
         dict[str, Any]: The manifest that was written.
+
+    Raises:
+        ValueError: If the listing does not report a file's size.
     """
     manifest = build_manifest(uri_prefix, num_threads)
     fs, path = filesystem_and_path(uri_prefix)
