@@ -6,7 +6,6 @@ from parameterized import param, parameterized
 
 from gigl.distributed.utils.degree import (
     _clamp_to_int32,
-    _compute_degrees_from_indptr,
     _compute_degrees_from_topology,
     _pad_to_size,
     compute_and_broadcast_degree_tensor,
@@ -298,11 +297,13 @@ class TestHelperFunctions(TestCase):
         result = _pad_to_size(tensor, target_size)
         self.assert_tensor_equality(result, expected)
 
-    def test_compute_degrees_from_indptr(self):
-        """Test _compute_degrees_from_indptr helper function."""
-        indptr = torch.tensor([0, 3, 5, 10, 12], dtype=torch.int64)
+    def test_compute_degrees_from_topology(self):
+        """Test _compute_degrees_from_topology helper function."""
+        rows = torch.tensor([0, 0, 0, 1, 1, 2, 2, 2, 2, 2, 3, 3])
+        coo = torch.stack([rows, torch.arange(rows.numel())])
+        topology = CompactTopology(coo, layout="CSR", compressed_id_offset=0)
         expected = torch.tensor([3, 2, 5, 2], dtype=torch.int32)
-        result = _compute_degrees_from_indptr(indptr)
+        result = _compute_degrees_from_topology(topology)
         self.assert_tensor_equality(result, expected)
 
     @parameterized.expand(
@@ -312,23 +313,25 @@ class TestHelperFunctions(TestCase):
             param("last_rank_with_trailing_zero_degrees", row_start=4, num_rows=12),
         ]
     )
-    def test_degrees_with_a_row_offset_are_indexed_by_global_id(
+    def test_degrees_with_a_compressed_id_offset_are_indexed_by_global_id(
         self, _, row_start: int, num_rows: int
     ):
         coo = torch.tensor([[4, 4, 6, 8, 8, 8], [0, 1, 2, 0, 1, 3]])
-        full = CompactTopology(coo, layout="CSR", num_rows=num_rows, row_offset=0)
+        full = CompactTopology(
+            coo, layout="CSR", num_rows=num_rows, compressed_id_offset=0
+        )
         shifted = coo.clone()
         shifted[0] -= row_start
         offset_topology = CompactTopology(
             shifted,
             layout="CSR",
             num_rows=num_rows - row_start,
-            row_offset=row_start,
+            compressed_id_offset=row_start,
         )
 
         self.assert_tensor_equality(
             _compute_degrees_from_topology(offset_topology),
-            _compute_degrees_from_indptr(full.indptr),
+            _compute_degrees_from_topology(full),
         )
 
     def test_clamp_to_int32(self):
@@ -341,20 +344,30 @@ class TestHelperFunctions(TestCase):
 
         self.assert_tensor_equality(result, expected)
 
-    def test_compute_degrees_from_indptr_all_zeros(self):
-        """Test _compute_degrees_from_indptr with all-zero indptr (no edges)."""
-        # All-zero indptr means no outgoing edges for any node
-        indptr = torch.tensor([0, 0, 0, 0, 0], dtype=torch.int64)
+    def test_compute_degrees_from_topology_all_zeros(self):
+        """Test _compute_degrees_from_topology with all-zero indptr (no edges)."""
+        # No edges for any of the 4 nodes
+        topology = CompactTopology(
+            torch.empty((2, 0), dtype=torch.int64),
+            layout="CSR",
+            num_rows=4,
+            compressed_id_offset=0,
+        )
         expected = torch.tensor([0, 0, 0, 0], dtype=torch.int32)
-        result = _compute_degrees_from_indptr(indptr)
+        result = _compute_degrees_from_topology(topology)
         self.assert_tensor_equality(result, expected)
 
-    def test_compute_degrees_from_indptr_empty(self):
-        """Test _compute_degrees_from_indptr with empty indptr (no nodes)."""
-        # indptr of [0] means 0 nodes
-        indptr = torch.empty(0, dtype=torch.int64)
+    def test_compute_degrees_from_topology_empty(self):
+        """Test _compute_degrees_from_topology with empty indptr (no nodes)."""
+        # An indptr of [0] means 0 nodes
+        topology = CompactTopology(
+            torch.empty((2, 0), dtype=torch.int64),
+            layout="CSR",
+            num_rows=0,
+            compressed_id_offset=0,
+        )
         expected = torch.empty(0, dtype=torch.int32)
-        result = _compute_degrees_from_indptr(indptr)
+        result = _compute_degrees_from_topology(topology)
         self.assert_tensor_equality(result, expected)
         self.assertEqual(result.numel(), 0)
 

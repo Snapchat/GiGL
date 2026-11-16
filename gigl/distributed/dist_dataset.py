@@ -874,26 +874,26 @@ class DistDataset(glt.distributed.DistDataset):
                 else get_total_ids(book)
             )
             # Under range partitioning the compressed ids of this rank's edges lie in
-            # [row_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
+            # [compressed_id_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
             # empty rows below the range, which on the last rank is nearly one row per node in
             # the graph. The COO is released after the build, so it is shifted in place.
-            row_offset = 0
+            compressed_id_offset = 0
             if isinstance(book, RangePartitionBook) and self._rank > 0:
-                row_offset = int(book.partition_bounds[self._rank - 1])
+                compressed_id_offset = int(book.partition_bounds[self._rank - 1])
                 compressed_dimension = 0 if target_layout == "CSR" else 1
-                coo[compressed_dimension] -= row_offset
+                coo[compressed_dimension] -= compressed_id_offset
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
-                f"{num_rows - row_offset:,} rows from id {row_offset:,}, input dtype {coo.dtype}"
+                f"{num_rows - compressed_id_offset:,} rows from id {compressed_id_offset:,}, input dtype {coo.dtype}"
             )
-            # The build raises if a shifted id falls outside [0, num_rows - row_offset), so a
+            # The build raises if a shifted id falls outside [0, num_rows - compressed_id_offset), so a
             # partitioner that places an edge away from its compressed node's owner fails here.
             topology = CompactTopology(
                 coo,
                 layout=target_layout,
-                num_rows=num_rows - row_offset,
+                num_rows=num_rows - compressed_id_offset,
                 retain_edge_ids=retain_edge_ids,
-                row_offset=row_offset,
+                compressed_id_offset=compressed_id_offset,
             )
             del coo
             gc.collect()

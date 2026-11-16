@@ -25,7 +25,7 @@ from parameterized import param, parameterized
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     _GlobalIdNeighborSampler,
-    _stores_only_owned_rows,
+    _is_range_partitioned_compact,
 )
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
@@ -33,7 +33,7 @@ from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
-from gigl.utils.csr import CompactTopology, get_row_offset
+from gigl.utils.csr import CompactTopology, get_compressed_id_offset
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -134,7 +134,7 @@ def _sample_on_partition(
     if range_partitioned:
         expected_offset = start
     for graph in dataset.graph.values():
-        assert get_row_offset(graph.topo) == expected_offset
+        assert get_compressed_id_offset(graph.topo) == expected_offset
 
     degrees = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir)
     sampler = BaseDistNeighborSampler(
@@ -188,7 +188,7 @@ def _run(edge_dir: Literal["in", "out"], range_partitioned: bool) -> dict[int, A
 
 class RangePartitionedSamplingTest(TestCase):
     @parameterized.expand([param("in", edge_dir="in"), param("out", edge_dir="out")])
-    def test_row_offsets_sample_exactly_as_rows_for_every_id(
+    def test_compressed_id_offsets_sample_exactly_as_rows_for_every_id(
         self, _name: str, edge_dir: Literal["in", "out"]
     ) -> None:
         every_row = _run(edge_dir, range_partitioned=False)
@@ -207,24 +207,30 @@ class GlobalIdNeighborSamplerTest(TestCase):
     """``_GlobalIdNeighborSampler`` on topologies with and without a row offset."""
 
     def _sampler(
-        self, topology: Topology, stores_only_owned_rows: bool, with_neg: bool = False
+        self,
+        topology: Topology,
+        is_range_partitioned_compact: bool,
+        with_neg: bool = False,
     ) -> _GlobalIdNeighborSampler:
         return _GlobalIdNeighborSampler(
             Graph(topology, "CPU", None),
             [-1],
             device=torch.device("cpu"),
             with_neg=with_neg,
-            stores_only_owned_rows=stores_only_owned_rows,
+            is_range_partitioned_compact=is_range_partitioned_compact,
         )
 
-    def test_sampling_takes_global_ids_on_a_row_offset(self) -> None:
+    def test_sampling_takes_global_ids_on_a_compressed_id_offset(self) -> None:
         """Ids 7 to 9 are stored as rows 0 to 2."""
         topology = CompactTopology(
-            torch.tensor([[0, 1], [0, 1]]), layout="CSR", num_rows=3, row_offset=7
+            torch.tensor([[0, 1], [0, 1]]),
+            layout="CSR",
+            num_rows=3,
+            compressed_id_offset=7,
         )
-        output = self._sampler(topology, stores_only_owned_rows=True).sample_one_hop(
-            torch.tensor([0, 7, 8, 9, 10]), -1
-        )
+        output = self._sampler(
+            topology, is_range_partitioned_compact=True
+        ).sample_one_hop(torch.tensor([0, 7, 8, 9, 10]), -1)
         self.assertEqual(output.nbr.tolist(), [0, 1])
         self.assertEqual(output.nbr_num.tolist(), [0, 1, 1, 0, 0])
 
@@ -232,27 +238,27 @@ class GlobalIdNeighborSamplerTest(TestCase):
         """GLT's own build has no row offset; ids past its last row get no neighbors."""
         topology = Topology(edge_index=torch.tensor([[0, 1, 1], [2, 0, 2]]))
         seeds = torch.tensor([1, 0, 5])
-        output = self._sampler(topology, stores_only_owned_rows=False).sample_one_hop(
-            seeds, -1
-        )
+        output = self._sampler(
+            topology, is_range_partitioned_compact=False
+        ).sample_one_hop(seeds, -1)
         self.assertEqual(output.nbr.tolist(), [0, 2, 2])
         self.assertEqual(output.nbr_num.tolist(), [2, 1, 0])
 
     def test_negative_sampling_raises_when_only_owned_rows_are_stored(self) -> None:
         topology = CompactTopology(
-            torch.tensor([[0, 1], [0, 1]]), layout="CSR", row_offset=0
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", compressed_id_offset=0
         )
         with self.assertRaises(ValueError):
             self._sampler(
-                topology, stores_only_owned_rows=True, with_neg=True
+                topology, is_range_partitioned_compact=True, with_neg=True
             ).lazy_init_neg_sampler()
 
     def test_subgraph_extraction_raises_when_only_owned_rows_are_stored(self) -> None:
         topology = CompactTopology(
-            torch.tensor([[0, 1], [0, 1]]), layout="CSR", row_offset=0
+            torch.tensor([[0, 1], [0, 1]]), layout="CSR", compressed_id_offset=0
         )
         with self.assertRaises(ValueError):
-            self._sampler(topology, stores_only_owned_rows=True).subgraph_op
+            self._sampler(topology, is_range_partitioned_compact=True).subgraph_op
 
     @parameterized.expand(
         [
@@ -261,11 +267,11 @@ class GlobalIdNeighborSamplerTest(TestCase):
             param("tensor_rank_1", rank=1, range_partitioned=False, expected=False),
         ]
     )
-    def test_every_rank_of_a_range_partitioned_build_stores_only_owned_rows(
+    def test_every_rank_of_a_range_partitioned_build_is_range_partitioned_compact(
         self, _name: str, rank: int, range_partitioned: bool, expected: bool
     ) -> None:
         dataset = _partition_dataset(rank, "out", range_partitioned)
-        self.assertEqual(_stores_only_owned_rows(dataset), expected)
+        self.assertEqual(_is_range_partitioned_compact(dataset), expected)
 
 
 if __name__ == "__main__":

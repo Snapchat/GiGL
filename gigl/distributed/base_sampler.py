@@ -57,7 +57,11 @@ from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
 )
-from gigl.utils.csr import CompactTopology, get_row_offset, to_local_rows
+from gigl.utils.csr import (
+    CompactTopology,
+    get_compressed_id_offset,
+    to_local_compressed_ids,
+)
 from gigl.utils.data_splitters import PADDING_NODE
 
 logger = Logger()
@@ -121,11 +125,13 @@ class SampleLoopInputs:
     metadata: dict[str, torch.Tensor]
 
 
-def _stores_only_owned_rows(data: DistDataset) -> bool:
-    """Whether ``data`` was built with each rank's topology holding only the rows it owns.
+def _is_range_partitioned_compact(data: DistDataset) -> bool:
+    """Whether ``data`` uses the compact build under a range partition book.
+
+    Each rank's topology then stores only the rows for the node ids in its range of the partition book.
 
     GiGL's compact build (:class:`gigl.utils.csr.CompactTopology`) under a range partition book
-    stores rows from the rank's range start, as recorded in ``row_offset``.
+    stores rows from the rank's range start, as recorded in ``compressed_id_offset``.
     This holds on every rank, including rank 0, whose offset is 0, so all ranks agree.
     Graphs that fall back to GLT's build, and tensor partition books, keep a row per id.
 
@@ -133,18 +139,20 @@ def _stores_only_owned_rows(data: DistDataset) -> bool:
         data: The dataset the sampler reads.
 
     Returns:
-        bool: Whether the topologies store only the owned rows.
+        bool: Whether the topologies store only the rows in each rank's range.
     """
     if isinstance(data.node_pb, dict):
-        books = list(data.node_pb.values())
+        partition_books = list(data.node_pb.values())
     else:
-        books = [data.node_pb]
+        partition_books = [data.node_pb]
     graphs: list[Graph]
     if isinstance(data.graph, dict):
         graphs = list(data.graph.values())
     else:
         graphs = [data.graph]
-    range_partitioned = any(isinstance(book, RangePartitionBook) for book in books)
+    range_partitioned = any(
+        isinstance(book, RangePartitionBook) for book in partition_books
+    )
     compact = any(isinstance(graph.topo, CompactTopology) for graph in graphs)
     return range_partitioned and compact
 
@@ -153,7 +161,7 @@ class _GlobalIdNeighborSampler(NeighborSampler):
     """GLT's ``NeighborSampler``, taking global seed ids.
 
     Under range partitioning a rank's topology stores rows only for the ids the rank owns (see
-    ``row_offset`` of :class:`gigl.utils.csr.CompactTopology`), but GLT's kernels index ``indptr``
+    ``compressed_id_offset`` of :class:`gigl.utils.csr.CompactTopology`), but GLT's kernels index ``indptr``
     by the seed id.
     ``sample_one_hop`` translates seeds to local rows first, on every topology: with a row offset
     of 0 the translation only maps ids past the last row to the row count.
@@ -164,14 +172,14 @@ class _GlobalIdNeighborSampler(NeighborSampler):
 
     Args:
         *args: Positional arguments of GLT's ``NeighborSampler``.
-        stores_only_owned_rows: Whether the topologies store only the rows the rank owns, as
-            :func:`_stores_only_owned_rows` returns.
+        is_range_partitioned_compact: Whether the topologies store only the rows the rank owns, as
+            :func:`_is_range_partitioned_compact` returns.
         **kwargs: Keyword arguments of GLT's ``NeighborSampler``.
     """
 
-    def __init__(self, *args, stores_only_owned_rows: bool, **kwargs) -> None:
+    def __init__(self, *args, is_range_partitioned_compact: bool, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._stores_only_owned_rows = stores_only_owned_rows
+        self._is_range_partitioned_compact = is_range_partitioned_compact
 
     def sample_one_hop(
         self,
@@ -190,8 +198,11 @@ class _GlobalIdNeighborSampler(NeighborSampler):
             NeighborOutput: The sampled neighbors, as GLT's ``sample_one_hop`` returns them.
         """
         graph = self.graph if etype is None else self.graph[etype]
-        local_seeds = to_local_rows(
-            input_seeds, get_row_offset(graph.topo), graph.topo.row_count
+        # ``to_local_compressed_ids`` takes the number of stored rows, not the global id bound.
+        local_seeds = to_local_compressed_ids(
+            input_seeds,
+            compressed_id_offset=get_compressed_id_offset(graph.topo),
+            num_rows=graph.topo.row_count,
         )
         return super().sample_one_hop(local_seeds, req_num, etype)
 
@@ -201,7 +212,7 @@ class _GlobalIdNeighborSampler(NeighborSampler):
         Raises:
             ValueError: If negative sampling is on and the topologies store only the owned rows.
         """
-        if self.with_neg and self._stores_only_owned_rows:
+        if self.with_neg and self._is_range_partitioned_compact:
             raise ValueError(
                 "Negative sampling is not supported on a range-partitioned compact topology"
             )
@@ -213,7 +224,7 @@ class _GlobalIdNeighborSampler(NeighborSampler):
         Raises:
             ValueError: If the topologies store only the owned rows.
         """
-        if self._stores_only_owned_rows:
+        if self._is_range_partitioned_compact:
             raise ValueError(
                 "Subgraph extraction is not supported on a range-partitioned compact topology"
             )
@@ -427,7 +438,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             self.with_weight,
             self.edge_dir,
             seed=self.seed,
-            stores_only_owned_rows=_stores_only_owned_rows(data),
+            is_range_partitioned_compact=_is_range_partitioned_compact(data),
         )
         self.inducer_pool = queue.Queue(maxsize=self.concurrency)
 

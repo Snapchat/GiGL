@@ -47,7 +47,7 @@ from gigl.common.logger import Logger
 from gigl.distributed.utils.device import get_device_from_process_group
 from gigl.distributed.utils.networking import get_internal_ip_from_all_ranks
 from gigl.types.graph import is_label_edge_type
-from gigl.utils.csr import get_row_offset
+from gigl.utils.csr import get_compressed_id_offset
 
 logger = Logger()
 
@@ -166,22 +166,20 @@ def _clamp_to_int32(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.clamp(max=_INT32_MAX).to(torch.int32)
 
 
-def _compute_degrees_from_indptr(indptr: torch.Tensor) -> torch.Tensor:
-    """Compute degrees from CSR row pointers: degree[i] = indptr[i+1] - indptr[i]."""
-    return _clamp_to_int32(indptr[1:] - indptr[:-1])
-
-
 def _compute_degrees_from_topology(topo: Topology) -> torch.Tensor:
     """Compute degrees indexed by global compressed id.
 
     A topology with a row offset stores no rows below it, so those ids get degree 0.
     """
-    local_degrees = _compute_degrees_from_indptr(topo.indptr)
-    row_offset = get_row_offset(topo)
-    if not row_offset:
+    indptr = topo.indptr
+    local_degrees = _clamp_to_int32(indptr[1:] - indptr[:-1])
+    compressed_id_offset = get_compressed_id_offset(topo)
+    if not compressed_id_offset:
         return local_degrees
-    degrees = torch.zeros(row_offset + local_degrees.numel(), dtype=local_degrees.dtype)
-    degrees[row_offset:] = local_degrees
+    degrees = torch.zeros(
+        compressed_id_offset + local_degrees.numel(), dtype=local_degrees.dtype
+    )
+    degrees[compressed_id_offset:] = local_degrees
     return degrees
 
 

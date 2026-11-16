@@ -17,7 +17,11 @@ from parameterized import param, parameterized
 from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
-from gigl.utils.csr import CompactTopology, get_row_offset, to_local_rows
+from gigl.utils.csr import (
+    CompactTopology,
+    get_compressed_id_offset,
+    to_local_compressed_ids,
+)
 from gigl.utils.data_splitters import _get_padded_labels
 from tests.test_assets.test_case import TestCase
 
@@ -41,12 +45,12 @@ class CompactTopologyTest(TestCase):
     def test_it_has_exactly_the_attributes_of_a_real_topology(self) -> None:
         """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed.
 
-        ``row_offset`` is the one field GiGL adds.
+        ``compressed_id_offset`` is the one field GiGL adds.
         """
         coo = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64)
         self.assertEqual(
-            set(CompactTopology(coo, layout="CSR", row_offset=0).__dict__)
-            - {"row_offset"},
+            set(CompactTopology(coo, layout="CSR", compressed_id_offset=0).__dict__)
+            - {"compressed_id_offset"},
             set(Topology(edge_index=coo, layout="CSR").__dict__),
         )
 
@@ -54,21 +58,25 @@ class CompactTopologyTest(TestCase):
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
         self.assertEqual(
             CompactTopology(
-                coo, layout="CSR", retain_edge_ids=True, row_offset=0
+                coo, layout="CSR", retain_edge_ids=True, compressed_id_offset=0
             ).edge_ids.tolist(),
             [3, 1, 2, 0],
         )
 
     def test_implicit_edge_ids_are_omitted_by_default(self) -> None:
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
-        self.assertIsNone(CompactTopology(coo, layout="CSR", row_offset=0).edge_ids)
+        self.assertIsNone(
+            CompactTopology(coo, layout="CSR", compressed_id_offset=0).edge_ids
+        )
 
     def test_implicit_edge_ids_can_be_omitted_when_sampling_neighbors(self) -> None:
         from graphlearn_torch import py_graphlearn_torch as pywrap
 
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=torch.int64)
         compact = Graph(
-            CompactTopology(coo, layout="CSR", retain_edge_ids=False, row_offset=0),
+            CompactTopology(
+                coo, layout="CSR", retain_edge_ids=False, compressed_id_offset=0
+            ),
             "CPU",
             None,
         )
@@ -83,7 +91,7 @@ class CompactTopologyTest(TestCase):
 
     def test_a_float_edge_index_is_cast_as_glt_does(self) -> None:
         coo = torch.tensor([[0.0, 2.0, 2.0], [1.0, 0.0, 1.0]])
-        lean = CompactTopology(coo, layout="CSR", row_offset=0)
+        lean = CompactTopology(coo, layout="CSR", compressed_id_offset=0)
         reference = Topology(edge_index=coo, layout="CSR")
         torch.testing.assert_close(lean.indptr, reference.indptr, rtol=0, atol=0)
         torch.testing.assert_close(lean.indices, reference.indices, rtol=0, atol=0)
@@ -94,7 +102,10 @@ class CompactTopologyTest(TestCase):
 
         graph = Graph(
             CompactTopology(
-                torch.empty((2, 0)), layout="CSC", retain_edge_ids=True, row_offset=0
+                torch.empty((2, 0)),
+                layout="CSC",
+                retain_edge_ids=True,
+                compressed_id_offset=0,
             ),
             "CPU",
             None,
@@ -348,7 +359,7 @@ class InitializeGraphTest(TestCase):
 
         ``out`` compresses sources (user, 100 nodes), ``in`` destinations (item, 20).
         """
-        books: dict[NodeType, Union[torch.Tensor, RangePartitionBook]] = (
+        partition_books: dict[NodeType, Union[torch.Tensor, RangePartitionBook]] = (
             {NodeType("user"): torch.zeros(100), NodeType("item"): torch.zeros(20)}
             if tensor_book
             else {
@@ -368,7 +379,7 @@ class InitializeGraphTest(TestCase):
                     edge_index=torch.tensor([[0, 3], [1, 2]]), edge_ids=None
                 )
             },
-            node_partition_book=books,
+            node_partition_book=partition_books,
             edge_features_registered=False,
         )
 
@@ -457,7 +468,7 @@ class RangePartitionRowOffsetTest(TestCase):
 
         assert isinstance(dataset.graph, dict)
         topology = dataset.graph[_EDGE_TYPE].topo
-        self.assertEqual(get_row_offset(topology), 10)
+        self.assertEqual(get_compressed_id_offset(topology), 10)
         self.assertEqual(topology.indptr.numel(), 15 + 1)
         row, col, _, _ = topology.to_coo()
         self.assertEqual(
@@ -483,7 +494,7 @@ class RangePartitionRowOffsetTest(TestCase):
         dataset = self._build(torch.tensor([[3], [12]]), "out", torch.zeros(25))
         assert isinstance(dataset.graph, dict)
         topology = dataset.graph[_EDGE_TYPE].topo
-        self.assertEqual(get_row_offset(topology), 0)
+        self.assertEqual(get_compressed_id_offset(topology), 0)
         self.assertEqual(topology.indptr.numel(), 25 + 1)
 
     def test_the_glt_build_keeps_every_row(self) -> None:
@@ -491,9 +502,9 @@ class RangePartitionRowOffsetTest(TestCase):
             torch.tensor([[12], [3]]), "out", self._BOOK, edge_features_registered=True
         )
         assert isinstance(dataset.graph, dict)
-        self.assertEqual(get_row_offset(dataset.graph[_EDGE_TYPE].topo), 0)
+        self.assertEqual(get_compressed_id_offset(dataset.graph[_EDGE_TYPE].topo), 0)
 
-    def test_the_row_offset_survives_ipc(self) -> None:
+    def test_the_compressed_id_offset_survives_ipc(self) -> None:
         dataset = self._build(torch.tensor([[12, 24], [3, 4]]), "out", self._BOOK)
 
         assert isinstance(dataset.graph, dict)
@@ -502,14 +513,14 @@ class RangePartitionRowOffsetTest(TestCase):
         # DistDataset.share_ipc hands each Graph to GLT's Graph reduction.
         rebuilt = ForkingPickler.loads(ForkingPickler.dumps(graph))
 
-        self.assertEqual(get_row_offset(rebuilt.topo), 10)
+        self.assertEqual(get_compressed_id_offset(rebuilt.topo), 10)
         self.assert_tensor_equality(rebuilt.topo.indptr, graph.topo.indptr)
         self.assertEqual(rebuilt.row_count, 15)
 
-    def test_seeds_translate_to_local_rows(self) -> None:
+    def test_seeds_translate_to_local_compressed_ids(self) -> None:
         self.assert_tensor_equality(
-            to_local_rows(
-                torch.tensor([3, 10, 17, 24, 25]), row_offset=10, num_rows=15
+            to_local_compressed_ids(
+                torch.tensor([3, 10, 17, 24, 25]), compressed_id_offset=10, num_rows=15
             ),
             torch.tensor([15, 0, 7, 14, 15]),
         )
@@ -591,7 +602,9 @@ class SamplingParityTest(TestCase):
         coo = torch.tensor([[1, 0, 1, 0], [7, 5, 6, 4]], dtype=dtype)
         seeds = torch.tensor([0, 1] if layout == "CSR" else [4, 5, 6, 7])
         compact = Graph(
-            CompactTopology(coo, layout=layout, retain_edge_ids=True, row_offset=0),
+            CompactTopology(
+                coo, layout=layout, retain_edge_ids=True, compressed_id_offset=0
+            ),
             "CPU",
             None,
         )
@@ -624,7 +637,7 @@ class SamplingParityTest(TestCase):
             dtype=torch.int64,
         )
         topology = CompactTopology(
-            coo, layout=layout, retain_edge_ids=True, row_offset=0
+            coo, layout=layout, retain_edge_ids=True, compressed_id_offset=0
         )
         self.assertEqual(sorted(topology.edge_ids.tolist()), list(range(coo.size(1))))
         compressed, other = (0, 1) if layout == "CSR" else (1, 0)
@@ -655,7 +668,9 @@ class SamplingParityTest(TestCase):
         coo = _random_coo(num_nodes, 4_000, seed=11)
 
         lean = Graph(
-            CompactTopology(coo.to(dtype), layout=layout, row_offset=0), "CPU", None
+            CompactTopology(coo.to(dtype), layout=layout, compressed_id_offset=0),
+            "CPU",
+            None,
         )
         lean.lazy_init()
 

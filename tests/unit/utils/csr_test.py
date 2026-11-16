@@ -413,7 +413,7 @@ class ScatterPlacementTest(TestCase):
             ),
         ):
             topology = CompactTopology(
-                coo, layout="CSR", retain_edge_ids=True, row_offset=0
+                coo, layout="CSR", retain_edge_ids=True, compressed_id_offset=0
             )
             edge_ids_ptr = topology.edge_ids.data_ptr()
             self.assertTrue(topology.edge_ids.is_shared())
