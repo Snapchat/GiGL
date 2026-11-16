@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -32,8 +33,18 @@ class ParquetManifestTest(TestCase):
     def test_write_manifest_records_row_groups_and_skips_other_files(self) -> None:
         manifest = parquet_manifest.write_manifest(UriFactory.create_uri(self.root))
         expected_files = {
-            "part-00000-of-00002.parquet": [10, 10, 5],
-            "part-00001-of-00002.parquet": [5],
+            "part-00000-of-00002.parquet": {
+                "row_groups": [10, 10, 5],
+                "size_bytes": os.path.getsize(
+                    self.root / "part-00000-of-00002.parquet"
+                ),
+            },
+            "part-00001-of-00002.parquet": {
+                "row_groups": [5],
+                "size_bytes": os.path.getsize(
+                    self.root / "part-00001-of-00002.parquet"
+                ),
+            },
         }
         self.assertEqual(manifest["version"], parquet_manifest.MANIFEST_VERSION)
         self.assertEqual(manifest["files"], expected_files)
@@ -46,7 +57,7 @@ class ParquetManifestTest(TestCase):
         parquet_manifest.write_manifest(UriFactory.create_uri(self.root))
         files = parquet_manifest.list_parquet_files(self.fs, self.path)
         self.assertEqual(
-            files,
+            [file.path for file in files],
             [
                 f"{self.path}/part-00000-of-00002.parquet",
                 f"{self.path}/part-00001-of-00002.parquet",
@@ -84,4 +95,12 @@ class ParquetManifestTest(TestCase):
         _write_parquet(self.root / "part-00002-of-00002.parquet", 3, 3)
         files = parquet_manifest.list_parquet_files(self.fs, self.path)
         with self.assertRaises(ValueError):
+            parquet_manifest.read_manifest_row_groups(self.fs, self.path, files)
+
+    def test_read_manifest_row_groups_raises_when_a_file_size_changed(self) -> None:
+        parquet_manifest.write_manifest(UriFactory.create_uri(self.root))
+        # Same name and row count, different size.
+        _write_parquet(self.root / "part-00001-of-00002.parquet", 5, 1)
+        files = parquet_manifest.list_parquet_files(self.fs, self.path)
+        with self.assertRaisesRegex(ValueError, "bytes"):
             parquet_manifest.read_manifest_row_groups(self.fs, self.path, files)
