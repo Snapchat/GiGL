@@ -3,6 +3,14 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
+# Python minor for every uv command and for `ty`, e.g. `make unit_test PYTHON_MINOR=3.13`. Defaults to the
+# minor of UV_PYTHON when the environment sets it (e.g. UV_PYTHON=3.13.15 gives 3.13), otherwise to the
+# minor of .python-version.
+PYTHON_MINOR ?= $(shell echo "$${UV_PYTHON:-$$(cat .python-version)}" | cut -d. -f1,2)
+# An environment that already sets UV_PYTHON keeps its interpreter: PYTHON_MINOR= on the command line
+# steers uv only when UV_PYTHON is unset.
+export UV_PYTHON ?= $(PYTHON_MINOR)
+
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
 SHORT_GIT_HASH?=$(shell git rev-parse --short HEAD 2>/dev/null || "")
@@ -84,6 +92,7 @@ install_deps:
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
 	uv run python tests/config_tests/glt_patches_check.py
+	uv run python tests/config_tests/beam_sdk_image_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
@@ -188,7 +197,7 @@ format_cpp:
 format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
-	uv run ty check ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
