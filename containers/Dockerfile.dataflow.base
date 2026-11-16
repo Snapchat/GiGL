@@ -5,7 +5,8 @@
 #   - the Python minor in the image *name* (`beam_python3.11_sdk`) is kept equal to
 #     .python-version by convention. Nothing copied out of this stage depends on it: `boot`
 #     is the same binary in every Python minor's SDK image, and the rest is license files
-#     and an apache-beam sdist that this image does not install.
+#     and an apache-beam sdist that this image does not install. So this one stage serves
+#     the image for every PYTHON_VERSION.
 # Pinned by digest so that a re-push of the tag upstream cannot change what this stage copies.
 # The tag is a multi-platform index, so this digest is the index's.
 ARG BEAM_SDK_IMAGE=apache/beam_python3.11_sdk:2.76.0@sha256:e1964c6453c6412ee6228272fc09414a9d782fb8ccb7c475db06239f40e667e0
@@ -36,7 +37,6 @@ COPY requirements requirements
 # post_install.py imports gigl.scripts.glt_wheel_cache, so `gigl` must be a package here.
 COPY gigl/__init__.py gigl/__init__.py
 COPY gigl/scripts gigl/scripts
-COPY .python-version .python-version
 # gigl-core is a path dependency in pyproject.toml. uv sync needs its metadata to
 # resolve the lockfile. Copying only the build manifest (no C++ sources) so cmake
 # configures but compiles nothing — the src Dockerfile installs the real wheel later.
@@ -44,7 +44,14 @@ COPY gigl-core/pyproject.toml gigl-core/pyproject.toml
 COPY gigl-core/CMakeLists.txt gigl-core/CMakeLists.txt
 COPY gigl-core/README.md gigl-core/README.md
 
-RUN bash ./requirements/install_py_deps.sh --skip-glt-post-install
+# The Python version this image's venv is built on, e.g. 3.13.15. Required.
+ARG PYTHON_VERSION
+# Set before the install so uv builds the venv on PYTHON_VERSION, and kept in the image so that every later
+# uv command stays on that venv instead of resolving .python-version. The Makefile reads it as well.
+ENV UV_PYTHON=${PYTHON_VERSION}
+# only-managed keeps uv from settling for a system Python that matches the request.
+RUN : "${UV_PYTHON:?Pass --build-arg PYTHON_VERSION=<X.Y.Z>}" \
+    && UV_PYTHON_PREFERENCE=only-managed bash ./requirements/install_py_deps.sh --skip-glt-post-install
 
 # The UV_PROJECT_ENVIRONMENT environment variable can be used to configure the project virtual environment path
 # Since the above command should have created the .venv, we activate by default for any future uv commands.

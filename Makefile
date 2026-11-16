@@ -10,6 +10,8 @@ PYTHON_MINOR ?= $(shell echo "$${UV_PYTHON:-$$(cat .python-version)}" | cut -d. 
 # An environment that already sets UV_PYTHON keeps its interpreter: PYTHON_MINOR= on the command line
 # steers uv only when UV_PYTHON is unset.
 export UV_PYTHON ?= $(PYTHON_MINOR)
+# Suffix of this minor's image tags and dep_vars.env keys, e.g. py313.
+PY_TAG := py$(subst .,,$(PYTHON_MINOR))
 
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
@@ -29,18 +31,20 @@ DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DOCKER_IMAGE_TAG}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DOCKER_IMAGE_TAG}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DOCKER_IMAGE_TAG}
+# The Python suffix keeps images that different minors build in the same minute apart.
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
 DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DOCKER_IMAGE_TAG}
 
 # Image built and used by `make integration_test`. The tag defaults to ${DOCKER_IMAGE_TAG} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
 # other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
-# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
+# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export. The Python
+# suffix goes after the tag so that minors sharing one CI run ID push different images.
 INTEGRATION_TEST_CPU_IMAGE_TAG?=${DOCKER_IMAGE_TAG}
-INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}-${PY_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
@@ -337,6 +341,14 @@ run_all_e2e_tests:
 # The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
 run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
 run_glt_e2e_tests: run_all_e2e_tests
+
+# Builds and pushes this minor's 3 release src images (cuda, cpu, cpu-dataflow) and compiles and uploads its KFP
+# pipeline, using the refs under the dep_vars.env keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
+release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))
+release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_TAG))
+release_kfp_pipeline: compile_gigl_kubeflow_pipeline
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path

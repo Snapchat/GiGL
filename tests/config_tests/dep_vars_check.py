@@ -17,6 +17,14 @@ def _load_supported_python_versions_script():
     return module
 
 
+def _read_dep_vars(repo_root: Path) -> dict[str, str]:
+    return dict(
+        line.split("=", 1)
+        for line in (repo_root / "gigl" / "dep_vars.env").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+
+
 def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
     """`SUPPORTED_PYTHON_VERSIONS` must agree with the classifiers and `requires-python`.
 
@@ -52,6 +60,41 @@ def check_supported_python_versions(repo_root: Path = REPO_ROOT) -> None:
         )
 
 
+# Key family -> the suffix its value must end with after the `-py<XY>` tag.
+_PER_MINOR_KEY_FAMILIES = {
+    "DOCKER_LATEST_BASE_CUDA_IMAGE_NAME_WITH_TAG": "",
+    "DOCKER_LATEST_BASE_CPU_IMAGE_NAME_WITH_TAG": "",
+    "DOCKER_LATEST_BASE_DATAFLOW_IMAGE_NAME_WITH_TAG": "",
+    "DOCKER_LATEST_BUILDER_IMAGE_NAME_WITH_TAG": "",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA": "",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU": "",
+    "DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU": "",
+    "DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH": ".yaml",
+}
+
+
+def check_per_minor_keys(repo_root: Path = REPO_ROOT) -> None:
+    """Every supported minor has each per-minor key, ending in its `-py<XY>` tag, and no other minor has keys."""
+    values = _read_dep_vars(repo_root)
+    tags = [
+        "py" + "".join(version.split(".")[:2])
+        for version in values["SUPPORTED_PYTHON_VERSIONS"].split(",")
+    ]
+    expected_keys = set()
+    for tag in tags:
+        for family, extension in _PER_MINOR_KEY_FAMILIES.items():
+            key = f"{family}_{tag}"
+            expected_keys.add(key)
+            assert key in values, f"gigl/dep_vars.env is missing {key}"
+            assert values[key].endswith(f"-{tag}{extension}"), (
+                f"{key}={values[key]} does not end in -{tag}{extension}"
+            )
+    stray_keys = {key for key in values if re.search(r"_py\d+$", key)} - expected_keys
+    assert not stray_keys, (
+        f"gigl/dep_vars.env has per-minor keys for minors not in SUPPORTED_PYTHON_VERSIONS: {sorted(stray_keys)}"
+    )
+
+
 if __name__ == "__main__":
     assert DEP_VARS_FILE_PATH.exists(), (
         f"File `gigl/dep_vars.env` not found at: {DEP_VARS_FILE_PATH}"
@@ -68,3 +111,4 @@ if __name__ == "__main__":
                     f"Invalid line found in `gigl/dep_vars.env`: {line}. Expected format: var=value"
                 )
     check_supported_python_versions()
+    check_per_minor_keys()
