@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- The padded Graph Transformer path computes `hop_distance` for k-hop sequences when the batch has none, so
+  `AddHeteroHopDistanceEncoding` is optional and a fallback batch no longer raises
 - Make the sampling-loader bring-up RPC timeout configurable via `GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS` (workers reset
   to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
   bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and

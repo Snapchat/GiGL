@@ -295,24 +295,17 @@ class PackedPathTest(TestCase):
         expected = _run_packed(encoder, data)
         del data[_HOP]
         torch.testing.assert_close(_run_packed(encoder, data), expected)
-        with self.assertRaisesRegex(ValueError, "apply the corresponding transform"):
-            encoder(data, anchor_node_type=_USER)
+        torch.testing.assert_close(encoder(data, anchor_node_type=_USER), expected)
 
-    def test_fallback_batch_without_the_hop_distance_attribute_raises(self) -> None:
+    def test_fallback_batch_without_the_hop_distance_attribute_matches_transform(
+        self,
+    ) -> None:
         data = _oversized_layout_batch()
         encoder = _materialized_encoder(data, _encoder_kwargs())
+        expected = _run_packed(encoder, data)
         del data[_HOP]
-        with self.assertRaisesRegex(ValueError, "AddHeteroHopDistanceEncoding"):
-            _run_packed(encoder, data)
-        # Without the hop input the same batch falls back and runs.
-        encoder = _materialized_encoder(
-            data,
-            _encoder_kwargs(
-                anchor_based_input_attr_names=None,
-                anchor_based_input_embedding_dict=None,
-            ),
-        )
-        self.assertEqual(_run_packed(encoder, data).shape, (1, 8))
+        torch.testing.assert_close(_run_packed(encoder, data), expected)
+        self.assertFalse(hasattr(data, _HOP))
 
     def test_packed_path_uses_the_layout_hop_not_the_attribute(self) -> None:
         # A transform with a smaller h_max stores different hops than the layout
@@ -463,10 +456,20 @@ class PackedPathTest(TestCase):
         [
             param("without_fallback", fall_back_at=(), settled_from=2),
             param("with_fallback", fall_back_at=(3,), settled_from=5),
+            param(
+                "with_fallback_without_hop_attribute",
+                fall_back_at=(3,),
+                settled_from=5,
+                drop_hop_attribute=True,
+            ),
         ]
     )
     def test_whole_encoder_compile_does_not_recompile_across_batches(
-        self, _: str, fall_back_at: tuple[int, ...], settled_from: int
+        self,
+        _: str,
+        fall_back_at: tuple[int, ...],
+        settled_from: int,
+        drop_hop_attribute: bool = False,
     ) -> None:
         torch._dynamo.reset()
         self.addCleanup(torch._dynamo.reset)
@@ -491,8 +494,11 @@ class PackedPathTest(TestCase):
             compiled = torch.compile(encoder, backend="eager")
             for seed in range(8):
                 fall_back["now"] = seed in fall_back_at
+                batch = _random_batch(seed)
+                if drop_hop_attribute:
+                    del batch[_HOP]
                 with torch.no_grad():
-                    compiled(_random_batch(seed), anchor_node_type=_USER)
+                    compiled(batch, anchor_node_type=_USER)
                 graph_counts.append(
                     torch._dynamo.utils.counters["stats"]["unique_graphs"]
                 )
