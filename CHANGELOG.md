@@ -57,6 +57,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   its values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
   `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
   @kmontemayor2-sc
+- Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
+  (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
+  through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
 - GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
   (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
   comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
