@@ -26,6 +26,7 @@ from typing import Literal, Optional
 
 import torch
 from graphlearn_torch.data import Topology
+from jaxtyping import Int64
 
 from gigl.common.logger import Logger
 from gigl.utils.csr_parallel import (
@@ -449,8 +450,8 @@ def get_compressed_id_offset(topology: Topology) -> int:
 
 
 def to_local_compressed_ids(
-    ids: torch.Tensor, compressed_id_offset: int, num_rows: int
-) -> torch.Tensor:
+    ids: Int64[torch.Tensor, "ids"], compressed_id_offset: int, num_rows: int
+) -> Int64[torch.Tensor, "ids"]:
     """Translate global compressed ids to rows of a topology that starts at ``compressed_id_offset``.
 
     Ids outside ``[compressed_id_offset, compressed_id_offset + num_rows)`` map to ``num_rows``.
@@ -467,7 +468,7 @@ def to_local_compressed_ids(
         num_rows: The number of stored rows.
 
     Returns:
-        torch.Tensor: Local row ids, same shape and dtype as ``ids``.
+        torch.Tensor: Local row ids.
     """
     local = ids - compressed_id_offset
     return torch.where((local >= 0) & (local < num_rows), local, num_rows)
