@@ -17,11 +17,14 @@ class Param:
 
 
 GCP_DL_IMAGES_REPO = "projects/deeplearning-platform-release/global/images"
-# Support for the default GCP DL image used below ends on August 1, 2026
-# It becomes not available after August 1, 2027.
-# See `machine_boot_image` arg description for more details.
-DEFAULT_GCP_DL_IMAGE = f"common-cu128-ubuntu-2204-nvidia-570-v20250728"
-DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE = datetime.datetime(2026, 8, 1)
+# The default image is Ubuntu 24.04 because some locked dependencies (e.g. tensorflow-data-validation 1.21) only ship
+# Linux wheels for glibc 2.39+, and Ubuntu 22.04 ships glibc 2.35. The supported Ubuntu 24.04 images ship CUDA 12.9
+# with NVIDIA driver 580, not CUDA 12.8. GiGL's torch stays on cu128, and the gigl-core and GLT CUDA builds compile
+# with the image's CUDA 12.9 nvcc; torch's extension build fails only when the CUDA major versions differ.
+# Support for this image family ends on August 4, 2028, which is also its end of availability.
+# See https://cloud.google.com/deep-learning-vm/docs/images and the `machine_boot_image` arg description.
+DEFAULT_GCP_DL_IMAGE = "common-cu129-ubuntu-2404-nvidia-580-v20261111"
+DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE = datetime.datetime(2028, 8, 4)
 
 
 class SupportedParams:
