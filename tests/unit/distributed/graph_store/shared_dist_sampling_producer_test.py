@@ -13,6 +13,7 @@ import torch.multiprocessing as mp
 from graphlearn_torch.channel import QueueTimeoutError
 from graphlearn_torch.sampler import NodeSamplerInput, SamplingConfig, SamplingType
 
+from gigl.distributed.constants import SAMPLING_RPC_CHANNELS_ENV
 from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     EPOCH_DONE_EVENT,
     ActiveEpochState,
@@ -27,7 +28,6 @@ from gigl.distributed.graph_store.shared_dist_sampling_producer import (
     _shared_sampling_worker_loop,
 )
 from gigl.distributed.sampler_options import KHopNeighborSamplerOptions
-from gigl.distributed.utils.rpc_init import SAMPLING_RPC_CHANNELS_ENV
 from tests.test_assets.test_case import TestCase
 
 

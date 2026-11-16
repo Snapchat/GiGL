@@ -172,6 +172,12 @@ block instead when the expression:
   call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`
   fails the test command.
 
+### Environment Variables
+
+- Define environment variables read by `gigl/distributed/` code in `gigl/distributed/constants.py` as `Final[str]`
+  constants. Document each one in a comment above it: what it controls, its allowed values, its default, and whether it
+  must be identical on every node of a job.
+
 ### Docstrings
 
 Add Google-style docstrings for all public functions and methods. Include: one-line summary, optional details, Example
