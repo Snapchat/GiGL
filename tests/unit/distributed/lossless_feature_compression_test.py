@@ -384,7 +384,7 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book=torch.zeros(_NUM_NODES),
+                node_partition_book=torch.zeros(_NUM_NODES, dtype=torch.int64),
                 edge_partition_book=torch.zeros(_ring_edges().shape[1]),
                 partitioned_edge_index=GraphPartitionData(
                     edge_index=_ring_edges(), edge_ids=None
@@ -427,10 +427,15 @@ class LosslessCompressionLoaderTest(TestCase):
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book={_USER: torch.zeros(5), _STORY: torch.zeros(5)},
+                node_partition_book={
+                    _USER: torch.zeros(5, dtype=torch.int64),
+                    _STORY: torch.zeros(5, dtype=torch.int64),
+                },
                 edge_partition_book={
-                    _USER_TO_STORY: torch.zeros(5),
-                    EdgeType(_STORY, Relation("to"), _USER): torch.zeros(5),
+                    _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
+                    EdgeType(_STORY, Relation("to"), _USER): torch.zeros(
+                        5, dtype=torch.int64
+                    ),
                 },
                 partitioned_edge_index={
                     _USER_TO_STORY: GraphPartitionData(
@@ -474,7 +479,7 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book=torch.zeros(_NUM_NODES),
+                node_partition_book=torch.zeros(_NUM_NODES, dtype=torch.int64),
                 edge_partition_book=torch.zeros(_ring_edges().shape[1]),
                 partitioned_edge_index=GraphPartitionData(
                     edge_index=_ring_edges(), edge_ids=None
@@ -512,10 +517,13 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book={_USER: torch.zeros(5), _STORY: torch.zeros(5)},
+                node_partition_book={
+                    _USER: torch.zeros(5, dtype=torch.int64),
+                    _STORY: torch.zeros(5, dtype=torch.int64),
+                },
                 edge_partition_book={
-                    _USER_TO_STORY: torch.zeros(5),
-                    story_to_user: torch.zeros(5),
+                    _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
+                    story_to_user: torch.zeros(5, dtype=torch.int64),
                 },
                 partitioned_edge_index={
                     _USER_TO_STORY: GraphPartitionData(
@@ -564,8 +572,11 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book={_USER: torch.zeros(5), _STORY: torch.zeros(5)},
-                edge_partition_book={_USER_TO_STORY: torch.zeros(5)},
+                node_partition_book={
+                    _USER: torch.zeros(5, dtype=torch.int64),
+                    _STORY: torch.zeros(5, dtype=torch.int64),
+                },
+                edge_partition_book={_USER_TO_STORY: torch.zeros(5, dtype=torch.int64)},
                 partitioned_edge_index={
                     _USER_TO_STORY: GraphPartitionData(
                         edge_index=edge_index, edge_ids=None
@@ -634,9 +645,12 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         dataset.build(
             partition_output=PartitionOutput(
-                node_partition_book={DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3)},
+                node_partition_book={
+                    DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3, dtype=torch.int64)
+                },
                 edge_partition_book={
-                    edge_type: torch.zeros(3) for edge_type in edge_index
+                    edge_type: torch.zeros(3, dtype=torch.int64)
+                    for edge_type in edge_index
                 },
                 partitioned_edge_index={
                     edge_type: GraphPartitionData(

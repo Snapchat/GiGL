@@ -1,8 +1,8 @@
 from typing import Optional, Tuple, Union
 
 from gigl.common import UriFactory
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
@@ -72,10 +72,17 @@ def _build_serialized_tfrecord_entity_info(
         key: spec for key, spec in feature_spec_dict.items() if key in serialized_keys
     }
 
+    parquet_uri_prefix = None
+    if preprocessed_metadata.parquet_uri_prefix:
+        parquet_uri_prefix = UriFactory.create_uri(
+            preprocessed_metadata.parquet_uri_prefix
+        )
+
     return SerializedTFRecordInfo(
         tfrecord_uri_prefix=UriFactory.create_uri(
             preprocessed_metadata.tfrecord_uri_prefix
         ),
+        parquet_uri_prefix=parquet_uri_prefix,
         feature_keys=feature_keys_to_load,
         feature_spec=feature_spec_dict,
         feature_dim=feature_dim,
