@@ -110,7 +110,6 @@ Columns are copied as numpy arrays into numpy views of the outputs, which write 
 
 The loader runs in the per-entity process that ``gigl.common.data.load_torch_tensors`` starts with ``spawn``, like the
 TFRecord loader.
-The log line at the end of a load reports the process's open file-descriptor count at its start.
 """
 
 import os
@@ -141,6 +140,7 @@ from gigl.common.data.parquet_format import (
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.retry import retry
+from gigl.src.data_preprocessor.lib.transform.arrow_utils import list_column_to_numpy
 from gigl.utils.share_memory import allocate_preshared
 
 logger = Logger()
@@ -281,14 +281,6 @@ class _SharedHandles:
             handle.close()
 
 
-def _open_fd_count() -> int:
-    """Number of file descriptors open in this process, or -1 where ``/proc`` is unavailable."""
-    try:
-        return len(os.listdir("/proc/self/fd"))
-    except OSError:
-        return -1
-
-
 def _column_width(field: pa.Field) -> int:
     """Number of values per row of a column: the list size of a fixed-size list, 1 for scalars."""
     if pa.types.is_fixed_size_list(field.type):
@@ -303,8 +295,8 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
     ``[rows, 1]`` ones.
 
     Raises:
-        ValueError: If the column has null values, or its width is not the width of ``destination``.
-            numpy would otherwise repeat a width-1 column across a wider destination.
+        ValueError: If the column has null values or null list values, or its width is not the width of
+            ``destination``. numpy would otherwise repeat a width-1 column across a wider destination.
     """
     if destination.ndim == 2:
         destination_width = destination.shape[1]
@@ -312,26 +304,15 @@ def _copy_into(column: pa.ChunkedArray, destination: np.ndarray) -> None:
         destination_width = 1
     offset = 0
     for chunk in column.chunks:
-        if chunk.null_count:
-            raise ValueError(f"Parquet column has {chunk.null_count} null values")
-        if pa.types.is_fixed_size_list(chunk.type):
-            width = chunk.type.list_size
-            flat_values = chunk.flatten()
-            # The null count of a list array does not include null values inside the lists.
-            if flat_values.null_count:
-                raise ValueError(
-                    f"Parquet column has {flat_values.null_count} null list values"
-                )
-            values = flat_values.to_numpy(zero_copy_only=False)
-        else:
-            width = 1
-            values = chunk.to_numpy(zero_copy_only=False)
-        if width != destination_width:
+        if len(chunk) == 0:
+            continue
+        values = list_column_to_numpy(chunk, len(chunk))
+        if values.shape[1] != destination_width:
             raise ValueError(
-                f"Parquet column has {width} values per row but {destination_width} were expected"
+                f"Parquet column has {values.shape[1]} values per row but {destination_width} were expected"
             )
-        if destination.ndim == 2:
-            values = values.reshape(len(chunk), width)
+        if destination.ndim == 1:
+            values = values[:, 0]
         destination[offset : offset + len(chunk)] = values
         offset += len(chunk)
 
@@ -449,7 +430,6 @@ class ParquetDataLoader:
         info = serialized_tf_record_info
         if info.parquet_uri_prefix is None:
             raise ValueError("ParquetDataLoader requires parquet_uri_prefix to be set")
-        fd_count = _open_fd_count()
         wall_start = time.perf_counter()
 
         fs, path = self._filesystem_and_path(info.parquet_uri_prefix)
@@ -499,12 +479,12 @@ class ParquetDataLoader:
             footer_list = pool.map(
                 read_footer, [files[index] for index in footer_file_indices]
             )
-            metadatas: dict[int, pq.FileMetaData] = dict(
+            metadata_by_file: dict[int, pq.FileMetaData] = dict(
                 zip(footer_file_indices, footer_list)
             )
             # The plan is built from the manifest. If a footer disagrees with it, a task would copy fewer rows than
             # planned and leave output rows unset, or read rows that belong to another rank.
-            for file_index, metadata in metadatas.items():
+            for file_index, metadata in metadata_by_file.items():
                 footer_row_counts: list[int] = []
                 for row_group in range(metadata.num_row_groups):
                     footer_row_counts.append(metadata.row_group(row_group).num_rows)
@@ -532,7 +512,7 @@ class ParquetDataLoader:
             columns.extend(info.label_keys)
 
             # Shards without row groups carry only the id columns, so the schema comes from a file with rows.
-            schema = metadatas[tasks[0].file_index].schema.to_arrow_schema()
+            schema = metadata_by_file[tasks[0].file_index].schema.to_arrow_schema()
             label_widths: list[int] = []
             for key in info.label_keys:
                 label_widths.append(_column_width(schema.field(key)))
@@ -576,7 +556,7 @@ class ParquetDataLoader:
             def read_row_group(task: _ReadTask) -> pa.Table:
                 parquet_file = pq.ParquetFile(
                     shared_handles.get(task.file_index),
-                    metadata=metadatas[task.file_index],
+                    metadata=metadata_by_file[task.file_index],
                     pre_buffer=True,
                 )
                 return parquet_file.read_row_group(
@@ -626,7 +606,9 @@ class ParquetDataLoader:
 
         compressed_bytes = 0
         for task in tasks:
-            row_group_metadata = metadatas[task.file_index].row_group(task.row_group)
+            row_group_metadata = metadata_by_file[task.file_index].row_group(
+                task.row_group
+            )
             for column_index in range(row_group_metadata.num_columns):
                 compressed_bytes += row_group_metadata.column(
                     column_index
@@ -636,7 +618,7 @@ class ParquetDataLoader:
             f"Loaded Parquet entity: rank={self._rank} files={len(files)} "
             f"row_groups={len(tasks)} list_s={list_s:.2f} footers_s={footers_s:.2f} "
             f"read_s={read_s:.2f} bytes={compressed_bytes} rows={num_rows} "
-            f"threads={self._num_threads} fd_count={fd_count} "
+            f"threads={self._num_threads} "
             f"wall_s={wall_s:.2f} "
             f"rows_per_s={num_rows / max(wall_s, 1e-9):.0f}"
         )
