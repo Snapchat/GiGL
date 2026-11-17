@@ -53,6 +53,8 @@ message PreprocessedMetadata{
     string transform_fn_assets_uri = 9;
     // Optional quantized node feature metadata.
     FeatureQuantizationMetadata quantized_feature_metadata = 10;
+    // GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet.
+    string parquet_uri_prefix = 11;
   }
 
   // Houses metadata of edge features output from DataPreprocessor
@@ -73,6 +75,8 @@ message PreprocessedMetadata{
     string transform_fn_assets_uri = 7;
     // Optional quantized main-edge feature metadata.
     FeatureQuantizationMetadata quantized_feature_metadata = 8;
+    // GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet.
+    string parquet_uri_prefix = 9;
   }
 
   // Houses metadata about edge TFTransform output from DataPreprocessor.
