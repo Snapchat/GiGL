@@ -58,10 +58,17 @@ class SerializedTFRecordInfo:
 
     @property
     def data_uri_prefix(self) -> Uri:
-        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise."""
+        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise.
+
+        Raises:
+            ValueError: If neither ``parquet_uri_prefix`` nor ``tfrecord_uri_prefix`` is set.
+        """
         if self.parquet_uri_prefix is not None:
             return self.parquet_uri_prefix
-        assert self.tfrecord_uri_prefix is not None  # Guaranteed by __post_init__.
+        if self.tfrecord_uri_prefix is None:
+            raise ValueError(
+                "Neither parquet_uri_prefix nor tfrecord_uri_prefix is set."
+            )
         return self.tfrecord_uri_prefix
 
     @property
