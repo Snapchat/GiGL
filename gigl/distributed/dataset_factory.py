@@ -21,9 +21,8 @@ from gigl.common import Uri, UriFactory
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
 )
-from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
 from gigl.common.utils.garbage_collection import freeze_gc
@@ -110,9 +109,8 @@ def _load_and_build_partitioned_dataset(
     rank: int = get_context().rank
     world_size: int = get_context().world_size
 
-    tfrecord_data_loader = TFRecordDataLoader(rank=rank, world_size=world_size)
-    loaded_graph_tensors = load_torch_tensors_from_tf_record(
-        tf_record_dataloader=tfrecord_data_loader,
+    loaded_graph_tensors = load_torch_tensors(
+        world_size=world_size,
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         rank=rank,
