@@ -1,4 +1,4 @@
-"""Types shared by the TFRecord data loader and its callers."""
+"""Types shared by the TFRecord and Parquet loaders."""
 
 from dataclasses import dataclass, field
 from typing import NamedTuple, Optional, Sequence, Tuple, Union
@@ -21,7 +21,8 @@ class LoadedEntityTensors(NamedTuple):
 class SerializedTFRecordInfo:
     """
     Stores information pertaining to how a single entity (node, edge, positive label, negative label) and single node/edge type in the heterogeneous case is serialized on disk.
-    This field is used as input to the TFRecordDataLoader.load_as_torch_tensor() function for loading torch tensors.
+    This field is used as input to TFRecordDataLoader.load_as_torch_tensors() or, when parquet_uri_prefix is set,
+    ParquetDataLoader.load_as_torch_tensors() for loading torch tensors.
     """
 
     # Uri Prefix for stored TfRecords
@@ -45,6 +46,16 @@ class SerializedTFRecordInfo:
     label_keys: Sequence[str] = field(default_factory=list)
     # The regex pattern to match the TFRecord files at the specified prefix
     tfrecord_uri_pattern: str = ".*-of-.*\.tfrecord(\.gz)?$"
+    # Uri Prefix for stored Parquet files. When set, the entity is loaded with ParquetDataLoader and
+    # tfrecord_uri_prefix is ignored.
+    parquet_uri_prefix: Optional[Uri] = None
+
+    @property
+    def data_uri_prefix(self) -> Uri:
+        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise."""
+        if self.parquet_uri_prefix is not None:
+            return self.parquet_uri_prefix
+        return self.tfrecord_uri_prefix
 
     @property
     def is_node_entity(self) -> bool:
@@ -82,3 +93,43 @@ class TFDatasetOptions:
     num_parallel_file_reads: int = 64
     ram_budget_multiplier: float = 0.5
     log_every_n_batch: int = 1000
+
+
+def empty_entity_tensors(info: SerializedTFRecordInfo) -> LoadedEntityTensors:
+    """Returns the tensors of an entity with no rows, shaped as a load of ``info`` with rows would be.
+
+    Args:
+        info (SerializedTFRecordInfo): How the entity is stored.
+
+    Returns:
+        LoadedEntityTensors: Zero-row tensors:
+
+            - ids: int64 ``[0]`` for nodes, ``[2, 0]`` for edges.
+            - features: ``[0, feature_dim]``, or None without ``feature_keys``.
+            - packed_features: uint8 ``[0, packed_feature_dim]``, or None without ``packed_feature_key``.
+            - labels: ``[0, total label width]``, or None without ``label_keys``. The width is the sum of the
+              widths of the label keys in ``feature_spec``: ``shape[0]``, or 1 for a scalar.
+    """
+    if info.is_node_entity:
+        ids = torch.empty(0, dtype=torch.int64)
+    else:
+        ids = torch.empty(2, 0, dtype=torch.int64)
+    features: Optional[torch.Tensor] = None
+    if info.feature_keys:
+        features = torch.empty(0, info.feature_dim)
+    labels: Optional[torch.Tensor] = None
+    if info.label_keys:
+        label_width = 0
+        for key in info.label_keys:
+            shape = info.feature_spec[key].shape
+            label_width += shape[0] if shape else 1
+        labels = torch.empty(0, label_width)
+    packed_features: Optional[torch.Tensor] = None
+    if info.packed_feature_key is not None:
+        packed_features = torch.empty(0, info.packed_feature_dim, dtype=torch.uint8)
+    return LoadedEntityTensors(
+        ids=ids,
+        features=features,
+        packed_features=packed_features,
+        labels=labels,
+    )

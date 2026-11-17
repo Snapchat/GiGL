@@ -739,6 +739,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     *   Contains categorical feature vocabularies
     * @param quantizedFeatureMetadata
     *   Optional quantized node feature metadata.
+    * @param parquetUriPrefix
+    *   GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet.
     */
   @SerialVersionUID(0L)
   final case class NodeMetadataOutput(
@@ -752,6 +754,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       featureDim: _root_.scala.Option[_root_.scala.Int] = _root_.scala.None,
       transformFnAssetsUri: _root_.scala.Predef.String = "",
       quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = _root_.scala.None,
+      parquetUriPrefix: _root_.scala.Predef.String = "",
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[NodeMetadataOutput] {
       @transient
@@ -815,6 +818,13 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
         if (quantizedFeatureMetadata.isDefined) {
           val __value = quantizedFeatureMetadata.get
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
+        };
+
+        {
+          val __value = parquetUriPrefix
+          if (!__value.isEmpty) {
+            __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(11, __value)
+          }
         };
         __size += unknownFields.serializedSize
         __size
@@ -883,6 +893,12 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           _output__.writeUInt32NoTag(__m.serializedSize)
           __m.writeTo(_output__)
         };
+        {
+          val __v = parquetUriPrefix
+          if (!__v.isEmpty) {
+            _output__.writeString(11, __v)
+          }
+        };
         unknownFields.writeTo(_output__)
       }
       def withNodeIdKey(__v: _root_.scala.Predef.String): NodeMetadataOutput = copy(nodeIdKey = __v)
@@ -905,6 +921,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def getQuantizedFeatureMetadata: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata = quantizedFeatureMetadata.getOrElse(snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata.defaultInstance)
       def clearQuantizedFeatureMetadata: NodeMetadataOutput = copy(quantizedFeatureMetadata = _root_.scala.None)
       def withQuantizedFeatureMetadata(__v: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata): NodeMetadataOutput = copy(quantizedFeatureMetadata = Option(__v))
+      def withParquetUriPrefix(__v: _root_.scala.Predef.String): NodeMetadataOutput = copy(parquetUriPrefix = __v)
       def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
       def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
       def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -937,6 +954,10 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
             if (__t != "") __t else null
           }
           case 10 => quantizedFeatureMetadata.orNull
+          case 11 => {
+            val __t = parquetUriPrefix
+            if (__t != "") __t else null
+          }
         }
       }
       def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -952,6 +973,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           case 8 => featureDim.map(_root_.scalapb.descriptors.PInt(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 9 => _root_.scalapb.descriptors.PString(transformFnAssetsUri)
           case 10 => quantizedFeatureMetadata.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+          case 11 => _root_.scalapb.descriptors.PString(parquetUriPrefix)
         }
       }
       def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -972,6 +994,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       var __featureDim: _root_.scala.Option[_root_.scala.Int] = _root_.scala.None
       var __transformFnAssetsUri: _root_.scala.Predef.String = ""
       var __quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = _root_.scala.None
+      var __parquetUriPrefix: _root_.scala.Predef.String = ""
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
       var _done__ = false
       while (!_done__) {
@@ -998,6 +1021,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
             __transformFnAssetsUri = _input__.readStringRequireUtf8()
           case 82 =>
             __quantizedFeatureMetadata = Option(__quantizedFeatureMetadata.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+          case 90 =>
+            __parquetUriPrefix = _input__.readStringRequireUtf8()
           case tag =>
             if (_unknownFields__ == null) {
               _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -1016,6 +1041,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           featureDim = __featureDim,
           transformFnAssetsUri = __transformFnAssetsUri,
           quantizedFeatureMetadata = __quantizedFeatureMetadata,
+          parquetUriPrefix = __parquetUriPrefix,
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
       )
     }
@@ -1032,7 +1058,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           enumeratedNodeDataBqTable = __fieldsMap.get(scalaDescriptor.findFieldByNumber(7).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           featureDim = __fieldsMap.get(scalaDescriptor.findFieldByNumber(8).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Int]]),
           transformFnAssetsUri = __fieldsMap.get(scalaDescriptor.findFieldByNumber(9).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
-          quantizedFeatureMetadata = __fieldsMap.get(scalaDescriptor.findFieldByNumber(10).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]])
+          quantizedFeatureMetadata = __fieldsMap.get(scalaDescriptor.findFieldByNumber(10).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]]),
+          parquetUriPrefix = __fieldsMap.get(scalaDescriptor.findFieldByNumber(11).get).map(_.as[_root_.scala.Predef.String]).getOrElse("")
         )
       case _ => throw new RuntimeException("Expected PMessage")
     }
@@ -1057,7 +1084,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedNodeDataBqTable = "",
       featureDim = _root_.scala.None,
       transformFnAssetsUri = "",
-      quantizedFeatureMetadata = _root_.scala.None
+      quantizedFeatureMetadata = _root_.scala.None,
+      parquetUriPrefix = ""
     )
     implicit class NodeMetadataOutputLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput](_l) {
       def nodeIdKey: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.nodeIdKey)((c_, f_) => c_.copy(nodeIdKey = f_))
@@ -1072,6 +1100,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def transformFnAssetsUri: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.transformFnAssetsUri)((c_, f_) => c_.copy(transformFnAssetsUri = f_))
       def quantizedFeatureMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = field(_.getQuantizedFeatureMetadata)((c_, f_) => c_.copy(quantizedFeatureMetadata = Option(f_)))
       def optionalQuantizedFeatureMetadata: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]] = field(_.quantizedFeatureMetadata)((c_, f_) => c_.copy(quantizedFeatureMetadata = f_))
+      def parquetUriPrefix: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.parquetUriPrefix)((c_, f_) => c_.copy(parquetUriPrefix = f_))
     }
     final val NODE_ID_KEY_FIELD_NUMBER = 1
     final val FEATURE_KEYS_FIELD_NUMBER = 2
@@ -1083,6 +1112,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     final val FEATURE_DIM_FIELD_NUMBER = 8
     final val TRANSFORM_FN_ASSETS_URI_FIELD_NUMBER = 9
     final val QUANTIZED_FEATURE_METADATA_FIELD_NUMBER = 10
+    final val PARQUET_URI_PREFIX_FIELD_NUMBER = 11
     def of(
       nodeIdKey: _root_.scala.Predef.String,
       featureKeys: _root_.scala.Seq[_root_.scala.Predef.String],
@@ -1093,7 +1123,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedNodeDataBqTable: _root_.scala.Predef.String,
       featureDim: _root_.scala.Option[_root_.scala.Int],
       transformFnAssetsUri: _root_.scala.Predef.String,
-      quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]
+      quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata],
+      parquetUriPrefix: _root_.scala.Predef.String
     ): _root_.snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput = _root_.snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.NodeMetadataOutput(
       nodeIdKey,
       featureKeys,
@@ -1104,7 +1135,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedNodeDataBqTable,
       featureDim,
       transformFnAssetsUri,
-      quantizedFeatureMetadata
+      quantizedFeatureMetadata,
+      parquetUriPrefix
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.NodeMetadataOutput])
   }
@@ -1127,6 +1159,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     *   Contains categorical feature vocabularies
     * @param quantizedFeatureMetadata
     *   Optional quantized main-edge feature metadata.
+    * @param parquetUriPrefix
+    *   GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet.
     */
   @SerialVersionUID(0L)
   final case class EdgeMetadataInfo(
@@ -1138,6 +1172,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       featureDim: _root_.scala.Option[_root_.scala.Int] = _root_.scala.None,
       transformFnAssetsUri: _root_.scala.Predef.String = "",
       quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = _root_.scala.None,
+      parquetUriPrefix: _root_.scala.Predef.String = "",
       unknownFields: _root_.scalapb.UnknownFieldSet = _root_.scalapb.UnknownFieldSet.empty
       ) extends scalapb.GeneratedMessage with scalapb.lenses.Updatable[EdgeMetadataInfo] {
       @transient
@@ -1187,6 +1222,13 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
         if (quantizedFeatureMetadata.isDefined) {
           val __value = quantizedFeatureMetadata.get
           __size += 1 + _root_.com.google.protobuf.CodedOutputStream.computeUInt32SizeNoTag(__value.serializedSize) + __value.serializedSize
+        };
+
+        {
+          val __value = parquetUriPrefix
+          if (!__value.isEmpty) {
+            __size += _root_.com.google.protobuf.CodedOutputStream.computeStringSize(9, __value)
+          }
         };
         __size += unknownFields.serializedSize
         __size
@@ -1243,6 +1285,12 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           _output__.writeUInt32NoTag(__m.serializedSize)
           __m.writeTo(_output__)
         };
+        {
+          val __v = parquetUriPrefix
+          if (!__v.isEmpty) {
+            _output__.writeString(9, __v)
+          }
+        };
         unknownFields.writeTo(_output__)
       }
       def clearFeatureKeys = copy(featureKeys = _root_.scala.Seq.empty)
@@ -1263,6 +1311,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def getQuantizedFeatureMetadata: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata = quantizedFeatureMetadata.getOrElse(snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata.defaultInstance)
       def clearQuantizedFeatureMetadata: EdgeMetadataInfo = copy(quantizedFeatureMetadata = _root_.scala.None)
       def withQuantizedFeatureMetadata(__v: snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata): EdgeMetadataInfo = copy(quantizedFeatureMetadata = Option(__v))
+      def withParquetUriPrefix(__v: _root_.scala.Predef.String): EdgeMetadataInfo = copy(parquetUriPrefix = __v)
       def withUnknownFields(__v: _root_.scalapb.UnknownFieldSet) = copy(unknownFields = __v)
       def discardUnknownFields = copy(unknownFields = _root_.scalapb.UnknownFieldSet.empty)
       def getFieldByNumber(__fieldNumber: _root_.scala.Int): _root_.scala.Any = {
@@ -1287,6 +1336,10 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
             if (__t != "") __t else null
           }
           case 8 => quantizedFeatureMetadata.orNull
+          case 9 => {
+            val __t = parquetUriPrefix
+            if (__t != "") __t else null
+          }
         }
       }
       def getField(__field: _root_.scalapb.descriptors.FieldDescriptor): _root_.scalapb.descriptors.PValue = {
@@ -1300,6 +1353,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           case 6 => featureDim.map(_root_.scalapb.descriptors.PInt(_)).getOrElse(_root_.scalapb.descriptors.PEmpty)
           case 7 => _root_.scalapb.descriptors.PString(transformFnAssetsUri)
           case 8 => quantizedFeatureMetadata.map(_.toPMessage).getOrElse(_root_.scalapb.descriptors.PEmpty)
+          case 9 => _root_.scalapb.descriptors.PString(parquetUriPrefix)
         }
       }
       def toProtoString: _root_.scala.Predef.String = _root_.scalapb.TextFormat.printToUnicodeString(this)
@@ -1318,6 +1372,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       var __featureDim: _root_.scala.Option[_root_.scala.Int] = _root_.scala.None
       var __transformFnAssetsUri: _root_.scala.Predef.String = ""
       var __quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = _root_.scala.None
+      var __parquetUriPrefix: _root_.scala.Predef.String = ""
       var `_unknownFields__`: _root_.scalapb.UnknownFieldSet.Builder = null
       var _done__ = false
       while (!_done__) {
@@ -1340,6 +1395,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
             __transformFnAssetsUri = _input__.readStringRequireUtf8()
           case 66 =>
             __quantizedFeatureMetadata = Option(__quantizedFeatureMetadata.fold(_root_.scalapb.LiteParser.readMessage[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata](_input__))(_root_.scalapb.LiteParser.readMessage(_input__, _)))
+          case 74 =>
+            __parquetUriPrefix = _input__.readStringRequireUtf8()
           case tag =>
             if (_unknownFields__ == null) {
               _unknownFields__ = new _root_.scalapb.UnknownFieldSet.Builder()
@@ -1356,6 +1413,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           featureDim = __featureDim,
           transformFnAssetsUri = __transformFnAssetsUri,
           quantizedFeatureMetadata = __quantizedFeatureMetadata,
+          parquetUriPrefix = __parquetUriPrefix,
           unknownFields = if (_unknownFields__ == null) _root_.scalapb.UnknownFieldSet.empty else _unknownFields__.result()
       )
     }
@@ -1370,7 +1428,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
           enumeratedEdgeDataBqTable = __fieldsMap.get(scalaDescriptor.findFieldByNumber(5).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
           featureDim = __fieldsMap.get(scalaDescriptor.findFieldByNumber(6).get).flatMap(_.as[_root_.scala.Option[_root_.scala.Int]]),
           transformFnAssetsUri = __fieldsMap.get(scalaDescriptor.findFieldByNumber(7).get).map(_.as[_root_.scala.Predef.String]).getOrElse(""),
-          quantizedFeatureMetadata = __fieldsMap.get(scalaDescriptor.findFieldByNumber(8).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]])
+          quantizedFeatureMetadata = __fieldsMap.get(scalaDescriptor.findFieldByNumber(8).get).flatMap(_.as[_root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]]),
+          parquetUriPrefix = __fieldsMap.get(scalaDescriptor.findFieldByNumber(9).get).map(_.as[_root_.scala.Predef.String]).getOrElse("")
         )
       case _ => throw new RuntimeException("Expected PMessage")
     }
@@ -1393,7 +1452,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedEdgeDataBqTable = "",
       featureDim = _root_.scala.None,
       transformFnAssetsUri = "",
-      quantizedFeatureMetadata = _root_.scala.None
+      quantizedFeatureMetadata = _root_.scala.None,
+      parquetUriPrefix = ""
     )
     implicit class EdgeMetadataInfoLens[UpperPB](_l: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo]) extends _root_.scalapb.lenses.ObjectLens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo](_l) {
       def featureKeys: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Seq[_root_.scala.Predef.String]] = field(_.featureKeys)((c_, f_) => c_.copy(featureKeys = f_))
@@ -1406,6 +1466,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       def transformFnAssetsUri: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.transformFnAssetsUri)((c_, f_) => c_.copy(transformFnAssetsUri = f_))
       def quantizedFeatureMetadata: _root_.scalapb.lenses.Lens[UpperPB, snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata] = field(_.getQuantizedFeatureMetadata)((c_, f_) => c_.copy(quantizedFeatureMetadata = Option(f_)))
       def optionalQuantizedFeatureMetadata: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]] = field(_.quantizedFeatureMetadata)((c_, f_) => c_.copy(quantizedFeatureMetadata = f_))
+      def parquetUriPrefix: _root_.scalapb.lenses.Lens[UpperPB, _root_.scala.Predef.String] = field(_.parquetUriPrefix)((c_, f_) => c_.copy(parquetUriPrefix = f_))
     }
     final val FEATURE_KEYS_FIELD_NUMBER = 1
     final val LABEL_KEYS_FIELD_NUMBER = 2
@@ -1415,6 +1476,7 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
     final val FEATURE_DIM_FIELD_NUMBER = 6
     final val TRANSFORM_FN_ASSETS_URI_FIELD_NUMBER = 7
     final val QUANTIZED_FEATURE_METADATA_FIELD_NUMBER = 8
+    final val PARQUET_URI_PREFIX_FIELD_NUMBER = 9
     def of(
       featureKeys: _root_.scala.Seq[_root_.scala.Predef.String],
       labelKeys: _root_.scala.Seq[_root_.scala.Predef.String],
@@ -1423,7 +1485,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedEdgeDataBqTable: _root_.scala.Predef.String,
       featureDim: _root_.scala.Option[_root_.scala.Int],
       transformFnAssetsUri: _root_.scala.Predef.String,
-      quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata]
+      quantizedFeatureMetadata: _root_.scala.Option[snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.FeatureQuantizationMetadata],
+      parquetUriPrefix: _root_.scala.Predef.String
     ): _root_.snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo = _root_.snapchat.research.gbml.preprocessed_metadata.PreprocessedMetadata.EdgeMetadataInfo(
       featureKeys,
       labelKeys,
@@ -1432,7 +1495,8 @@ object PreprocessedMetadata extends scalapb.GeneratedMessageCompanion[snapchat.r
       enumeratedEdgeDataBqTable,
       featureDim,
       transformFnAssetsUri,
-      quantizedFeatureMetadata
+      quantizedFeatureMetadata,
+      parquetUriPrefix
     )
     // @@protoc_insertion_point(GeneratedMessageCompanion[snapchat.research.gbml.PreprocessedMetadata.EdgeMetadataInfo])
   }
