@@ -172,6 +172,7 @@ TEST_EDGES = [
 
 - **Unit tests**: Dir: `tests/unit/` - Fast, isolated tests
 - **Integration tests**: Dir: `tests/integration/` - Component interaction tests
+- **Spark integration tests**: Dir: `tests/integration_tests_spark/` - Tests for the legacy Subgraph Sampler and Split Generator
 - **End-to-end tests**: Defined in `Makefile` target: `_run_e2e_kfp_test` - Test complete workflows
 - **Config/project-level tests**: Dir: `tests/config_tests`
 
@@ -185,6 +186,8 @@ Use the following commands to evaluate a test:
   - By default, runs all tests under tests/unit.
 - integration test: `make integration_test PY_TEST_FILES="some_test.py"`
   - ensure to use `PY_TEST_FILES` and run integration tests one at a time as they take a long time to run
+- Spark integration test: `make integration_tests_spark`
+  - needs the Scala toolchain; does not run as part of `make integration_test`
 
 ### Test Data Lifecycle
 

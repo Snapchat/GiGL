@@ -32,6 +32,7 @@ make unit_test_py                                    # All Python unit tests (in
 # e.g. if you want to test `tests/unit/common/foo_test.py` then you should run `make unit_test_py PY_TEST_FILES="foo_test.py"
 make unit_test_py PY_TEST_FILES="specific_test.py"   # Single test file
 make integration_test PY_TEST_FILES="specific_test.py"  # Integration (run one at a time, slow; builds a fresh src-cpu image from current source so Vertex-AI-launching tests run against current code)
+make integration_tests_spark                         # Spark integration tests (Subgraph Sampler, Split Generator); needs Scala toolchain
 
 # Formatting & Linting
 make format              # Auto-fix Python, Scala, Markdown
@@ -239,6 +240,9 @@ Use `tests.test_assets.test_case.TestCase` as the base class, **NOT** `unittest.
   real Vertex AI jobs. `make integration_test` builds a fresh `src-cpu` image from current source and points those tests
   at it (via `GIGL_CPU_DOCKER_URI`), so worker-side source changes are caught on the PR rather than only after a
   release.
+- **Spark integration tests**: `tests/integration_tests_spark/` - Tests for the legacy Subgraph Sampler and Split
+  Generator. Run with `make integration_tests_spark`. Optional in CI: the merge queue runs them but they are not a
+  required check, and the PR comment command is `/spark_integration_tests`.
 - **E2E tests**: Defined in `tests/e2e_tests/e2e_tests.yaml`
 - **Test assets**: `tests/test_assets/` (configs in `configs/`, test graphs in `small_graph/`)
 

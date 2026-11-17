@@ -90,14 +90,15 @@ gcloud builds list \
 
 Map CloudBuild jobs to GH Actions jobs using the `_CMD` substitution:
 
-| `_CMD` contains                    | GH Actions job       |
-| ---------------------------------- | -------------------- |
-| `unit_test_py`                     | unit-test-python     |
-| `unit_test_scala`                  | unit-test-scala      |
-| `integration_test` (without `e2e`) | integration-test     |
-| `run_all_e2e_tests`                | integration-e2e-test |
-| `lint_test`                        | lint-test            |
-| `run_all_notebook_e2e_tests`       | notebooks-e2e-test   |
+| `_CMD` contains                                | GH Actions job          |
+| ---------------------------------------------- | ----------------------- |
+| `unit_test_py`                                 | unit-test-python        |
+| `unit_test_scala`                              | unit-test-scala         |
+| `integration_test` (without `e2e` or `_spark`) | integration-test        |
+| `integration_tests_spark`                      | integration-tests-spark |
+| `run_all_e2e_tests`                            | integration-e2e-test    |
+| `lint_test`                                    | lint-test               |
+| `run_all_notebook_e2e_tests`                   | notebooks-e2e-test      |
 
 Store this mapping — you will use CloudBuild IDs to fetch logs when GH Actions logs are unavailable.
 

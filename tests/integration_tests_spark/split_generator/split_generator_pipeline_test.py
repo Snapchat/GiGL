@@ -36,11 +36,11 @@ from snapchat.research.gbml import (
     gbml_config_pb2,
     training_samples_schema_pb2,
 )
-from tests.integration.pipeline.split_generator.lib import (
+from tests.integration_tests_spark.split_generator.lib import (
     node_anchor_based_link_prediction,
     supervised_node_classification,
 )
-from tests.integration.pipeline.utils import (
+from tests.integration_tests_spark.utils import (
     get_gcs_assets_dir_from_frozen_gbml_config_uri,
 )
 from tests.test_assets.test_case import TestCase
