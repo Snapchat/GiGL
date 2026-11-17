@@ -15,6 +15,12 @@ from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 
 from gigl.common import LocalUri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
+from gigl.common.data.dataloaders import (
+    LoadedEntityTensors,
+    SerializedTFRecordInfo,
+    TFDatasetOptions,
+    TFRecordDataLoader,
+)
 from gigl.common.data.loader_types import (
     LoadedEntityTensors,
     SerializedTFRecordInfo,

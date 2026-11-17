@@ -740,9 +740,11 @@ class DistABLPLoaderTest(TestCase):
         edge_index.update(labeled_edges)
 
         partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            node_partition_book=to_heterogeneous_node(
+                torch.zeros(18, dtype=torch.int64)
+            ),
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -816,8 +818,12 @@ class DistABLPLoaderTest(TestCase):
             dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_packed_features
         )
         partition_output = PartitionOutput(
-            node_partition_book={DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3)},
-            edge_partition_book={edge_type: torch.zeros(3) for edge_type in edge_index},
+            node_partition_book={
+                DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3, dtype=torch.int64)
+            },
+            edge_partition_book={
+                edge_type: torch.zeros(3, dtype=torch.int64) for edge_type in edge_index
+            },
             partitioned_edge_index={
                 edge_type: GraphPartitionData(
                     edge_tensor, torch.arange(edge_tensor.size(1))
@@ -923,9 +929,11 @@ class DistABLPLoaderTest(TestCase):
         }
         edge_index.update(labeled_edges)
         partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            node_partition_book=to_heterogeneous_node(
+                torch.zeros(18, dtype=torch.int64)
+            ),
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -1027,11 +1035,13 @@ class DistABLPLoaderTest(TestCase):
             nodes[edge_type[2]].append(edge_idx[1])
         partition_output = PartitionOutput(
             node_partition_book={
-                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                node_type: torch.zeros(
+                    int(torch.cat(node_ids).max().item() + 1), dtype=torch.int64
+                )
                 for node_type, node_ids in nodes.items()
             },
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -1440,11 +1450,13 @@ class DistABLPLoaderTest(TestCase):
             nodes[edge_type[2]].append(edge_idx[1])
         partition_output = PartitionOutput(
             node_partition_book={
-                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                node_type: torch.zeros(
+                    int(torch.cat(node_ids).max().item() + 1), dtype=torch.int64
+                )
                 for node_type, node_ids in nodes.items()
             },
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
