@@ -1,8 +1,8 @@
 from typing import Optional, Tuple, Union
 
 from gigl.common import UriFactory
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
