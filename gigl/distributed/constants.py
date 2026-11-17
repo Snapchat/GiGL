@@ -34,6 +34,44 @@ SAMPLING_RPC_INIT_TIMEOUT_ENV: Final[str] = "GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECO
 # GLT's own default
 DEFAULT_SAMPLING_RPC_INIT_TIMEOUT_SECONDS: Final[int] = 600
 
+# Comma-separated TensorPipe channels for the RPC agent of sampling workers, the dataset-building
+# process and colocated loader workers, highest priority first. Unset means GLT's default,
+# "mpt_uv,basic". Use the same value on every node of a job.
+#
+# A channel moves tensor payloads; control messages always use the "uv" (libuv TCP) transport.
+# TensorPipe uses the first channel both peers list and can use, so "basic" is required: every
+# process can use it, which guarantees a shared channel. The values are TensorPipe's channel
+# names and are passed to it unchanged.
+#
+# References:
+#   PyTorch registers these channel names. basic is at line 243, cma at line 258, and mpt_uv at
+#   lines 285-288. The comment above mpt_uv explains it: 16 UV (libuv TCP) connections, each with
+#   its own thread, and each tensor split into equal chunks across them.
+#     https://github.com/pytorch/pytorch/blob/v2.8.0/torch/csrc/distributed/rpc/tensorpipe_agent.cpp#L243-L288
+#   TensorPipe overview of transports and channels:
+#     https://github.com/pytorch/tensorpipe#transports-and-channels
+#   TensorPipe channel sources (basic/, cma/, mpt/):
+#     https://github.com/pytorch/tensorpipe/tree/main/tensorpipe/channel
+#
+# Allowed values:
+#   basic:  Sends each payload over the pair's one TCP connection, served by one libuv I/O
+#           thread. Lowest cost per message, which suits the small payloads of sampling RPCs.
+#   mpt_uv: "Multiplexed transport over libuv". Splits each payload across 16 extra TCP
+#           connections, each with its own I/O thread. About 2-5x faster than basic for
+#           multi-megabyte payloads, about 25% slower per message for small ones.
+#   cma:    Linux "cross-memory attach". The receiver copies the payload out of the sender's
+#           memory with process_vm_readv, in one thread. Faster than basic only for
+#           multi-megabyte payloads. Limits:
+#             - Same host and PID namespace only; for other peers TensorPipe uses the next channel.
+#             - Needs ptrace access between the processes. TensorPipe skips cma when Yama's
+#               ptrace_scope is 3, when it is 2 and the process lacks CAP_SYS_PTRACE, or when a
+#               seccomp profile blocks process_vm_readv.
+#
+# Not allowed:
+#   xth: Copies between threads of one process; RPC peers are separate processes.
+#   cuda_basic, cuda_ipc, cuda_gdr, cuda_xth: For CUDA tensors; sampling payloads are CPU tensors.
+SAMPLING_RPC_CHANNELS_ENV: Final[str] = "GIGL_SAMPLING_RPC_CHANNELS"
+
 # GLT's ``rpc_timeout`` is not init-only: it becomes the RPC agent's default request timeout for
 # EVERY sampling and feature-collection RPC. Raising it to tolerate bring-up skew would therefore
 # also mean a genuinely stuck steady-state request takes that long to surface -- trading a fast,

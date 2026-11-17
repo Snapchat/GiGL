@@ -57,6 +57,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   its values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
   `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
   @kmontemayor2-sc
+- Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
+  (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
+  through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
+- GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
+  (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
+  comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
+  `basic`, the channel every process can use). `basic` sends each payload over one TCP connection and has the lowest
+  cost per message; `mpt_uv` splits each payload across 16 extra TCP connections, which is 2-5x faster for
+  multi-megabyte payloads and about 25% slower per small message; `cma` copies the payload straight out of the sender's
+  memory (same host only, needs ptrace access) and is faster than `basic` only for multi-megabyte payloads. Each value
+  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default equals
+  GraphLearn-Torch's (`mpt_uv,basic`). Use the same value on every node of a job. A bad value fails in the parent
+  process before workers are spawned for the colocated sampling producer and the graph-store sampling backend, and in
+  the process that initializes RPC (the `mp.spawn` child, or each loader worker at startup) for the dataset-building
+  process and the colocated loader worker. The colocated loader worker, the dataset-building process, the colocated
+  sampling producer and the graph-store sampling worker subprocesses honor the variable. The graph-store `init_server`
+  and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
+  GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
+  hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
+- Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
+  neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
+  releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop
+  thread. For integer partition books the ids and their order are the same as before, including for ids no partition
+  owns, which both routings drop; negative partition ids are now dropped like the mask drops them, and float partition
+  ids are no longer supported. On a 60-machine k-hop sampling job (loader only, no model) it raised throughput by about
+  30% per machine. A custom `id_select` on the dataset keeps GraphLearn-Torch's mask loop. Unit tests hash the copied
+  upstream `_sample_one_hop` and `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is
+  noticed
 
 ### Changed
 
@@ -128,6 +156,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
   `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
   columns by @kmontemayor2-sc
+- Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
+  longer grows with rank id. `CompactTopology` takes a required `compressed_id_offset`, the global id of its first row.
+  GiGL's distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo`
+  add the offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with
+  GLT's `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
 - The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
   atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
   would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by

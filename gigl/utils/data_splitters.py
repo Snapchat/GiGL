@@ -27,6 +27,7 @@ from gigl.types.graph import (
     message_passing_to_positive_label,
     reverse_edge_type,
 )
+from gigl.utils.csr import get_compressed_id_offset
 
 logger = Logger()
 
@@ -711,13 +712,25 @@ def _get_padded_labels(
     # Note that GLT defaults to CSR under the hood, if this changes, we will need to update this.
     indptr = topo.indptr  # [N]
     indices = topo.indices  # [M]
+    compressed_id_offset = get_compressed_id_offset(topo)
     extra_nodes_to_pad = 0
     if allow_non_existant_node_ids:
-        valid_ids = anchor_node_ids < (indptr.size(0) - 1)
+        # Ids at or past the last stored row have no labels; they are padded below.
+        valid_ids = anchor_node_ids < (indptr.size(0) - 1 + compressed_id_offset)
         extra_nodes_to_pad = int(torch.count_nonzero(~valid_ids).item())
         anchor_node_ids = anchor_node_ids[valid_ids]
-    starts = indptr[anchor_node_ids]  # [N]
-    ends = indptr[anchor_node_ids + 1]  # [N]
+    if compressed_id_offset == 0:
+        starts = indptr[anchor_node_ids]  # [N]
+        ends = indptr[anchor_node_ids + 1]  # [N]
+    else:
+        # Row 0 of indptr holds global id compressed_id_offset, so shift ids to local rows.
+        local_rows = anchor_node_ids - compressed_id_offset
+        # Ids below the offset have no stored row. Point them at row 0 so indexing stays in bounds,
+        # then give them an empty range (end == start) so they get no labels.
+        below_offset = local_rows < 0
+        local_rows = local_rows.clamp(min=0)
+        starts = indptr[local_rows]  # [N]
+        ends = torch.where(below_offset, starts, indptr[local_rows + 1])  # [N]
 
     max_range = int(torch.max(ends - starts).item())
     if max_labels_per_anchor_node is not None:
