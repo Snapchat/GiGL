@@ -76,6 +76,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
   GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
   hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
+- Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
+  neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
+  releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop
+  thread. For integer partition books the ids and their order are the same as before, including for ids no partition
+  owns, which both routings drop; negative partition ids are now dropped like the mask drops them, and float partition
+  ids are no longer supported. On a 60-machine k-hop sampling job (loader only, no model) it raised throughput by about
+  30% per machine. A custom `id_select` on the dataset keeps GraphLearn-Torch's mask loop. Unit tests hash the copied
+  upstream `_sample_one_hop` and `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is
+  noticed
 
 ### Changed
 
