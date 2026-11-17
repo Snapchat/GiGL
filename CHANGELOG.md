@@ -60,6 +60,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
   (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
   through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
+- GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
+  (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
+  comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
+  `basic`, the channel every process can use). `basic` sends each payload over one TCP connection and has the lowest
+  cost per message; `mpt_uv` splits each payload across 16 extra TCP connections, which is 2-5x faster for
+  multi-megabyte payloads and about 25% slower per small message; `cma` copies the payload straight out of the sender's
+  memory (same host only, needs ptrace access) and is faster than `basic` only for multi-megabyte payloads. Each value
+  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default equals
+  GraphLearn-Torch's (`mpt_uv,basic`). Use the same value on every node of a job. A bad value fails in the parent
+  process before workers are spawned for the colocated sampling producer and the graph-store sampling backend, and in
+  the process that initializes RPC (the `mp.spawn` child, or each loader worker at startup) for the dataset-building
+  process and the colocated loader worker. The colocated loader worker, the dataset-building process, the colocated
+  sampling producer and the graph-store sampling worker subprocesses honor the variable. The graph-store `init_server`
+  and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
+  GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
+  hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
 
 ### Changed
 
