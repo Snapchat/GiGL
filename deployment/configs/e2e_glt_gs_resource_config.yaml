@@ -1,6 +1,6 @@
 # Machine shapes here are chosen for availability in us-central1 CI, not for speed:
-# CPU-only pools use E2. The compute pools keep N1 + 2 T4 x 2 replicas so e2e covers
-# torch.distributed with CUDA. In practice, pick more performant types (for example
+# CPU-only pools use E2. The compute pools use N1 + 2 T4 x 2 replicas. CI runs the graph-store
+# tests on e2e_glt_gs_cpu_resource_config.yaml. In practice, pick more performant types (for example
 # N2 or C3 for storage, A100 or L4 for training).
 #
 # Diffs from e2e_glt_resource_config.yaml

@@ -1,0 +1,19 @@
+# e2e_glt_gs_resource_config.yaml with the compute pools on CPU. Only het_dblp_sup_test
+# keeps the T4 pools, so each Python minor's e2e run uses one GPU pipeline.
+# _self_ merges this file last, so its values take precedence.
+defaults:
+  - e2e_glt_gs_resource_config
+  - _self_
+
+trainer_resource_config:
+  vertex_ai_graph_store_trainer_config:
+    compute_pool:
+      machine_type: e2-highmem-16
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0
+inferencer_resource_config:
+  vertex_ai_graph_store_inferencer_config:
+    compute_pool:
+      machine_type: e2-highmem-16
+      gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+      gpu_limit: 0

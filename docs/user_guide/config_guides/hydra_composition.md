@@ -139,6 +139,9 @@ The repository's E2E resource configs select [shared infrastructure](../../../de
 - [CICD](../../../deployment/configs/e2e_cicd_resource_config.yaml)
 - [GLT](../../../deployment/configs/e2e_glt_resource_config.yaml)
 - [GLT graph store](../../../deployment/configs/e2e_glt_gs_resource_config.yaml)
+- [GLT on CPU](../../../deployment/configs/e2e_glt_cpu_resource_config.yaml), which uses the GLT config as its base
+- [GLT graph store on CPU](../../../deployment/configs/e2e_glt_gs_cpu_resource_config.yaml), which uses the GLT graph
+  store config as its base
 
 Each primary keeps its pipeline-specific settings while the fragments supply the shared infrastructure and preprocessing
 capacity.
