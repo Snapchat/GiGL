@@ -398,7 +398,7 @@ class InitializeGraphTest(TestCase):
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0], [9]]), edge_ids=None
             ),
-            node_partition_book=torch.zeros(10),
+            node_partition_book=torch.zeros(10, dtype=torch.int64),
             edge_features_registered=False,
         )
 
