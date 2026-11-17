@@ -33,7 +33,7 @@ steps:
         # Step containers get Docker's default 64 MB /dev/shm, too small for tests that share
         # DBLP-sized tensors across processes. Enlarging it needs a privileged step; warn if refused.
         df -h /dev/shm
-        mount -o remount,size=16G /dev/shm || sudo mount -o remount,size=16G /dev/shm || echo "WARNING: could not enlarge /dev/shm"
+        mount -o remount,size=16G /dev/shm || sudo mount -o remount,size=16G /dev/shm || echo "ERROR: could not enlarge /dev/shm, we need larger shared memory for DBLP tests!" && exit 1
         df -h /dev/shm
 
         if [[ -z "${_CMD}" ]]; then
