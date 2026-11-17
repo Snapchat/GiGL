@@ -14,7 +14,7 @@ from torch.testing import assert_close
 from gigl.common import UriFactory
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
     remove_sampling_weight_from_edge_quantization_metadata,
 )
 from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
@@ -735,7 +735,7 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loaded = load_torch_tensors_from_tf_record(
+        loaded = load_torch_tensors(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
@@ -808,7 +808,7 @@ class TFRecordDataLoaderTest(TestCase):
         )
 
         with self.assertRaises(ValueError):
-            load_torch_tensors_from_tf_record(
+            load_torch_tensors(
                 world_size=1,
                 serialized_graph_metadata=serialized_graph_metadata,
                 should_load_tensors_in_parallel=False,
@@ -1016,7 +1016,7 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loaded = load_torch_tensors_from_tf_record(
+        loaded = load_torch_tensors(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
@@ -1105,7 +1105,7 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loaded = load_torch_tensors_from_tf_record(
+        loaded = load_torch_tensors(
             world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(

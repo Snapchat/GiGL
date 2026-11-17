@@ -21,7 +21,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.data import parquet_format, parquet_manifest
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
 )
 from gigl.common.data.loader_types import (
     LoadedEntityTensors,
@@ -433,10 +433,10 @@ class ParquetDataLoaderTest(TestCase):
         )
         return metadata, np.stack([src, dst])
 
-    def test_load_torch_tensors_from_tf_record_reads_parquet(self) -> None:
+    def test_load_torch_tensors_reads_parquet(self) -> None:
         metadata, edge_index = self._write_local_graph()
 
-        loaded = load_torch_tensors_from_tf_record(
+        loaded = load_torch_tensors(
             world_size=2,
             serialized_graph_metadata=metadata,
             should_load_tensors_in_parallel=True,

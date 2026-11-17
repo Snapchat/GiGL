@@ -22,7 +22,7 @@ from gigl.common import Uri, UriFactory
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -109,7 +109,7 @@ def _load_and_build_partitioned_dataset(
     rank: int = get_context().rank
     world_size: int = get_context().world_size
 
-    loaded_graph_tensors = load_torch_tensors_from_tf_record(
+    loaded_graph_tensors = load_torch_tensors(
         world_size=world_size,
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,

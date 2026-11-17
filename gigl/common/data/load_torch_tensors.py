@@ -291,6 +291,7 @@ def remove_sampling_weight_from_edge_quantization_metadata(
 
 
 def _data_loading_process(
+    rank: int,
     world_size: int,
     output_dict: MutableMapping[
         str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
@@ -301,7 +302,6 @@ def _data_loading_process(
         SerializedTFRecordInfo,
         dict[Union[NodeType, EdgeType], SerializedTFRecordInfo],
     ],
-    rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> None:
@@ -311,6 +311,7 @@ def _data_loading_process(
     the error_dict "error" field, since exceptions for spawned processes won't properly be raised to the parent process.
 
     Args:
+        rank (int): Rank of the current machine
         world_size (int): Number of machines; each rank loads its share of the files (TFRecord) or rows (Parquet)
         output_dict (MutableMapping[str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]]):
             Dictionary initialized by mp.Manager().dict() in which outputs of tensor loading will be written to
@@ -319,7 +320,6 @@ def _data_loading_process(
             writing to the output_dict and error_dict fields
         serialized_tf_record_info (Union[SerializedTFRecordInfo, dict[NodeType, SerializedTFRecordInfo], dict[EdgeType, SerializedTFRecordInfo]]):
             Serialized information for current entity
-        rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Only used when
             ``entity_type == _EDGE_KEY``. Name of the edge feature column to extract as
@@ -605,7 +605,7 @@ def _read_and_compress_features(
     return _EntityFeatures(features, packed_features, metadata)
 
 
-def load_torch_tensors_from_tf_record(
+def load_torch_tensors(
     world_size: int,
     serialized_graph_metadata: SerializedGraphMetadata,
     should_load_tensors_in_parallel: bool,
@@ -615,7 +615,7 @@ def load_torch_tensors_from_tf_record(
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> LoadedGraphTensors:
     """
-    Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
+    Loads all torch tensors (from TFRecord or Parquet files, on GCS or local disk) from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
 
     Running these processes in parallel slows the runtime of each individual process, but may still result in a net speedup across all entity types. As a result,
     there is a tradeoff that needs to be made between parallel and sequential tensor loading, which is why we don't parallelize across node and edge types. We enable
