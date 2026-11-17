@@ -20,8 +20,9 @@ Run `uv lock` to generate a new `uv.lock` file, and create a PR with the changes
 
 - Navigate to GiGL's [Actions tab](https://github.com/Snapchat/GiGL/actions) and find the
   [build-base-docker-images workflow](https://github.com/Snapchat/GiGL/actions/workflows/build-base-docker-images.yml).
-- Run the workflow with the PR# (You may need to ask a repo maintainer to do this). You can leave the branch name as
-  `main`.
+- Run the workflow with the PR# and the full commit SHA of the PR head that was reviewed (You may need to ask a repo
+  maintainer to do this). The workflow aborts if the PR head no longer matches that SHA. You can leave the branch name
+  as `main`.
 - Navigate back to your PR, you should see a message from `github-actions[bot]` specifying that your docker images are
   being built. The bot will push a new commit to the PR once it is done.
 
