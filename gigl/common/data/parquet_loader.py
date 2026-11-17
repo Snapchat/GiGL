@@ -78,19 +78,25 @@ Terms:
         -> thread pool: read each task's row group, copy its columns into the outputs at out_offset
         -> LoadedEntityTensors
 
-Example: files ``a: [4, 4]``, ``b: [2]``, ``c: [4]`` (row counts per row group) hold 14 rows; 2 ranks keep rows
-``[0, 7)`` and ``[7, 14)``. Row group ``a[1]`` straddles the boundary, so both ranks read it::
+Example: a directory holds three Parquet files, in sorted order ``part-0.parquet``, ``part-1.parquet`` and
+``part-2.parquet``.
+Their row groups hold ``[4, 4]``, ``[2]`` and ``[4]`` rows, so there are 14 rows in total.
+``part-0[1]`` names row group 1 of ``part-0.parquet``.
+With 2 ranks, rank 0 keeps rows ``[0, 7)`` and rank 1 keeps rows ``[7, 14)``.
+Row group ``part-0[1]`` straddles the boundary, so both ranks read it::
 
-    global rows    0 1 2 3 | 4 5 6 7 | 8 9 | 10 11 12 13
-    row group      a[0]    | a[1]    | b[0]| c[0]
-    rank 0         x x x x   x x x
-    rank 1                         x   x x   x  x  x  x
+    global rows    0    1    2    3    4    5    6    7    8    9    10   11   12   13
+    row group      part-0[0]           part-0[1]           part-1[0] part-2[0]
+    rank 0         x    x    x    x    x    x    x
+    rank 1                                            x    x    x    x    x    x    x
 
-    (file, row_group, row_offset, num_rows, out_offset)
-    rank 0: (a, 0, 0, 4, 0)  (a, 1, 0, 3, 4)
-    rank 1: (a, 1, 3, 1, 0)  (b, 0, 0, 2, 1)  (c, 0, 0, 4, 3)
+    (file_index, row_group, row_offset, num_rows, out_offset)
+    rank 0: (0, 0, 0, 4, 0)  (0, 1, 0, 3, 4)
+    rank 1: (0, 1, 3, 1, 0)  (1, 0, 0, 2, 1)  (2, 0, 0, 4, 3)
 
-Rank 0 reads only the footer of ``a``.
+Here ``file_index`` 0, 1 and 2 are ``part-0.parquet``, ``part-1.parquet`` and ``part-2.parquet``.
+
+Rank 0 reads only the footer of ``part-0.parquet``.
 
 Outputs are allocated with ``gigl.utils.share_memory.allocate_preshared``, which picks the tensor's final home:
 
@@ -160,6 +166,20 @@ _retry_on_os_error = retry(
 )
 
 
+@_retry_on_os_error
+def _list_parquet_files(fs: pafs.FileSystem, path: str) -> list[pafs.FileInfo]:
+    """Lists the Parquet files under ``path``, retrying on ``OSError``.
+
+    Args:
+        fs (pafs.FileSystem): Filesystem that ``path`` is on.
+        path (str): Directory to list.
+
+    Returns:
+        list[pafs.FileInfo]: The Parquet files, in sorted order.
+    """
+    return parquet_manifest.list_parquet_files(fs, path)
+
+
 @dataclass(frozen=True)
 class _ReadTask:
     """Reads ``num_rows`` rows starting at ``row_offset`` of one row group into ``out_offset`` of the output."""
@@ -183,21 +203,18 @@ class _SharedHandles:
     Tasks start in file order and a file's handle closes after its last task, so the number of open files stays near
     the number of reader threads instead of growing with the number of row groups.
     A slow task can keep an earlier file open while later files are opened.
-
-    ``get`` opens a file's handle on first use, under a per-file lock, and reads its ``closed`` property before
-    releasing the lock.
-    For a GCS file, pyarrow's first ``closed`` call opens a read stream on the object and stores it without
-    synchronization, and every ``read_at`` calls ``closed``.
-    Without the read under the lock, concurrent first reads of one handle would race on that store.
-    ``closed`` is true if that stream fails to open; ``get`` then raises ``OSError`` without keeping the handle, so a
-    retry opens the file again.
-    ``finish_task`` counts down the file's remaining tasks and closes the handle after the last one.
-    ``close_all`` closes the handles left open when tasks are cancelled; call it only once no task is running.
     """
 
     def __init__(
         self, fs: pafs.FileSystem, files: Sequence[str], tasks: Sequence[_ReadTask]
     ) -> None:
+        """Counts each file's remaining tasks; no file is opened until ``get``.
+
+        Args:
+            fs (pafs.FileSystem): Filesystem that the files are opened on.
+            files (Sequence[str]): Paths of the files, in sorted file order.
+            tasks (Sequence[_ReadTask]): The read tasks, used to count each file's remaining tasks.
+        """
         self._fs = fs
         self._files = files
         self._remaining: list[int] = [0] * len(files)
@@ -207,7 +224,25 @@ class _SharedHandles:
         self._handles: list[Optional[pa.NativeFile]] = [None] * len(files)
 
     def get(self, file_index: int) -> pa.NativeFile:
-        """Returns the shared handle of the file, opening it on first use."""
+        """Returns the shared handle of the file, opening it on first use.
+
+        Opens the handle under a per-file lock and reads its ``closed`` property before releasing the lock.
+        For a GCS file, pyarrow's first ``closed`` call opens a read stream on the object and stores it without
+        synchronization, and every ``read_at`` calls ``closed``.
+        Without the read under the lock, concurrent first reads of one handle would race on that store.
+
+        ``closed`` is true if that stream fails to open.
+        The handle is then not kept, so a retry opens the file again.
+
+        Args:
+            file_index (int): Index of the file in the sorted file list.
+
+        Returns:
+            pa.NativeFile: The open handle, shared by all of the file's tasks.
+
+        Raises:
+            OSError: If the read stream on the file could not be opened.
+        """
         with self._locks[file_index]:
             handle = self._handles[file_index]
             if handle is None:
@@ -219,14 +254,22 @@ class _SharedHandles:
             return handle
 
     def finish_task(self, file_index: int) -> None:
-        """Marks one task of the file done and closes the file's handle after its last task."""
+        """Marks one task of the file done and closes the file's handle after its last task.
+
+        Args:
+            file_index (int): Index of the file in the sorted file list.
+        """
         with self._locks[file_index]:
             self._remaining[file_index] -= 1
             if self._remaining[file_index] == 0:
                 self._close_locked(file_index)
 
     def close_all(self) -> None:
-        """Closes every handle that is still open."""
+        """Closes every handle that is still open.
+
+        These are the handles left open when tasks are cancelled.
+        Call it only once no task is running.
+        """
         for file_index in range(len(self._files)):
             with self._locks[file_index]:
                 self._close_locked(file_index)
@@ -323,16 +366,18 @@ class ParquetDataLoader:
     Dataflow ends files early at bundle boundaries, so file sizes vary and whole-file assignment gives uneven ranks.
     This loader instead gives each rank a contiguous range of rows, so ranks differ by at most one row.
     The module docstring describes how a rank's range is planned, read and copied into its outputs.
-
-    Args:
-        rank (int): Rank of the current machine.
-        world_size (int): Number of machines.
-        num_threads (Optional[int]): Number of reader threads. Defaults to the CPU count, at most 64.
     """
 
     def __init__(
         self, rank: int, world_size: int, num_threads: Optional[int] = None
     ) -> None:
+        """Creates a loader for one rank.
+
+        Args:
+            rank (int): Rank of the current machine.
+            world_size (int): Number of machines.
+            num_threads (Optional[int]): Number of reader threads. Defaults to the CPU count, at most 64.
+        """
         self._rank = rank
         self._world_size = world_size
         if num_threads is None:
@@ -408,9 +453,7 @@ class ParquetDataLoader:
         wall_start = time.perf_counter()
 
         fs, path = self._filesystem_and_path(info.parquet_uri_prefix)
-        file_infos: list[pafs.FileInfo] = _retry_on_os_error(
-            parquet_manifest.list_parquet_files
-        )(fs, path)
+        file_infos = _list_parquet_files(fs, path)
         files: list[str] = [file_info.path for file_info in file_infos]
         list_s = time.perf_counter() - wall_start
         if not files:
