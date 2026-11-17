@@ -26,7 +26,7 @@ class BuildStorageDatasetTest(TestCase):
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
-    def test_node_features_are_compressed_unless_feature_compression_is_off(
+    def test_node_and_edge_features_are_compressed_unless_feature_compression_is_off(
         self,
     ) -> None:
         task_config_uri = get_mocked_dataset_artifact_metadata()[
@@ -55,6 +55,16 @@ class BuildStorageDatasetTest(TestCase):
         self.assertIsNone(compressed.node_features)
         self.assertIsNone(uncompressed.node_quantization_metadata)
         self.assertIsNotNone(uncompressed.node_features)
+
+        edge_metadata = compressed.edge_quantization_metadata
+        assert isinstance(edge_metadata, FeatureQuantizationMetadata)
+        self.assertEqual(
+            edge_metadata.lossless_feature_indices,
+            tuple(range(edge_metadata.feature_dim)),
+        )
+        self.assertIsNone(compressed.edge_features)
+        self.assertIsNone(uncompressed.edge_quantization_metadata)
+        self.assertIsNotNone(uncompressed.edge_features)
 
 
 if __name__ == "__main__":

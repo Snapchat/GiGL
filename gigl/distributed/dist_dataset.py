@@ -832,7 +832,8 @@ class DistDataset(glt.distributed.DistDataset):
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
-                destructively: entries are removed as they are converted.
+                destructively: entries are removed as they are converted, and under range
+                partitioning their compressed ids are shifted in place.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
             retain_edge_ids: Whether the memory-lean build stores implicit edge IDs.
 
@@ -872,15 +873,27 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(book, RangePartitionBook)
                 else get_total_ids(book)
             )
+            # Under range partitioning the compressed ids of this rank's edges lie in
+            # [compressed_id_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
+            # empty rows below the range, which on the last rank is nearly one row per node in
+            # the graph. The COO is released after the build, so it is shifted in place.
+            compressed_id_offset = 0
+            if isinstance(book, RangePartitionBook) and self._rank > 0:
+                compressed_id_offset = int(book.partition_bounds[self._rank - 1])
+                compressed_dimension = 0 if target_layout == "CSR" else 1
+                coo[compressed_dimension] -= compressed_id_offset
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
-                f"{num_rows:,} rows, input dtype {coo.dtype}"
+                f"{num_rows - compressed_id_offset:,} rows from id {compressed_id_offset:,}, input dtype {coo.dtype}"
             )
+            # The build raises if a shifted id falls outside [0, num_rows - compressed_id_offset), so a
+            # partitioner that places an edge away from its compressed node's owner fails here.
             topology = CompactTopology(
                 coo,
                 layout=target_layout,
-                num_rows=num_rows,
+                num_rows=num_rows - compressed_id_offset,
                 retain_edge_ids=retain_edge_ids,
+                compressed_id_offset=compressed_id_offset,
             )
             del coo
             gc.collect()
@@ -1049,21 +1062,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(edge_features, Mapping):
-            self._edge_feature_info = {}
-            for edge_type, edge_features_per_edge_type in edge_features.items():
-                assert isinstance(edge_type, EdgeType)
-                self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
             )
         else:
-            self._edge_feature_info = FeatureInfo(
-                dim=edge_features.size(1),
-                dtype=edge_features.dtype,
-            )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
     def _initialize_edge_packed_features(
@@ -1240,6 +1242,12 @@ class DistDataset(glt.distributed.DistDataset):
         )
         partition_output.partitioned_edge_packed_features = None
         gc.collect()
+
+        self._edge_feature_info = _build_feature_info(
+            raw_features=self._edge_features,
+            packed_features=self._edge_packed_features,
+            metadata=self._edge_quantization_metadata,
+        )
 
         self._node_partition_book = partition_output.node_partition_book
         self._edge_partition_book = partition_output.edge_partition_book

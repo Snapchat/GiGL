@@ -3,9 +3,10 @@ from typing import Optional
 
 import psutil
 import torch
-from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.distributed import init_worker_group
 
 from gigl.common.logger import Logger
+from gigl.distributed.utils.rpc_init import init_rpc_from_env
 
 logger = Logger()
 
@@ -163,7 +164,7 @@ def init_neighbor_loader_worker(
     logger.info(
         f"Initing worker group with: world_size={world_size}, rank={rank}, group_name={group_name}, "
     )
-    init_rpc(
+    init_rpc_from_env(
         master_addr=master_ip_address,
         master_port=master_worker_port,
         rpc_timeout=600,

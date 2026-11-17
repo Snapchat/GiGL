@@ -12,18 +12,16 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed import (
     barrier,
     get_context,
-    init_rpc,
     init_worker_group,
     rpc_is_initialized,
     shutdown_rpc,
 )
 
 from gigl.common import Uri, UriFactory
-from gigl.common.data.dataloaders import TFRecordDataLoader
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
     TFDatasetOptions,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
 )
 from gigl.common.logger import Logger
 from gigl.common.utils.decorator import tf_on_cpu
@@ -39,6 +37,7 @@ from gigl.distributed.utils import (
     get_internal_ip_from_master_node,
     get_process_group_name,
 )
+from gigl.distributed.utils.rpc_init import init_rpc_from_env
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -110,9 +109,8 @@ def _load_and_build_partitioned_dataset(
     rank: int = get_context().rank
     world_size: int = get_context().world_size
 
-    tfrecord_data_loader = TFRecordDataLoader(rank=rank, world_size=world_size)
-    loaded_graph_tensors = load_torch_tensors_from_tf_record(
-        tf_record_dataloader=tfrecord_data_loader,
+    loaded_graph_tensors = load_torch_tensors(
+        world_size=world_size,
         serialized_graph_metadata=serialized_graph_metadata,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
         rank=rank,
@@ -325,7 +323,7 @@ def _build_dataset_process(
     rpc_port = master_dataset_building_ports[0]
     splitter_port = master_dataset_building_ports[1]
 
-    init_rpc(
+    init_rpc_from_env(
         master_addr=master_ip_address,
         master_port=rpc_port,
         num_rpc_threads=16,
@@ -428,11 +426,12 @@ def build_dataset(
             unaffected.
             TODO(kmonte): remove retain_edge_ids once internal callers no longer set it.
 
-    Node feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
+    Node and edge feature columns are losslessly compressed unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is
     ``off`` (case-insensitive). Unset or ``auto`` compresses: every column that is integral on all ranks (for example
     one-hot columns and categorical ids) is stored as the narrowest integer encoding that holds its values, and other
     columns stay float32. The encodings are inferred from the data, columns that preprocessing already quantized are left
     alone, and batches are unchanged because loaders decode back to float32. Any other value raises ``ValueError``.
+    The sampling-weight edge feature is not compressed: it is removed from the edge features before they are.
     See :mod:`gigl.common.utils.feature_quantization.lossless` for the encodings and an example.
 
     Returns:

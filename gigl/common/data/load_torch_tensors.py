@@ -17,11 +17,9 @@ import torch.multiprocessing as mp
 from graphlearn_torch.distributed.rpc import barrier, rpc_is_initialized
 from torch.multiprocessing import Manager
 
-from gigl.common.data.dataloaders import (
-    SerializedTFRecordInfo,
-    TFDatasetOptions,
-    TFRecordDataLoader,
-)
+from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.parquet_loader import ParquetDataLoader
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.lossless_compression import (
     FeatureCompression,
@@ -293,7 +291,8 @@ def remove_sampling_weight_from_edge_quantization_metadata(
 
 
 def _data_loading_process(
-    tf_record_dataloader: TFRecordDataLoader,
+    rank: int,
+    world_size: int,
     output_dict: MutableMapping[
         str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]
     ],
@@ -303,7 +302,6 @@ def _data_loading_process(
         SerializedTFRecordInfo,
         dict[Union[NodeType, EdgeType], SerializedTFRecordInfo],
     ],
-    rank: int,
     tf_dataset_options: TFDatasetOptions = TFDatasetOptions(),
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> None:
@@ -313,7 +311,8 @@ def _data_loading_process(
     the error_dict "error" field, since exceptions for spawned processes won't properly be raised to the parent process.
 
     Args:
-        tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
+        rank (int): Rank of the current machine
+        world_size (int): Number of machines; each rank loads its share of the files (TFRecord) or rows (Parquet)
         output_dict (MutableMapping[str, Union[torch.Tensor, dict[Union[NodeType, EdgeType], torch.Tensor]]]):
             Dictionary initialized by mp.Manager().dict() in which outputs of tensor loading will be written to
         error_dict (MutableMapping[str, str]): Dictionary initialized by mp.Manager().dict() in which error of errors in current process will be written to
@@ -321,7 +320,6 @@ def _data_loading_process(
             writing to the output_dict and error_dict fields
         serialized_tf_record_info (Union[SerializedTFRecordInfo, dict[NodeType, SerializedTFRecordInfo], dict[EdgeType, SerializedTFRecordInfo]]):
             Serialized information for current entity
-        rank (int): Rank of the current machine
         tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         weight_edge_feat_name (Optional[Union[str, dict[EdgeType, str]]]): Only used when
             ``entity_type == _EDGE_KEY``. Name of the edge feature column to extract as
@@ -343,7 +341,7 @@ def _data_loading_process(
             is_input_homogeneous = False
 
         all_tf_record_uris = [
-            serialized_entity.tfrecord_uri_prefix.uri
+            serialized_entity.data_uri_prefix.uri
             for serialized_entity in serialized_tf_record_info.values()
         ]
 
@@ -370,46 +368,53 @@ def _data_loading_process(
                 raise NotImplementedError(
                     "Label keys are not supported for edge entities"
                 )
-            loaded_entity = tf_record_dataloader.load_as_torch_tensors(
-                serialized_tf_record_info=serialized_entity_tf_record_info,
-                tf_dataset_options=tf_dataset_options,
-            )
+            if serialized_entity_tf_record_info.parquet_uri_prefix is not None:
+                loaded_entity = ParquetDataLoader(
+                    rank=rank, world_size=world_size
+                ).load_as_torch_tensors(serialized_entity_tf_record_info)
+            else:
+                loaded_entity = TFRecordDataLoader(
+                    rank=rank, world_size=world_size
+                ).load_as_torch_tensors(
+                    serialized_tf_record_info=serialized_entity_tf_record_info,
+                    tf_dataset_options=tf_dataset_options,
+                )
             entity_ids = loaded_entity.ids
             entity_features = loaded_entity.features
             entity_packed_features = loaded_entity.packed_features
             entity_labels = loaded_entity.labels
             ids[graph_type] = entity_ids
             logger.info(
-                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                f"Rank {rank} finished loading {entity_type} ids of shape {entity_ids.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
             )
             if entity_features is not None:
                 features[graph_type] = entity_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} features of shape {entity_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} features for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
             if entity_packed_features is not None:
                 packed_features[graph_type] = entity_packed_features
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} packed features of shape {entity_packed_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} packed features of shape {entity_packed_features.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} packed features for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} packed features for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
             if entity_labels is not None:
                 labels[graph_type] = entity_labels
                 logger.info(
-                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} finished loading {entity_type} labels of shape {entity_labels.shape} for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
             else:
                 logger.info(
-                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.tfrecord_uri_prefix.uri}"
+                    f"Rank {rank} did not detect {entity_type} labels for graph type {graph_type} from {serialized_entity_tf_record_info.data_uri_prefix.uri}"
                 )
 
         # Extract weight column from edge features when weight_edge_feat_name is set.
@@ -600,8 +605,8 @@ def _read_and_compress_features(
     return _EntityFeatures(features, packed_features, metadata)
 
 
-def load_torch_tensors_from_tf_record(
-    tf_record_dataloader: TFRecordDataLoader,
+def load_torch_tensors(
+    world_size: int,
     serialized_graph_metadata: SerializedGraphMetadata,
     should_load_tensors_in_parallel: bool,
     rank: int = 0,
@@ -610,23 +615,24 @@ def load_torch_tensors_from_tf_record(
     weight_edge_feat_name: Optional[Union[str, dict[EdgeType, str]]] = None,
 ) -> LoadedGraphTensors:
     """
-    Loads all torch tensors from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
+    Loads all torch tensors (from TFRecord or Parquet files, on GCS or local disk) from a SerializedGraphMetadata object for all entity [node, edge, positive_label, negative_label] and edge / node types.
 
     Running these processes in parallel slows the runtime of each individual process, but may still result in a net speedup across all entity types. As a result,
     there is a tradeoff that needs to be made between parallel and sequential tensor loading, which is why we don't parallelize across node and edge types. We enable
     the `should_load_tensors_in_parallel` to allow some customization for loading strategies based on the input data.
 
-    If RPC is initialized, node feature columns are losslessly compressed right after the node loading process joins,
-    unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
-    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, this runs while
-    the edge loading process is still reading.
+    If RPC is initialized, node and edge feature columns are losslessly compressed, each right after its own loading
+    process joins, unless the ``GIGL_FEATURE_COMPRESSION`` environment variable is ``off``
+    (see :mod:`gigl.common.utils.feature_quantization.lossless_compression`). When loading in parallel, node
+    compression runs while the edge loading process is still reading. The sampling-weight edge feature is removed
+    from the edge features before they are compressed, so it is never compressed.
 
     With compression on and RPC initialized, every rank must call this function, with the same
     ``should_load_tensors_in_parallel``, because compression joins a collective RPC ``all_gather``.
     Without RPC, features are returned uncompressed.
 
     Args:
-        tf_record_dataloader (TFRecordDataLoader): TFRecordDataloader used for loading tensors from serialized tfrecords
+        world_size (int): Number of machines; each rank loads its share of the files (TFRecord) or rows (Parquet)
         serialized_graph_metadata (SerializedGraphMetadata): Serialized graph metadata contained serialized information for loading tfrecords across node and edge types
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         rank (int): Rank on current machine
@@ -656,6 +662,9 @@ def load_torch_tensors_from_tf_record(
     node_is_homogeneous = isinstance(
         serialized_graph_metadata.node_entity_info, SerializedTFRecordInfo
     )
+    edge_is_homogeneous = isinstance(
+        serialized_graph_metadata.edge_entity_info, SerializedTFRecordInfo
+    )
     node_quantization_metadata = serialized_graph_metadata.node_quantization_metadata
     edge_quantization_metadata = remove_sampling_weight_from_edge_quantization_metadata(
         serialized_graph_metadata=serialized_graph_metadata,
@@ -670,6 +679,7 @@ def load_torch_tensors_from_tf_record(
     # By default, torch processes are created using the `fork` method, which makes a copy of the entire process. This can be problematic in multi-threaded settings,
     # especially when working with TensorFlow, since this includes all threads, which can lead to deadlocks or other synchronization issues. As a result, we set the
     # start method to spawn, which creates a new Python interpreter process and is much safer with multi-threading applications.
+    # Parquet is also read in these processes.
     ctx = mp.get_context("spawn")
 
     node_output_dict: MutableMapping[
@@ -685,7 +695,7 @@ def load_torch_tensors_from_tf_record(
     node_data_loading_process = ctx.Process(
         target=_data_loading_process,
         kwargs={
-            "tf_record_dataloader": tf_record_dataloader,
+            "world_size": world_size,
             "output_dict": node_output_dict,
             "error_dict": error_dict,
             "entity_type": _NODE_KEY,
@@ -698,7 +708,7 @@ def load_torch_tensors_from_tf_record(
     edge_data_loading_process = ctx.Process(
         target=_data_loading_process,
         kwargs={
-            "tf_record_dataloader": tf_record_dataloader,
+            "world_size": world_size,
             "output_dict": edge_output_dict,
             "error_dict": error_dict,
             "entity_type": _EDGE_KEY,
@@ -713,7 +723,7 @@ def load_torch_tensors_from_tf_record(
         positive_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
             kwargs={
-                "tf_record_dataloader": tf_record_dataloader,
+                "world_size": world_size,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
                 "entity_type": _POSITIVE_LABEL_KEY,
@@ -728,7 +738,7 @@ def load_torch_tensors_from_tf_record(
         negative_label_data_loading_process = ctx.Process(
             target=_data_loading_process,
             kwargs={
-                "tf_record_dataloader": tf_record_dataloader,
+                "world_size": world_size,
                 "output_dict": edge_output_dict,
                 "error_dict": error_dict,
                 "entity_type": _NEGATIVE_LABEL_KEY,
@@ -764,8 +774,16 @@ def load_torch_tensors_from_tf_record(
             )
         )
         edge_data_loading_process.join()
-        logger.info(
-            f"Rank {rank} {_EDGE_KEY} loading process joined {time.time() - start_time:.2f} seconds after the load started"
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
         )
         if serialized_graph_metadata.positive_label_entity_info is not None:
             positive_label_data_loading_process.join()
@@ -780,6 +798,17 @@ def load_torch_tensors_from_tf_record(
         # compared with first launching node loading and then launching edge loading.
         edge_data_loading_process.start()
         edge_data_loading_process.join()
+        edge_features, edge_packed_features, edge_quantization_metadata = (
+            _read_and_compress_features(
+                output_dict=edge_output_dict,
+                error_dict=error_dict,
+                entity_type=_EDGE_KEY,
+                metadata=edge_quantization_metadata,
+                should_compress=should_compress,
+                is_homogeneous=edge_is_homogeneous,
+                default_key=DEFAULT_HOMOGENEOUS_EDGE_TYPE,
+            )
+        )
         node_data_loading_process.start()
         node_data_loading_process.join()
         node_features, node_packed_features, node_quantization_metadata = (
@@ -813,10 +842,6 @@ def load_torch_tensors_from_tf_record(
     node_labels = node_output_dict.get(_LABEL_FMT.format(entity=_NODE_KEY), None)
 
     edge_index = edge_output_dict[_ID_FMT.format(entity=_EDGE_KEY)]
-    edge_features = edge_output_dict.get(_FEATURE_FMT.format(entity=_EDGE_KEY), None)
-    edge_packed_features = edge_output_dict.get(
-        _PACKED_FEATURE_FMT.format(entity=_EDGE_KEY), None
-    )
     edge_weights = edge_output_dict.get(_EDGE_WEIGHTS_KEY, None)
 
     positive_labels = edge_output_dict.get(
