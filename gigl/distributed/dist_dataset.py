@@ -832,7 +832,8 @@ class DistDataset(glt.distributed.DistDataset):
 
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
-                destructively: entries are removed as they are converted.
+                destructively: entries are removed as they are converted, and under range
+                partitioning their compressed ids are shifted in place.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
             retain_edge_ids: Whether the memory-lean build stores implicit edge IDs.
 
@@ -872,15 +873,27 @@ class DistDataset(glt.distributed.DistDataset):
                 if isinstance(book, RangePartitionBook)
                 else get_total_ids(book)
             )
+            # Under range partitioning the compressed ids of this rank's edges lie in
+            # [compressed_id_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
+            # empty rows below the range, which on the last rank is nearly one row per node in
+            # the graph. The COO is released after the build, so it is shifted in place.
+            compressed_id_offset = 0
+            if isinstance(book, RangePartitionBook) and self._rank > 0:
+                compressed_id_offset = int(book.partition_bounds[self._rank - 1])
+                compressed_dimension = 0 if target_layout == "CSR" else 1
+                coo[compressed_dimension] -= compressed_id_offset
             logger.info(
                 f"Building {target_layout} for {edge_type}: {coo.size(1):,} edges, "
-                f"{num_rows:,} rows, input dtype {coo.dtype}"
+                f"{num_rows - compressed_id_offset:,} rows from id {compressed_id_offset:,}, input dtype {coo.dtype}"
             )
+            # The build raises if a shifted id falls outside [0, num_rows - compressed_id_offset), so a
+            # partitioner that places an edge away from its compressed node's owner fails here.
             topology = CompactTopology(
                 coo,
                 layout=target_layout,
-                num_rows=num_rows,
+                num_rows=num_rows - compressed_id_offset,
                 retain_edge_ids=retain_edge_ids,
+                compressed_id_offset=compressed_id_offset,
             )
             del coo
             gc.collect()
@@ -926,23 +939,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(node_features, Mapping):
-            self._node_feature_info = {}
-            for node_type, node_features_per_node_type in node_features.items():
-                # We cannot make isinstance checks with NodeType, so we check
-                # if it is not an edge type, since it must be one of the two.
-                assert not isinstance(node_type, EdgeType)
-                self._node_feature_info[node_type] = FeatureInfo(
-                    dim=node_features_per_node_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=node_features_per_node_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized node features for heterogeneous graph to dataset with node types: {node_features.keys()}"
             )
         else:
-            self._node_feature_info = FeatureInfo(
-                dim=node_features.size(1),
-                dtype=node_features.dtype,
-            )
             logger.info("Initialized node features for homogeneous graph to dataset")
 
     def _initialize_node_packed_features(
@@ -1062,21 +1062,10 @@ class DistDataset(glt.distributed.DistDataset):
         )
 
         if isinstance(edge_features, Mapping):
-            self._edge_feature_info = {}
-            for edge_type, edge_features_per_edge_type in edge_features.items():
-                assert isinstance(edge_type, EdgeType)
-                self._edge_feature_info[edge_type] = FeatureInfo(
-                    dim=edge_features_per_edge_type.size(1),  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                    dtype=edge_features_per_edge_type.dtype,  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-                )
             logger.info(
                 f"Initialized edge features for heterogeneous graph to dataset with edge types: {edge_features.keys()}"
             )
         else:
-            self._edge_feature_info = FeatureInfo(
-                dim=edge_features.size(1),
-                dtype=edge_features.dtype,
-            )
             logger.info(f"Initialized edge features for homogeneous graph to dataset")
 
     def _initialize_edge_packed_features(
@@ -1227,6 +1216,12 @@ class DistDataset(glt.distributed.DistDataset):
         partition_output.partitioned_node_packed_features = None
         gc.collect()
 
+        self._node_feature_info = _build_feature_info(
+            raw_features=self._node_features,
+            packed_features=self._node_packed_features,
+            metadata=self._node_quantization_metadata,
+        )
+
         self._initialize_node_labels(
             node_partition_book=partition_output.node_partition_book,
             partitioned_node_labels=partition_output.partitioned_node_labels,
@@ -1247,6 +1242,12 @@ class DistDataset(glt.distributed.DistDataset):
         )
         partition_output.partitioned_edge_packed_features = None
         gc.collect()
+
+        self._edge_feature_info = _build_feature_info(
+            raw_features=self._edge_features,
+            packed_features=self._edge_packed_features,
+            metadata=self._edge_quantization_metadata,
+        )
 
         self._node_partition_book = partition_output.node_partition_book
         self._edge_partition_book = partition_output.edge_partition_book
@@ -1457,6 +1458,67 @@ def _append_non_split_node_ids(
         return torch.cat(
             [train_node_ids, val_node_ids, test_node_ids, node_ids_not_in_split]
         )
+
+
+def _build_feature_info(
+    raw_features: Optional[Union[Feature, Mapping[_EntityType, Feature]]],
+    packed_features: Optional[Union[Feature, Mapping[_EntityType, Feature]]],
+    metadata: Optional[
+        Union[
+            FeatureQuantizationMetadata,
+            Mapping[_EntityType, FeatureQuantizationMetadata],
+        ]
+    ],
+) -> Optional[Union[FeatureInfo, dict[_EntityType, FeatureInfo]]]:
+    """Builds the feature info loaders and models see, from the raw and packed feature stores.
+
+    A type with packed columns is described by its logical width (``metadata.feature_dim``) and ``torch.float32``,
+    because its raw store only holds the columns that are not packed.
+    Unsampled types need a placeholder of the full logical width, so the raw width would be wrong for them.
+
+    A type without packed columns is described by the shape and dtype of its raw store.
+
+    The result is a dict if either store (or the metadata) is keyed by type, and a single ``FeatureInfo`` otherwise.
+    A single metadata value applies to every type.
+
+    Args:
+        raw_features: The store of columns that are not packed, or None.
+        packed_features: The store of packed uint8 columns, or None.
+        metadata: How the packed columns were quantized, or None if nothing is packed.
+
+    Returns:
+        The feature info, or None if there are no features.
+    """
+    if raw_features is None and packed_features is None:
+        return None
+
+    if isinstance(raw_features, Mapping) or isinstance(packed_features, Mapping):
+        raw_by_type: Mapping[_EntityType, Feature] = raw_features or {}
+        packed_by_type: Mapping[_EntityType, Feature] = packed_features or {}
+        feature_info: dict[_EntityType, FeatureInfo] = {}
+        for entity_type in [*raw_by_type, *packed_by_type]:
+            if metadata is not None and entity_type in packed_by_type:
+                if isinstance(metadata, FeatureQuantizationMetadata):
+                    type_metadata = metadata
+                else:
+                    type_metadata = metadata[entity_type]
+                feature_info[entity_type] = FeatureInfo(
+                    dim=type_metadata.feature_dim, dtype=torch.float32
+                )
+            else:
+                raw_tensor = raw_by_type[entity_type].feature_tensor
+                feature_info[entity_type] = FeatureInfo(
+                    dim=raw_tensor.size(1), dtype=raw_tensor.dtype
+                )
+        return feature_info
+
+    if packed_features is not None and metadata is not None:
+        assert isinstance(metadata, FeatureQuantizationMetadata)
+        return FeatureInfo(dim=metadata.feature_dim, dtype=torch.float32)
+    assert raw_features is not None
+    return FeatureInfo(
+        dim=raw_features.feature_tensor.size(1), dtype=raw_features.feature_tensor.dtype
+    )
 
 
 @overload

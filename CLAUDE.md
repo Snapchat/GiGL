@@ -17,7 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
 billion-scale. It supports node classification, link prediction, and both supervised and unsupervised learning. Python
-3.11, `uv` for package management.
+3.11–3.13; images are published for every supported minor, and 3.11 is the default (the full CI suite runs on it, and so
+does a Cloud Build job with no `python_version`). `uv` for package management.
 
 ## Common Commands
 
@@ -171,6 +172,12 @@ block instead when the expression:
   Typeguard checks every shape-bearing tensor value in annotated containers in `gigl` and `examples` when a contracted
   call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`
   fails the test command.
+
+### Environment Variables
+
+- Define environment variables read by `gigl/distributed/` code in `gigl/distributed/constants.py` as `Final[str]`
+  constants. Document each one in a comment above it: what it controls, its allowed values, its default, and whether it
+  must be identical on every node of a job.
 
 ### Docstrings
 

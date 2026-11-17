@@ -7,7 +7,7 @@ from typing import Literal, Optional, TypeVar, Union, overload
 import torch
 from graphlearn_torch.partition import PartitionBook
 
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 from gigl.common.utils.feature_quantization.lossless import FeatureCodec
@@ -306,6 +306,15 @@ class LoadedGraphTensors:
     ] = None
     edge_packed_features: Optional[
         Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
+    ] = None
+    # Describes the packed node features, after any build-time compression.
+    node_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[NodeType, FeatureQuantizationMetadata]]
+    ] = None
+    # Describes the packed edge features, after any build-time compression.
+    # Excludes the sampling-weight column, which is returned in ``edge_weights``.
+    edge_quantization_metadata: Optional[
+        Union[FeatureQuantizationMetadata, dict[EdgeType, FeatureQuantizationMetadata]]
     ] = None
 
     def treat_labels_as_edges(self, edge_dir: Literal["in", "out"]) -> None:

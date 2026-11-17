@@ -45,12 +45,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
   `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
   @kmontemayor2-sc
+- Add lossless compression of node feature columns, on by default. Every column that holds only whole numbers on all
+  ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer encoding
+  that holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy
+  move fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical
+  float32 batches. `build_dataset`, `build_dataset_from_task_config_uri` and Graph Store storage nodes
+  (`build_storage_dataset`) all read the `GIGL_FEATURE_COMPRESSION` environment variable: unset or `auto` compresses,
+  `off` keeps every column float32, and any other value raises by @kmontemayor2-sc
+- Add lossless compression of main edge feature columns, like the node one and on by default. Every column that holds
+  only whole numbers on all ranks is stored in the packed feature sidecar as the narrowest integer encoding that holds
+  its values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
+  `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
+  @kmontemayor2-sc
+- Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
+  (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
+  through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
+- GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
+  (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
+  comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
+  `basic`, the channel every process can use). `basic` sends each payload over one TCP connection and has the lowest
+  cost per message; `mpt_uv` splits each payload across 16 extra TCP connections, which is 2-5x faster for
+  multi-megabyte payloads and about 25% slower per small message; `cma` copies the payload straight out of the sender's
+  memory (same host only, needs ptrace access) and is faster than `basic` only for multi-megabyte payloads. Each value
+  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default equals
+  GraphLearn-Torch's (`mpt_uv,basic`). Use the same value on every node of a job. A bad value fails in the parent
+  process before workers are spawned for the colocated sampling producer and the graph-store sampling backend, and in
+  the process that initializes RPC (the `mp.spawn` child, or each loader worker at startup) for the dataset-building
+  process and the colocated loader worker. The colocated loader worker, the dataset-building process, the colocated
+  sampling producer and the graph-store sampling worker subprocesses honor the variable. The graph-store `init_server`
+  and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
+  GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
+  hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
 
 ### Changed
 
+- `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
+  packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
+- Fetch node labels in the same fused request as the node features, so a batch makes one feature request per remote
+  partition per node type instead of two; the `y` labels in batches are unchanged by @kmontemayor2-sc
 - `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
   of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
   unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
@@ -79,6 +114,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
+  `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/PENDING
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
+    `.python-version` value), 3.12.14 or 3.13.15.
+  - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
+    `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
+    release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline
+    refs. `gigl.common.constants` picks the images and pipeline for the running Python minor, because Ray and Beam
+    require one Python per job.
+  - The dependency stack moves to:
+    - TensorFlow 2.21
+    - Apache Beam 2.76.0
+    - `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0
+    - protobuf 6, pyarrow 25 and numpy 2 (tested)
+    - TensorBoard, now a declared dependency
+  - All runtime images require glibc >= 2.39 (Ubuntu 24.04), and Dataflow images are published for `linux/amd64` only.
+  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel`, which exports the NVIDIA driver mount paths
+    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH`; the image build asserts them with
+    `scripts/smoke_test_image.py`.
 - `retain_edge_ids` now defaults to `False` in `build_dataset`, `DistDataset.build`, `CompactTopology`,
   `build_csr_from_coo`, and the `build_dataset_from_task_config_uri` runtime args. The memory-lean graph build is used
   only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
@@ -88,6 +143,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
   `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
   columns by @kmontemayor2-sc
+- Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
+  longer grows with rank id. `CompactTopology` takes a required `compressed_id_offset`, the global id of its first row.
+  GiGL's distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo`
+  add the offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with
+  GLT's `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
 
 ### Fixed
 
