@@ -51,8 +51,8 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
     return static_cast<int32_t>(static_cast<uint32_t>(key));
 }
 
-// Reads one node's total out-degree from a resolved degree view. Returns 0 when the
-// node type has no degree data.
+// Reads one node's total out-degree from a resolved degree view. Returns 0 for a
+// destination-only node type: it has no outgoing edge types, so it has no degree data.
 static inline int32_t readTotalDegree(int32_t nodeId, int32_t nodeTypeId, const DegreeView& degreeView) {
     if (degreeView.degreesInt32.empty() && degreeView.degreesInt64.empty()) {
         return 0;
@@ -139,10 +139,22 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     // Resolve each degree tensor's dtype and data pointer once so the push loop
     // reads degrees without per-call tensor dispatch. _degreeTensors keeps the
     // storage alive.
+    TORCH_CHECK(static_cast<int32_t>(_degreeTensors.size()) == _numNodeTypes,
+                "Expected one degree tensor per node type (",
+                _numNodeTypes,
+                "), got ",
+                _degreeTensors.size(),
+                ".");
     _degreeViews.resize(_degreeTensors.size());
     for (size_t nodeTypeIndex = 0; nodeTypeIndex < _degreeTensors.size(); ++nodeTypeIndex) {
         const auto& degreeTensor = _degreeTensors[nodeTypeIndex];
         if (degreeTensor.numel() == 0) {
+            // Only destination-only node types have no degree data. An empty tensor for
+            // a type with outgoing edges would read every degree as 0 and corrupt scores.
+            TORCH_CHECK(_nodeTypeToEdgeTypeIds[nodeTypeIndex].empty(),
+                        "Degree tensor for ntype_id ",
+                        nodeTypeIndex,
+                        " is empty, but the node type has outgoing edge types.");
             continue;
         }
         if (degreeTensor.scalar_type() == torch::kInt) {
@@ -163,7 +175,7 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
     // Pre-size the seed node type's tables to skip the first several rehashes.
-    // The sizes are about the median final table size per seed on the benchmark
+    // The sizes are about the median final table size per seed on a production-scale
     // graph, rounded to a power of two. Other node types are sized on demand so
     // heterogeneous states do not pay for tables a seed may never reach.
     for (auto& perSeedState : _state) {
