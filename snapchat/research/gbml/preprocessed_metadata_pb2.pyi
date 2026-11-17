@@ -101,6 +101,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         FEATURE_DIM_FIELD_NUMBER: builtins.int
         TRANSFORM_FN_ASSETS_URI_FIELD_NUMBER: builtins.int
         QUANTIZED_FEATURE_METADATA_FIELD_NUMBER: builtins.int
+        PARQUET_URI_PREFIX_FIELD_NUMBER: builtins.int
         node_id_key: builtins.str
         """The field in output TFRecords which references the node identifier."""
         @property
@@ -124,6 +125,8 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         @property
         def quantized_feature_metadata(self) -> global___PreprocessedMetadata.FeatureQuantizationMetadata:
             """Optional quantized node feature metadata."""
+        parquet_uri_prefix: builtins.str
+        """GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet."""
         def __init__(
             self,
             *,
@@ -137,9 +140,10 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             feature_dim: builtins.int | None = ...,
             transform_fn_assets_uri: builtins.str = ...,
             quantized_feature_metadata: global___PreprocessedMetadata.FeatureQuantizationMetadata | None = ...,
+            parquet_uri_prefix: builtins.str = ...,
         ) -> None: ...
         def HasField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "feature_dim", b"feature_dim", "quantized_feature_metadata", b"quantized_feature_metadata"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_node_data_bq_table", b"enumerated_node_data_bq_table", "enumerated_node_ids_bq_table", b"enumerated_node_ids_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "node_id_key", b"node_id_key", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_node_data_bq_table", b"enumerated_node_data_bq_table", "enumerated_node_ids_bq_table", b"enumerated_node_ids_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "node_id_key", b"node_id_key", "parquet_uri_prefix", b"parquet_uri_prefix", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
         def WhichOneof(self, oneof_group: typing_extensions.Literal["_feature_dim", b"_feature_dim"]) -> typing_extensions.Literal["feature_dim"] | None: ...
 
     class EdgeMetadataInfo(google.protobuf.message.Message):
@@ -155,6 +159,7 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         FEATURE_DIM_FIELD_NUMBER: builtins.int
         TRANSFORM_FN_ASSETS_URI_FIELD_NUMBER: builtins.int
         QUANTIZED_FEATURE_METADATA_FIELD_NUMBER: builtins.int
+        PARQUET_URI_PREFIX_FIELD_NUMBER: builtins.int
         @property
         def feature_keys(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
             """Fields in output TFRecords which reference features."""
@@ -174,6 +179,8 @@ class PreprocessedMetadata(google.protobuf.message.Message):
         @property
         def quantized_feature_metadata(self) -> global___PreprocessedMetadata.FeatureQuantizationMetadata:
             """Optional quantized main-edge feature metadata."""
+        parquet_uri_prefix: builtins.str
+        """GCS prefix of the Parquet dataset. Empty if the output was not written as Parquet."""
         def __init__(
             self,
             *,
@@ -185,9 +192,10 @@ class PreprocessedMetadata(google.protobuf.message.Message):
             feature_dim: builtins.int | None = ...,
             transform_fn_assets_uri: builtins.str = ...,
             quantized_feature_metadata: global___PreprocessedMetadata.FeatureQuantizationMetadata | None = ...,
+            parquet_uri_prefix: builtins.str = ...,
         ) -> None: ...
         def HasField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "feature_dim", b"feature_dim", "quantized_feature_metadata", b"quantized_feature_metadata"]) -> builtins.bool: ...
-        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_edge_data_bq_table", b"enumerated_edge_data_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
+        def ClearField(self, field_name: typing_extensions.Literal["_feature_dim", b"_feature_dim", "enumerated_edge_data_bq_table", b"enumerated_edge_data_bq_table", "feature_dim", b"feature_dim", "feature_keys", b"feature_keys", "label_keys", b"label_keys", "parquet_uri_prefix", b"parquet_uri_prefix", "quantized_feature_metadata", b"quantized_feature_metadata", "schema_uri", b"schema_uri", "tfrecord_uri_prefix", b"tfrecord_uri_prefix", "transform_fn_assets_uri", b"transform_fn_assets_uri"]) -> None: ...
         def WhichOneof(self, oneof_group: typing_extensions.Literal["_feature_dim", b"_feature_dim"]) -> typing_extensions.Literal["feature_dim"] | None: ...
 
     class EdgeMetadataOutput(google.protobuf.message.Message):

@@ -25,6 +25,7 @@ from typing import Final, Literal, Optional
 
 import torch
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
@@ -62,6 +63,7 @@ DEFAULT_HETEROGENEOUS_EDGE_INDICES: Final[dict[EdgeType, torch.Tensor]] = {
 }
 
 
+@freeze_gc()
 def create_homogeneous_dataset(
     edge_index: torch.Tensor,
     node_features: Optional[torch.Tensor] = None,
@@ -144,6 +146,7 @@ def create_homogeneous_dataset(
     return dataset
 
 
+@freeze_gc()
 def create_heterogeneous_dataset(
     edge_indices: dict[EdgeType, torch.Tensor],
     node_features: Optional[dict[NodeType, torch.Tensor]] = None,
@@ -233,6 +236,7 @@ def create_heterogeneous_dataset(
     return dataset
 
 
+@freeze_gc()
 def create_heterogeneous_dataset_for_ablp(
     positive_labels: dict[int, list[int]],
     train_node_ids: list[int],

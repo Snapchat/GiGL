@@ -9,6 +9,7 @@ from graphlearn_torch.utils import reverse_edge_type
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.base_dist_loader import BaseDistLoader
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
@@ -437,6 +438,26 @@ def _run_featureless_edge_ids_absent(
     shutdown_rpc()
 
 
+def _run_empty_frontier_neighbor_loader(
+    _,
+    dataset: DistDataset,
+    holder: MutableMapping,
+):
+    # Every neighbor found at hop 2 is already seen, so hop 3 starts with an empty frontier.
+    create_test_process_group()
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[2, 2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, Data)
+        count += 1
+    holder["count"] = count
+    shutdown_rpc()
+
+
 def _run_quantized_feature_neighbor_loader(
     _: int,
     dataset: DistDataset,
@@ -592,8 +613,8 @@ class DistributedNeighborLoaderTest(TestCase):
 
     def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(5),
-            edge_partition_book=torch.zeros(5),
+            node_partition_book=torch.zeros(5, dtype=torch.int64),
+            edge_partition_book=torch.zeros(5, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
                 edge_ids=None,
@@ -621,12 +642,12 @@ class DistributedNeighborLoaderTest(TestCase):
     def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
         partition_output = PartitionOutput(
             node_partition_book={
-                _USER: torch.zeros(5),
-                _STORY: torch.zeros(5),
+                _USER: torch.zeros(5, dtype=torch.int64),
+                _STORY: torch.zeros(5, dtype=torch.int64),
             },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(5),
-                _STORY_TO_USER: torch.zeros(5),
+                _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
+                _STORY_TO_USER: torch.zeros(5, dtype=torch.int64),
             },
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
@@ -673,8 +694,8 @@ class DistributedNeighborLoaderTest(TestCase):
         n = 10
         labels = torch.stack([torch.arange(n), torch.arange(n) * 10], dim=1)
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(n),
-            edge_partition_book=torch.zeros(n),
+            node_partition_book=torch.zeros(n, dtype=torch.int64),
+            edge_partition_book=torch.zeros(n, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
                 edge_ids=None,
@@ -704,12 +725,12 @@ class DistributedNeighborLoaderTest(TestCase):
         labels = torch.stack([torch.arange(n), torch.arange(n) * 10], dim=1)
         partition_output = PartitionOutput(
             node_partition_book={
-                _USER: torch.zeros(n),
-                _STORY: torch.zeros(n),
+                _USER: torch.zeros(n, dtype=torch.int64),
+                _STORY: torch.zeros(n, dtype=torch.int64),
             },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(n),
-                _STORY_TO_USER: torch.zeros(n),
+                _USER_TO_STORY: torch.zeros(n, dtype=torch.int64),
+                _STORY_TO_USER: torch.zeros(n, dtype=torch.int64),
             },
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
@@ -785,7 +806,7 @@ class DistributedNeighborLoaderTest(TestCase):
         self,
     ):
         partition_output = PartitionOutput(
-            node_partition_book={"author": torch.zeros(18)},
+            node_partition_book={"author": torch.zeros(18, dtype=torch.int64)},
             edge_partition_book=None,
             partitioned_edge_index={
                 EdgeType(
@@ -812,7 +833,7 @@ class DistributedNeighborLoaderTest(TestCase):
         self,
     ):
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(18),
+            node_partition_book=torch.zeros(18, dtype=torch.int64),
             edge_partition_book=None,
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[10], [15]]), edge_ids=None
@@ -844,8 +865,8 @@ class DistributedNeighborLoaderTest(TestCase):
             [[0.0, 10.0, 3.0, 20.0], [2.0, 30.0, 1.0, 40.0]]
         )
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(2),
-            edge_partition_book=torch.zeros(2),
+            node_partition_book=torch.zeros(2, dtype=torch.int64),
+            edge_partition_book=torch.zeros(2, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0, 1], [1, 0]]), edge_ids=None
             ),
@@ -853,7 +874,7 @@ class DistributedNeighborLoaderTest(TestCase):
                 feats=raw_node_features,
                 ids=torch.arange(2),
             ),
-            partitioned_node_quantized_features=FeaturePartitionData(
+            partitioned_node_packed_features=FeaturePartitionData(
                 feats=packed_quantized_node_features,
                 ids=torch.arange(2),
             ),
@@ -881,6 +902,68 @@ class DistributedNeighborLoaderTest(TestCase):
             args=(dataset, expected_features),
         )
 
+    def test_distributed_neighbor_loader_materializes_lossless_packed_node_features(
+        self,
+    ) -> None:
+        raw_node_features = torch.tensor([[10.0, 20.0], [30.0, 40.0]])
+        lossless_codec = FeatureCodec(("int16", "uint8_bias1"))
+        lossless_columns = torch.tensor([[-1.0, 254.0], [300.0, -1.0]])
+        metadata = FeatureQuantizationMetadata(
+            bits=2,
+            feature_dim=6,
+            quantized_feature_indices=(0, 2),
+            clip_min=0.0,
+            clip_max=3.0,
+            lossless_feature_indices=(4, 5),
+            lossless_column_encodings=lossless_codec.column_encodings,
+        )
+        # The two-bit region (codes [0, 3] and [2, 1], see the test above) is padded to the
+        # start of the lossless region, which holds the id columns as narrow integers.
+        quantized_region = torch.tensor([[48], [144]], dtype=torch.uint8)
+        packed = torch.cat(
+            [
+                torch.nn.functional.pad(
+                    quantized_region,
+                    (0, metadata.lossless_byte_offset - quantized_region.shape[1]),
+                ),
+                lossless_codec.encode(lossless_columns),
+            ],
+            dim=1,
+        )
+        expected_features = torch.tensor(
+            [[0.0, 10.0, 3.0, 20.0, -1.0, 254.0], [2.0, 30.0, 1.0, 40.0, 300.0, -1.0]]
+        )
+        dataset = DistDataset(
+            rank=0,
+            world_size=1,
+            edge_dir="out",
+            node_quantization_metadata=metadata,
+        )
+        dataset.build(
+            partition_output=PartitionOutput(
+                node_partition_book=torch.zeros(2, dtype=torch.int64),
+                edge_partition_book=torch.zeros(2, dtype=torch.int64),
+                partitioned_edge_index=GraphPartitionData(
+                    edge_index=torch.tensor([[0, 1], [1, 0]]), edge_ids=None
+                ),
+                partitioned_node_features=FeaturePartitionData(
+                    feats=raw_node_features, ids=torch.arange(2)
+                ),
+                partitioned_node_packed_features=FeaturePartitionData(
+                    feats=packed, ids=torch.arange(2)
+                ),
+                partitioned_edge_features=None,
+                partitioned_positive_labels=None,
+                partitioned_negative_labels=None,
+                partitioned_node_labels=None,
+            )
+        )
+
+        mp.spawn(
+            fn=_run_quantized_feature_neighbor_loader,
+            args=(dataset, expected_features),
+        )
+
     def test_heterogeneous_loader_supports_partially_quantized_node_types(
         self,
     ) -> None:
@@ -890,10 +973,10 @@ class DistributedNeighborLoaderTest(TestCase):
         }
         partition_output = PartitionOutput(
             node_partition_book={
-                _USER: torch.zeros(1),
-                _STORY: torch.zeros(1),
+                _USER: torch.zeros(1, dtype=torch.int64),
+                _STORY: torch.zeros(1, dtype=torch.int64),
             },
-            edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
+            edge_partition_book={_USER_TO_STORY: torch.zeros(1, dtype=torch.int64)},
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
                     edge_index=torch.tensor([[0], [0]]), edge_ids=None
@@ -907,7 +990,7 @@ class DistributedNeighborLoaderTest(TestCase):
                     feats=torch.tensor([[20.0]]), ids=torch.tensor([0])
                 ),
             },
-            partitioned_node_quantized_features={
+            partitioned_node_packed_features={
                 _USER: FeaturePartitionData(
                     feats=torch.tensor([[0]], dtype=torch.uint8),
                     ids=torch.tensor([0]),
@@ -1103,8 +1186,8 @@ class WithEdgeDerivationTest(TestCase):
         # Homogeneous dataset with node features but no edge features: the loader
         # must still yield batches, and none carry sampled edge ids.
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(5),
-            edge_partition_book=torch.zeros(5),
+            node_partition_book=torch.zeros(5, dtype=torch.int64),
+            edge_partition_book=torch.zeros(5, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 0]]),
                 edge_ids=None,
@@ -1131,6 +1214,36 @@ class WithEdgeDerivationTest(TestCase):
         self.assertGreater(holder["count"], 0)
         self.assertTrue(holder["edge_ids_absent"])
         self.assertTrue(holder["packed_features_absent"])
+
+    def test_empty_frontier_in_later_hop_does_not_crash(self) -> None:
+        # Two nodes with edges 0 <-> 1. After hop 2 no new node exists, so hop 3 has no sources.
+        partition_output = PartitionOutput(
+            node_partition_book=torch.zeros(2, dtype=torch.int64),
+            edge_partition_book=torch.zeros(2, dtype=torch.int64),
+            partitioned_edge_index=GraphPartitionData(
+                edge_index=torch.tensor([[0, 1], [1, 0]]),
+                edge_ids=None,
+            ),
+            partitioned_node_features=FeaturePartitionData(
+                feats=torch.zeros(2, 2), ids=torch.arange(2)
+            ),
+            partitioned_edge_features=None,
+            partitioned_positive_labels=None,
+            partitioned_negative_labels=None,
+            partitioned_node_labels=None,
+        )
+        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        dataset.build(partition_output=partition_output)
+
+        manager = mp.Manager()
+        holder: MutableMapping = manager.dict()
+        proc = mp.spawn(
+            fn=_run_empty_frontier_neighbor_loader,
+            args=(dataset, holder),
+            join=False,
+        )
+        proc.join(timeout=120)
+        self.assertEqual(holder["count"], 2)
 
 
 class SamplingSeedTest(TestCase):
@@ -1243,10 +1356,13 @@ class TestSamplingErrorPropagation(TestCase):
         n = 5
         edge_index = torch.tensor([[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]])
         partition_output = PartitionOutput(
-            node_partition_book={_USER: torch.zeros(n), _STORY: torch.zeros(n)},
+            node_partition_book={
+                _USER: torch.zeros(n, dtype=torch.int64),
+                _STORY: torch.zeros(n, dtype=torch.int64),
+            },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(n),
-                _STORY_TO_USER: torch.zeros(n),
+                _USER_TO_STORY: torch.zeros(n, dtype=torch.int64),
+                _STORY_TO_USER: torch.zeros(n, dtype=torch.int64),
             },
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
@@ -1345,7 +1461,8 @@ def _run_incoming_heterogeneous_quantized_edge_feature_neighbor_loader(
     assert isinstance(edge_quantization_metadata, dict)
     assert set(edge_feature_info) == {_USER_TO_STORY}
     assert set(edge_quantization_metadata) == {_USER_TO_STORY}
-    assert edge_feature_info[_USER_TO_STORY].dim == 2
+    # The dataset describes the logical width: two raw columns plus two packed ones.
+    assert edge_feature_info[_USER_TO_STORY].dim == 4
     assert edge_quantization_metadata[_USER_TO_STORY].feature_dim == 4
 
     batch = next(iter(loader))
@@ -1366,8 +1483,11 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
             reverse_edge_type(_USER_TO_STORY): torch.tensor([[0.0, 10.0]])
         }
         partition_output = PartitionOutput(
-            node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
-            edge_partition_book={_USER_TO_STORY: torch.zeros(1)},
+            node_partition_book={
+                _USER: torch.zeros(1, dtype=torch.int64),
+                _STORY: torch.zeros(1, dtype=torch.int64),
+            },
+            edge_partition_book={_USER_TO_STORY: torch.zeros(1, dtype=torch.int64)},
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
                     edge_index=torch.tensor([[0], [0]]), edge_ids=None
@@ -1379,7 +1499,7 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
                     feats=torch.tensor([[10.0]]), ids=torch.tensor([0])
                 ),
             },
-            partitioned_edge_quantized_features={
+            partitioned_edge_packed_features={
                 _USER_TO_STORY: FeaturePartitionData(
                     feats=torch.tensor([[0]], dtype=torch.uint8),
                     ids=torch.tensor([0]),
@@ -1412,10 +1532,13 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
 
     def test_incoming_edges_reverse_feature_metadata_and_output_stores(self) -> None:
         partition_output = PartitionOutput(
-            node_partition_book={_USER: torch.zeros(1), _STORY: torch.zeros(1)},
+            node_partition_book={
+                _USER: torch.zeros(1, dtype=torch.int64),
+                _STORY: torch.zeros(1, dtype=torch.int64),
+            },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(1),
-                _STORY_TO_USER: torch.zeros(1),
+                _USER_TO_STORY: torch.zeros(1, dtype=torch.int64),
+                _STORY_TO_USER: torch.zeros(1, dtype=torch.int64),
             },
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(
@@ -1431,7 +1554,7 @@ class HeterogeneousEdgeFeatureLookupTest(TestCase):
                     feats=torch.tensor([[10.0, 20.0]]), ids=torch.tensor([0])
                 )
             },
-            partitioned_edge_quantized_features={
+            partitioned_edge_packed_features={
                 _USER_TO_STORY: FeaturePartitionData(
                     # The high-order 2-bit codes unpack to [0, 3] in feature
                     # slots 0 and 2; raw [10, 20] therefore yields [0, 10, 3, 20].

@@ -17,7 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GiGL (GIgantic Graph Learning) is an open-source library for training and inference of Graph Neural Networks at
 billion-scale. It supports node classification, link prediction, and both supervised and unsupervised learning. Python
-3.11, `uv` for package management.
+3.11–3.13; images are published for every supported minor, and 3.11 is the default (the full CI suite runs on it, and so
+does a Cloud Build job with no `python_version`). `uv` for package management.
 
 ## Common Commands
 
@@ -133,6 +134,15 @@ development.
 - Use OOP for model architectures, functional style for data transforms/pipelines.
 - Re-use and refactor existing code as a priority instead of implementing new code.
 
+### Comprehensions and Ternaries
+
+Use a comprehension or ternary only when it fits on one line and is easy to read. Use a plain `for` loop or `if`/`else`
+block instead when the expression:
+
+- Wraps across lines.
+- Is nested (a comprehension inside a comprehension, or a ternary inside a ternary).
+- Has complex logic in the element or the condition.
+
 ### Fail Fast on Invalid State
 
 - Use `dict[key]` (bracket access) when the key **must** exist. Only use `.get(key, default)` when absence is a valid,
@@ -162,6 +172,12 @@ development.
   Typeguard checks every shape-bearing tensor value in annotated containers in `gigl` and `examples` when a contracted
   call executes. Arguments are checked before execution and returns afterwards; an uncaught `jaxtyping.TypeCheckError`
   fails the test command.
+
+### Environment Variables
+
+- Define environment variables read by `gigl/distributed/` code in `gigl/distributed/constants.py` as `Final[str]`
+  constants. Document each one in a comment above it: what it controls, its allowed values, its default, and whether it
+  must be identical on every node of a job.
 
 ### Docstrings
 
@@ -298,6 +314,18 @@ Plan documents live in `docs/plans/` and must be date-prefixed using the format 
 Ground every claim in a plan with a concrete reference: file paths with line numbers (e.g., `foo.py:42`), API
 signatures, log output, or test results. Do not assert that code behaves a certain way without pointing to the evidence.
 If a plan references a function, class, or config value, include where it is defined so readers can verify.
+
+## Communicating With the User
+
+In text the user reads (replies, summaries, plans, PR descriptions), do not refer to items by labels you invented, such
+as "B11", "c2", or "option 3". Use a short descriptive name instead, such as "full-scale test (experiment)" or "small
+test (model only)".
+
+Short labels are fine in your own reasoning, scratch files, and prompts to subagents. Translate them to descriptive
+names only when you write to the user.
+
+Also define jargon and give context for numbers. For example, do not write only "5-10ms speedup". Write "5-10ms faster
+per batch (about 3% of the 300ms batch time)".
 
 ## Additional instructions
 
