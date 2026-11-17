@@ -406,8 +406,8 @@ def get_load_data_and_transform_pipeline_component(
             transformed_features_info.output_format
             == DataPreprocessorOutputFormat.PARQUET
         ):
-            id_keys: list[str]
-            id_columns: list[str]
+            id_keys: list[str] = []
+            id_columns: list[str] = []
             if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
                 id_keys = [
                     str(preprocessing_spec.identifier_output.src_node),
