@@ -131,9 +131,3 @@ if(GIGL_CORE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
-
-option(GIGL_CORE_BUILD_BENCHMARKS
-       "Build C++ kernel microbenchmarks (used by make benchmark_cpp)" OFF)
-if(GIGL_CORE_BUILD_BENCHMARKS)
-  add_subdirectory(benchmarks)
-endif()
