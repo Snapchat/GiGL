@@ -178,7 +178,7 @@ integration_test: build_cpp_extensions
 # Runs the integration tests for the legacy Spark components (Subgraph Sampler and Split Generator).
 # These tests need the Scala toolchain; do not install with SKIP_SCALA=1.
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specific file.
-integration_tests_spark: build_cpp_extensions
+integration_tests_spark:
 	uv run python -m tests.integration_tests_spark.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
