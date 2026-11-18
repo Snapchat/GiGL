@@ -537,8 +537,8 @@ class DistributedDatasetTestCase(TestCase):
 
     def test_building_homogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(10),
-            edge_partition_book=torch.zeros(20),
+            node_partition_book=torch.zeros(10, dtype=torch.int64),
+            edge_partition_book=torch.zeros(20, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.ones(20, 2), edge_ids=None
             ),
@@ -579,8 +579,8 @@ class DistributedDatasetTestCase(TestCase):
             clip_max=3.0,
         )
         partition_output = PartitionOutput(
-            node_partition_book=torch.zeros(2),
-            edge_partition_book=torch.zeros(1),
+            node_partition_book=torch.zeros(2, dtype=torch.int64),
+            edge_partition_book=torch.zeros(1, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
                 edge_index=torch.tensor([[0], [1]]), edge_ids=None
             ),
@@ -589,7 +589,7 @@ class DistributedDatasetTestCase(TestCase):
             partitioned_positive_labels=None,
             partitioned_negative_labels=None,
             partitioned_node_labels=None,
-            partitioned_node_quantized_features=FeaturePartitionData(
+            partitioned_node_packed_features=FeaturePartitionData(
                 feats=packed_features, ids=torch.tensor([3, 7])
             ),
         )
@@ -602,12 +602,12 @@ class DistributedDatasetTestCase(TestCase):
         )
         dataset.build(partition_output=partition_output)
 
-        assert isinstance(dataset.node_quantized_features, Feature)
+        assert isinstance(dataset.node_packed_features, Feature)
         self.assert_tensor_equality(
-            dataset.node_quantized_features.feature_tensor, packed_features
+            dataset.node_packed_features.feature_tensor, packed_features
         )
         self.assert_tensor_equality(
-            dataset.node_quantized_features[torch.tensor([7, 3])],
+            dataset.node_packed_features[torch.tensor([7, 3])],
             packed_features.flip(0),
         )
         self.assertEqual(dataset.node_quantization_metadata, quantization_metadata)
@@ -615,11 +615,11 @@ class DistributedDatasetTestCase(TestCase):
     def test_building_heterogeneous_dataset_preserves_node_features_and_labels(self):
         partition_output = PartitionOutput(
             node_partition_book={
-                _USER: torch.zeros(10),
-                _STORY: torch.zeros(5),
+                _USER: torch.zeros(10, dtype=torch.int64),
+                _STORY: torch.zeros(5, dtype=torch.int64),
             },
             edge_partition_book={
-                _USER_TO_STORY: torch.zeros(5),
+                _USER_TO_STORY: torch.zeros(5, dtype=torch.int64),
             },
             partitioned_edge_index={
                 _USER_TO_STORY: GraphPartitionData(

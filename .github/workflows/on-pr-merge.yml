@@ -105,6 +105,26 @@ jobs:
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
+  # Optional: this job is not in the required status checks of the `main` ruleset, so a failure does not block the merge.
+  ci-integration-tests-spark:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Spark Integration Tests
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      with:
+        cmd: "make integration_tests_spark"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
@@ -120,9 +140,19 @@ jobs:
     - name: Run E2E Tests
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make run_all_e2e_tests"
+        # The merge queue fails fast: the first failed pipeline cancels the rest to free capacity.
+        # GITHUB_RUN_ID labels the pipeline runs so the cancel step below can find them.
+        cmd: "make run_all_e2e_tests GITHUB_RUN_ID=${{ github.run_id }} E2E_FAIL_FAST=1"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
 # TODO(kmonte): Re-enable this once the tests are fixed.
   # ci-integration-example-notebooks-test:
