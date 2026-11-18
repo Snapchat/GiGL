@@ -181,8 +181,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `gigl/scripts/post_install.py` now propagates `install_glt.sh`'s exit status as its own process exit code; previously
   a failed GLT build/install exited 0 when the file was invoked directly, as image builds do by @dsaini2 in
   https://github.com/Snapchat/GiGL/pull/761
-- Range partitioning now supports node types with fewer nodes than ranks and ranks with no edges of an edge type that
-  has edge features, packed features, or weights by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
 
 ### Removed
 

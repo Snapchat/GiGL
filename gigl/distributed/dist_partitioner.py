@@ -7,12 +7,11 @@ import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
 from graphlearn_torch.distributed.dist_context import get_context
 from graphlearn_torch.distributed.dist_random_partitioner import DistPartitionManager
-from graphlearn_torch.partition import PartitionBook
+from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor, index_select
 
 from gigl.common.logger import Logger
 from gigl.distributed.utils.partition_book import (
-    EmptyRangeAllowedPartitionBook,
     build_partition_book,
     get_ids_on_rank,
 )
@@ -1375,7 +1374,7 @@ class DistPartitioner:
             or edge_packed_feature_dim is not None
             or has_edge_weights
         ):
-            edge_partition_book = EmptyRangeAllowedPartitionBook(
+            edge_partition_book = RangePartitionBook(
                 partition_ranges=partition_ranges, partition_idx=self._rank
             )
             partitioned_edge_ids = get_ids_on_rank(

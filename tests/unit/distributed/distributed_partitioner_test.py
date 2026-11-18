@@ -7,7 +7,7 @@ import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import init_rpc, init_worker_group
-from graphlearn_torch.partition import PartitionBook, RangePartitionBook
+from graphlearn_torch.partition import PartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
@@ -36,31 +36,6 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     run_distributed_partitioner,
 )
 from tests.test_assets.test_case import TestCase
-
-
-def _run_partitioner_with_empty_rank(
-    rank: int,
-    output_dict: MutableMapping[int, PartitionOutput],
-    master_addr: str,
-    master_port: int,
-) -> None:
-    """Partitions a graph with a single node and a single featured edge; rank 1 registers nothing."""
-    init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
-    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
-    partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
-    if rank == 0:
-        partitioner.register_node_ids(node_ids=torch.tensor([0]))
-        partitioner.register_node_features(node_features=torch.tensor([[1.0, 2.0]]))
-        partitioner.register_edge_index(edge_index=torch.tensor([[0], [0]]))
-        partitioner.register_edge_features(edge_features=torch.tensor([[3.0]]))
-    else:
-        partitioner.register_node_ids(node_ids=torch.empty(0, dtype=torch.int64))
-        partitioner.register_node_features(node_features=torch.empty((0, 2)))
-        partitioner.register_edge_index(
-            edge_index=torch.empty((2, 0), dtype=torch.int64)
-        )
-        partitioner.register_edge_features(edge_features=torch.empty((0, 1)))
-    output_dict[rank] = partitioner.partition()
 
 
 class DistRandomPartitionerTestCase(TestCase):
@@ -1075,50 +1050,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
 
-    def test_partitioning_with_empty_ranks(self) -> None:
-        """One node and one featured edge across two ranks: rank 1 owns no nodes and no edges."""
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-        mp.spawn(
-            _run_partitioner_with_empty_rank,
-            args=(output_dict, self._master_ip_address, get_free_port()),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, num_nodes_and_edges in [(0, 1), (1, 0)]:
-            output = output_dict[rank]
-            assert isinstance(output.node_partition_book, RangePartitionBook)
-            assert isinstance(output.edge_partition_book, RangePartitionBook)
-            assert output.partitioned_edge_index is not None
-            assert not isinstance(output.partitioned_edge_index, abc.Mapping)
-            assert not isinstance(output.partitioned_node_features, abc.Mapping)
-            assert not isinstance(output.partitioned_edge_features, abc.Mapping)
-            assert output.partitioned_node_features is not None
-            assert output.partitioned_edge_features is not None
-            self.assertEqual(
-                output.node_partition_book.partition_bounds.tolist(), [1, 1]
-            )
-            self.assertEqual(
-                output.edge_partition_book.partition_bounds.tolist(), [1, 1]
-            )
-            self.assert_tensor_equality(
-                output.partitioned_edge_index.edge_index.to(torch.int64),
-                torch.tensor([[0], [0]])[:, :num_nodes_and_edges],
-            )
-            self.assertEqual(
-                output.partitioned_node_features.feats.shape, (num_nodes_and_edges, 2)
-            )
-            self.assertEqual(
-                output.partitioned_edge_features.feats.shape, (num_nodes_and_edges, 1)
-            )
-        self.assert_tensor_equality(
-            output_dict[0].partitioned_node_features.feats, torch.tensor([[1.0, 2.0]])
-        )
-        self.assert_tensor_equality(
-            output_dict[0].partitioned_edge_features.feats, torch.tensor([[3.0]])
-        )
-
     def test_partitioning_failure(self) -> None:
         master_port = get_free_port()
         rank = 0
@@ -1165,69 +1096,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 AssertionError, "Must have registered nodes prior to partitioning them"
             ):
                 partitioner.partition_node()
-
-        partitioner = DistPartitioner(
-            should_assign_edges_by_src_node=True,
-        )
-        empty_node_ids = torch.empty(0)
-        empty_edge_index = torch.empty((2, 0))
-        empty_node_features = torch.empty((0, 5))
-        empty_node_labels = torch.empty((0, 1))
-        empty_edge_features = torch.empty((0, 10))
-        empty_pos_label = torch.empty((2, 0))
-        empty_neg_label = torch.empty((2, 0))
-
-        # Test partitioning with empty node_ids, empty node_feats, empty node_labels, empty edge_feats, and empty edge index
-        partitioner.register_node_ids(node_ids=empty_node_ids)
-        partitioner.register_edge_index(edge_index=empty_edge_index)
-        partitioner.register_node_features(node_features=empty_node_features)
-        partitioner.register_node_labels(node_labels=empty_node_labels)
-        partitioner.register_edge_features(edge_features=empty_edge_features)
-        partitioner.register_labels(label_edge_index=empty_pos_label, is_positive=True)
-        partitioner.register_labels(label_edge_index=empty_neg_label, is_positive=False)
-
-        partitioned_output = partitioner.partition()
-        assert (
-            not isinstance(partitioned_output.partitioned_node_features, abc.Mapping)
-            and not isinstance(
-                partitioned_output.partitioned_edge_features, abc.Mapping
-            )
-            and not isinstance(partitioned_output.partitioned_node_labels, abc.Mapping)
-        ), "Got heterogeneous features/labels, but expected homogeneous output"
-
-        assert (
-            partitioned_output.partitioned_node_features is not None
-            and partitioned_output.partitioned_edge_features is not None
-            and partitioned_output.partitioned_node_labels is not None
-        ), "Features and labels should not be None"
-
-        assert (
-            partitioned_output.partitioned_node_features.feats.shape
-            == empty_node_features.shape
-        ), (
-            f"Node Features should be empty, but got shape {partitioned_output.partitioned_node_features.feats.shape}"
-        )
-
-        assert (
-            partitioned_output.partitioned_node_labels.feats.shape
-            == empty_node_labels.shape
-        ), (
-            f"Node Labels should be empty, but got shape {partitioned_output.partitioned_node_labels.feats.shape}"
-        )
-
-        assert (
-            partitioned_output.partitioned_edge_features.feats.shape
-            == empty_edge_features.shape
-        ), (
-            f"Edge Features should be empty, but got shape {partitioned_output.partitioned_edge_features.feats.shape}"
-        )
-
-        # Assert that calling partition() twice in a row on registered input raises error
-        with self.subTest(partitioner=partitioner):
-            with self.assertRaisesRegex(
-                AssertionError, "Must have registered nodes prior to partitioning them"
-            ):
-                partitioner.partition()
 
     @parameterized.expand(
         [

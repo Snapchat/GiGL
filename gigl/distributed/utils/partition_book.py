@@ -2,42 +2,6 @@ from typing import Union
 
 import torch
 from graphlearn_torch.partition import PartitionBook, RangePartitionBook
-from graphlearn_torch.partition.partition_book import OffsetId2Index
-
-
-class EmptyRangeAllowedPartitionBook(RangePartitionBook):
-    """A RangePartitionBook that accepts empty partition ranges.
-
-    GLT's RangePartitionBook requires start < end for every range, which fails when a rank owns no entities
-    (e.g. fewer nodes than ranks, or a rank with no edges of an edge type).
-    Lookups, `id2index`, and `id_filter` already behave correctly for empty ranges.
-    Ranges must still satisfy start <= end and be contiguous.
-
-    Args:
-        partition_ranges (list[tuple[int, int]]): Start and end (exclusive) of each partition range.
-        partition_idx (int): Index of the current partition.
-
-    Raises:
-        ValueError: If any range has start > end, or the ranges are not contiguous.
-    """
-
-    def __init__(
-        self, partition_ranges: list[tuple[int, int]], partition_idx: int
-    ) -> None:
-        # Intentionally does not call RangePartitionBook.__init__, which rejects empty ranges.
-        if not all(start <= end for start, end in partition_ranges):
-            raise ValueError("All partition ranges must have start <= end")
-        if not all(
-            previous[1] == current[0]
-            for previous, current in zip(partition_ranges[:-1], partition_ranges[1:])
-        ):
-            raise ValueError("Partition ranges must be continuous")
-
-        self.partition_bounds = torch.tensor(
-            [end for _, end in partition_ranges], dtype=torch.long
-        )
-        self.partition_idx = partition_idx
-        self._id2index = OffsetId2Index(partition_ranges[partition_idx][0])
 
 
 def _check_partition_book(partition_book: torch.Tensor) -> None:
@@ -141,8 +105,8 @@ def build_partition_book(
         partition_ranges.append((start, end))
         start = end
 
-    # Empty ranges are possible when num_entities < world_size.
-    partition_book = EmptyRangeAllowedPartitionBook(
+    # Store and return partitioned ranges as GLT's RangePartitionBook
+    partition_book = RangePartitionBook(
         partition_ranges=partition_ranges, partition_idx=rank
     )
     return partition_book
