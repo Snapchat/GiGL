@@ -342,7 +342,15 @@ class TFRecordDataLoader:
             tf_dataset_options (TFDatasetOptions): The options to use when building the dataset.
         Returns:
             LoadedEntityTensors: The (id_tensor, feature_tensor, packed_feature_tensor, label_tensor) for the loaded entities.
+        Raises:
+            ValueError: If ``serialized_tf_record_info.tfrecord_uri_prefix`` is not set.
         """
+        tfrecord_uri_prefix = serialized_tf_record_info.tfrecord_uri_prefix
+        if tfrecord_uri_prefix is None:
+            raise ValueError(
+                "Cannot load TFRecords: tfrecord_uri_prefix is not set. "
+                "Entities written as Parquet are loaded with ParquetDataLoader."
+            )
         entity_key = serialized_tf_record_info.entity_key
         feature_keys = serialized_tf_record_info.feature_keys
         packed_feature_key = serialized_tf_record_info.packed_feature_key
@@ -404,7 +412,7 @@ class TFRecordDataLoader:
             )
 
         uris = self._partition_children_uris(
-            serialized_tf_record_info.tfrecord_uri_prefix,
+            tfrecord_uri_prefix,
             serialized_tf_record_info.tfrecord_uri_pattern,
         )
         if not uris:

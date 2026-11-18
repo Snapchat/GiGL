@@ -147,6 +147,8 @@ class TranslatorTestCase(TestCase):
                 condensed_node_type
             ]
         )
+        # The preprocessor leaves tfrecord_uri_prefix empty when it writes Parquet.
+        node_metadata.tfrecord_uri_prefix = ""
         node_metadata.parquet_uri_prefix = "gs://example-bucket/nodes/"
 
         serialized_metadata = convert_pb_to_serialized_graph_metadata(
@@ -158,6 +160,7 @@ class TranslatorTestCase(TestCase):
 
         node_entity_info = serialized_metadata.node_entity_info
         assert isinstance(node_entity_info, SerializedTFRecordInfo)
+        self.assertIsNone(node_entity_info.tfrecord_uri_prefix)
         assert node_entity_info.parquet_uri_prefix is not None
         self.assertEqual(
             node_entity_info.parquet_uri_prefix.uri, "gs://example-bucket/nodes/"
@@ -168,6 +171,7 @@ class TranslatorTestCase(TestCase):
         edge_entity_info = serialized_metadata.edge_entity_info
         assert isinstance(edge_entity_info, SerializedTFRecordInfo)
         self.assertIsNone(edge_entity_info.parquet_uri_prefix)
+        self.assertIsNotNone(edge_entity_info.tfrecord_uri_prefix)
 
     @parameterized.expand(
         [
@@ -256,6 +260,7 @@ class TranslatorTestCase(TestCase):
                     condensed_node_type
                 ],
             )
+            assert seralized_node_info.tfrecord_uri_prefix is not None
             self.assertEqual(
                 seralized_node_info.tfrecord_uri_prefix.uri,
                 preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
@@ -337,6 +342,7 @@ class TranslatorTestCase(TestCase):
                 ],
             )
 
+            assert seralized_edge_info.tfrecord_uri_prefix is not None
             self.assertEqual(
                 seralized_edge_info.tfrecord_uri_prefix.uri,
                 edge_info.main_edge_info.tfrecord_uri_prefix,
@@ -422,6 +428,7 @@ class TranslatorTestCase(TestCase):
                         ],
                     )
 
+                    assert seralized_positive_label_info.tfrecord_uri_prefix is not None
                     self.assertEqual(
                         seralized_positive_label_info.tfrecord_uri_prefix.uri,
                         edge_info.positive_edge_info.tfrecord_uri_prefix,
@@ -511,6 +518,9 @@ class TranslatorTestCase(TestCase):
                         ],
                     )
 
+                    assert (
+                        serialized_negative_label_info.tfrecord_uri_prefix is not None
+                    )
                     self.assertEqual(
                         serialized_negative_label_info.tfrecord_uri_prefix.uri,
                         edge_info.negative_edge_info.tfrecord_uri_prefix,
