@@ -1,0 +1,54 @@
+name: Cancel Dead Merge Queue Runs
+
+# The merge queue deletes a merge group branch when a pull request leaves the queue, or when an earlier entry
+# fails and the queue rebuilds the groups behind it. GitHub does not stop the "CI Tests" run on a destroyed group.
+# That run keeps using runners and Vertex AI capacity for hours.
+#
+# The `destroyed` activity type is listed for the `merge_group` webhook event, but not for workflow triggers:
+# https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+# This workflow depends on it anyway. If the workflow never runs, the only effect is that dead runs are not cancelled.
+on:
+  merge_group:
+    types: [destroyed]
+
+permissions:
+  # Needed to cancel workflow runs.
+  actions: 'write'
+  contents: 'read'
+
+jobs:
+  cancel-dead-ci-runs:
+    # A merged group has no work left to cancel.
+    if: github.event.reason != 'merged'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Print destroyed event fields
+      env:
+        EVENT_REASON: ${{ github.event.reason }}
+        MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        GITHUB_REF_VALUE: ${{ github.ref }}
+        GITHUB_SHA_VALUE: ${{ github.sha }}
+      run: |
+        echo "reason=${EVENT_REASON}"
+        echo "merge_group.head_ref=${MERGE_GROUP_HEAD_REF}"
+        echo "merge_group.head_sha=${MERGE_GROUP_HEAD_SHA}"
+        echo "github.ref=${GITHUB_REF_VALUE}"
+        echo "github.sha=${GITHUB_SHA_VALUE}"
+    - name: Cancel CI Tests runs for the destroyed merge group
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        # GITHUB_SHA is the "SHA of the merge group" for merge_group events.
+        MERGE_GROUP_SHA: ${{ github.sha }}
+      run: |
+        run_ids=$(gh run list \
+          --workflow on-pr-merge.yml \
+          --event merge_group \
+          --commit "${MERGE_GROUP_SHA}" \
+          --json databaseId,status \
+          --jq '.[] | select(.status != "completed") | .databaseId')
+        for run_id in ${run_ids}; do
+          echo "Cancelling CI Tests run ${run_id}"
+          gh run cancel "${run_id}"
+        done
