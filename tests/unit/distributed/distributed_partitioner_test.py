@@ -33,7 +33,7 @@ from tests.test_assets.distributed.constants import (
 )
 from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
-    run_distributed_partitioner,
+    run_distributed_partitioner_cases,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -228,6 +228,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 tensor_a=node_partition_book[node_ids],
                 tensor_b=expected_node_pidx,
             )
+
+            # No edge weights are registered in these cases, so none should come back.
+            self.assertIsNone(graph.weights)
 
             edge_ids = graph.edge_ids
 
@@ -487,7 +490,6 @@ class DistRandomPartitionerTestCase(TestCase):
                     # Otherwise, we expect there to be the same number of edge features and nodes, as each user node is the source and destination node of exactly one edge.
                     self.assertEqual(edge_feat.feats.size(0), num_nodes_on_rank)
 
-                # We expect the edge ids on the current rank from the graph to be the same as the edge ids on the current rank from the features.
                 # The edge feature object does not store ids. Its rows are in the same order as the edge ids of the graph.
                 self.assertIsNone(edge_feat.ids)
                 edge_feat_ids = graph.edge_ids
@@ -584,106 +586,116 @@ class DistRandomPartitionerTestCase(TestCase):
                 node_partition_book[target_nodes], expect_edge_pidx
             )
 
-    @parameterized.expand(
-        [
-            param(
-                "Homogeneous Partitioning By Source Node",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=True,
+    def test_partitioning_correctness(self) -> None:
+        """
+        Tests partitioning functionality and correctness on mocked inputs.
+        All cases run in one spawn of the ranks, as spawning costs far more than partitioning the mocked graph.
+        """
+        # Each case is (name, is_heterogeneous, input_data_strategy, should_assign_edges_by_src_node).
+        cases: list[tuple[str, bool, InputDataStrategy, bool]] = [
+            (
+                "Homogeneous Partitioning By Source Node - Register All Entities together through Constructor",
+                False,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
+                True,
             ),
-            param(
-                "Heterogeneous Partitioning By Source Node",
-                is_heterogeneous=True,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=True,
+            (
+                "Heterogeneous Partitioning By Source Node - Register All Entities together through Constructor",
+                True,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
+                True,
             ),
-            param(
-                "Homogeneous Partitioning By Dest Node",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=False,
+            (
+                "Homogeneous Partitioning By Dest Node - Register All Entities together through Constructor",
+                False,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
+                False,
             ),
-            param(
-                "Heterogeneous Partitioning By Dest Node",
-                is_heterogeneous=True,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=False,
+            (
+                "Heterogeneous Partitioning By Dest Node - Register All Entities together through Constructor",
+                True,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
+                False,
             ),
-            param(
-                "Homogeneous Partitioning By Source Node - Register All Entites separately through register functions",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                should_assign_edges_by_src_node=True,
+            (
+                "Homogeneous Partitioning By Source Node - Register All Entities separately through register functions",
+                False,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+                True,
             ),
-            param(
-                "Homogeneous Partitioning By Source Node - Register minimal entities separately through register functions",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
-                should_assign_edges_by_src_node=True,
-            ),
-            param(
+            (
                 "Heterogeneous Partitioning By Source Node - Register minimal entities separately through register functions",
-                is_heterogeneous=True,
-                input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
-                should_assign_edges_by_src_node=True,
+                True,
+                InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
+                True,
             ),
-            param(
-                "Homogeneous raw and quantized edge feature partitioning",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
-                should_assign_edges_by_src_node=True,
-            ),
-            param(
+            (
                 "Heterogeneous raw and quantized edge feature partitioning",
-                is_heterogeneous=True,
-                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
-                should_assign_edges_by_src_node=True,
+                True,
+                InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
+                True,
             ),
-            param(
+            (
                 "Homogeneous packed-edge-only partitioning",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
-                should_assign_edges_by_src_node=True,
+                False,
+                InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
+                True,
             ),
         ]
-    )
-    def test_partitioning_correctness(
-        self,
-        _,
-        is_heterogeneous: bool,
-        input_data_strategy: InputDataStrategy,
-        should_assign_edges_by_src_node: bool,
-    ) -> None:
-        """
-        Tests partitioning functionality and correctness on mocked inputs
-        Args:
-            is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs should be used
-            input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
-            should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
-        """
-        master_port = get_free_port()
 
         manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        mocked_input_graph = RANK_TO_MOCKED_GRAPH
-
+        output_dicts: list[MutableMapping[int, PartitionOutput]] = [
+            manager.dict() for _ in cases
+        ]
         mp.spawn(
-            run_distributed_partitioner,
+            run_distributed_partitioner_cases,
             args=(
-                output_dict,
-                is_heterogeneous,
-                mocked_input_graph,
-                should_assign_edges_by_src_node,
+                output_dicts,
+                [
+                    {
+                        "is_heterogeneous": is_heterogeneous,
+                        "rank_to_input_graph": RANK_TO_MOCKED_GRAPH,
+                        "should_assign_edges_by_src_node": should_assign_edges_by_src_node,
+                        "input_data_strategy": input_data_strategy,
+                    }
+                    for _, is_heterogeneous, input_data_strategy, should_assign_edges_by_src_node in cases
+                ],
                 self._master_ip_address,
-                master_port,
-                input_data_strategy,
+                get_free_port(),
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
             join=True,
         )
 
+        for output_dict, (
+            case_name,
+            is_heterogeneous,
+            input_data_strategy,
+            should_assign_edges_by_src_node,
+        ) in zip(output_dicts, cases):
+            with self.subTest(case_name):
+                self._assert_partitioning_correctness(
+                    output_dict=output_dict,
+                    is_heterogeneous=is_heterogeneous,
+                    input_data_strategy=input_data_strategy,
+                    should_assign_edges_by_src_node=should_assign_edges_by_src_node,
+                )
+
+    def _assert_partitioning_correctness(
+        self,
+        output_dict: MutableMapping[int, PartitionOutput],
+        is_heterogeneous: bool,
+        input_data_strategy: InputDataStrategy,
+        should_assign_edges_by_src_node: bool,
+    ) -> None:
+        """
+        Checks the partitioned outputs of all ranks for one case.
+        Args:
+            output_dict (MutableMapping[int, PartitionOutput]): Mapping of rank to its partitioning output
+            is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs were used
+            input_data_strategy (InputDataStrategy): Strategy used for registering inputs to the partitioner
+            should_assign_edges_by_src_node (bool): Whether edges were partitioned according to the partition book of the source node or destination node
+        """
         unified_output_edge_index: dict[EdgeType, list[torch.Tensor]] = defaultdict(
             list
         )
@@ -730,14 +742,14 @@ class DistRandomPartitionerTestCase(TestCase):
                 expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                 expected_edge_feat_types=expected_edge_feat_types,
             )
-            if isinstance(partitioned_edge_index, abc.Mapping):
-                for edge_type, graph in partitioned_edge_index.items():
-                    unified_output_edge_index[edge_type].append(graph.edge_index)
-            else:
+            if isinstance(partitioned_edge_index, GraphPartitionData):
                 graph = partitioned_edge_index
                 unified_output_edge_index[USER_TO_USER_EDGE_TYPE].append(
                     graph.edge_index
                 )
+            else:
+                for edge_type, graph in partitioned_edge_index.items():
+                    unified_output_edge_index[edge_type].append(graph.edge_index)
 
             if is_packed_edge_only:
                 self.assertIsNotNone(partition_output.edge_partition_book)
@@ -771,18 +783,19 @@ class DistRandomPartitionerTestCase(TestCase):
                 )
                 self.assertIsNotNone(partition_output.partitioned_edge_packed_features)
                 packed_features = partition_output.partitioned_edge_packed_features
-                if isinstance(packed_features, abc.Mapping):
-                    assert isinstance(partitioned_edge_index, abc.Mapping)
-                    self.assertEqual(set(packed_features), {USER_TO_USER_EDGE_TYPE})
-                    packed_feature_items = packed_features.items()
-                else:
+                assert packed_features is not None
+                if isinstance(packed_features, FeaturePartitionData):
                     assert isinstance(partitioned_edge_index, GraphPartitionData)
                     packed_feature_items = [(USER_TO_USER_EDGE_TYPE, packed_features)]
+                else:
+                    assert not isinstance(partitioned_edge_index, GraphPartitionData)
+                    self.assertEqual(set(packed_features), {USER_TO_USER_EDGE_TYPE})
+                    packed_feature_items = packed_features.items()
                 for edge_type, edge_type_features in packed_feature_items:
                     edge_type_graph = (
-                        partitioned_edge_index[edge_type]
-                        if isinstance(partitioned_edge_index, abc.Mapping)
-                        else partitioned_edge_index
+                        partitioned_edge_index
+                        if isinstance(partitioned_edge_index, GraphPartitionData)
+                        else partitioned_edge_index[edge_type]
                     )
                     self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
                     self.assertIsNone(edge_type_features.ids)
@@ -814,7 +827,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 assert partition_output.edge_partition_book is not None, (
                     f"Must create edge partition book for strategy {input_data_strategy.value}"
                 )
-                if isinstance(partition_output.edge_partition_book, abc.Mapping):
+                if isinstance(partition_output.edge_partition_book, dict):
                     for (
                         edge_type,
                         partition_book,
@@ -861,16 +874,18 @@ class DistRandomPartitionerTestCase(TestCase):
                     entity_name="packed_features",
                 )
 
-                if isinstance(partition_output.partitioned_node_features, abc.Mapping):
+                if isinstance(
+                    partition_output.partitioned_node_features, FeaturePartitionData
+                ):
+                    unified_output_node_feat[USER_NODE_TYPE].append(
+                        partition_output.partitioned_node_features.feats
+                    )
+                else:
                     for (
                         node_type,
                         node_features,
                     ) in partition_output.partitioned_node_features.items():
                         unified_output_node_feat[node_type].append(node_features.feats)
-                else:
-                    unified_output_node_feat[USER_NODE_TYPE].append(
-                        partition_output.partitioned_node_features.feats
-                    )
 
                 assert partition_output.partitioned_node_labels is not None, (
                     f"Must partition node labels for strategy {input_data_strategy.value}"
@@ -887,16 +902,18 @@ class DistRandomPartitionerTestCase(TestCase):
                     entity_name="labels",
                 )
 
-                if isinstance(partition_output.partitioned_node_labels, abc.Mapping):
+                if isinstance(
+                    partition_output.partitioned_node_labels, FeaturePartitionData
+                ):
+                    unified_output_node_labels[USER_NODE_TYPE].append(
+                        partition_output.partitioned_node_labels.feats
+                    )
+                else:
                     for (
                         node_type,
                         node_labels,
                     ) in partition_output.partitioned_node_labels.items():
                         unified_output_node_labels[node_type].append(node_labels.feats)
-                else:
-                    unified_output_node_labels[USER_NODE_TYPE].append(
-                        partition_output.partitioned_node_labels.feats
-                    )
 
                 self._assert_edge_feature_outputs(
                     rank=rank,
@@ -907,16 +924,18 @@ class DistRandomPartitionerTestCase(TestCase):
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
                 )
 
-                if isinstance(partition_output.partitioned_edge_features, abc.Mapping):
+                if isinstance(
+                    partition_output.partitioned_edge_features, FeaturePartitionData
+                ):
+                    unified_output_edge_feat[USER_TO_USER_EDGE_TYPE].append(
+                        partition_output.partitioned_edge_features.feats
+                    )
+                else:
                     for (
                         edge_type,
                         edge_features,
                     ) in partition_output.partitioned_edge_features.items():
                         unified_output_edge_feat[edge_type].append(edge_features.feats)
-                else:
-                    unified_output_edge_feat[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_edge_features.feats
-                    )
 
                 # Currently, we always partition labeled edge indices by their source node
                 self._assert_label_outputs(
@@ -929,17 +948,17 @@ class DistRandomPartitionerTestCase(TestCase):
                 )
 
                 if isinstance(
-                    partition_output.partitioned_positive_labels, abc.Mapping
+                    partition_output.partitioned_positive_labels, torch.Tensor
                 ):
+                    unified_output_pos_label[USER_TO_USER_EDGE_TYPE].append(
+                        partition_output.partitioned_positive_labels
+                    )
+                else:
                     for (
                         edge_type,
                         pos_edge_label,
                     ) in partition_output.partitioned_positive_labels.items():
                         unified_output_pos_label[edge_type].append(pos_edge_label)
-                else:
-                    unified_output_pos_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_positive_labels
-                    )
 
                 self._assert_label_outputs(
                     rank=rank,
@@ -951,17 +970,17 @@ class DistRandomPartitionerTestCase(TestCase):
                 )
 
                 if isinstance(
-                    partition_output.partitioned_negative_labels, abc.Mapping
+                    partition_output.partitioned_negative_labels, torch.Tensor
                 ):
+                    unified_output_neg_label[USER_TO_USER_EDGE_TYPE].append(
+                        partition_output.partitioned_negative_labels
+                    )
+                else:
                     for (
                         edge_type,
                         neg_edge_labels,
                     ) in partition_output.partitioned_negative_labels.items():
                         unified_output_neg_label[edge_type].append(neg_edge_labels)
-                else:
-                    unified_output_neg_label[USER_TO_USER_EDGE_TYPE].append(
-                        partition_output.partitioned_negative_labels
-                    )
 
         ## Checking that the union of edge indices across all ranks equals to the full set from the input
 

@@ -4,7 +4,6 @@ from unittest import mock
 
 import torch
 from absl.testing import absltest
-from parameterized import param, parameterized
 
 from gigl.common.utils.feature_quantization.lossless_compression import (
     FEATURE_COMPRESSION_ENV,
@@ -29,49 +28,10 @@ class TestDatasetFactory(TestCase):
         if torch.distributed.is_initialized():
             torch.distributed.destroy_process_group()
 
-    @parameterized.expand(
-        [
-            param("training", is_inference=False),
-            param("inference", is_inference=True),
-        ]
-    )
-    def test_build_dataset_from_task_config_uri_homogeneous(
-        self, _, is_inference: bool
-    ):
-        # Test with a valid task config URI
-        task_config_uri = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ].frozen_gbml_config_uri
-
-        dataset = build_dataset_from_task_config_uri(
-            task_config_uri,
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
-
-        if is_inference:
-            self.assertIsNone(dataset.train_node_ids)
-            self.assertIsNone(dataset.val_node_ids)
-            self.assertIsNone(dataset.test_node_ids)
-        else:
-            # Mapping despite being "homogeneous" as ABLP uses labels as edge types.
-            # Use assert isinstance instead of self.assertIsInstance to type narrow.
-            assert isinstance(dataset.train_node_ids, abc.Mapping)
-            self.assertTrue(
-                dataset.train_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
-            )
-            assert isinstance(dataset.val_node_ids, abc.Mapping)
-            self.assertTrue(
-                dataset.val_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
-            )
-            assert isinstance(dataset.test_node_ids, abc.Mapping)
-            self.assertTrue(
-                dataset.val_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
-            )
-
-    def test_node_and_edge_features_are_compressed_by_default_and_off_keeps_float32(
+    def test_cora_dataset_has_splits_for_training_and_none_for_inference_and_compresses_features(
         self,
     ) -> None:
+        """The default (training, compressed) build and the compression-off inference build share one Cora load each."""
         task_config_uri = get_mocked_dataset_artifact_metadata()[
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ].frozen_gbml_config_uri
@@ -85,9 +45,27 @@ class TestDatasetFactory(TestCase):
         with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: "OFF"}):
             uncompressed = build_dataset_from_task_config_uri(
                 task_config_uri,
-                is_inference=False,
+                is_inference=True,
                 _tfrecord_uri_pattern=".*data.tfrecord$",
             )
+
+        # Mapping despite being "homogeneous" as ABLP uses labels as edge types.
+        # Use assert isinstance instead of self.assertIsInstance to type narrow.
+        assert isinstance(compressed.train_node_ids, abc.Mapping)
+        self.assertEqual(
+            compressed.train_node_ids.keys(), {DEFAULT_HOMOGENEOUS_NODE_TYPE}
+        )
+        assert isinstance(compressed.val_node_ids, abc.Mapping)
+        self.assertEqual(
+            compressed.val_node_ids.keys(), {DEFAULT_HOMOGENEOUS_NODE_TYPE}
+        )
+        assert isinstance(compressed.test_node_ids, abc.Mapping)
+        self.assertEqual(
+            compressed.test_node_ids.keys(), {DEFAULT_HOMOGENEOUS_NODE_TYPE}
+        )
+        self.assertIsNone(uncompressed.train_node_ids)
+        self.assertIsNone(uncompressed.val_node_ids)
+        self.assertIsNone(uncompressed.test_node_ids)
 
         # Cora's features are all 0/1, so every column is inferred as a lossless bit column.
         metadata = compressed.node_quantization_metadata
