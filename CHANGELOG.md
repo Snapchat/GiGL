@@ -187,7 +187,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Remove `DistRangePartitioner`; `DistPartitioner` is now range-based, so the `partitioner_class` default of
   `build_dataset` changes from a tensor-partition-book partitioner to a range-based one. Remove the
   `should_use_range_partitioning` task-config argument, which is now ignored if set by @kmontemayor2-sc in
-  https://github.com/Snapchat/GiGL/pull/PENDING
+  https://github.com/Snapchat/GiGL/pull/912
 - Remove all-to-all feature collection from the samplers; GiGL never enabled it, and the sampler no longer receives
   `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
