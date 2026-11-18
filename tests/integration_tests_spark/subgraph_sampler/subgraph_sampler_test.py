@@ -39,7 +39,7 @@ from snapchat.research.gbml.training_samples_schema_pb2 import (
     NodeAnchorBasedLinkPredictionSample,
     RootedNodeNeighborhood,
 )
-from tests.integration.pipeline.subgraph_sampler.utils import (
+from tests.integration_tests_spark.subgraph_sampler.utils import (
     EdgeMetadataInfo,
     ExpectedGraphFromPreprocessor,
     bidirectionalize_edge_type_to_edge_to_features_map,
@@ -51,7 +51,7 @@ from tests.integration.pipeline.subgraph_sampler.utils import (
     read_output_node_based_task_samples_from_subgraph_sampler,
     reconstruct_graph_information_from_preprocessor_output,
 )
-from tests.integration.pipeline.utils import (
+from tests.integration_tests_spark.utils import (
     get_gcs_assets_dir_from_frozen_gbml_config_uri,
 )
 from tests.test_assets.test_case import TestCase
