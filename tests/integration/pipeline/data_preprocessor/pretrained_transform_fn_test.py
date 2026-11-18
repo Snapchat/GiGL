@@ -17,7 +17,7 @@ from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.graph_metadata import DEFAULT_CONDENSED_NODE_TYPE
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
 from gigl.src.data_preprocessor.lib.ingest.reference import NodeDataReference
@@ -144,7 +144,7 @@ class PretrainedTransformFnTest(TestCase):
         extra_data_preprocessor_args: dict[str, str],
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput:
         applied_task_identifier = AppliedTaskIdentifier(
-            f"pretrained_transform_fn_test_{run_name}_{current_formatted_datetime()}"
+            new_test_run_id(f"pretrained_transform_fn_test_{run_name}")
         )
         self._applied_tasks_to_cleanup.append(applied_task_identifier)
         task_config_uri = self._write_task_config(

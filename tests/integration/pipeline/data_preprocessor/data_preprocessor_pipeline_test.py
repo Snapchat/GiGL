@@ -34,7 +34,7 @@ from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
 from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
@@ -603,7 +603,9 @@ class DataPreprocessorPipelineTest(TestCase):
 
     def __run_test_for_mocked_dataset(self, mocked_dataset_info: MockedDatasetInfo):
         applied_task_id = AppliedTaskIdentifier(
-            f"data_preprocessor_pipeline_test_{mocked_dataset_info.name}_{current_formatted_datetime()}"
+            new_test_run_id(
+                f"data_preprocessor_pipeline_test_{mocked_dataset_info.name}"
+            )
         )
         frozen_gbml_config_uri: LocalUri = self.__generate_gbml_config_pb_for_mocked_dataset_using_passthrough_preprocessor(
             applied_task_identifier=applied_task_id,

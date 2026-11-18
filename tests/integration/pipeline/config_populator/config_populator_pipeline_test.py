@@ -6,7 +6,7 @@ from gigl.common.logger import Logger
 from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.config_populator.config_populator import ConfigPopulator
 from snapchat.research.gbml import gbml_config_pb2
@@ -52,7 +52,7 @@ class ConfigPopulatorPipelineTest(TestCase):
 
     def setUp(self) -> None:
         self.applied_task_identifier = AppliedTaskIdentifier(
-            f"config_populator_testing_{current_formatted_datetime()}"
+            new_test_run_id("config_populator_testing")
         )
 
         # Make a simple empty GbmlConfig proto
