@@ -100,7 +100,6 @@ class DistDatasetTestCase(TestCase):
                     mocked_dataset_info,  # mocked_dataset_info
                     should_load_tensors_in_parallel,  # should_load_tensors_in_parallel
                     output_dict,  # output_dict
-                    None,  # partitioner_class
                     None,  # splitter
                     use_process_group,  # _use_process_group
                     master_port if use_process_group else None,  # _port
@@ -216,7 +215,6 @@ class DistDatasetTestCase(TestCase):
                 mocked_dataset_info,  # mocked_dataset_info
                 True,  # should_load_tensors_in_parallel
                 output_dict,  # output_dict
-                None,  # partitioner_class
                 split_fn,  # splitter
                 False,  # _use_process_group
                 master_port,  # _port

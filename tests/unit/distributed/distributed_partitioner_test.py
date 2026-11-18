@@ -1,18 +1,18 @@
 # Originally taken from https://github.com/alibaba/graphlearn-for-pytorch/blob/main/test/python/test_dist_random_partitioner.py
 
 from collections import abc, defaultdict
-from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Type, Union, cast
+from typing import Iterable, Literal, MutableMapping, Optional, Tuple, Union, cast
 
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import init_rpc, init_worker_group
-from graphlearn_torch.partition import PartitionBook
+from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from parameterized import param, parameterized
 from torch.multiprocessing import Manager
 
 from gigl.common.utils.garbage_collection import freeze_gc
-from gigl.distributed import DistPartitioner, DistRangePartitioner
+from gigl.distributed import DistPartitioner
 from gigl.distributed.utils import get_process_group_name
 from gigl.distributed.utils.networking import get_free_port
 from gigl.distributed.utils.partition_book import get_ids_on_rank
@@ -36,6 +36,31 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     run_distributed_partitioner,
 )
 from tests.test_assets.test_case import TestCase
+
+
+def _run_partitioner_with_empty_rank(
+    rank: int,
+    output_dict: MutableMapping[int, PartitionOutput],
+    master_addr: str,
+    master_port: int,
+) -> None:
+    """Partitions a graph with a single node and a single featured edge; rank 1 registers nothing."""
+    init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+    partitioner = DistPartitioner(should_assign_edges_by_src_node=True)
+    if rank == 0:
+        partitioner.register_node_ids(node_ids=torch.tensor([0]))
+        partitioner.register_node_features(node_features=torch.tensor([[1.0, 2.0]]))
+        partitioner.register_edge_index(edge_index=torch.tensor([[0], [0]]))
+        partitioner.register_edge_features(edge_features=torch.tensor([[3.0]]))
+    else:
+        partitioner.register_node_ids(node_ids=torch.empty(0, dtype=torch.int64))
+        partitioner.register_node_features(node_features=torch.empty((0, 2)))
+        partitioner.register_edge_index(
+            edge_index=torch.empty((2, 0), dtype=torch.int64)
+        )
+        partitioner.register_edge_features(edge_features=torch.empty((0, 1)))
+    output_dict[rank] = partitioner.partition()
 
 
 class DistRandomPartitionerTestCase(TestCase):
@@ -103,7 +128,6 @@ class DistRandomPartitionerTestCase(TestCase):
         ],
         expected_node_types: list[NodeType],
         expected_edge_types: list[EdgeType],
-        expected_pb_dtype: torch.dtype,
         expected_edge_feat_types: list[EdgeType],
     ) -> None:
         """
@@ -117,8 +141,6 @@ class DistRandomPartitionerTestCase(TestCase):
             output_edge_index: (Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a dict[EdgeType, GraphPartitionData] if heterogeneous
             expected_node_types (list[NodeType]): Expected node types for heterogeneous input
             expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
-            expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
-                Otherwise, it will be a torch.uint8.
             expected_edge_feat_types (list[EdgeType]): Expected edge types that have edge features
         """
         self._assert_data_type_correctness(
@@ -213,15 +235,12 @@ class DistRandomPartitionerTestCase(TestCase):
             else:
                 node_partition_book = output_node_partition_book
 
-            # Partition book can either be a torch Tensor for tensor-based partitioning or a PartitionBook for range-based partitioning.
-            # If it is a range-based partition book, we should check that the node ids on the current machine are as expected and in the
-            # correct order, specified by setting `dim=None`
-            if isinstance(node_partition_book, PartitionBook):
-                self.assert_tensor_equality(
-                    node_ids,
-                    get_ids_on_rank(partition_book=node_partition_book, rank=rank),
-                    dim=None,
-                )
+            # We check that the node ids on the current machine are as expected and in the correct order, specified by setting `dim=None`
+            self.assert_tensor_equality(
+                node_ids,
+                get_ids_on_rank(partition_book=node_partition_book, rank=rank),
+                dim=None,
+            )
 
             # We expect the number of output node ids to be the same as the number of nodes input to the partitioner on the current rank, as the inputs and outputs per rank
             # should both be equal in number across all ranks. This is because each node id is the target node of exactly one edge in the mocked graph.
@@ -229,9 +248,7 @@ class DistRandomPartitionerTestCase(TestCase):
 
             # We expect the target node ids on the current rank to be correctly specified in the node partition book. For example, if we are on rank 0 with
             # target node ids [1, 3, 5], we expected node_partition_book[[1, 3, 5]] = 0.
-            expected_node_pidx = (
-                torch.ones(num_nodes_on_rank, dtype=expected_pb_dtype) * rank
-            )
+            expected_node_pidx = torch.ones(num_nodes_on_rank, dtype=torch.int64) * rank
             self.assert_tensor_equality(
                 tensor_a=node_partition_book[node_ids],
                 tensor_b=expected_node_pidx,
@@ -260,7 +277,7 @@ class DistRandomPartitionerTestCase(TestCase):
                 expected_edge_pidx = (
                     torch.ones(
                         edge_ids.size(0),
-                        dtype=expected_pb_dtype,
+                        dtype=torch.int64,
                     )
                     * rank
                 )
@@ -276,7 +293,6 @@ class DistRandomPartitionerTestCase(TestCase):
         self,
         rank: int,
         is_heterogeneous: bool,
-        is_range_based_partition: bool,
         should_assign_edges_by_src_node: bool,
         output_graph: Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]],
         output_node_data: Union[
@@ -291,7 +307,6 @@ class DistRandomPartitionerTestCase(TestCase):
         Args:
             rank (int): Rank from current output
             is_heterogeneous (bool): Whether the output is expected to be homogeneous or heterogeneous
-            is_range_based_partition (bool): Whether range-based partitioning was used
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_graph: (Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a dict[EdgeType, GraphPartitionData] if heterogeneous
             output_node_data (Union[FeaturePartitionData, dict[NodeType, FeaturePartitionData]]): Output node features or labels from partitioning, either a FeaturePartitionData if homogeneous or a dict[NodeType, FeaturePartitionData] if heterogeneous
@@ -361,19 +376,9 @@ class DistRandomPartitionerTestCase(TestCase):
                 node_data.feats.size(0),
                 num_nodes_on_rank,
             )
-            # We expect the node ids on the current rank from the graph to be the same as the node ids on the current rank from the data.
-            # If we are using range-based partitioning, the node data object does not store ids. If we are using tensor-based partitioning,
-            # node data stores ids, and we need to check that they are the same as they nodes on the current rank, independent of the order.
-            if is_range_based_partition:
-                node_data_ids = node_ids
-            else:
-                assert node_data.ids is not None
-                node_data_ids = node_data.ids
-                self.assert_tensor_equality(
-                    tensor_a=node_ids,
-                    tensor_b=node_data.ids,
-                    dim=0,
-                )
+            # The node data object does not store ids. Its rows are sorted by node id, matching the node ids on the current rank from the graph.
+            self.assertIsNone(node_data.ids)
+            node_data_ids = node_ids
 
             # Validate dimensions and values based on whether this is labels or features
             if entity_name == "labels":
@@ -418,7 +423,6 @@ class DistRandomPartitionerTestCase(TestCase):
         self,
         rank: int,
         is_heterogeneous: bool,
-        is_range_based_partition: bool,
         should_assign_edges_by_src_node: bool,
         output_graph: Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]],
         output_edge_feat: Union[
@@ -431,7 +435,6 @@ class DistRandomPartitionerTestCase(TestCase):
         Args:
             rank (int): Rank from current output
             is_heterogeneous (bool): Whether the output is expected to be homogeneous or heterogeneous
-            is_range_based_partition (bool): Whether range-based partitioning was used
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
             output_graph: (Union[GraphPartitionData, dict[EdgeType, GraphPartitionData]]): Output edge indices and ids from partitioning, either a GraphPartitionData if homogeneous or a dict[EdgeType, GraphPartitionData] if heterogeneous
             output_edge_feat (Union[FeaturePartitionData, dict[EdgeType, FeaturePartitionData]]): Output node features from partitioning, either a FeaturePartitionData if homogeneous or a dict[EdgeType, FeaturePartitionData] if heterogeneous
@@ -510,16 +513,9 @@ class DistRandomPartitionerTestCase(TestCase):
                     self.assertEqual(edge_feat.feats.size(0), num_nodes_on_rank)
 
                 # We expect the edge ids on the current rank from the graph to be the same as the edge ids on the current rank from the features.
-                # If we are using range-based partitioning, the edge feature object does not store ids. If we are using tensor-based partitioning,
-                # edge feature stores ids, and we need to check that they are the same as they edges on the current rank, independent of the order.
-                if is_range_based_partition:
-                    edge_feat_ids = graph.edge_ids
-                else:
-                    assert edge_feat.ids is not None
-                    edge_feat_ids = edge_feat.ids
-                    self.assert_tensor_equality(
-                        tensor_a=graph.edge_ids, tensor_b=edge_feat.ids, dim=0
-                    )
+                # The edge feature object does not store ids. Its rows are in the same order as the edge ids of the graph.
+                self.assertIsNone(edge_feat.ids)
+                edge_feat_ids = graph.edge_ids
 
                 # We expect the shape of the edge features to be equal to the expected edge feature dimension
                 self.assertEqual(
@@ -547,7 +543,6 @@ class DistRandomPartitionerTestCase(TestCase):
         output_node_partition_book: Union[PartitionBook, dict[NodeType, PartitionBook]],
         output_labeled_edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]],
         expected_edge_types: list[EdgeType],
-        expected_pb_dtype: torch.dtype,
     ) -> None:
         """
         Checks correctness for labeled outputs of partitioning
@@ -558,8 +553,6 @@ class DistRandomPartitionerTestCase(TestCase):
             output_node_partition_book: (Union[PartitionBook, dict[NodeType, PartitionBook]]): Node Partition Book from partitioning, either a PartitionBook if homogeneous or a dict[NodeType, PartitionBook] if heterogeneous
             output_labeled_edge_index (Union[torch.Tensor, dict[EdgeType, torch.Tensor]]): Output labeled edges from partitioning, either a FeaturePartitionData if homogeneous or a dict[EdgeType, FeaturePartitionData] if heterogeneous
             expected_edge_types (list[EdgeType]): Expected edge types for heterogeneous input
-                expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
-            Otherwise, it will be a torch.uint8.
         """
 
         self._assert_data_type_correctness(
@@ -607,7 +600,7 @@ class DistRandomPartitionerTestCase(TestCase):
             expect_edge_pidx = (
                 torch.ones(
                     target_nodes.size(0),
-                    dtype=expected_pb_dtype,
+                    dtype=torch.int64,
                 )
                 * rank
             )
@@ -619,108 +612,64 @@ class DistRandomPartitionerTestCase(TestCase):
     @parameterized.expand(
         [
             param(
-                "Homogeneous Partitioning by Source Node - Register All Entites together through Constructor",
+                "Homogeneous Partitioning By Source Node",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
-                "Heterogeneous Partitioning By Source Node - Register All Entites together through Constructor",
+                "Heterogeneous Partitioning By Source Node",
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
-                "Homogeneous Partitioning By Dest Node- Register All Entites together through Constructor",
+                "Homogeneous Partitioning By Dest Node",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=False,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
-                "Heterogeneous Partitioning By Dest Node- Register All Entites together through Constructor",
+                "Heterogeneous Partitioning By Dest Node",
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
                 should_assign_edges_by_src_node=False,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
                 "Homogeneous Partitioning By Source Node - Register All Entites separately through register functions",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
                 "Homogeneous Partitioning By Source Node - Register minimal entities separately through register functions",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
-                "Homogeneous Partitioning By Source Node - Range Partitioning",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=True,
-                partitioner_class=DistRangePartitioner,
-                expected_pb_dtype=torch.int64,
-            ),
-            param(
-                "Heterogeneous Partitioning By Source Node - Range Partitioning",
-                is_heterogeneous=True,
-                input_data_strategy=InputDataStrategy.REGISTER_ALL_ENTITIES_TOGETHER,
-                should_assign_edges_by_src_node=True,
-                partitioner_class=DistRangePartitioner,
-                expected_pb_dtype=torch.int64,
-            ),
-            param(
-                "Heterogeneous Partitioning By Source Node - Range Partitioning, Register minimal entities separately through register functions",
+                "Heterogeneous Partitioning By Source Node - Register minimal entities separately through register functions",
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistRangePartitioner,
-                expected_pb_dtype=torch.int64,
             ),
             param(
-                "Homogeneous raw and quantized edge feature tensor partitioning",
+                "Homogeneous raw and quantized edge feature partitioning",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
             ),
             param(
-                "Heterogeneous raw and quantized edge feature range partitioning",
+                "Heterogeneous raw and quantized edge feature partitioning",
                 is_heterogeneous=True,
                 input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistRangePartitioner,
-                expected_pb_dtype=torch.int64,
             ),
             param(
-                "Homogeneous packed-edge-only tensor partitioning",
+                "Homogeneous packed-edge-only partitioning",
                 is_heterogeneous=False,
                 input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
                 should_assign_edges_by_src_node=True,
-                partitioner_class=DistPartitioner,
-                expected_pb_dtype=torch.uint8,
-            ),
-            param(
-                "Homogeneous packed-edge-only range partitioning",
-                is_heterogeneous=False,
-                input_data_strategy=InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
-                should_assign_edges_by_src_node=True,
-                partitioner_class=DistRangePartitioner,
-                expected_pb_dtype=torch.int64,
             ),
         ]
     )
@@ -730,8 +679,6 @@ class DistRandomPartitionerTestCase(TestCase):
         is_heterogeneous: bool,
         input_data_strategy: InputDataStrategy,
         should_assign_edges_by_src_node: bool,
-        partitioner_class: Type[DistPartitioner],
-        expected_pb_dtype: torch.dtype,
     ) -> None:
         """
         Tests partitioning functionality and correctness on mocked inputs
@@ -739,9 +686,6 @@ class DistRandomPartitionerTestCase(TestCase):
             is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs should be used
             input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
             should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
-            partitioner_class (Type[DistPartitioner]): The class to use for partitioning
-            expected_pb_dtype (torch.dtype): The expected datatype when indexing into a partition book. For range-base partitioning, this will be an torch.int64.
-                Otherwise, it will be a torch.uint8.
         """
         master_port = get_free_port()
 
@@ -760,7 +704,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 input_data_strategy,
-                partitioner_class,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
             join=True,
@@ -781,8 +724,6 @@ class DistRandomPartitionerTestCase(TestCase):
         unified_output_pos_label: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
 
         unified_output_neg_label: dict[EdgeType, list[torch.Tensor]] = defaultdict(list)
-
-        is_range_based_partition = partitioner_class is DistRangePartitioner
 
         if (
             input_data_strategy
@@ -812,7 +753,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 output_edge_index=partitioned_edge_index,
                 expected_node_types=MOCKED_HETEROGENEOUS_NODE_TYPES,
                 expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
-                expected_pb_dtype=expected_pb_dtype,
                 expected_edge_feat_types=expected_edge_feat_types,
             )
             if isinstance(partitioned_edge_index, abc.Mapping):
@@ -837,11 +777,7 @@ class DistRandomPartitionerTestCase(TestCase):
                     partitioned_edge_index.edge_index.size(1),
                 )
                 assert partitioned_edge_index.edge_ids is not None
-                if packed_features.ids is not None:
-                    self.assert_tensor_equality(
-                        tensor_a=packed_features.ids,
-                        tensor_b=partitioned_edge_index.edge_ids,
-                    )
+                self.assertIsNone(packed_features.ids)
                 for index, edge_id in enumerate(partitioned_edge_index.edge_ids):
                     self.assert_tensor_equality(
                         tensor_a=packed_features.feats[index],
@@ -853,7 +789,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._assert_edge_feature_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
-                    is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
                     output_edge_feat=partition_output.partitioned_edge_features,
@@ -875,14 +810,8 @@ class DistRandomPartitionerTestCase(TestCase):
                         else partitioned_edge_index
                     )
                     self.assertEqual(edge_type_features.feats.dtype, torch.uint8)
-                    if is_range_based_partition:
-                        self.assertIsNone(edge_type_features.ids)
-                        expected_source_nodes = edge_type_graph.edge_index[0]
-                    else:
-                        assert edge_type_features.ids is not None
-                        expected_source_nodes = MOCKED_UNIFIED_GRAPH.edge_index[
-                            edge_type
-                        ][0, edge_type_features.ids]
+                    self.assertIsNone(edge_type_features.ids)
+                    expected_source_nodes = edge_type_graph.edge_index[0]
                     expected_features = torch.stack(
                         (
                             expected_source_nodes * 3 + 17,
@@ -894,13 +823,6 @@ class DistRandomPartitionerTestCase(TestCase):
                         tensor_a=edge_type_features.feats,
                         tensor_b=expected_features,
                     )
-                    if not is_range_based_partition:
-                        assert edge_type_features.ids is not None
-                        assert edge_type_graph.edge_ids is not None
-                        self.assert_tensor_equality(
-                            tensor_a=edge_type_features.ids,
-                            tensor_b=edge_type_graph.edge_ids,
-                        )
             elif (
                 input_data_strategy
                 == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY
@@ -944,7 +866,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._assert_node_data_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
-                    is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
                     output_node_data=partition_output.partitioned_node_features,
@@ -957,7 +878,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._assert_node_data_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
-                    is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
                     output_node_data=partition_output.partitioned_node_packed_features,
@@ -984,7 +904,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._assert_node_data_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
-                    is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
                     output_node_data=partition_output.partitioned_node_labels,
@@ -1007,7 +926,6 @@ class DistRandomPartitionerTestCase(TestCase):
                 self._assert_edge_feature_outputs(
                     rank=rank,
                     is_heterogeneous=is_heterogeneous,
-                    is_range_based_partition=is_range_based_partition,
                     should_assign_edges_by_src_node=should_assign_edges_by_src_node,
                     output_graph=partitioned_edge_index,
                     output_edge_feat=partition_output.partitioned_edge_features,
@@ -1033,7 +951,6 @@ class DistRandomPartitionerTestCase(TestCase):
                     should_assign_edges_by_src_node=True,
                     output_labeled_edge_index=partition_output.partitioned_positive_labels,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
-                    expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
@@ -1056,7 +973,6 @@ class DistRandomPartitionerTestCase(TestCase):
                     should_assign_edges_by_src_node=True,
                     output_labeled_edge_index=partition_output.partitioned_negative_labels,
                     expected_edge_types=MOCKED_HETEROGENEOUS_EDGE_TYPES,
-                    expected_pb_dtype=expected_pb_dtype,
                 )
 
                 if isinstance(
@@ -1158,6 +1074,50 @@ class DistRandomPartitionerTestCase(TestCase):
             self.assert_tensor_equality(
                 tensor_a=expected_negative_labels, tensor_b=output_neg_label, dim=1
             )
+
+    def test_partitioning_with_empty_ranks(self) -> None:
+        """One node and one featured edge across two ranks: rank 1 owns no nodes and no edges."""
+        manager = Manager()
+        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
+        mp.spawn(
+            _run_partitioner_with_empty_rank,
+            args=(output_dict, self._master_ip_address, get_free_port()),
+            nprocs=MOCKED_NUM_PARTITIONS,
+            join=True,
+        )
+
+        for rank, num_nodes_and_edges in [(0, 1), (1, 0)]:
+            output = output_dict[rank]
+            assert isinstance(output.node_partition_book, RangePartitionBook)
+            assert isinstance(output.edge_partition_book, RangePartitionBook)
+            assert output.partitioned_edge_index is not None
+            assert not isinstance(output.partitioned_edge_index, abc.Mapping)
+            assert not isinstance(output.partitioned_node_features, abc.Mapping)
+            assert not isinstance(output.partitioned_edge_features, abc.Mapping)
+            assert output.partitioned_node_features is not None
+            assert output.partitioned_edge_features is not None
+            self.assertEqual(
+                output.node_partition_book.partition_bounds.tolist(), [1, 1]
+            )
+            self.assertEqual(
+                output.edge_partition_book.partition_bounds.tolist(), [1, 1]
+            )
+            self.assert_tensor_equality(
+                output.partitioned_edge_index.edge_index.to(torch.int64),
+                torch.tensor([[0], [0]])[:, :num_nodes_and_edges],
+            )
+            self.assertEqual(
+                output.partitioned_node_features.feats.shape, (num_nodes_and_edges, 2)
+            )
+            self.assertEqual(
+                output.partitioned_edge_features.feats.shape, (num_nodes_and_edges, 1)
+            )
+        self.assert_tensor_equality(
+            output_dict[0].partitioned_node_features.feats, torch.tensor([[1.0, 2.0]])
+        )
+        self.assert_tensor_equality(
+            output_dict[0].partitioned_edge_features.feats, torch.tensor([[3.0]])
+        )
 
     def test_partitioning_failure(self) -> None:
         master_port = get_free_port()
