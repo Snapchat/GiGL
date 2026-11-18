@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "sampling/ppr_forward_push.h"
 
+#include <algorithm>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -659,4 +661,191 @@ TEST(PPRForwardPush, ExtractTopKWithResidualTopUpUsesMaxPPRNodesAsTotalCap) {
 TEST(PPRForwardPush, ExtractTopKWithResidualTopUpRejectsNegativeMaxPPRNodes) {
     auto state = makeState(/*seeds=*/{0}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{0});
     EXPECT_THROW(state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/-1, /*enableResidualTopUp=*/true), c10::Error);
+}
+
+// edge type id -> source node id -> neighbor ids.
+using Adjacency = std::map<int32_t, std::map<int64_t, std::vector<int64_t>>>;
+
+// Runs drainQueue / pushResiduals to convergence, serving neighbor lookups from
+// the given adjacency. Nodes missing from the adjacency have no neighbors.
+static void runToConvergence(PPRForwardPush& state, const Adjacency& adjacency) {
+    for (int iteration = 0; iteration < 10000; ++iteration) {
+        auto toFetch = state.drainQueue();
+        if (!toFetch.has_value()) {
+            return;
+        }
+        NeighborFetchMap fetched;
+        for (const auto& [edgeTypeId, nodeIdsTensor] : *toFetch) {
+            std::vector<int64_t> nodeIds = tensorToInt64Vector(nodeIdsTensor);
+            std::vector<int64_t> flatNeighborIds;
+            std::vector<int64_t> counts;
+            for (int64_t nodeId : nodeIds) {
+                std::vector<int64_t> neighbors;
+                auto edgeTypeIter = adjacency.find(edgeTypeId);
+                if (edgeTypeIter != adjacency.end() && edgeTypeIter->second.count(nodeId) > 0) {
+                    neighbors = edgeTypeIter->second.at(nodeId);
+                }
+                flatNeighborIds.insert(flatNeighborIds.end(), neighbors.begin(), neighbors.end());
+                counts.push_back(static_cast<int64_t>(neighbors.size()));
+            }
+            fetched.merge(makeFetched(edgeTypeId, nodeIds, flatNeighborIds, counts));
+        }
+        state.pushResiduals(fetched);
+    }
+    FAIL() << "PPR did not converge";
+}
+
+// Single-seed scores for one node type, keyed by node id.
+static std::map<int64_t, double> scoresByNode(PPRForwardPush& state,
+                                              int32_t nodeTypeId,
+                                              int32_t maxPPRNodes,
+                                              bool enableResidualTopUp) {
+    auto topk = state.extractTopKWithResidualTopUp(maxPPRNodes, enableResidualTopUp);
+    std::map<int64_t, double> scores;
+    auto typeIter = topk.find(nodeTypeId);
+    if (typeIter == topk.end()) {
+        return scores;
+    }
+    auto ids = tensorToInt64Vector(typeIter->second.ids);
+    auto weights = typeIter->second.weights.accessor<double, 2>();
+    for (size_t row = 0; row < ids.size(); ++row) {
+        scores[ids[row]] = weights[row][0];
+    }
+    return scores;
+}
+
+// With alpha the restart probability, sum(ppr) + sum(residual) / alpha equals 1
+// for a seed whose reachable nodes all have outgoing edges.
+static double pprMassInvariant(PPRForwardPush& state, double alpha) {
+    double pprMass = 0.0;
+    for (const auto& [nodeId, score] : scoresByNode(state, 0, 1000000, false)) {
+        pprMass += score;
+    }
+    double totalMass = 0.0;
+    for (const auto& [nodeId, score] : scoresByNode(state, 0, 1000000, true)) {
+        totalMass += score;
+    }
+    return pprMass + (totalMass - pprMass) / alpha;
+}
+
+static PPRForwardPush makeStateWithDegrees(const torch::Tensor& degrees) {
+    return PPRForwardPush(torch::tensor({0}, torch::kLong),
+                          /*seedNodeTypeId=*/0,
+                          /*alpha=*/0.5,
+                          /*requeueThresholdFactor=*/1e-6,
+                          /*nodeTypeToEdgeTypeIds=*/{{0}},
+                          /*edgeTypeToDstNtypeId=*/{0},
+                          {degrees});
+}
+
+TEST(PPRForwardPush, Int64DegreeTensorMatchesInt32) {
+    const Adjacency adjacency = {{0, {{0, {1, 2}}, {1, {2}}}}};
+    auto int32State = makeStateWithDegrees(torch::tensor({2, 1, 0}, torch::kInt));
+    auto int64State = makeStateWithDegrees(torch::tensor({2, 1, 0}, torch::kLong));
+    runToConvergence(int32State, adjacency);
+    runToConvergence(int64State, adjacency);
+    EXPECT_EQ(scoresByNode(int32State, 0, 10, true), scoresByNode(int64State, 0, 10, true));
+}
+
+// A node type without degree data has degree 0, so every discovered node is
+// queued and then absorbs its residual.
+TEST(PPRForwardPush, EmptyDegreeTensorQueuesEveryDiscoveredNode) {
+    const double alpha = 0.5;
+    auto state = makeStateWithDegrees(torch::empty({0}, torch::kInt));
+    runToConvergence(state, {{0, {{0, {1}}}}});
+    auto scores = scoresByNode(state, 0, 10, false);
+    ASSERT_EQ(scores.size(), 2U);
+    EXPECT_NEAR(scores[0], alpha, 1e-12);
+    EXPECT_NEAR(scores[1], (1.0 - alpha) * alpha, 1e-12);
+}
+
+// Source type 0 reaches destination type 1 through two edge types. The residual
+// is split by total neighbor count across both edge types.
+TEST(PPRForwardPush, HeterogeneousDestinationReachedThroughTwoEdgeTypes) {
+    const double alpha = 0.5;
+    PPRForwardPush state(torch::tensor({0}, torch::kLong),
+                         /*seedNodeTypeId=*/0,
+                         alpha,
+                         /*requeueThresholdFactor=*/1e-6,
+                         /*nodeTypeToEdgeTypeIds=*/{{0, 1}, {}},
+                         /*edgeTypeToDstNtypeId=*/{1, 1},
+                         {torch::tensor({1}, torch::kInt), torch::empty({0}, torch::kInt)});
+    runToConvergence(state, {{0, {{0, {5}}}}, {1, {{0, {5, 6}}}}});
+
+    auto sourceScores = scoresByNode(state, 0, 10, false);
+    ASSERT_EQ(sourceScores.size(), 1U);
+    EXPECT_NEAR(sourceScores[0], alpha, 1e-12);
+
+    auto destinationScores = scoresByNode(state, 1, 10, false);
+    ASSERT_EQ(destinationScores.size(), 2U);
+    const double pushed = (1.0 - alpha) * alpha;
+    EXPECT_NEAR(destinationScores[5], pushed * 2.0 / 3.0, 1e-12);
+    EXPECT_NEAR(destinationScores[6], pushed / 3.0, 1e-12);
+}
+
+// A self-loop re-queues the node being pushed.
+TEST(PPRForwardPush, SelfLoopRequeuesDrainedNode) {
+    const double alpha = 0.5;
+    auto state = makeStateWithDegrees(torch::tensor({1}, torch::kInt));
+    runToConvergence(state, {{0, {{0, {0}}}}});
+    EXPECT_NEAR(pprMassInvariant(state, alpha), 1.0, 1e-9);
+    EXPECT_NEAR(scoresByNode(state, 0, 10, false).at(0), 1.0, 1e-5);
+}
+
+// Nodes 0 and 1 are both in one drain snapshot and each re-queues both.
+TEST(PPRForwardPush, NodesInSameSnapshotRequeueEachOther) {
+    const double alpha = 0.5;
+    auto state = makeStateWithDegrees(torch::tensor({2, 2}, torch::kInt));
+    runToConvergence(state, {{0, {{0, {0, 1}}, {1, {0, 1}}}}});
+    EXPECT_NEAR(pprMassInvariant(state, alpha), 1.0, 1e-9);
+    auto scores = scoresByNode(state, 0, 10, false);
+    EXPECT_NEAR(scores[0] + scores[1], 1.0, 1e-5);
+}
+
+// A star with thousands of leaves grows the per-seed tables well past their
+// initial size.
+TEST(PPRForwardPush, LargeTraversalConservesMass) {
+    const double alpha = 0.15;
+    const int64_t numLeaves = 5000;
+    std::vector<int64_t> leaves;
+    std::vector<int32_t> degrees(numLeaves + 1, 1);
+    degrees[0] = static_cast<int32_t>(numLeaves);
+    Adjacency adjacency;
+    for (int64_t leaf = 1; leaf <= numLeaves; ++leaf) {
+        leaves.push_back(leaf);
+        adjacency[0][leaf] = {0};
+    }
+    adjacency[0][0] = leaves;
+    auto state = makeState(/*seeds=*/{0}, alpha, /*requeueThresholdFactor=*/1e-6, degrees);
+    runToConvergence(state, adjacency);
+    EXPECT_NEAR(pprMassInvariant(state, alpha), 1.0, 1e-9);
+    EXPECT_EQ(scoresByNode(state, 0, 100000, true).size(), static_cast<size_t>(numLeaves + 1));
+}
+
+// Equal scores are ordered by ascending node id, so the cutoff keeps the lowest ids.
+TEST(PPRForwardPush, TopKBreaksScoreTiesByNodeId) {
+    auto state =
+        makeState(/*seeds=*/{0}, /*alpha=*/0.5, /*requeueThresholdFactor=*/1e-6, /*degrees=*/{3, 0, 0, 0, 0, 0, 0, 0});
+    runToConvergence(state, {{0, {{0, {7, 3, 5}}}}});
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/3, /*enableResidualTopUp=*/false);
+    EXPECT_EQ(tensorToInt64Vector(topk.at(0).ids), std::vector<int64_t>({0, 3, 5}));
+}
+
+// Reordering neighbor lists does not change the output.
+TEST(PPRForwardPush, OutputIsIndependentOfNeighborOrder) {
+    const std::vector<int32_t> degrees = {3, 3, 2, 2, 1, 1};
+    const Adjacency adjacency = {{0, {{0, {1, 2, 3}}, {1, {0, 3, 4}}, {2, {1, 5}}, {3, {0, 4}}, {4, {5}}, {5, {2}}}}};
+    Adjacency reversed = adjacency;
+    for (auto& [nodeId, neighbors] : reversed[0]) {
+        std::reverse(neighbors.begin(), neighbors.end());
+    }
+    auto state = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-4, degrees);
+    auto reversedState = makeState(/*seeds=*/{0, 1}, /*alpha=*/0.15, /*requeueThresholdFactor=*/1e-4, degrees);
+    runToConvergence(state, adjacency);
+    runToConvergence(reversedState, reversed);
+
+    auto topk = state.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/true);
+    auto reversedTopk = reversedState.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/true);
+    EXPECT_TRUE(torch::equal(topk.at(0).ids, reversedTopk.at(0).ids));
+    EXPECT_TRUE(torch::equal(topk.at(0).weights, reversedTopk.at(0).weights));
 }
