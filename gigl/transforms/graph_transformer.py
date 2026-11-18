@@ -481,7 +481,7 @@ def tensors_to_graph_transformer_input(
         )
 
     if sequence_construction_method == "ppr":
-        _validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
+        validate_ppr_sequence_input(edge_index_dict, edge_attr_dict)
 
     device = x_dict[anchor_node_type].device
 
@@ -562,44 +562,21 @@ def tensors_to_graph_transformer_input(
                 )
             )
     elif sequence_construction_method == "ppr":
-        # Build the PPR sequence from the "ppr" edges only. When
-        # include_sampled_edges is on, the batch also carries the original
-        # relation edge types; those feed the relation-message channel via
-        # lookup_pairwise_relation_indices and must not leak into the sequence.
-        #
-        # Gather just the "ppr" edges and remap their endpoints with the SAME
-        # node_type_offsets used for homo_x, so the indices line up with
-        # anchor_indices and num_nodes (both computed over every node type).
-        ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
-        ppr_source_indices: list[Tensor] = []
-        ppr_target_indices: list[Tensor] = []
-        ppr_edge_features: list[Tensor] = []
-        for ppr_edge_type in ppr_edge_types:
-            edge_index = edge_index_dict[ppr_edge_type].to(
-                device=device, dtype=torch.long
-            )
-            ppr_source_indices.append(
-                edge_index[0] + node_type_offsets[ppr_edge_type[0]]
-            )
-            ppr_target_indices.append(
-                edge_index[1] + node_type_offsets[ppr_edge_type[2]]
-            )
-            ppr_edge_features.append(edge_attr_dict[ppr_edge_type].to(device))
-        ppr_edge_index = torch.stack(
-            [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
-        )
         (
             node_index_sequences,
             valid_mask,
             ppr_weight_sequences,
             ppr_relation_feature_sequences,
-        ) = _build_sequence_layout_from_ppr_edges(
-            edge_index=ppr_edge_index,
-            edge_attr=torch.cat(ppr_edge_features, dim=0),
+            ppr_expanded_token_mask,
+        ) = build_ppr_sequence_grids(
+            edge_index_dict=edge_index_dict,
+            edge_attr_dict=edge_attr_dict,
+            ppr_is_expanded_dict=ppr_is_expanded_dict,
+            node_type_offsets=node_type_offsets,
             anchor_indices=anchor_indices,
+            num_nodes=num_nodes,
             max_seq_len=max_seq_len,
             include_anchor_first=include_anchor_first,
-            num_nodes=num_nodes,
             device=device,
             return_edge_weights=(
                 PPR_WEIGHT_FEATURE_NAME
@@ -609,55 +586,6 @@ def tensors_to_graph_transformer_input(
                 PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
             ),
         )
-        # Drop relation edges whose source token the anchor did not expand.
-        # With include_sampled_edges, a co-seeded ABLP positive enters the
-        # anchor's sequence as a residual top-up node the anchor never expanded;
-        # its own push then supplies edges the anchor's solo sample never would.
-        # The per-edge ppr_is_expanded flag marks which tokens the anchor pushed.
-        ppr_edge_is_expanded_parts = [
-            ppr_is_expanded_dict.get(et) for et in ppr_edge_types
-        ]
-        if all(part is not None for part in ppr_edge_is_expanded_parts):
-            ppr_edge_is_expanded = torch.cat(
-                [
-                    part.to(device=device)
-                    for part in ppr_edge_is_expanded_parts
-                    if part is not None
-                ],
-                dim=0,
-            ).to(torch.long)
-            anchor_batch_by_homo_idx = torch.full(
-                (num_nodes,), -1, dtype=torch.long, device=device
-            )
-            anchor_batch_by_homo_idx[anchor_indices] = torch.arange(
-                anchor_indices.size(0), device=device
-            )
-            edge_anchor_batch = anchor_batch_by_homo_idx[ppr_edge_index[0]]
-            anchored = edge_anchor_batch >= 0
-            # Membership via searchsorted over sorted (anchor, node) edge keys,
-            # avoiding a dense (batch * num_nodes) scratch tensor.
-            edge_keys = (
-                edge_anchor_batch[anchored] * num_nodes + ppr_edge_index[1][anchored]
-            )
-            sorted_edge_keys, edge_sort_perm = torch.sort(edge_keys)
-            sorted_edge_vals = ppr_edge_is_expanded[anchored][edge_sort_perm]
-            ppr_expanded_token_mask = torch.zeros(
-                valid_mask.shape, dtype=torch.long, device=device
-            )
-            token_batch, token_pos = torch.nonzero(valid_mask, as_tuple=True)
-            token_nodes = node_index_sequences[token_batch, token_pos]
-            if sorted_edge_keys.numel() > 0:
-                token_keys = token_batch * num_nodes + token_nodes
-                search = torch.searchsorted(sorted_edge_keys, token_keys).clamp(
-                    max=sorted_edge_keys.numel() - 1
-                )
-                matched = sorted_edge_keys[search] == token_keys
-                token_expanded = torch.zeros_like(token_keys, dtype=torch.long)
-                token_expanded[matched] = sorted_edge_vals[search[matched]]
-                ppr_expanded_token_mask[token_batch, token_pos] = token_expanded
-            if include_anchor_first and max_seq_len > 0:
-                # The anchor pushes itself in every channel, so mark all bits set.
-                ppr_expanded_token_mask[:, 0] = valid_mask[:, 0].to(torch.long) * -1
     else:
         raise ValueError(
             "sequence_construction_method must be one of ['khop', 'ppr'], "
@@ -804,10 +732,20 @@ def to_homogeneous_edge_index(
     return concat_tensors(edge_index_parts, dim=1).to(device)
 
 
-def _validate_ppr_sequence_input(
+def validate_ppr_sequence_input(
     edge_index_dict: dict[EdgeType, Tensor],
     edge_attr_dict: dict[EdgeType, Tensor],
 ) -> None:
+    """Validates that a batch can build PPR sequences.
+
+    Args:
+        edge_index_dict: Edge indices of the batch, keyed by edge type.
+        edge_attr_dict: Edge weights of the batch, keyed by edge type.
+
+    Raises:
+        ValueError: If there is no PPR edge type, or a PPR edge type has no
+            edge weights.
+    """
     # The batch may also contain original relation edge types when
     # include_sampled_edges is on (they feed the relation-message channel via
     # lookup_pairwise_relation_indices); only the "ppr" edges drive the sequence.
@@ -1299,6 +1237,158 @@ def _append_frontier_tokens_to_sequences(
     )
 
 
+class PprSequenceGrids(NamedTuple):
+    """Per-anchor PPR sequences on the padded ``[num_anchors, max_seq_len]`` grid.
+
+    Attributes:
+        node_index: Homogeneous node id of each token, -1 at padding.
+        valid_mask: True at real tokens; each row is a prefix.
+        ppr_weight: ``[num_anchors, max_seq_len, 1]`` PPR weight of each token's
+            edge, or None if not requested. The anchor and padding have 0.
+        ppr_relation_features: ``[num_anchors, max_seq_len, num_features]``
+            relation features of each token's edge, or None if not requested.
+        expanded_token_mask: Per-token bitmask of the PPR channels in which the
+            anchor pushed the token's node, or None without ``ppr_is_expanded``
+            flags. The anchor has every bit set.
+    """
+
+    node_index: Tensor
+    valid_mask: Tensor
+    ppr_weight: Optional[Tensor]
+    ppr_relation_features: Optional[Tensor]
+    expanded_token_mask: Optional[Tensor]
+
+
+def build_ppr_sequence_grids(
+    edge_index_dict: dict[EdgeType, Tensor],
+    edge_attr_dict: dict[EdgeType, Tensor],
+    ppr_is_expanded_dict: dict[EdgeType, Tensor],
+    node_type_offsets: dict[NodeType, int],
+    anchor_indices: Tensor,
+    num_nodes: int,
+    max_seq_len: int,
+    include_anchor_first: bool,
+    device: torch.device,
+    return_edge_weights: bool,
+    return_relation_features: bool,
+) -> PprSequenceGrids:
+    """Builds each anchor's PPR sequence from the batch's ``"ppr"`` edges.
+
+    The padded and packed encoder paths both use these grids, so both see the
+    same tokens, PPR features and relation-filter mask.
+
+    Args:
+        edge_index_dict: Batch edges by edge type; only ``"ppr"`` relations are read.
+        edge_attr_dict: Edge features by edge type; a ``"ppr"`` edge's first column
+            is its weight and the rest are its relation features.
+        ppr_is_expanded_dict: Per-edge ``ppr_is_expanded`` flags (or typed-PPR
+            channel bitmasks) by edge type.
+        node_type_offsets: Offset of each node type in the homogeneous ids.
+        anchor_indices: Homogeneous node id of each anchor.
+        num_nodes: Number of nodes over all node types.
+        max_seq_len: Tokens per sequence, the anchor included.
+        include_anchor_first: Whether each sequence starts with its anchor.
+        device: Device of the returned tensors.
+        return_edge_weights: Whether to return ``ppr_weight``.
+        return_relation_features: Whether to return ``ppr_relation_features``.
+
+    Returns:
+        The grids, see ``PprSequenceGrids``.
+    """
+    ppr_expanded_token_mask: Optional[Tensor] = None
+    # Build the PPR sequence from the "ppr" edges only. When
+    # include_sampled_edges is on, the batch also carries the original
+    # relation edge types; those feed the relation-message channel via
+    # lookup_pairwise_relation_indices and must not leak into the sequence.
+    #
+    # Gather just the "ppr" edges and remap their endpoints with the SAME
+    # node_type_offsets the caller used for the node features, so the indices
+    # line up with anchor_indices and num_nodes (both computed over every node
+    # type).
+    ppr_edge_types = [et for et in edge_index_dict if et[1] == "ppr"]
+    ppr_source_indices: list[Tensor] = []
+    ppr_target_indices: list[Tensor] = []
+    ppr_edge_features: list[Tensor] = []
+    for ppr_edge_type in ppr_edge_types:
+        edge_index = edge_index_dict[ppr_edge_type].to(device=device, dtype=torch.long)
+        ppr_source_indices.append(edge_index[0] + node_type_offsets[ppr_edge_type[0]])
+        ppr_target_indices.append(edge_index[1] + node_type_offsets[ppr_edge_type[2]])
+        ppr_edge_features.append(edge_attr_dict[ppr_edge_type].to(device))
+    ppr_edge_index = torch.stack(
+        [torch.cat(ppr_source_indices), torch.cat(ppr_target_indices)]
+    )
+    (
+        node_index_sequences,
+        valid_mask,
+        ppr_weight_sequences,
+        ppr_relation_feature_sequences,
+    ) = _build_sequence_layout_from_ppr_edges(
+        edge_index=ppr_edge_index,
+        edge_attr=torch.cat(ppr_edge_features, dim=0),
+        anchor_indices=anchor_indices,
+        max_seq_len=max_seq_len,
+        include_anchor_first=include_anchor_first,
+        num_nodes=num_nodes,
+        device=device,
+        return_edge_weights=return_edge_weights,
+        return_relation_features=return_relation_features,
+    )
+    # Drop relation edges whose source token the anchor did not expand.
+    # With include_sampled_edges, a co-seeded ABLP positive enters the
+    # anchor's sequence as a residual top-up node the anchor never expanded;
+    # its own push then supplies edges the anchor's solo sample never would.
+    # The per-edge ppr_is_expanded flag marks which tokens the anchor pushed.
+    ppr_edge_is_expanded_parts = [ppr_is_expanded_dict.get(et) for et in ppr_edge_types]
+    if all(part is not None for part in ppr_edge_is_expanded_parts):
+        ppr_edge_is_expanded = torch.cat(
+            [
+                part.to(device=device)
+                for part in ppr_edge_is_expanded_parts
+                if part is not None
+            ],
+            dim=0,
+        ).to(torch.long)
+        anchor_batch_by_homo_idx = torch.full(
+            (num_nodes,), -1, dtype=torch.long, device=device
+        )
+        anchor_batch_by_homo_idx[anchor_indices] = torch.arange(
+            anchor_indices.size(0), device=device
+        )
+        edge_anchor_batch = anchor_batch_by_homo_idx[ppr_edge_index[0]]
+        anchored = edge_anchor_batch >= 0
+        # Membership via searchsorted over sorted (anchor, node) edge keys,
+        # avoiding a dense (batch * num_nodes) scratch tensor.
+        edge_keys = (
+            edge_anchor_batch[anchored] * num_nodes + ppr_edge_index[1][anchored]
+        )
+        sorted_edge_keys, edge_sort_perm = torch.sort(edge_keys)
+        sorted_edge_vals = ppr_edge_is_expanded[anchored][edge_sort_perm]
+        ppr_expanded_token_mask = torch.zeros(
+            valid_mask.shape, dtype=torch.long, device=device
+        )
+        token_batch, token_pos = torch.nonzero(valid_mask, as_tuple=True)
+        token_nodes = node_index_sequences[token_batch, token_pos]
+        if sorted_edge_keys.numel() > 0:
+            token_keys = token_batch * num_nodes + token_nodes
+            search = torch.searchsorted(sorted_edge_keys, token_keys).clamp(
+                max=sorted_edge_keys.numel() - 1
+            )
+            matched = sorted_edge_keys[search] == token_keys
+            token_expanded = torch.zeros_like(token_keys, dtype=torch.long)
+            token_expanded[matched] = sorted_edge_vals[search[matched]]
+            ppr_expanded_token_mask[token_batch, token_pos] = token_expanded
+        if include_anchor_first and max_seq_len > 0:
+            # The anchor pushes itself in every channel, so mark all bits set.
+            ppr_expanded_token_mask[:, 0] = valid_mask[:, 0].to(torch.long) * -1
+    return PprSequenceGrids(
+        node_index=node_index_sequences,
+        valid_mask=valid_mask,
+        ppr_weight=ppr_weight_sequences,
+        ppr_relation_features=ppr_relation_feature_sequences,
+        expanded_token_mask=ppr_expanded_token_mask,
+    )
+
+
 def _build_sequence_layout_from_ppr_edges(
     edge_index: Tensor,
     edge_attr: Tensor,
@@ -1391,7 +1481,9 @@ def _build_sequence_layout_from_ppr_edges(
     batch_order = torch.argsort(anchor_batch_idx, stable=True)
     sorted_batch_idx = anchor_batch_idx[batch_order]
     edge_counts = torch.bincount(sorted_batch_idx, minlength=batch_size)
-    num_candidates = max(1, int(edge_counts.max()))
+    num_candidates = 1
+    if edge_counts.numel() > 0:
+        num_candidates = max(1, int(edge_counts.max()))
     group_starts = torch.cumsum(edge_counts, dim=0) - edge_counts
     column = (
         torch.arange(sorted_batch_idx.numel(), device=device)
