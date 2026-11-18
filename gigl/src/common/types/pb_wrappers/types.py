@@ -13,7 +13,7 @@ FlattenedGraphMetadataOutputPb = Union[
     flattened_graph_metadata_pb2.SupervisedLinkBasedTaskOutput,
 ]
 
-# TODO: (svij-sc) Clean this up and make it reflective of tests/integration/pipeline_tests/split_generator_pipeline_test.py#TSample
+# TODO: (svij-sc) Clean this up and make it reflective of tests/integration_tests_spark/split_generator/split_generator_pipeline_test.py#TSample
 TrainingSamplePb = Union[
     training_samples_schema_pb2.SupervisedNodeClassificationSample,
     training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample,
