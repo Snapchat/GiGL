@@ -243,6 +243,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: TEMPORARY TEST - fail on purpose after 8 minutes
+      # Runs before the slow setup step. The other jobs have time to start their Cloud Builds first.
+      # Remove before any real merge.
+      run: |
+        sleep 480
+        exit 1
     - name: Setup development environment
       uses: ./.github/actions/setup-python-tools
       with:
@@ -263,11 +269,6 @@ jobs:
         # It is setup in the setup-python-tools action.
         source ~/.profile
         make lint_test
-    - name: TEMPORARY TEST - fail on purpose after 10 minutes
-      # Lets the other jobs start their Cloud Builds first. Remove before any real merge.
-      run: |
-        sleep 600
-        exit 1
     - name: Cancel the merge queue run on failure
       if: failure()
       env:
