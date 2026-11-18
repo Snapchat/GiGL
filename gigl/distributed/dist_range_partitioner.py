@@ -20,7 +20,8 @@ from gigl.utils.share_memory import is_disk_backed
 
 logger = Logger()
 
-# Size of the RAM staging block used to write node features in id order.
+# Size of the RAM staging block used to write rows in id order. It bounds the staging buffer's RAM;
+# larger blocks mean fewer, larger sequential writes to the disk-backed destinations.
 _ORDERED_BLOCK_BYTES: Final = 256 * 1024 * 1024
 
 
@@ -137,22 +138,23 @@ class DistRangePartitioner(DistPartitioner):
 
         return node_partition_book
 
-    # TODO: Create a dataclass for this positional three-value partition result.
     def _assemble_node_chunks(
         self, chunks: list[tuple[torch.Tensor, ...]], fields: list[int]
     ) -> list[torch.Tensor]:
-        """Join ``fields`` of the received chunks in node id order, consuming ``chunks``.
+        """Join ``fields`` of the received chunks sorted by node id, emptying ``chunks``.
 
         The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
-        In RAM, the chunks are joined and then gathered by id. On disk, each destination is filled
-        one block of rows at a time: the block is gathered from the chunks in RAM, then written in
-        one sequential copy, so the features never need a second full copy in RAM.
+        If every destination is in RAM, the chunks are joined and then gathered by id.
+        Otherwise each destination is filled one block of rows at a time, so a spilled field
+        never needs a second full copy in RAM.
         """
         node_id_field = len(chunks[0]) - 1
         num_rows = sum(chunk[node_id_field].shape[0] for chunk in chunks)
         destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
-        if not is_disk_backed(destinations[0]):
-            # Joining frees each chunk as it is copied, so this peaks lower than the block fill.
+        if not any(is_disk_backed(destination) for destination in destinations):
+            # The block fill below handles any mix of disk and RAM destinations. This path is only for
+            # the all-RAM case, where freeing each chunk as it is copied peaks lower. The unused
+            # destinations cost nothing because torch.empty does not touch pages.
             del destinations
             joined = _concat_chunks(chunks, fields)
             order = torch.argsort(joined[fields.index(node_id_field)])
@@ -168,6 +170,7 @@ class DistRangePartitioner(DistPartitioner):
         block_rows = max(1, _ORDERED_BLOCK_BYTES // max(row_bytes, 1))
         for block_start in range(0, order.numel(), block_rows):
             positions = order[block_start : block_start + block_rows]
+            # Locate the chunk holding each row so every chunk is indexed once per field, not once per row.
             chunk_of_position = (
                 torch.searchsorted(chunk_starts, positions, right=True) - 1
             )
@@ -176,6 +179,8 @@ class DistRangePartitioner(DistPartitioner):
             block_rows_by_chunk = by_chunk.split(counts)
             source_rows_by_chunk = positions[by_chunk].split(counts)
             for destination, field in zip(destinations, fields):
+                # Gather into RAM first: random writes to a disk-backed destination are slow, a
+                # single sequential copy of the finished block is not.
                 staging = torch.empty(
                     (positions.numel(), *destination.shape[1:]),
                     dtype=destination.dtype,
@@ -191,6 +196,7 @@ class DistRangePartitioner(DistPartitioner):
         chunks.clear()
         return destinations
 
+    # TODO: Create a dataclass for this positional three-value partition result.
     def _partition_node_features_and_labels(
         self,
         node_partition_book: dict[NodeType, PartitionBook],
@@ -201,9 +207,9 @@ class DistRangePartitioner(DistPartitioner):
         Optional[FeaturePartitionData],
     ]:
         """
-        Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here;
-        :meth:`_assemble_node_chunks` sorts the node features by node indices, which is specific to range-based partitioning. This is done so that
-        the range-based id2idx corresponds correctly to the node features.
+        Partitions node features according to the node partition book, reusing the parent tensor-based partitioner.
+        Rows arrive already in node id order from :meth:`_assemble_node_chunks`, which is what the range-based id2idx requires.
+        This override only drops the ids, because the range partition book already maps id to row.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
@@ -220,24 +226,22 @@ class DistRangePartitioner(DistPartitioner):
             node_partition_book=node_partition_book, node_type=node_type
         )
 
-        # The parent class always returns ids in the feature_partition_data, but we don't need to store the partitioned node feature ids for
-        # range-based partitioning, since this is available from the node partition book.
-        # _assemble_node_chunks has already put the rows in node id order.
-        partitioned_node_feature_data = (
-            FeaturePartitionData(feats=feature_partition_data.feats, ids=None)
-            if feature_partition_data is not None
-            else None
-        )
-        partitioned_node_packed_feature_data = (
-            FeaturePartitionData(feats=packed_feature_partition_data.feats, ids=None)
-            if packed_feature_partition_data is not None
-            else None
-        )
-        partitioned_node_label_data = (
-            FeaturePartitionData(feats=labels_partition_data.feats, ids=None)
-            if labels_partition_data is not None
-            else None
-        )
+        # The parent class always returns ids in each partition data, but range-based partitioning does not store them.
+        partitioned_node_feature_data = None
+        if feature_partition_data is not None:
+            partitioned_node_feature_data = FeaturePartitionData(
+                feats=feature_partition_data.feats, ids=None
+            )
+        partitioned_node_packed_feature_data = None
+        if packed_feature_partition_data is not None:
+            partitioned_node_packed_feature_data = FeaturePartitionData(
+                feats=packed_feature_partition_data.feats, ids=None
+            )
+        partitioned_node_label_data = None
+        if labels_partition_data is not None:
+            partitioned_node_label_data = FeaturePartitionData(
+                feats=labels_partition_data.feats, ids=None
+            )
 
         return (
             partitioned_node_feature_data,

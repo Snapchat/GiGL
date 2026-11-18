@@ -28,9 +28,9 @@ logger = Logger()
 
 
 def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
-    """An uninitialised tensor shaped like ``sample`` with ``num_rows`` rows.
+    """Returns an uninitialized tensor shaped like ``sample`` with ``num_rows`` rows.
 
-    It lives on disk when tensor spilling is enabled and the tensor is large enough, otherwise in RAM.
+    It is disk-backed when spilling is enabled and the tensor is large enough, otherwise in RAM.
     """
     shape = (num_rows, *sample.shape[1:])
     destination = allocate_disk_backed(shape, sample.dtype)
@@ -42,10 +42,10 @@ def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
 def _concat_chunks(
     chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
 ) -> list[torch.Tensor]:
-    """``torch.cat([chunk[field] for chunk in chunks])`` for each field, consuming ``chunks``.
+    """Returns ``torch.cat([chunk[field] for chunk in chunks])`` for each field, and empties ``chunks``.
 
-    Each result is allocated once by :func:`_empty_rows` and each chunk is released as soon as it is
-    copied, so the results never coexist in RAM with every chunk the way ``torch.cat``'s do.
+    ``chunks`` is mutated on purpose: each chunk is released as soon as it is copied, so the
+    results never coexist in RAM with every chunk the way ``torch.cat``'s do.
     """
     num_rows = sum(chunk[fields[0]].shape[0] for chunk in chunks)
     destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
@@ -853,7 +853,10 @@ class DistPartitioner:
     def _assemble_node_chunks(
         self, chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
     ) -> list[torch.Tensor]:
-        """Join ``fields`` of the received chunks in chunk order; see :func:`_concat_chunks`."""
+        """Join ``fields`` of the received chunks in chunk order; see :func:`_concat_chunks`.
+
+        :class:`DistRangePartitioner` overrides this to return rows sorted by node id.
+        """
         return _concat_chunks(chunks, fields)
 
     def _remove_key_from_member_dict(
@@ -1226,16 +1229,17 @@ class DistPartitioner:
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
             node_id_ind = len(partitioned_results[0]) - 1
-            fields = [
-                ind
-                for ind in (
-                    node_feature_ind,
-                    node_packed_feature_ind,
-                    node_label_ind,
-                    node_id_ind,
-                )
-                if ind is not None
-            ]
+            fields: list[int] = []
+            for ind in (
+                node_feature_ind,
+                node_packed_feature_ind,
+                node_label_ind,
+                node_id_ind,
+            ):
+                if ind is not None:
+                    fields.append(ind)
+            # DistRangePartitioner overrides _assemble_node_chunks, so rows are in chunk order here
+            # and in node id order there.
             assembled = dict(
                 zip(fields, self._assemble_node_chunks(partitioned_results, fields))
             )

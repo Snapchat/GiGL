@@ -1,5 +1,7 @@
+import contextlib
 import os
 import tempfile
+from typing import Iterator
 from unittest import mock
 
 import torch
@@ -32,22 +34,23 @@ class PartitionAssemblyTest(TestCase):
         self._spill_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._spill_dir.cleanup)
 
-    def _spilling(self):
-        return mock.patch.dict(
-            os.environ,
-            {
-                "GIGL_TENSOR_SPILL_DIR": self._spill_dir.name,
-                "GIGL_TENSOR_SPILL_MIN_BYTES": "1",
-            },
-        )
+    @contextlib.contextmanager
+    def _spill_env(self, enabled: bool, min_bytes: int = 1) -> Iterator[None]:
+        # Spilling is read from env vars, so also clear any spill dir set in the developer's environment.
+        with mock.patch.dict(
+            os.environ, {"GIGL_TENSOR_SPILL_MIN_BYTES": str(min_bytes)}
+        ):
+            if enabled:
+                os.environ["GIGL_TENSOR_SPILL_DIR"] = self._spill_dir.name
+            else:
+                os.environ.pop("GIGL_TENSOR_SPILL_DIR", None)
+            yield
 
     def test_tensor_partitioner_keeps_chunk_order(self) -> None:
         chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=0)
         expected = [torch.cat([chunk[field] for chunk in chunks]) for field in (0, 2)]
 
-        assembled = DistPartitioner._assemble_node_chunks(
-            object.__new__(DistPartitioner), chunks, [0, 2]
-        )
+        assembled = DistPartitioner()._assemble_node_chunks(chunks, [0, 2])
 
         self.assertEqual(chunks, [])
         for result, reference in zip(assembled, expected):
@@ -66,14 +69,14 @@ class PartitionAssemblyTest(TestCase):
         chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=1)
 
         with (
-            self._spilling() if spill else mock.patch.dict(os.environ),
+            self._spill_env(spill),
             mock.patch(
                 "gigl.distributed.dist_range_partitioner._ORDERED_BLOCK_BYTES",
                 block_bytes,
             ),
         ):
-            features, labels, ids = DistRangePartitioner._assemble_node_chunks(
-                object.__new__(DistRangePartitioner), chunks, [0, 1, 2]
+            features, labels, ids = DistRangePartitioner()._assemble_node_chunks(
+                chunks, [0, 1, 2]
             )
 
         self.assertEqual(chunks, [])
@@ -85,14 +88,12 @@ class PartitionAssemblyTest(TestCase):
         torch.testing.assert_close(labels, torch.arange(1000).unsqueeze(1))
 
     def test_results_are_disk_backed_when_spilling(self) -> None:
-        with self._spilling():
-            tensor_results = DistPartitioner._assemble_node_chunks(
-                object.__new__(DistPartitioner),
+        with self._spill_env(True):
+            tensor_results = DistPartitioner()._assemble_node_chunks(
                 _received_chunks(num_nodes=1000, num_chunks=7, seed=2),
                 [0, 2],
             )
-            range_results = DistRangePartitioner._assemble_node_chunks(
-                object.__new__(DistRangePartitioner),
+            range_results = DistRangePartitioner()._assemble_node_chunks(
                 _received_chunks(num_nodes=1000, num_chunks=7, seed=2),
                 [0, 2],
             )
@@ -100,3 +101,22 @@ class PartitionAssemblyTest(TestCase):
         for result in tensor_results + range_results:
             self.assertTrue(is_disk_backed(result))
         torch.testing.assert_close(range_results[1], torch.arange(1000))
+
+    def test_range_partitioner_spills_when_only_some_fields_are_large(self) -> None:
+        # Features (12000 B) spill; labels and ids (8000 B each) stay in RAM. Labels come first so
+        # the first destination is in RAM while a later one is on disk.
+        chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=3)
+
+        with self._spill_env(True, min_bytes=10000):
+            labels, features, ids = DistRangePartitioner()._assemble_node_chunks(
+                chunks, [1, 0, 2]
+            )
+
+        self.assertTrue(is_disk_backed(features))
+        self.assertFalse(is_disk_backed(labels))
+        self.assertFalse(is_disk_backed(ids))
+        torch.testing.assert_close(ids, torch.arange(1000), rtol=0, atol=0)
+        torch.testing.assert_close(
+            features, torch.arange(1000).float().unsqueeze(1).repeat(1, 3)
+        )
+        torch.testing.assert_close(labels, torch.arange(1000).unsqueeze(1))
