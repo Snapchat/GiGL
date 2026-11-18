@@ -6,6 +6,8 @@ on:
   # https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
   pull_request:
   merge_group:
+    # TEMPORARY PROBE: checks whether a workflow can run on the undocumented `destroyed` activity type.
+    types: [checks_requested, destroyed]
 
 permissions:
   # Needed for gcloud auth: https://github.com/google-github-actions/auth
@@ -21,7 +23,7 @@ jobs:
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,7 +50,7 @@ jobs:
     # We skip when the workflow is triggered by a pull_request event; otherwise we will run the check twice.
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,7 +73,7 @@ jobs:
         project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-unit-test-cpp:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -86,7 +88,7 @@ jobs:
       run: make unit_test_cpp
 
   ci-integration-test:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,7 +109,7 @@ jobs:
 
   # Optional: this job is not in the required status checks of the `main` ruleset, so a failure does not block the merge.
   ci-integration-tests-spark:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,7 +128,7 @@ jobs:
         project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-integration-e2e-test:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -175,7 +177,7 @@ jobs:
   #       project:  ${{ vars.GCP_PROJECT_ID }}
 
   ci-lint-test:
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' && github.event.action == 'checks_requested'
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -199,3 +201,22 @@ jobs:
         # It is setup in the setup-python-tools action.
         source ~/.profile
         make lint_test
+
+  # TEMPORARY PROBE: prints what a `destroyed` merge group run receives. It cancels nothing.
+  probe-merge-group-destroyed:
+    if: github.event_name == 'merge_group' && github.event.action == 'destroyed'
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Print destroyed event fields
+      env:
+        EVENT_ACTION: ${{ github.event.action }}
+        EVENT_REASON: ${{ github.event.reason }}
+        MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        GITHUB_REF_VALUE: ${{ github.ref }}
+      run: |
+        echo "action=${EVENT_ACTION}"
+        echo "reason=${EVENT_REASON}"
+        echo "merge_group.head_ref=${MERGE_GROUP_HEAD_REF}"
+        echo "merge_group.head_sha=${MERGE_GROUP_HEAD_SHA}"
+        echo "github.ref=${GITHUB_REF_VALUE}"
