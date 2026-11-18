@@ -21,7 +21,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils.file_loader import FileLoader
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -355,7 +355,7 @@ class SplitGeneratorPipelineTest(TestCase):
                 --master local \\
                 --jars {SPARK_35_TFRECORD_JAR_LOCAL_PATH} \\
                 {_PATH_TO_SPLIT_GEN_SCALA_ROOT}/{_SPLIT_GEN_SCALA_PROJECT_NAME}/target/scala-2.12/split_generator-assembly-1.0.jar \\
-                splitgen_integration_test_{current_formatted_datetime()} \\
+                {new_test_run_id("splitgen_integration_test")} \\
                 {frozen_gbml_config_uri.uri} \\
                 {resource_config_uri.uri}""",
         ]
