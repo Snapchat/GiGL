@@ -206,6 +206,49 @@ def _run_packed(
         return encoder(data, anchor_node_type=_USER, **forward_kwargs)
 
 
+def _run_packed_capturing_layouts(
+    encoder: GraphTransformerEncoder, data: HeteroData, **forward_kwargs: object
+) -> tuple[torch.Tensor, list[PackedLayout]]:
+    """Runs the packed path and returns the output and every layout it built."""
+    layouts: list[PackedLayout] = []
+    build_layout = encoder._build_packed_layout
+
+    def capture_layout(*args: Any, **kwargs: Any) -> Optional[PackedLayout]:
+        layout = build_layout(*args, **kwargs)
+        assert layout is not None
+        layouts.append(layout)
+        return layout
+
+    with mock.patch.object(encoder, "_build_packed_layout", side_effect=capture_layout):
+        output = _run_packed(encoder, data, **forward_kwargs)
+    return output, layouts
+
+
+def _bucket_batch() -> HeteroData:
+    """Eight anchors whose 1-hop neighbourhoods fill every length bucket twice.
+
+    Sequence lengths (anchor plus neighbours) are 21, 151, 6, 81, 61, 201, 41 and
+    121, which is neither sorted nor within one bucket of 32, 64, 128 or 256.
+    """
+    neighbor_counts = [20, 150, 5, 80, 60, 200, 40, 120]
+    num_anchors = len(neighbor_counts)
+    num_nodes = num_anchors + sum(neighbor_counts)
+    sources: list[torch.Tensor] = []
+    targets: list[torch.Tensor] = []
+    next_node = num_anchors
+    for anchor, neighbor_count in enumerate(neighbor_counts):
+        sources.append(torch.arange(next_node, next_node + neighbor_count))
+        targets.append(torch.full((neighbor_count,), anchor))
+        next_node += neighbor_count
+    data = HeteroData()
+    data[_USER].x = torch.randn(num_nodes, 8)
+    data[_USER].batch_size = num_anchors
+    data[_FOLLOWS.tuple_repr()].edge_index = torch.stack(
+        [torch.cat(sources), torch.cat(targets)]
+    )
+    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+
+
 def _gradients(
     forward: Callable[[], torch.Tensor], encoder: GraphTransformerEncoder
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -402,12 +445,83 @@ class PackedPathTest(TestCase):
                 atol=1e-6,
             )
 
+    @parameterized.expand(_READOUT_MODES)
+    def test_layout_is_sorted_and_output_is_in_anchor_order(
+        self, readout_mode: str
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(readout_mode=readout_mode)
+        )
+        with torch.no_grad():
+            actual, layouts = _run_packed_capturing_layouts(encoder, data)
+            expected = encoder(data, anchor_node_type=_USER)
+        self.assertEqual(len(layouts), 1)
+        sequence_order = layouts[0].sequence_order
+        assert sequence_order is not None
+        # Sorting reordered the anchors, so the output restore is exercised.
+        self.assertFalse(torch.equal(sequence_order, torch.arange(12)))
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+
+    @parameterized.expand(_READOUT_MODES)
+    def test_shuffled_explicit_anchors_match_padded_path(
+        self, readout_mode: str
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                readout_mode=readout_mode,
+                dropout_rate=0.0,
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+        )
+        anchor_node_ids = torch.tensor([7, 2, 11, 0, 5, 3])
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder(data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids),
+                rtol=0,
+                atol=1e-6,
+            )
+        encoder.train()
+        _assert_training_gradients_match(
+            self,
+            _gradients(
+                lambda: encoder(
+                    data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+                ),
+                encoder,
+            ),
+            _gradients(
+                lambda: _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder,
+            ),
+        )
+
+    def test_one_anchor_matches_padded_path(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        anchor_node_ids = torch.tensor([4])
+        with torch.no_grad():
+            actual = _run_packed(encoder, data, anchor_node_ids=anchor_node_ids)
+            expected = encoder(
+                data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids
+            )
+        self.assertEqual(actual.shape, (1, 8))
+        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+
     def test_empty_anchor_batch(self) -> None:
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
         no_anchors = torch.empty(0, dtype=torch.long)
-        with torch.no_grad():
+        with (
+            torch.no_grad(),
+            mock.patch.object(encoder, "_build_packed_layout") as build_layout,
+        ):
             actual = _run_packed(encoder, data, anchor_node_ids=no_anchors)
+        build_layout.assert_not_called()
+        with torch.no_grad():
             expected = encoder(data, anchor_node_type=_USER, anchor_node_ids=no_anchors)
         self.assertEqual(actual.shape, (0, 8))
         torch.testing.assert_close(actual, expected)
@@ -504,6 +618,8 @@ class PackedPathTest(TestCase):
                 lambda: _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
                 encoder,
             ),
+            # The sorted layout sums gradients in another order.
+            atol=1e-5,
         )
 
     def test_packed_path_runs_without_the_hop_distance_attribute(self) -> None:
@@ -627,7 +743,7 @@ class PackedPathTest(TestCase):
             param("head_dim_4", num_heads=4, supported=True),
             param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
-            param("attention_dropout", attention_dropout_rate=0.1),
+            param("attention_dropout", attention_dropout_rate=0.1, supported=True),
             param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
             param(
                 "other_token_input",
@@ -695,14 +811,89 @@ class PackedPathTest(TestCase):
                 encoder(data, anchor_node_type=_USER, device="cpu").shape, (12, 8)
             )
 
-    def test_layer_rejects_attention_dropout_in_training(self) -> None:
-        layer = GraphTransformerEncoderLayer(
-            model_dim=16, num_heads=2, feedforward_dim=32, attention_dropout_rate=0.1
+    def test_attention_dropout_runs_packed_with_eval_parity_and_training_noise(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(attention_dropout_rate=0.3, dropout_rate=0.0)
         )
-        packed = pack_sequences(torch.tensor([2]), 2)
-        layer.eval().forward_packed(torch.randn(2, 16), packed)
-        with self.assertRaises(ValueError):
-            layer.train().forward_packed(torch.randn(2, 16), packed)
+        self.assertTrue(encoder._supports_packed_backend)
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data),
+                encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-6,
+            )
+        encoder.train()
+        outputs = []
+        for seed in (0, 1):
+            torch.manual_seed(seed)
+            encoder.zero_grad()
+            output = _run_packed(encoder, data)
+            output.sum().backward()
+            outputs.append(output.detach())
+            for name, parameter in encoder.named_parameters():
+                if parameter.grad is not None:
+                    self.assertTrue(torch.isfinite(parameter.grad).all(), name)
+        self.assertFalse(torch.allclose(outputs[0], outputs[1]))
+
+    def test_every_length_bucket_matches_padded_path(self) -> None:
+        data = _bucket_batch()
+        for training in (False, True):
+            # Dropout acts only in training, so training compares at rate 0.
+            attention_dropout_rate = 0.0 if training else 0.1
+            encoder = _materialized_encoder(
+                data,
+                _encoder_kwargs(
+                    max_seq_len=256,
+                    attention_dropout_rate=attention_dropout_rate,
+                    dropout_rate=0.0,
+                    readout_mode=_NEIGHBOR_READOUT,
+                ),
+            ).train(training)
+            with self.subTest(training=training):
+                if training:
+                    packed_result = _gradients(
+                        lambda: _run_packed_capturing_layouts(encoder, data)[0],
+                        encoder,
+                    )
+                    _assert_training_gradients_match(
+                        self,
+                        _gradients(
+                            lambda: encoder(data, anchor_node_type=_USER), encoder
+                        ),
+                        packed_result,
+                        atol=1e-5,
+                    )
+                else:
+                    with torch.no_grad():
+                        actual, layouts = _run_packed_capturing_layouts(encoder, data)
+                        expected = encoder(data, anchor_node_type=_USER)
+                    self.assertIsNotNone(layouts[0].buckets)
+                    torch.testing.assert_close(actual, expected, rtol=0, atol=1e-5)
+
+    def test_attention_dropout_in_every_length_bucket(self) -> None:
+        data = _bucket_batch()
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                max_seq_len=256, attention_dropout_rate=0.3, dropout_rate=0.0
+            ),
+        ).train()
+        outputs = []
+        for seed in (0, 1):
+            torch.manual_seed(seed)
+            encoder.zero_grad()
+            output, layouts = _run_packed_capturing_layouts(encoder, data)
+            self.assertIsNotNone(layouts[0].buckets)
+            output.sum().backward()
+            outputs.append(output.detach())
+            for name, parameter in encoder.named_parameters():
+                if parameter.grad is not None:
+                    self.assertTrue(torch.isfinite(parameter.grad).all(), name)
+        self.assertFalse(torch.allclose(outputs[0], outputs[1]))
 
     def test_compiled_layer_module_is_rejected_on_the_packed_path(self) -> None:
         torch._dynamo.reset()
@@ -999,6 +1190,50 @@ class PackedRelationMessageTest(TestCase):
         self.assertEqual(checkpointed.layer_calls, 6)
         _assert_training_gradients_match(self, expected, actual, atol=1e-7)
 
+    def test_per_layer_checkpointing_matches_plain_gradients_on_length_buckets(
+        self,
+    ) -> None:
+        class CheckpointedEncoder(GraphTransformerEncoder):
+            def _run_packed_layer(
+                self,
+                layer: GraphTransformerEncoderLayer,
+                x: torch.Tensor,
+                layout: PackedLayout,
+                first_token_output: bool,
+                relation_edges: PackedRelationEdges | None,
+                bias: PackedAttentionBias | None = None,
+            ) -> torch.Tensor:
+                def run(x: torch.Tensor) -> torch.Tensor:
+                    return super(CheckpointedEncoder, self)._run_packed_layer(
+                        layer, x, layout, first_token_output, relation_edges, bias
+                    )
+
+                return checkpoint(run, x, use_reentrant=False)
+
+        data = _bucket_batch()
+        for attention_dropout_rate in (0.0, 0.3):
+            with self.subTest(attention_dropout_rate=attention_dropout_rate):
+                kwargs = _encoder_kwargs(
+                    max_seq_len=256,
+                    dropout_rate=0.0,
+                    attention_dropout_rate=attention_dropout_rate,
+                )
+                encoder = _materialized_encoder(data, kwargs).train()
+                checkpointed = CheckpointedEncoder(**kwargs).train()
+                checkpointed.load_state_dict(encoder.state_dict())
+
+                def run_with_seed(model: GraphTransformerEncoder) -> torch.Tensor:
+                    # Checkpointing replays the RNG state, so one seed gives equal masks.
+                    torch.manual_seed(0)
+                    return _run_packed(model, data)
+
+                _assert_training_gradients_match(
+                    self,
+                    _gradients(lambda: run_with_seed(encoder), encoder),
+                    _gradients(lambda: run_with_seed(checkpointed), checkpointed),
+                    atol=1e-6,
+                )
+
     def test_layer_requires_relation_edges_for_relation_messages(self) -> None:
         layer = GraphTransformerEncoderLayer(
             model_dim=16,
@@ -1090,6 +1325,33 @@ class PackedPathCudaTest(TestCase):
             ),
             atol=1e-4,
         )
+
+    def test_cuda_attention_dropout_matches_cpu_in_eval_and_trains_finitely(
+        self,
+    ) -> None:
+        data = _bucket_batch()
+        cuda_data = data.clone().to("cuda")
+        kwargs = _encoder_kwargs(
+            hid_dim=128, max_seq_len=256, attention_dropout_rate=0.1, dropout_rate=0.0
+        )
+        cpu_encoder = _materialized_encoder(data, kwargs)
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
+        with torch.no_grad():
+            torch.testing.assert_close(
+                cuda_encoder(cuda_data, anchor_node_type=_USER).cpu(),
+                cpu_encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-4,
+            )
+        cuda_encoder.train()
+        cuda_encoder.zero_grad()
+        output = cuda_encoder(cuda_data, anchor_node_type=_USER)
+        output.sum().backward()
+        self.assertTrue(output.isfinite().all())
+        for name, parameter in cuda_encoder.named_parameters():
+            if parameter.grad is not None:
+                self.assertTrue(torch.isfinite(parameter.grad).all(), name)
 
     @parameterized.expand(_READOUT_MODES)
     def test_whole_encoder_inductor_compile_matches_eager_without_recompiling(
