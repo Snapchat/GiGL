@@ -19,7 +19,12 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
 )
-from gigl.nn.packed_attention import PackedAttentionBias
+from gigl.nn.packed_attention import (
+    PackedAttentionBias,
+    layout_buckets,
+    per_pair_bias_num_cells,
+    per_pair_bias_views,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
 from gigl.transforms.sequence_layout import (
@@ -54,7 +59,9 @@ def _random_batch(
     """A random batch with duplicate edges, self loops and shared neighbours.
 
     Carries the ``hop_distance`` attribute the padded backend reads and
-    ``hop_times_two``, a second sparse attribute with every hop value doubled.
+    ``hop_times_two``, a second sparse attribute with every hop value doubled,
+    and ``pair_score``, a square sparse attribute over all nodes (by homogeneous
+    id) with a random value on a random fifth of the pairs.
     """
     generator = torch.Generator().manual_seed(seed)
     data = HeteroData()
@@ -83,6 +90,10 @@ def _random_batch(
     data["hop_times_two"] = torch.sparse_csr_tensor(
         hop.crow_indices(), hop.col_indices(), hop.values() * 2, size=hop.shape
     )
+    num_nodes = hop.shape[0]
+    scores = torch.randn(num_nodes, num_nodes, generator=generator)
+    scores[torch.rand(num_nodes, num_nodes, generator=generator) > 0.2] = 0.0
+    data["pair_score"] = scores.to_sparse_csr()
     return data
 
 
@@ -246,7 +257,30 @@ def _bucket_batch() -> HeteroData:
     data[_FOLLOWS.tuple_repr()].edge_index = torch.stack(
         [torch.cat(sources), torch.cat(targets)]
     )
-    return AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+    data = AddHeteroHopDistanceEncoding(h_max=2, sampling_direction="in")(data)
+    # A random value on a random fifth of the node pairs, so a sequence has both
+    # found and missing pairs.
+    generator = torch.Generator().manual_seed(0)
+    scores = torch.randn(num_nodes, num_nodes, generator=generator)
+    scores[torch.rand(num_nodes, num_nodes, generator=generator) > 0.2] = 0.0
+    data["pair_score"] = scores.to_sparse_csr()
+    return data
+
+
+def _randomize_pairwise_biases(encoder: GraphTransformerEncoder) -> None:
+    """Gives the pairwise projection and nonmissing bias random values.
+
+    Both start at (near) zero, which would hide a wrong pairwise path.
+    """
+    generator = torch.Generator().manual_seed(1)
+    projection = encoder._pairwise_pe_attention_bias_projection
+    nonmissing = encoder._pairwise_nonmissing_attention_bias
+    assert projection is not None and nonmissing is not None
+    with torch.no_grad():
+        projection.weight.copy_(
+            torch.randn(projection.weight.shape, generator=generator)
+        )
+        nonmissing.copy_(torch.randn(nonmissing.shape, generator=generator))
 
 
 def _gradients(
@@ -397,6 +431,22 @@ class PackedPathTest(TestCase):
                 readout_mode=_NEIGHBOR_READOUT,
             ),
             param("head_dim_10", hid_dim=20, num_heads=2),
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_and_anchor_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+            param(
+                "pairwise_bias_hetero",
+                hetero=True,
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+            param(
+                "pairwise_bias_neighbor_readout",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
         ]
     )
     def test_matches_padded_path(
@@ -420,6 +470,8 @@ class PackedPathTest(TestCase):
             if hetero:
                 data[_ITEM].random_walk_pe = torch.randn(20, 3)
             encoder = _materialized_encoder(data, kwargs)
+            if kwargs.get("pairwise_attention_bias_attr_names"):
+                _randomize_pairwise_biases(encoder)
             self.assertTrue(encoder._supports_packed_backend)
             with self.subTest(seed=seed, hop=hop_distance), torch.no_grad():
                 torch.testing.assert_close(
@@ -511,6 +563,62 @@ class PackedPathTest(TestCase):
         self.assertEqual(actual.shape, (1, 8))
         torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
 
+    @parameterized.expand(_READOUT_MODES)
+    def test_matches_padded_path_with_pairwise_bias_and_explicit_anchors(
+        self, readout_mode: str
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                readout_mode=readout_mode,
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+        )
+        _randomize_pairwise_biases(encoder)
+        anchor_node_ids = torch.tensor([7, 3, 3, 40, 0])
+        with torch.no_grad():
+            torch.testing.assert_close(
+                _run_packed(encoder, data, anchor_node_ids=anchor_node_ids),
+                encoder(data, anchor_node_type=_USER, anchor_node_ids=anchor_node_ids),
+                rtol=0,
+                atol=1e-6,
+            )
+
+    def test_pairwise_projection_and_nonmissing_bias_each_change_the_output(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"]),
+        )
+        _randomize_pairwise_biases(encoder)
+        projection = encoder._pairwise_pe_attention_bias_projection
+        nonmissing = encoder._pairwise_nonmissing_attention_bias
+        assert projection is not None and nonmissing is not None
+        with torch.no_grad():
+            both = _run_packed(encoder, data)
+            saved_projection = projection.weight.clone()
+            saved_nonmissing = nonmissing.clone()
+            projection.weight.zero_()
+            self.assertFalse(torch.allclose(_run_packed(encoder, data), both))
+            projection.weight.copy_(saved_projection)
+            nonmissing.zero_()
+            self.assertFalse(torch.allclose(_run_packed(encoder, data), both))
+            nonmissing.copy_(saved_nonmissing)
+            torch.testing.assert_close(_run_packed(encoder, data), both)
+
+    def test_packed_path_requires_the_pairwise_attribute(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"]),
+        )
+        del data["pair_score"]
+        with self.assertRaisesRegex(ValueError, "pair_score"), torch.no_grad():
+            _run_packed(encoder, data)
+
     def test_empty_anchor_batch(self) -> None:
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
@@ -594,6 +702,13 @@ class PackedPathTest(TestCase):
                 anchor_based_input_attr_names=[_HOP, "hop_times_two"],
                 anchor_based_input_embedding_dict=None,
             ),
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_bias_explicit_anchors",
+                anchors=[7, 3, 3, 40, 0],
+                pairwise_attention_bias_attr_names=["pair_score"],
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
         ]
     )
     def test_training_gradients_match_padded_path(
@@ -606,6 +721,8 @@ class PackedPathTest(TestCase):
         encoder = _materialized_encoder(
             data, _encoder_kwargs(dropout_rate=0.0, **overrides)
         ).train()
+        if overrides.get("pairwise_attention_bias_attr_names"):
+            _randomize_pairwise_biases(encoder)
         _assert_training_gradients_match(
             self,
             _gradients(
@@ -744,7 +861,11 @@ class PackedPathTest(TestCase):
             param("head_dim_10", hid_dim=20, supported=True),
             param("five_hops", hop_distance=5),
             param("attention_dropout", attention_dropout_rate=0.1, supported=True),
-            param("pairwise_bias", pairwise_attention_bias_attr_names=[_HOP]),
+            param(
+                "pairwise_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                supported=True,
+            ),
             param(
                 "other_token_input",
                 anchor_based_input_attr_names=["other"],
@@ -873,6 +994,134 @@ class PackedPathTest(TestCase):
                         expected = encoder(data, anchor_node_type=_USER)
                     self.assertIsNotNone(layouts[0].buckets)
                     torch.testing.assert_close(actual, expected, rtol=0, atol=1e-5)
+
+    @parameterized.expand(
+        [
+            param("pairwise_bias", pairwise_attention_bias_attr_names=["pair_score"]),
+            param(
+                "pairwise_and_anchor_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                anchor_based_attention_bias_attr_names=[_HOP],
+            ),
+        ]
+    )
+    def test_every_length_bucket_matches_padded_path_with_pairwise_bias(
+        self, _: str, **overrides: Any
+    ) -> None:
+        data = _bucket_batch()
+        for readout_mode in _READOUT_MODES:
+            for training in (False, True):
+                encoder = _materialized_encoder(
+                    data,
+                    _encoder_kwargs(
+                        max_seq_len=256,
+                        attention_dropout_rate=0.0,
+                        dropout_rate=0.0,
+                        readout_mode=readout_mode,
+                        **overrides,
+                    ),
+                ).train(training)
+                _randomize_pairwise_biases(encoder)
+                with self.subTest(readout_mode=readout_mode, training=training):
+                    if training:
+                        captured_layouts: list[PackedLayout] = []
+
+                        def run_packed() -> torch.Tensor:
+                            output, layouts = _run_packed_capturing_layouts(
+                                encoder, data
+                            )
+                            captured_layouts.extend(layouts)
+                            return output
+
+                        packed_result = _gradients(run_packed, encoder)
+                        self.assertIsNotNone(captured_layouts[0].buckets)
+                        _assert_training_gradients_match(
+                            self,
+                            _gradients(
+                                lambda: encoder(data, anchor_node_type=_USER), encoder
+                            ),
+                            packed_result,
+                            atol=1e-5,
+                        )
+                    else:
+                        with torch.no_grad():
+                            actual, layouts = _run_packed_capturing_layouts(
+                                encoder, data
+                            )
+                            expected = encoder(data, anchor_node_type=_USER)
+                        self.assertIsNotNone(layouts[0].buckets)
+                        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-5)
+
+    def test_pairwise_bias_blocks_match_the_padded_paths_dense_bias(self) -> None:
+        data = _bucket_batch()
+        encoder = _materialized_encoder(
+            data,
+            _encoder_kwargs(
+                max_seq_len=256, pairwise_attention_bias_attr_names=["pair_score"]
+            ),
+        )
+        _randomize_pairwise_biases(encoder)
+        padded_biases: list[torch.Tensor] = []
+        build_attention_bias = encoder._build_attention_bias
+
+        def capture_bias(*args: Any, **kwargs: Any) -> torch.Tensor:
+            bias = build_attention_bias(*args, **kwargs)
+            padded_biases.append(bias)
+            return bias
+
+        with torch.no_grad():
+            _, layouts = _run_packed_capturing_layouts(encoder, data)
+            with mock.patch.object(
+                encoder, "_build_attention_bias", side_effect=capture_bias
+            ):
+                encoder(data, anchor_node_type=_USER)
+            layout = layouts[0]
+            self.assertIsNotNone(layout.buckets)
+            assert layout.sequence_order is not None
+            per_pair = encoder._packed_pairwise_bias(layout, data)
+        self.assertEqual(
+            per_pair.numel(), per_pair_bias_num_cells(layout, encoder._num_heads)
+        )
+        padded_bias = padded_biases[0]
+        lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
+        bucket_views = per_pair_bias_views(per_pair, layout, encoder._num_heads)
+        for bucket, view in zip(layout_buckets(layout), bucket_views):
+            for sequence in range(bucket.first_sequence, bucket.end_sequence):
+                length = int(lengths[sequence])
+                caller_row = int(layout.sequence_order[sequence])
+                with self.subTest(sequence=sequence):
+                    torch.testing.assert_close(
+                        view[sequence - bucket.first_sequence, :, :length, :length],
+                        padded_bias[caller_row, :, :length, :length],
+                        rtol=0,
+                        atol=1e-6,
+                    )
+
+    def test_pairwise_bias_has_the_dtype_of_the_attention_projections_under_autocast(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(
+            data, _encoder_kwargs(pairwise_attention_bias_attr_names=["pair_score"])
+        )
+        _randomize_pairwise_biases(encoder)
+        with torch.no_grad():
+            _, layouts = _run_packed_capturing_layouts(encoder, data)
+            layout = layouts[0]
+            anchor_node_index = layout.node_index[layout.cu_seqlens[:-1].long()]
+            query_projection = cast(
+                nn.Linear, encoder._encoder_layers[0]._query_projection
+            )
+            for dtype in (torch.float32, torch.bfloat16):
+                with self.subTest(dtype=dtype), torch.autocast("cpu", dtype=dtype):
+                    bias = encoder._packed_attention_bias(
+                        layout, anchor_node_index, data
+                    )
+                    assert bias is not None and bias.per_pair is not None
+                    query = query_projection(
+                        torch.randn(3, query_projection.in_features)
+                    )
+                    self.assertEqual(bias.per_pair.dtype, query.dtype)
 
     def test_attention_dropout_in_every_length_bucket(self) -> None:
         data = _bucket_batch()
@@ -1280,6 +1529,15 @@ class PackedPathCudaTest(TestCase):
                 "anchor_bias",
                 anchor_based_attention_bias_attr_names=[_HOP],
             ),
+            param(
+                "pairwise_bias",
+                pairwise_attention_bias_attr_names=["pair_score"],
+            ),
+            param(
+                "pairwise_bias_neighbor_readout",
+                pairwise_attention_bias_attr_names=["pair_score"],
+                readout_mode=_NEIGHBOR_READOUT,
+            ),
         ]
     )
     def test_cuda_training_gradients_match_cpu(
@@ -1302,6 +1560,8 @@ class PackedPathCudaTest(TestCase):
         }
         kwargs = _encoder_kwargs(**encoder_overrides)
         cpu_encoder = _materialized_encoder(data, kwargs).train()
+        if overrides.get("pairwise_attention_bias_attr_names"):
+            _randomize_pairwise_biases(cpu_encoder)
         cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
         self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
         cuda_anchor_node_ids = None
@@ -1325,6 +1585,62 @@ class PackedPathCudaTest(TestCase):
             ),
             atol=1e-4,
         )
+
+    def test_cuda_pairwise_bias_matches_cpu_in_eval_and_training(self) -> None:
+        data = _bucket_batch()
+        cuda_data = data.clone().to("cuda")
+        kwargs = _encoder_kwargs(
+            hid_dim=128,
+            max_seq_len=256,
+            dropout_rate=0.0,
+            pairwise_attention_bias_attr_names=["pair_score"],
+        )
+        cpu_encoder = _materialized_encoder(data, kwargs)
+        _randomize_pairwise_biases(cpu_encoder)
+        cuda_encoder = copy.deepcopy(cpu_encoder).to("cuda")
+        self.assertTrue(cuda_encoder._use_packed_backend(torch.device("cuda")))
+        with torch.no_grad():
+            torch.testing.assert_close(
+                cuda_encoder(cuda_data, anchor_node_type=_USER).cpu(),
+                cpu_encoder(data, anchor_node_type=_USER),
+                rtol=0,
+                atol=1e-4,
+            )
+        cpu_encoder.train()
+        cuda_encoder.train()
+        _assert_training_gradients_match(
+            self,
+            _gradients(lambda: cpu_encoder(data, anchor_node_type=_USER), cpu_encoder),
+            _gradients(
+                lambda: cuda_encoder(cuda_data, anchor_node_type=_USER), cuda_encoder
+            ),
+            atol=1e-4,
+        )
+
+    def test_cuda_pairwise_forward_has_a_constant_number_of_host_syncs(self) -> None:
+        device = torch.device("cuda")
+        kwargs = _encoder_kwargs(
+            hid_dim=128, pairwise_attention_bias_attr_names=["pair_score"]
+        )
+        encoder = _materialized_encoder(_random_batch(0), kwargs).to(device)
+        sync_counts: list[int] = []
+        with torch.no_grad():
+            encoder(_random_batch(0).to(device), anchor_node_type=_USER)
+            for seed in range(3):
+                cuda_data = _random_batch(seed).to(device)
+                torch.cuda.synchronize()
+                torch.cuda.set_sync_debug_mode("warn")
+                try:
+                    with warnings.catch_warnings(record=True) as caught:
+                        warnings.simplefilter("always")
+                        encoder(cuda_data, anchor_node_type=_USER)
+                finally:
+                    torch.cuda.set_sync_debug_mode("default")
+                sync_counts.append(
+                    len([w for w in caught if "synchroniz" in str(w.message)])
+                )
+        print(f"PAIRWISE_HOST_SYNCS {sync_counts[0]}")
+        self.assertEqual(sync_counts, [sync_counts[0]] * 3, sync_counts)
 
     def test_cuda_attention_dropout_matches_cpu_in_eval_and_trains_finitely(
         self,
