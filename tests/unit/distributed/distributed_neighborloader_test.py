@@ -1,4 +1,3 @@
-import unittest
 from collections.abc import Mapping, MutableMapping
 
 import torch
@@ -548,8 +547,6 @@ class DistributedNeighborLoaderTest(TestCase):
             args=(dataset, max_num_batches),
         )
 
-    # TODO: (svij) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_distributed_neighbor_loader_heterogeneous(self):
         expected_data_count = 4057
 
@@ -557,6 +554,7 @@ class DistributedNeighborLoaderTest(TestCase):
             rank=0,
             world_size=self._world_size,
             mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
+            _port=get_free_port(),
         )
 
         mp.spawn(

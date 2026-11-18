@@ -88,6 +88,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `scripts/create_dev_instance.py` creates dev VMs from the Ubuntu 24.04 Deep Learning VM image
+  `common-cu129-ubuntu-2404-nvidia-580-v20261111` (glibc 2.39, CUDA 12.9, NVIDIA driver 580) instead of the Ubuntu 22.04
+  CUDA 12.8 image, whose support ended on August 1, 2026. The locked `tensorflow-data-validation` 1.21 has Linux wheels
+  only for glibc 2.39 and later, so `install_py_deps.sh` fails on Ubuntu 22.04 by @kmontemayor2-sc
 - `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
   packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
