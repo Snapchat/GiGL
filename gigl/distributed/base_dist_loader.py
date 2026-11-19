@@ -30,6 +30,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
+from graphlearn_torch.utils import reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
@@ -44,6 +45,7 @@ from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import (
     PPR_EDGE_INDEX_METADATA_KEY,
+    PPR_EXPANDED_METADATA_KEY,
     PPR_WEIGHT_METADATA_KEY,
 )
 from gigl.distributed.dist_sampling_producer import DistSamplingProducer
@@ -57,6 +59,9 @@ from gigl.distributed.graph_store.remote_channel import RemoteReceivingChannel
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
 from gigl.distributed.sampler_options import PPRSamplerOptions, SamplerOptions
 from gigl.distributed.utils.channel import MonitoredShmChannel
+from gigl.distributed.utils.dist_typed_sampler import (
+    parse_typed_channel_ratio_groups,
+)
 from gigl.distributed.utils.neighborloader import (
     DatasetSchema,
     attach_ppr_outputs,
@@ -79,6 +84,43 @@ DEFAULT_NUM_CPU_THREADS = 2
 def _flush() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
+
+
+def _build_ppr_relation_channel_masks(
+    sampler_options: SamplerOptions,
+    edge_dir: str,
+) -> Optional[dict[EdgeType, int]]:
+    """Per-relation-edge-type channel bitmask for typed PPR, else ``None``.
+
+    Bit ``c`` is set for an edge type when typed-PPR channel ``c`` traverses it.
+    The graph-transformer relation filter ANDs this with a token's per-node
+    pushed-channel bitmask (``ppr_is_expanded``) so an edge is kept only when the
+    anchor pushed the edge's owner in a channel that fetches that edge type.
+    Keyed in both edge orientations because GLT reverses sampled edges in
+    collation. Untyped PPR returns ``None`` (the filter then keeps any pushed
+    owner).
+    """
+    if not isinstance(sampler_options, PPRSamplerOptions):
+        return None
+    typed_channel_groups, _ = parse_typed_channel_ratio_groups(
+        sampler_options.typed_channel_ratios
+    )
+    if not typed_channel_groups:
+        return None
+    channel_masks: dict[EdgeType, int] = {}
+    for channel_index, edge_type_group in enumerate(typed_channel_groups):
+        bit = 1 << channel_index
+        for edge_type in edge_type_group:
+            # Key by the single orientation that appears in the batch: GLT emits
+            # the reverse edge type for edge_dir="out" and the forward type for
+            # "in". Keying only that orientation keeps opposite-direction channels
+            # distinct -- keying both would OR their bits and collapse the mask.
+            batch_edge_type = (
+                reverse_edge_type(edge_type) if edge_dir == "out" else edge_type
+            )
+            key = tuple(batch_edge_type)
+            channel_masks[key] = channel_masks.get(key, 0) | bit
+    return channel_masks
 
 
 @dataclass(frozen=True)
@@ -288,6 +330,9 @@ class BaseDistLoader(DistLoader):
         self.with_weight = sampling_config.with_weight
         self.collect_features = sampling_config.collect_features
         self.edge_dir = sampling_config.edge_dir
+        self._ppr_relation_channel_masks = _build_ppr_relation_channel_masks(
+            sampler_options, self.edge_dir
+        )
         self.sampling_config = sampling_config
         self.to_device = device
         self.worker_options = worker_options
@@ -1040,11 +1085,18 @@ class BaseDistLoader(DistLoader):
             # Hetero PPR (including labeled-homogeneous): prefixed edge-type keys.
             matched, metadata = extract_edge_type_metadata(
                 metadata=metadata,
-                prefixes=[PPR_EDGE_INDEX_METADATA_KEY, PPR_WEIGHT_METADATA_KEY],
+                prefixes=[
+                    PPR_EDGE_INDEX_METADATA_KEY,
+                    PPR_WEIGHT_METADATA_KEY,
+                    PPR_EXPANDED_METADATA_KEY,
+                ],
             )
             ppr_edge_indices = matched[PPR_EDGE_INDEX_METADATA_KEY]
             ppr_weights = matched[PPR_WEIGHT_METADATA_KEY]
-            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights)
+            ppr_is_expanded = matched[PPR_EXPANDED_METADATA_KEY]
+            attach_ppr_outputs(data, ppr_edge_indices, ppr_weights, ppr_is_expanded)
+            if self._ppr_relation_channel_masks is not None:
+                data.ppr_relation_channel_masks = self._ppr_relation_channel_masks
             if isinstance(data, HeteroData):
                 edge_types_to_keep = set(ppr_edge_indices.keys())
                 if self._sampler_options.include_sampled_edges:

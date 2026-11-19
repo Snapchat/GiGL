@@ -3,8 +3,23 @@ include gigl/dep_vars.env
 SHELL := /bin/bash
 DATE:=$(shell /bin/date "+%Y%m%d_%H%M")
 
+# Python minor for every uv command and for `ty`, e.g. `make unit_test PYTHON_MINOR=3.13`. Defaults to the
+# minor of UV_PYTHON when the environment sets it (e.g. UV_PYTHON=3.13.15 gives 3.13), otherwise to the
+# minor of .python-version.
+PYTHON_MINOR ?= $(shell echo "$${UV_PYTHON:-$$(cat .python-version)}" | cut -d. -f1,2)
+# An environment that already sets UV_PYTHON keeps its interpreter: PYTHON_MINOR= on the command line
+# steers uv only when UV_PYTHON is unset.
+export UV_PYTHON ?= $(PYTHON_MINOR)
+# Suffix of this minor's image tags and dep_vars.env keys, e.g. py313.
+PY_TAG := py$(subst .,,$(PYTHON_MINOR))
+
 # GIT HASH, or empty string if not in a git repo.
 GIT_HASH?=$(shell git rev-parse HEAD 2>/dev/null || "")
+SHORT_GIT_HASH?=$(shell git rev-parse --short HEAD 2>/dev/null || "")
+# Docker image tag. The artifact registry enforces tag immutability, so a date alone can
+# collide when a build is retried or two builds start in the same minute. The short hash
+# makes the tag unique per commit.
+DOCKER_IMAGE_TAG?=${DATE}_${SHORT_GIT_HASH}
 PWD=$(shell pwd)
 
 # You can override GIGL_PROJECT by setting it in your environment i.e.
@@ -16,18 +31,20 @@ DOCKER_IMAGE_MAIN_CUDA_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cuda
 DOCKER_IMAGE_MAIN_CPU_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/src-cpu
 DOCKER_IMAGE_DEV_WORKBENCH_NAME:=${GIGL_DOCKER_ARTIFACT_REGISTRY}/dev-workbench
 
-DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DATE}
-DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DATE}
-DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DATE}
+# The Python suffix keeps images that different minors build in the same minute apart.
+DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG?=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CUDA_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
+DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${DOCKER_IMAGE_TAG}-${PY_TAG}
+DOCKER_IMAGE_DEV_WORKBENCH_NAME_WITH_TAG?=${DOCKER_IMAGE_DEV_WORKBENCH_NAME}:${DOCKER_IMAGE_TAG}
 
-# Image built and used by `make integration_test`. The tag defaults to ${DATE} for local
+# Image built and used by `make integration_test`. The tag defaults to ${DOCKER_IMAGE_TAG} for local
 # runs; CI overrides INTEGRATION_TEST_CPU_IMAGE_TAG with an immutable per-run value (e.g.
 # ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}) so concurrent runs can't overwrite each
 # other's tag. `?=` keeps INTEGRATION_TEST_CPU_IMAGE lazily expanded so a CLI override of
-# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export.
-INTEGRATION_TEST_CPU_IMAGE_TAG?=${DATE}
-INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}
+# the tag flows through to both the build and the GIGL_CPU_DOCKER_URI export. The Python
+# suffix goes after the tag so that minors sharing one CI run ID push different images.
+INTEGRATION_TEST_CPU_IMAGE_TAG?=${DOCKER_IMAGE_TAG}
+INTEGRATION_TEST_CPU_IMAGE?=${DOCKER_IMAGE_MAIN_CPU_NAME}:${INTEGRATION_TEST_CPU_IMAGE_TAG}-${PY_TAG}
 
 PYTHON_DIRS:=.github/scripts examples gigl tests snapchat scripts
 CPP_SOURCES:=$(shell find gigl-core/core \( -name "*.cpp" -o -name "*.cu" \) 2>/dev/null)
@@ -54,12 +71,15 @@ check_if_valid_env:
 	@command -v docker >/dev/null 2>&1 || { echo >&2 "docker is required but it's not installed.  Aborting."; exit 1; }
 	@command -v gsutil >/dev/null 2>&1 || { echo >&2 "gsutil is required but it's not installed.  Aborting."; exit 1; }
 
+# The Scala toolchain only serves the legacy Scala components; set SKIP_SCALA=1 to skip downloading it.
+SKIP_SCALA?=0
+
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
 	bash ./gigl-core/requirements/install_cpp_deps.sh
 	bash ./requirements/install_py_deps.sh --dev
-	bash ./requirements/install_scala_deps.sh
+	@if [ "$(SKIP_SCALA)" = "1" ]; then echo "SKIP_SCALA=1: skipping Scala deps"; else bash ./requirements/install_scala_deps.sh; fi
 	uv pip install -e .
 	uv run pre-commit install --hook-type pre-commit --hook-type pre-push
 
@@ -75,6 +95,8 @@ install_deps:
 # installation scripts
 precondition_tests:
 	uv run python tests/config_tests/dep_vars_check.py
+	uv run python tests/config_tests/glt_patches_check.py
+	uv run python tests/config_tests/beam_sdk_image_check.py
 
 run_api_test:
 	cd tests/api_test && make run_api_test
@@ -128,9 +150,14 @@ check_format_md:
 check_format_cpp:
 	$(MAKE) -C gigl-core check_format_cpp
 
+# Runs the `whitespace` pre-commit alias (end-of-file-fixer and trailing-whitespace) on every
+# tracked file. It fixes files in place and exits non-zero if it changed anything.
+format_whitespace:
+	uv run pre-commit run --all-files --show-diff-on-failure whitespace
+
 # Checks formatting only (clang-format, black, scalafmt, mdformat). Does NOT run
 # clang-tidy static analysis — use `make check_lint_cpp` for that.
-check_format: check_format_py check_format_cpp check_format_scala check_format_md
+check_format: check_format_py check_format_cpp check_format_scala check_format_md format_whitespace
 
 # Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specifc file.
 # Ex. `make integration_test PY_TEST_FILES="dataflow_test.py"`
@@ -139,10 +166,20 @@ check_format: check_format_py check_format_cpp check_format_scala check_format_m
 # Builds a fresh src-cpu image from current source so Vertex-AI-launching integration
 # tests run against current code. CI passes an immutable INTEGRATION_TEST_CPU_IMAGE_TAG;
 # see the var definition above.
+# Does not run the Spark tests (Subgraph Sampler, Split Generator); see `integration_tests_spark`.
 integration_test: build_cpp_extensions
 	uv run python -m scripts.build_and_push_docker_image --predefined_type cpu --image_name ${INTEGRATION_TEST_CPU_IMAGE}
 	GIGL_CPU_DOCKER_URI=${INTEGRATION_TEST_CPU_IMAGE} \
 	uv run python -m tests.integration.main \
+		--env=test \
+		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
+		--test_file_pattern=$(PY_TEST_FILES)
+
+# Runs the integration tests for the legacy Spark components (Subgraph Sampler and Split Generator).
+# These tests need the Scala toolchain; do not install with SKIP_SCALA=1.
+# Set PY_TEST_FILES=<TEST_FILE_NAME_GLOB> to test a specific file.
+integration_tests_spark:
+	uv run python -m tests.integration_tests_spark.main \
 		--env=test \
 		--resource_config_uri=${GIGL_TEST_DEFAULT_RESOURCE_CONFIG} \
 		--test_file_pattern=$(PY_TEST_FILES)
@@ -171,10 +208,10 @@ format_md:
 format_cpp:
 	$(MAKE) -C gigl-core format_cpp
 
-format: format_py format_cpp format_scala format_md
+format: format_py format_cpp format_scala format_md format_whitespace
 
 type_check:
-	uv run ty check ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR} ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
@@ -185,7 +222,8 @@ check_lint_cpp:
 fix_lint_cpp:
 	$(MAKE) -C gigl-core fix_lint_cpp
 
-lint_test: check_format assert_yaml_configs_parse check_lint_cpp
+# precondition_tests runs here so a bumped GLT pin or an edited patch fails the lint job in CI.
+lint_test: precondition_tests check_format assert_yaml_configs_parse check_lint_cpp
 	@echo "Lint checks pass!"
 
 # Wipe cmake build caches. Use this if cmake's cached state becomes inconsistent
@@ -297,18 +335,37 @@ run_hom_cora_snc_e2e_test:
 		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
 		--test_names="hom_cora_snc_test"
 
+# Runs every test in e2e_tests.yaml, or only the tests in E2E_TEST_NAMES when it is set.
 run_all_e2e_tests: compiled_pipeline_path:=${GIGL_E2E_TEST_COMPILED_PIPELINE_PATH}
+# CI pipelines clean up their child jobs on exit instead of sending the notification email.
+run_all_e2e_tests: exit_task:=cleanup
 run_all_e2e_tests: compile_gigl_kubeflow_pipeline
+# Set E2E_FAIL_FAST=1 to cancel the other pipelines as soon as one fails (the merge queue does).
 run_all_e2e_tests:
 	uv run python -m tests.e2e_tests.e2e_test \
 		--compiled_pipeline_path=$(compiled_pipeline_path) \
-		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml"
+		--test_spec_uri="tests/e2e_tests/e2e_tests.yaml" \
+		$(foreach test_name,$(E2E_TEST_NAMES),--test_names=$(test_name)) \
+		$(if $(E2E_FAIL_FAST),--fail_fast)
+
+# The in-memory (GLT) e2e tests, i.e. those whose task config sets `should_run_glt_backend: True`.
+run_glt_e2e_tests: E2E_TEST_NAMES:=hom_cora_sup_test het_dblp_sup_test hom_cora_snc_test hom_cora_sup_gs_test het_dblp_sup_gs_test
+run_glt_e2e_tests: run_all_e2e_tests
+
+# Builds and pushes this minor's 3 release src images (cuda, cpu, cpu-dataflow) and compiles and uploads its KFP
+# pipeline, using the refs under the dep_vars.env keys ending in _$(PY_TAG) (create_release.yml runs this once per minor).
+release_kfp_pipeline: DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA_$(PY_TAG))
+release_kfp_pipeline: DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG:=$(DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU_$(PY_TAG))
+release_kfp_pipeline: compiled_pipeline_path:=$(DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH_$(PY_TAG))
+release_kfp_pipeline: compile_gigl_kubeflow_pipeline
 
 # Compile an instance of a kfp pipeline
 # If you want to compile a pipeline and save it to a specific path, set compiled_pipeline_path
 # Example:
 # `make compiled_pipeline_path="/tmp/gigl/my_pipeline.yaml" compile_gigl_kubeflow_pipeline`
 # Can be a GCS URI as well
+# Set exit_task=cleanup to compile the CI variant that cancels child jobs on exit instead of emailing.
 compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docker_images
 	uv run python -m gigl.orchestration.kubeflow.runner \
 		--action=compile \
@@ -316,6 +373,7 @@ compile_gigl_kubeflow_pipeline: build_cpp_extensions compile_jars push_new_docke
 		--container_image_cpu=${DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG} \
 		--container_image_dataflow=${DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG} \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
+		$(if $(exit_task),--exit_task=$(exit_task)) \
 
 _skip_build_deps:
 	@echo "compiled_pipeline_path was provided. Skipping build dependencies i.e. Compiling jars and pushing docker images"
@@ -351,6 +409,13 @@ run_dev_gnn_kubeflow_pipeline: $(if $(compiled_pipeline_path), _skip_build_deps,
 		--run_labels="gigl_commit=$(GIT_HASH)" \
 		--run_labels="gigl_version=$(GIGL_VERSION)" \
 		$(if $(compiled_pipeline_path),--compiled_pipeline_path=$(compiled_pipeline_path)) \
+
+# Cancel a GiGL pipeline run, wait for it to stop, then cancel the Vertex AI, Dataflow,
+# and Dataproc jobs it launched. Also cleans up the children of a run that already stopped.
+# Example:
+# make pipeline_run=projects/my-project/locations/us-central1/pipelineJobs/my-run cancel_pipeline_run
+cancel_pipeline_run:
+	uv run python -m gigl.src.common.job_cleanup --pipeline_run=$(pipeline_run)
 
 
 clean_build_files_py:

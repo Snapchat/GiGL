@@ -1,3 +1,4 @@
+import math
 from typing import Any, Callable, Iterable, Optional, Union
 
 import apache_beam as beam
@@ -5,17 +6,19 @@ import pyarrow as pa
 import tensorflow_data_validation as tfdv
 import tensorflow_data_validation.utils.display_util
 import tensorflow_transform
-import tfx_bsl
-import tfx_bsl.tfxio.tensor_adapter
-import tfx_bsl.tfxio.tf_example_record
 from apache_beam.pvalue import PBegin, PCollection, PDone
 from tensorflow_metadata.proto.v0 import schema_pb2, statistics_pb2
 from tensorflow_transform import beam as tft_beam
 from tensorflow_transform.tf_metadata import schema_utils
-from tfx_bsl.tfxio.record_based_tfxio import RecordBasedTFXIO
+from tfx_bsl.public import tfxio
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
+from gigl.common.data.parquet_format import (
+    EDGE_DST_COLUMN,
+    EDGE_SRC_COLUMN,
+    NODE_ID_COLUMN,
+)
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
@@ -32,11 +35,13 @@ from gigl.src.data_preprocessor.lib.transform.feature_quantization import (
     NODE_PACKED_FEATURE_KEY,
     apply_feature_quantization_transform,
 )
+from gigl.src.data_preprocessor.lib.transform.parquet_writer import WriteDenseParquet
 from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEncoder
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
+    DataPreprocessorOutputFormat,
     EdgeDataPreprocessingSpec,
     FeatureQuantizationSpec,
     FeatureSpecDict,
@@ -98,7 +103,7 @@ class IngestRawFeatures(beam.PTransform):
         data_reference: DataReference,
         feature_spec: FeatureSpecDict,
         schema: schema_pb2.Schema,
-        beam_record_tfxio: RecordBasedTFXIO,
+        beam_record_tfxio: tfxio.TFExampleBeamRecord,
     ):
         self.data_reference = data_reference
         self.feature_spec = feature_spec
@@ -177,7 +182,7 @@ class ReadExistingTFTransformFn(beam.PTransform):
 class AnalyzeAndBuildTFTransformFn(beam.PTransform):
     def __init__(
         self,
-        tensor_adapter_config: tfx_bsl.tfxio.tensor_adapter.TensorAdapterConfig,
+        tensor_adapter_config: tfxio.TensorAdapterConfig,
         preprocessing_fn: Callable[[TFTensorDict], TFTensorDict],
     ):
         self.tensor_adapter_config = tensor_adapter_config
@@ -285,7 +290,7 @@ def get_load_data_and_transform_pipeline_component(
             raw_feature_spec
         )
 
-        beam_record_tfxio = tfx_bsl.tfxio.tf_example_record.TFExampleBeamRecord(
+        beam_record_tfxio = tfxio.TFExampleBeamRecord(
             physical_format="tfrecord", schema=raw_data_schema
         )
 
@@ -378,6 +383,7 @@ def get_load_data_and_transform_pipeline_component(
             preprocessing_spec, (NodeDataPreprocessingSpec, EdgeDataPreprocessingSpec)
         ):
             quantization_spec = preprocessing_spec.feature_quantization_spec
+        packed_feature_key: Optional[str] = None
         if quantization_spec is not None:
             if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
                 packed_feature_key = EDGE_PACKED_FEATURE_KEY
@@ -396,14 +402,55 @@ def get_load_data_and_transform_pipeline_component(
                 )
             )
 
-        transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
-            file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
-            max_bytes_per_shard=int(2e8),  # 200mb,
-            transformed_metadata=resolved_transformed_metadata,
-            # TODO(mkolodner-sc): Right now, a non-zero value for num_shards overrides the max_bytes_per_shard condition. We need to implement
-            # a solution where num_shards specified is just a minimum, causing the max_bytes_per_shard rule taking precedent over the num_shards rule. This will require
-            # dynamically determining the number of shards produced by max_bytes_per_shard and setting it to be equal to min_num_shards if the value is less than it.
-            num_shards=num_shards,
-        )
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            id_keys: list[str] = []
+            id_columns: list[str] = []
+            if isinstance(preprocessing_spec, EdgeDataPreprocessingSpec):
+                id_keys = [
+                    str(preprocessing_spec.identifier_output.src_node),
+                    str(preprocessing_spec.identifier_output.dst_node),
+                ]
+                id_columns = [EDGE_SRC_COLUMN, EDGE_DST_COLUMN]
+            else:
+                id_keys = [str(preprocessing_spec.identifier_output)]
+                id_columns = [NODE_ID_COLUMN]
+            feature_keys: list[str] = list(preprocessing_spec.features_outputs or [])
+            packed_feature_dim = 0
+            if quantization_spec is not None:
+                # Quantized features are written as one packed binary column, not as float32 features.
+                quantized_keys = set(quantization_spec.feature_keys)
+                unquantized_feature_keys: list[str] = []
+                for key in feature_keys:
+                    if key not in quantized_keys:
+                        unquantized_feature_keys.append(key)
+                feature_keys = unquantized_feature_keys
+                # Each key takes `bits` bits, rounded up to whole bytes.
+                packed_feature_dim = math.ceil(
+                    len(quantization_spec.feature_keys) * quantization_spec.bits / 8
+                )
+            label_keys: list[str] = list(preprocessing_spec.labels_outputs or [])
+            transformed_features | "Write parquet files" >> WriteDenseParquet(
+                parquet_uri_prefix=transformed_features_info.transformed_features_parquet_prefix.uri,
+                id_keys=id_keys,
+                id_columns=id_columns,
+                feature_keys=feature_keys,
+                label_keys=label_keys,
+                num_shards=num_shards,
+                packed_feature_key=packed_feature_key,
+                packed_feature_dim=packed_feature_dim,
+            )
+        else:
+            transformed_features | "Write tf record files" >> BetterWriteToTFRecord(
+                file_path_prefix=transformed_features_info.transformed_features_file_prefix.uri,
+                max_bytes_per_shard=int(2e8),  # 200mb,
+                transformed_metadata=resolved_transformed_metadata,
+                # TODO(mkolodner-sc): Right now, a non-zero value for num_shards overrides the max_bytes_per_shard condition. We need to implement
+                # a solution where num_shards specified is just a minimum, causing the max_bytes_per_shard rule taking precedent over the num_shards rule. This will require
+                # dynamically determining the number of shards produced by max_bytes_per_shard and setting it to be equal to min_num_shards if the value is less than it.
+                num_shards=num_shards,
+            )
 
         return p

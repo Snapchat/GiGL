@@ -12,8 +12,11 @@ from gigl.common.constants import GIGL_ROOT_DIR
 from gigl.common.logger import Logger
 from gigl.common.types.uri.gcs_uri import GcsUri
 from gigl.common.types.uri.uri_factory import UriFactory
-from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.utils.file_loader import FileLoader
+from gigl.common.utils.proto_utils import ProtoUtils
+from gigl.src.common.types.pb_wrappers.gigl_resource_config import (
+    GiglResourceConfigWrapper,
+)
+from snapchat.research.gbml.gigl_resource_config_pb2 import GiglResourceConfig
 
 logger = Logger()
 
@@ -50,19 +53,25 @@ class TestExampleNotebooks(unittest.TestCase):
             str(GIGL_ROOT_DIR / "deployment/configs/e2e_glt_resource_config.yaml"),
         )
         logger.info(f"Using resource config URI: {resource_config_uri}")
-        # Copy over resource config to GCS so all machines can access it.
-        # If we don't do this, then since different machines run this test case,
-        # And run some of the buisness logic, they will not have access to the resource config.
+        proto_utils = ProtoUtils()
+        resource_config = proto_utils.read_proto_from_yaml(
+            uri=UriFactory.create_uri(resource_config_uri),
+            proto_cls=GiglResourceConfig,
+        )
+        resource_config_wrapper = GiglResourceConfigWrapper(resource_config)
         gcs_uri = GcsUri.join(
-            get_resource_config().temp_assets_regional_bucket_path,
+            resource_config_wrapper.temp_assets_regional_bucket_path,
             "testing",
             "notebooks",
             str(uuid4().hex),
             "resource_config.yaml",
         )
         logger.info(f"Using GCS URI: {gcs_uri}")
-        fileloader = FileLoader()
-        fileloader.load_file(UriFactory.create_uri(resource_config_uri), gcs_uri)
+        # The uploaded YAML must include any local Hydra fragments and external shared config.
+        resource_config.shared_resource_config.CopyFrom(
+            resource_config_wrapper.shared_resource_config
+        )
+        proto_utils.write_proto_to_yaml(proto=resource_config, uri=gcs_uri)
         self._notebooks = [
             _NoteBookTestConfig(
                 name="cora",

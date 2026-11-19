@@ -1,6 +1,6 @@
 import gc
 import time
-from typing import Optional, Union
+from typing import Final, Optional, Union
 
 import torch
 from graphlearn_torch.distributed.rpc import all_gather
@@ -8,12 +8,21 @@ from graphlearn_torch.partition import PartitionBook, RangePartitionBook
 from graphlearn_torch.utils import convert_to_tensor
 
 from gigl.common.logger import Logger
-from gigl.distributed.dist_partitioner import DistPartitioner
+from gigl.distributed.dist_partitioner import (
+    DistPartitioner,
+    _concat_chunks,
+    _empty_rows,
+)
 from gigl.distributed.utils.partition_book import build_partition_book, get_ids_on_rank
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.types.graph import FeaturePartitionData, GraphPartitionData, to_homogeneous
+from gigl.utils.share_memory import is_disk_backed
 
 logger = Logger()
+
+# Size of the RAM staging block used to write rows in id order. It bounds the staging buffer's RAM;
+# larger blocks mean fewer, larger sequential writes to the disk-backed destinations.
+_ORDERED_BLOCK_BYTES: Final = 256 * 1024 * 1024
 
 
 class DistRangePartitioner(DistPartitioner):
@@ -57,7 +66,12 @@ class DistRangePartitioner(DistPartitioner):
 
         self._edge_types = sorted(input_edge_index.keys())
 
-        self._edge_index = convert_to_tensor(input_edge_index, dtype=torch.int64)
+        self._edge_index = {
+            edge_type: convert_to_tensor(
+                edge_index, dtype=self._edge_index_dtype(edge_type)
+            )
+            for edge_type, edge_index in input_edge_index.items()
+        }
 
         # Logging information about number of edges across the machines
 
@@ -124,6 +138,64 @@ class DistRangePartitioner(DistPartitioner):
 
         return node_partition_book
 
+    def _assemble_node_chunks(
+        self, chunks: list[tuple[torch.Tensor, ...]], fields: list[int]
+    ) -> list[torch.Tensor]:
+        """Join ``fields`` of the received chunks sorted by node id, emptying ``chunks``.
+
+        The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
+        If every destination is in RAM, the chunks are joined and then gathered by id.
+        Otherwise each destination is filled one block of rows at a time, so a spilled field
+        never needs a second full copy in RAM.
+        """
+        node_id_field = len(chunks[0]) - 1
+        num_rows = sum(chunk[node_id_field].shape[0] for chunk in chunks)
+        destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+        if not any(is_disk_backed(destination) for destination in destinations):
+            # The block fill below handles any mix of disk and RAM destinations. This path is only for
+            # the all-RAM case, where freeing each chunk as it is copied peaks lower. The unused
+            # destinations cost nothing because torch.empty does not touch pages.
+            del destinations
+            joined = _concat_chunks(chunks, fields)
+            order = torch.argsort(joined[fields.index(node_id_field)])
+            return [tensor[order] for tensor in joined]
+        chunk_starts = torch.tensor(
+            [0] + [chunk[node_id_field].shape[0] for chunk in chunks]
+        ).cumsum(0)
+        order = torch.argsort(torch.cat([chunk[node_id_field] for chunk in chunks]))
+        row_bytes = max(
+            destination[:1].numel() * destination.element_size()
+            for destination in destinations
+        )
+        block_rows = max(1, _ORDERED_BLOCK_BYTES // max(row_bytes, 1))
+        for block_start in range(0, order.numel(), block_rows):
+            positions = order[block_start : block_start + block_rows]
+            # Locate the chunk holding each row so every chunk is indexed once per field, not once per row.
+            chunk_of_position = (
+                torch.searchsorted(chunk_starts, positions, right=True) - 1
+            )
+            by_chunk = torch.argsort(chunk_of_position, stable=True)
+            counts = torch.bincount(chunk_of_position, minlength=len(chunks)).tolist()
+            block_rows_by_chunk = by_chunk.split(counts)
+            source_rows_by_chunk = positions[by_chunk].split(counts)
+            for destination, field in zip(destinations, fields):
+                # Gather into RAM first: random writes to a disk-backed destination are slow, a
+                # single sequential copy of the finished block is not.
+                staging = torch.empty(
+                    (positions.numel(), *destination.shape[1:]),
+                    dtype=destination.dtype,
+                )
+                for chunk_index, (block_rows_of_chunk, source_rows) in enumerate(
+                    zip(block_rows_by_chunk, source_rows_by_chunk)
+                ):
+                    if source_rows.numel() > 0:
+                        staging[block_rows_of_chunk] = chunks[chunk_index][field][
+                            source_rows - chunk_starts[chunk_index]
+                        ]
+                destination[block_start : block_start + positions.numel()] = staging
+        chunks.clear()
+        return destinations
+
     # TODO: Create a dataclass for this positional three-value partition result.
     def _partition_node_features_and_labels(
         self,
@@ -135,9 +207,9 @@ class DistRangePartitioner(DistPartitioner):
         Optional[FeaturePartitionData],
     ]:
         """
-        Partitions node features according to the node partition book. We rely on the functionality from the parent tensor-based partitioner here,
-        and add logic to sort the node features by node indices which is specific to range-based partitioning. This is done so that the range-based
-        id2idx corresponds correctly to the node features.
+        Partitions node features according to the node partition book, reusing the parent tensor-based partitioner.
+        Rows arrive already in node id order from :meth:`_assemble_node_chunks`, which is what the range-based id2idx requires.
+        This override only drops the ids, because the range partition book already maps id to row.
 
         Args:
             node_partition_book (dict[NodeType, PartitionBook]): The partition book of nodes
@@ -148,66 +220,32 @@ class DistRangePartitioner(DistPartitioner):
         """
         (
             feature_partition_data,
-            quantized_feature_partition_data,
+            packed_feature_partition_data,
             labels_partition_data,
         ) = super()._partition_node_features_and_labels(
             node_partition_book=node_partition_book, node_type=node_type
         )
 
-        # The parent class always returns ids in the feature_partition_data, but we don't need to store the partitioned node feature ids for
-        # range-based partitioning, since this is available from the node partition book.
-
+        # The parent class always returns ids in each partition data, but range-based partitioning does not store them.
+        partitioned_node_feature_data = None
         if feature_partition_data is not None:
-            ids = feature_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_features = feature_partition_data.feats[
-                sorted_node_ids_indices
-            ]
             partitioned_node_feature_data = FeaturePartitionData(
-                feats=partitioned_node_features, ids=None
+                feats=feature_partition_data.feats, ids=None
             )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_feature_data = None
-
-        if quantized_feature_partition_data is not None:
-            ids = quantized_feature_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_quantized_features = (
-                quantized_feature_partition_data.feats[sorted_node_ids_indices]
+        partitioned_node_packed_feature_data = None
+        if packed_feature_partition_data is not None:
+            partitioned_node_packed_feature_data = FeaturePartitionData(
+                feats=packed_feature_partition_data.feats, ids=None
             )
-            partitioned_node_quantized_feature_data = FeaturePartitionData(
-                feats=partitioned_node_quantized_features, ids=None
-            )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_quantized_feature_data = None
-
+        partitioned_node_label_data = None
         if labels_partition_data is not None:
-            ids = labels_partition_data.ids
-            assert ids is not None
-            sorted_node_ids_indices = torch.argsort(ids)
-            partitioned_node_labels = labels_partition_data.feats[
-                sorted_node_ids_indices
-            ]
             partitioned_node_label_data = FeaturePartitionData(
-                feats=partitioned_node_labels, ids=None
+                feats=labels_partition_data.feats, ids=None
             )
-
-            del sorted_node_ids_indices
-            gc.collect()
-        else:
-            partitioned_node_label_data = None
 
         return (
             partitioned_node_feature_data,
-            partitioned_node_quantized_feature_data,
+            partitioned_node_packed_feature_data,
             partitioned_node_label_data,
         )
 
@@ -237,7 +275,7 @@ class DistRangePartitioner(DistPartitioner):
         Returns:
             GraphPartitionData: The graph data of the current partition.
             Optional[FeaturePartitionData]: The edge features on the current partition, will be None if there are no edge features for the current edge type
-            Optional[FeaturePartitionData]: The quantized edge features on the current partition, will be None if there are no quantized edge features for the current edge type
+            Optional[FeaturePartitionData]: The packed edge features on the current partition, will be None if there are no packed edge features for the current edge type
             Optional[PartitionBook]: The partition book of graph edges, will be None if there are no edge features for the current edge type
         """
 
@@ -249,9 +287,8 @@ class DistRangePartitioner(DistPartitioner):
 
         edge_index = self._edge_index[edge_type]
         has_edge_feats = self._edge_feat is not None and edge_type in self._edge_feat
-        has_edge_quantized_feats = (
-            self._edge_quantized_feat is not None
-            and edge_type in self._edge_quantized_feat
+        has_edge_packed_feats = (
+            self._edge_packed_feat is not None and edge_type in self._edge_packed_feat
         )
         has_edge_weights = (
             self._edge_weights is not None and edge_type in self._edge_weights
@@ -265,19 +302,19 @@ class DistRangePartitioner(DistPartitioner):
         edge_feat: Optional[torch.Tensor] = None
         edge_feat_dim: Optional[int] = None
         edge_weights_tensor: Optional[torch.Tensor] = None
-        edge_quantized_features: Optional[torch.Tensor] = None
-        edge_quantized_feature_dim: Optional[int] = None
+        edge_packed_features: Optional[torch.Tensor] = None
+        edge_packed_feature_dim: Optional[int] = None
 
         if has_edge_feats:
             assert self._edge_feat is not None and self._edge_feat_dim is not None
             assert edge_type in self._edge_feat_dim
             edge_feat = self._edge_feat[edge_type]
             edge_feat_dim = self._edge_feat_dim[edge_type]
-        if has_edge_quantized_feats:
-            assert self._edge_quantized_feat is not None
-            assert self._edge_quantized_feat_dim is not None
-            edge_quantized_features = self._edge_quantized_feat[edge_type]
-            edge_quantized_feature_dim = self._edge_quantized_feat_dim[edge_type]
+        if has_edge_packed_feats:
+            assert self._edge_packed_feat is not None
+            assert self._edge_packed_feat_dim is not None
+            edge_packed_features = self._edge_packed_feat[edge_type]
+            edge_packed_feature_dim = self._edge_packed_feat_dim[edge_type]
         if has_edge_weights:
             assert self._edge_weights is not None
             edge_weights_tensor = self._edge_weights[edge_type]
@@ -290,10 +327,10 @@ class DistRangePartitioner(DistPartitioner):
         if edge_feat is not None:
             feat_idx = len(input_parts)
             input_parts.append(edge_feat)
-        quantized_feat_idx: Optional[int] = None
-        if edge_quantized_features is not None:
-            quantized_feat_idx = len(input_parts)
-            input_parts.append(edge_quantized_features)
+        packed_feat_idx: Optional[int] = None
+        if edge_packed_features is not None:
+            packed_feat_idx = len(input_parts)
+            input_parts.append(edge_packed_features)
         if edge_weights_tensor is not None:
             weight_idx = len(input_parts)
             input_parts.append(edge_weights_tensor)
@@ -322,7 +359,7 @@ class DistRangePartitioner(DistPartitioner):
             edge_index,
             target_indices,
             edge_feat,
-            edge_quantized_features,
+            edge_packed_features,
             edge_weights_tensor,
         )
         del self._edge_index[edge_type]
@@ -331,14 +368,11 @@ class DistRangePartitioner(DistPartitioner):
             del self._edge_feat[edge_type], self._edge_feat_dim[edge_type]
         if self._edge_weights is not None and edge_type in self._edge_weights:
             del self._edge_weights[edge_type]
-        if (
-            self._edge_quantized_feat is not None
-            and edge_type in self._edge_quantized_feat
-        ):
-            assert self._edge_quantized_feat_dim is not None
+        if self._edge_packed_feat is not None and edge_type in self._edge_packed_feat:
+            assert self._edge_packed_feat_dim is not None
             del (
-                self._edge_quantized_feat[edge_type],
-                self._edge_quantized_feat_dim[edge_type],
+                self._edge_packed_feat[edge_type],
+                self._edge_packed_feat_dim[edge_type],
             )
 
         # We check if edge_index or edge_feat dict is empty after deleting the tensor. If so, we set these fields to None.
@@ -349,9 +383,9 @@ class DistRangePartitioner(DistPartitioner):
             self._edge_feat_dim = None
         if self._edge_weights is not None and not self._edge_weights:
             self._edge_weights = None
-        if self._edge_quantized_feat is not None and not self._edge_quantized_feat:
-            self._edge_quantized_feat = None
-            self._edge_quantized_feat_dim = None
+        if self._edge_packed_feat is not None and not self._edge_packed_feat:
+            self._edge_packed_feat = None
+            self._edge_packed_feat_dim = None
 
         gc.collect()
 
@@ -361,9 +395,9 @@ class DistRangePartitioner(DistPartitioner):
                 torch.empty(0, edge_feat_dim) if edge_feat_dim is not None else None
             )
             partitioned_weights = torch.empty(0) if has_edge_weights else None
-            partitioned_edge_quantized_features = (
-                torch.empty(0, edge_quantized_feature_dim, dtype=torch.uint8)
-                if edge_quantized_feature_dim is not None
+            partitioned_edge_packed_features = (
+                torch.empty(0, edge_packed_feature_dim, dtype=torch.uint8)
+                if edge_packed_feature_dim is not None
                 else None
             )
         else:
@@ -384,9 +418,9 @@ class DistRangePartitioner(DistPartitioner):
                 if weight_idx is not None
                 else None
             )
-            partitioned_edge_quantized_features = (
-                torch.cat([r[quantized_feat_idx] for r in res_list])
-                if quantized_feat_idx is not None
+            partitioned_edge_packed_features = (
+                torch.cat([r[packed_feat_idx] for r in res_list])
+                if packed_feat_idx is not None
                 else None
             )
 
@@ -408,7 +442,7 @@ class DistRangePartitioner(DistPartitioner):
 
         if (
             edge_feat_dim is not None
-            or edge_quantized_feature_dim is not None
+            or edge_packed_feature_dim is not None
             or has_edge_weights
         ):
             edge_partition_book = RangePartitionBook(
@@ -443,15 +477,15 @@ class DistRangePartitioner(DistPartitioner):
             f"Edge Index and Feature Partitioning for edge type {edge_type} finished, took {time.time() - start_time:.3f}s"
         )
 
-        current_quantized_feat_part = (
-            FeaturePartitionData(feats=partitioned_edge_quantized_features, ids=None)
-            if partitioned_edge_quantized_features is not None
+        current_packed_feat_part = (
+            FeaturePartitionData(feats=partitioned_edge_packed_features, ids=None)
+            if partitioned_edge_packed_features is not None
             else None
         )
         return (
             current_graph_part,
             current_feat_part,
-            current_quantized_feat_part,
+            current_packed_feat_part,
             edge_partition_book,
         )
 
@@ -520,12 +554,12 @@ class DistRangePartitioner(DistPartitioner):
         edge_partition_book: dict[EdgeType, PartitionBook] = {}
         partitioned_edge_index: dict[EdgeType, GraphPartitionData] = {}
         partitioned_edge_features: dict[EdgeType, FeaturePartitionData] = {}
-        partitioned_edge_quantized_features: dict[EdgeType, FeaturePartitionData] = {}
+        partitioned_edge_packed_features: dict[EdgeType, FeaturePartitionData] = {}
         for edge_type in self._edge_types:
             (
                 partitioned_edge_index_per_edge_type,
                 partitioned_edge_features_per_edge_type,
-                partitioned_edge_quantized_features_per_edge_type,
+                partitioned_edge_packed_features_per_edge_type,
                 edge_partition_book_per_edge_type,
             ) = self._partition_edge_index_and_edge_features(
                 node_partition_book=transformed_node_partition_book, edge_type=edge_type
@@ -537,9 +571,9 @@ class DistRangePartitioner(DistPartitioner):
                 partitioned_edge_features[edge_type] = (
                     partitioned_edge_features_per_edge_type
                 )
-            if partitioned_edge_quantized_features_per_edge_type is not None:
-                partitioned_edge_quantized_features[edge_type] = (
-                    partitioned_edge_quantized_features_per_edge_type
+            if partitioned_edge_packed_features_per_edge_type is not None:
+                partitioned_edge_packed_features[edge_type] = (
+                    partitioned_edge_packed_features_per_edge_type
                 )
 
         elapsed_time = time.time() - start_time
@@ -559,8 +593,8 @@ class DistRangePartitioner(DistPartitioner):
                 to_homogeneous(partitioned_edge_features)
                 if partitioned_edge_features
                 else None,
-                to_homogeneous(partitioned_edge_quantized_features)
-                if partitioned_edge_quantized_features
+                to_homogeneous(partitioned_edge_packed_features)
+                if partitioned_edge_packed_features
                 else None,
                 to_homogeneous(edge_partition_book) if edge_partition_book else None,
             )
@@ -570,8 +604,8 @@ class DistRangePartitioner(DistPartitioner):
                 partitioned_edge_index,
                 partitioned_edge_features if partitioned_edge_features else None,
                 (
-                    partitioned_edge_quantized_features
-                    if partitioned_edge_quantized_features
+                    partitioned_edge_packed_features
+                    if partitioned_edge_packed_features
                     else None
                 ),
                 edge_partition_book if edge_partition_book else None,

@@ -4,11 +4,22 @@ GiGL Resource Config is a yaml file that is passed in at runtime and specifies t
 configurations for each component in the GiGL. The proto definition for GiGL Resource Config can be seen
 [here](https://github.com/Snapchat/GiGL/blob/main/proto/snapchat/research/gbml/gigl_resource_config.proto)
 
+Resource configs can be split into Hydra config groups. See
+[composing task and resource configs with Hydra](./hydra_composition.md).
+
 ## Prerequisites
 
 If you don't have cloud assets already setup i.e. a GCP project. See [guide](../getting_started/cloud_setup_guide.md)
 
 ## Resource Config Breakdown
+
+### Choosing machine types
+
+The machine types in GiGL's own CI configs under `deployment/configs/` (for example `e2e_cicd_resource_config.yaml` and
+`e2e_glt_gs_resource_config.yaml`) are chosen for availability in the CI region, not for speed. CPU-only pools use E2
+shapes and the legacy pipelines train on CPU, because N1 and N2 pools and T4 GPUs in `us-central1` were often out of
+capacity. In practice, pick more performant types for your own workloads: N2 or C3 with local SSD for samplers and
+storage pools, and A100 or L4 GPUs for training and inference.
 
 ## Example: Full Template for Resource Config
 
@@ -143,6 +154,11 @@ Training.
 
 - **Local Trainer Config**: The `local_trainer_config` field of the trainer config just requires `num_workers` which can
   be used for data loaders.
+
+### Custom Launcher Config
+
+`custom_trainer_config` and `custom_inferencer_config` delegate component execution to a launcher command. The custom
+launcher owns resource compatibility for its component, including whether its graph store configuration is supported.
 
 **[Inferencer](../overview/components/inferencer.md) Config**
 

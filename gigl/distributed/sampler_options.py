@@ -147,7 +147,12 @@ class PPRSamplerOptions:
             edges are emitted through GLT's
             regular sampled-edge channel, so their final HeteroData edge
             orientation follows the same ``edge_dir`` convention as k-hop
-            sampling. The default ``False`` path is also more faithful to PyG's
+            sampling. Each PPR edge also carries ``ppr_is_expanded``: a per-node
+            bitmask of the PPR channels whose push expanded (fetched the adjacency
+            row of) that node for its anchor (value 0 or 1 for untyped PPR). The
+            graph-transformer relation filter uses it to drop a co-seeded ABLP
+            positive's sampled edges that the anchor's own push never fetched. The
+            default ``False`` path is also more faithful to PyG's
             ``get_ppr`` API, which returns virtual
             seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
             an induced message-passing subgraph:

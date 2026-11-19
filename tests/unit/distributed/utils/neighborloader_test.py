@@ -136,7 +136,7 @@ class LoaderUtilsTest(TestCase):
     def test_materialize_quantized_edge_features_uses_labeled_homogeneous_key(
         self,
     ) -> None:
-        data = Data(edge_index=torch.tensor([[0], [1]]))
+        data = Data(edge_index=torch.tensor([[0], [1]]), edge_attr=torch.empty(1, 0))
         typed_key = (
             f"{EDGE_PACKED_FEATURES_METADATA_KEY}.{DEFAULT_HOMOGENEOUS_EDGE_TYPE}"
         )
@@ -217,10 +217,32 @@ class LoaderUtilsTest(TestCase):
                 },
             )
 
+    def test_materialize_quantized_node_features_rejects_raw_width_mismatch(
+        self,
+    ) -> None:
+        data = Data(x=torch.empty(1, 0))
+        with self.assertRaises(ValueError):
+            materialize_quantized_node_features(
+                data=data,
+                metadata={
+                    NODE_PACKED_FEATURES_METADATA_KEY: torch.tensor(
+                        [[48]], dtype=torch.uint8
+                    )
+                },
+                node_quantization_metadata=FeatureQuantizationMetadata(
+                    bits=2,
+                    feature_dim=3,
+                    quantized_feature_indices=(0, 1),
+                    clip_min=0.0,
+                    clip_max=3.0,
+                ),
+            )
+
     def test_materialize_quantized_node_features_uses_per_node_type_metadata(
         self,
     ) -> None:
         data = HeteroData()
+        data["user"].x = torch.empty(1, 0)
         metadata = {
             f"{NODE_PACKED_FEATURES_METADATA_KEY}.user": torch.tensor(
                 [[48]], dtype=torch.uint8

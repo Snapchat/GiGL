@@ -269,12 +269,11 @@ class TestDataflowResourceConfig(TestCase):
         with self.assertRaises(AssertionError):
             _check_if_dataflow_resource_config_valid(config)
 
-    def test_missing_disk_size_gb(self):
-        """Test that missing disk_size_gb raises an assertion error."""
+    def test_missing_disk_size_gb_uses_dataflow_default(self):
+        """Test that an unset disk size passes validation for the Dataflow default."""
         config = _create_valid_dataflow_config()
         config.disk_size_gb = 0
-        with self.assertRaises(AssertionError):
-            _check_if_dataflow_resource_config_valid(config)
+        _check_if_dataflow_resource_config_valid(config)
 
     def test_missing_machine_type(self):
         """Test that missing machine_type raises an assertion error."""

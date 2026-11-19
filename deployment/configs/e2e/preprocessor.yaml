@@ -1,0 +1,9 @@
+# Shared preprocessing capacity for GiGL's end-to-end tests.
+edge_preprocessor_config:
+  num_workers: 1
+  max_num_workers: 128
+  machine_type: "e2-standard-8"
+node_preprocessor_config:
+  num_workers: 1
+  max_num_workers: 128
+  machine_type: "e2-standard-8"

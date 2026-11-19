@@ -32,7 +32,7 @@ def _check_if_dataflow_resource_config_valid(
     Returns:
         None
     """
-    for field in ["num_workers", "max_num_workers", "disk_size_gb", "machine_type"]:
+    for field in ["num_workers", "max_num_workers", "machine_type"]:
         assert_proto_field_value_is_truthy(
             proto=dataflow_resource_config_pb, field_name=field
         )

@@ -28,13 +28,11 @@ preprocessor_config:
   edge_preprocessor_config:
     num_workers: 1
     max_num_workers: 128
-    machine_type: "n2d-highmem-32"
-    disk_size_gb: 300
+    machine_type: "e2-standard-8"
   node_preprocessor_config:
     num_workers: 1
     max_num_workers: 128
-    machine_type: "n2d-highmem-64"
-    disk_size_gb: 300
+    machine_type: "e2-standard-8"
 # Kept in step with e2e_cicd_resource_config.yaml: n2 rather than n2d, since n2d
 # stocks out in us-central1. Same vCPU and memory.
 subgraph_sampler_config:
@@ -45,14 +43,16 @@ split_generator_config:
   machine_type: n2-standard-16
   num_local_ssds: 2
   num_replicas: 4
+# CPU training on E2 for the legacy (SGS) pipelines: chosen for availability in
+# us-central1 CI, and to leave T4 supply to the GLT e2e tests that need CUDA coverage.
+# In practice, train on a GPU shape (for example n1-highmem-8 + NVIDIA_TESLA_T4).
 trainer_config:
   vertex_ai_trainer_config:
-    machine_type: "n1-highmem-8"
-    gpu_type: NVIDIA_TESLA_T4  # set to `ACCELERATOR_TYPE_UNSPECIFIED` for cpu training
-    gpu_limit: 1  # set to 0 for cpu training
+    machine_type: "e2-highmem-8"
+    gpu_type: ACCELERATOR_TYPE_UNSPECIFIED
+    gpu_limit: 0
     num_replicas: 2
 inferencer_config:
   num_workers: 1
   max_num_workers: 256
-  machine_type: "c3-standard-22"
-  disk_size_gb: 100
+  machine_type: "e2-standard-8"

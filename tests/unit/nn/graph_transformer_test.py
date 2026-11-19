@@ -2,6 +2,7 @@
 
 import copy
 from typing import Callable, Literal, cast
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -125,6 +126,39 @@ class TestGraphTransformerEncoder(TestCase):
         self.assertEqual(item_embeddings.shape, (2, self._out_dim))
         self.assertFalse(torch.isnan(user_embeddings).any())
         self.assertFalse(torch.isnan(item_embeddings).any())
+
+    def test_forward_ignores_edge_store_without_edge_index(self) -> None:
+        """An edge store holding only ``edge_attr`` does not change the output."""
+        data = _create_simple_hetero_data()
+        data_with_attr_only_store = copy.deepcopy(data)
+        data_with_attr_only_store["user", "rates", "item"].edge_attr = torch.randn(4, 3)
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = encoder(
+                data=data_with_attr_only_store,
+                anchor_node_type=self._user_node_type,
+            )
+
+        torch.testing.assert_close(actual, expected)
+
+    def test_compiled_forward_matches_eager(self) -> None:
+        """``torch.compile`` of the whole encoder runs on a HeteroData batch.
+
+        The sparse k-hop layout still breaks the graph; this checks that
+        tracing succeeds and matches eager.
+        """
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder().eval()
+
+        with torch.no_grad():
+            expected = encoder(data=data, anchor_node_type=self._user_node_type)
+            actual = torch.compile(encoder)(
+                data=data, anchor_node_type=self._user_node_type
+            )
+
+        torch.testing.assert_close(actual, expected)
 
     def test_forward_with_l2_normalization(self) -> None:
         """Test that L2 normalization produces unit-length embeddings."""
@@ -287,6 +321,94 @@ class TestGraphTransformerEncoder(TestCase):
                 sequence_construction_method="ppr",
                 sampling_direction="in",
             )
+
+    def test_prioritize_hop_order_requires_khop(self) -> None:
+        with self.assertRaisesRegex(ValueError, "prioritize_hop_order"):
+            self._create_encoder(
+                sequence_construction_method="ppr",
+                prioritize_hop_order=True,
+            )
+
+    def test_prioritize_hop_order_passes_to_transform(self) -> None:
+        data = _create_simple_hetero_data()
+        encoder = self._create_encoder(
+            num_layers=0,
+            readout_mode="anchor_only",
+            prioritize_hop_order=True,
+        )
+        encoder.eval()
+
+        sequences = torch.zeros((3, 10, self._hid_dim), dtype=torch.float)
+        valid_mask = torch.zeros((3, 10), dtype=torch.bool)
+        valid_mask[:, 0] = True
+        sequence_auxiliary_data = {
+            "anchor_bias": None,
+            "pairwise_bias": None,
+            "pairwise_relation_indices": None,
+            "pairwise_nonmissing_indices": None,
+            "token_input": None,
+        }
+
+        with patch(
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
+            return_value=(sequences, valid_mask, sequence_auxiliary_data),
+        ) as mock_transform:
+            with torch.no_grad():
+                encoder(
+                    data=data,
+                    anchor_node_type=self._user_node_type,
+                    device=self._device,
+                )
+
+        self.assertTrue(mock_transform.call_args.kwargs["prioritize_hop_order"])
+
+    def test_forward_preserves_ppr_is_expanded(self) -> None:
+        # The encoder must pass the PPR expansion provenance and channel masks
+        # to the transform, or the relation filter silently no-ops.
+        user = self._user_node_type
+        ppr_edge_type = (user, "ppr", user)
+        data = HeteroData()
+        data[user].x = torch.randn(3, self._node_type_to_feat_dim_map[user])
+        data[user].batch_size = 1
+        data[ppr_edge_type].edge_index = torch.tensor([[0, 0], [1, 2]])
+        data[ppr_edge_type].edge_attr = torch.tensor([[0.9], [0.6]])
+        data[ppr_edge_type].ppr_is_expanded = torch.tensor([True, False])
+        data.ppr_relation_channel_masks = {ppr_edge_type: 0b01}
+
+        encoder = self._create_encoder(
+            num_layers=0,
+            readout_mode="anchor_only",
+            sequence_construction_method="ppr",
+        )
+        encoder.eval()
+
+        sequences = torch.zeros((1, 10, self._hid_dim), dtype=torch.float)
+        valid_mask = torch.zeros((1, 10), dtype=torch.bool)
+        valid_mask[:, 0] = True
+        aux = {
+            "anchor_bias": None,
+            "pairwise_bias": None,
+            "pairwise_relation_indices": None,
+            "pairwise_nonmissing_indices": None,
+            "token_input": None,
+        }
+        with patch(
+            "gigl.nn.graph_transformer.tensors_to_graph_transformer_input",
+            return_value=(sequences, valid_mask, aux),
+        ) as mock_transform:
+            with torch.no_grad():
+                encoder(data=data, anchor_node_type=user, device=self._device)
+
+        call_kwargs = mock_transform.call_args.kwargs
+        self.assertTrue(
+            torch.equal(
+                call_kwargs["ppr_is_expanded_dict"][ppr_edge_type],
+                torch.tensor([True, False]),
+            )
+        )
+        self.assertEqual(
+            call_kwargs["ppr_relation_channel_masks"], data.ppr_relation_channel_masks
+        )
 
     def test_anchor_only_readout_returns_anchor_token(self) -> None:
         """Test anchor-only readout returns the post-norm anchor token."""
@@ -2222,6 +2344,107 @@ class TestGraphTransformerEncoderFeedforwardRatio(TestCase):
 
         self.assertEqual(result.shape, (3, 16))
         self.assertFalse(torch.isnan(result).any())
+
+
+class TestGraphTransformerEncoderRelationFrontier(TestCase):
+    """Relation edges must not make an anchor's embedding depend on its batch."""
+
+    def setUp(self) -> None:
+        self._user = NodeType("user")
+        self._item = NodeType("item")
+        self._friends = EdgeType(self._user, Relation("friends"), self._user)
+        self._engages = EdgeType(self._item, Relation("engages"), self._user)
+        self._device = torch.device("cpu")
+
+    def _build_graph(
+        self,
+        user_x: Tensor,
+        item_x: Tensor,
+        friend_edges: list[tuple[int, int]],
+        engage_edges: list[tuple[int, int]],
+        user_order: list[int],
+        item_order: list[int],
+    ) -> HeteroData:
+        """Build a sampled batch whose local ids follow ``*_order``."""
+        user_local = {node: i for i, node in enumerate(user_order)}
+        item_local = {node: i for i, node in enumerate(item_order)}
+        data = HeteroData()
+        data["user"].x = user_x[user_order]
+        data["item"].x = item_x[item_order]
+        data[self._friends.tuple_repr()].edge_index = torch.tensor(
+            [[user_local[src], user_local[dst]] for src, dst in friend_edges]
+        ).t()
+        data[self._engages.tuple_repr()].edge_index = torch.tensor(
+            [[item_local[src], user_local[dst]] for src, dst in engage_edges]
+        ).t()
+        return data
+
+    def test_anchor_embedding_matches_solo_sample_when_positive_is_seeded(
+        self,
+    ) -> None:
+        torch.manual_seed(0)
+        user_x = torch.randn(5, 8)
+        item_x = torch.randn(2, 8)
+        # Two-hop in-edge sample of anchor user0 alone: in-edges of user0 and of
+        # its in-neighbors user2, user4, item1.
+        solo_friend_edges = [(2, 0), (4, 0), (1, 2), (3, 4)]
+        solo_engage_edges = [(1, 0), (0, 2)]
+        # Seeding positive user1 also expands user1 and its in-neighbor user3,
+        # both last-hop tokens of user0's sequence.
+        merged_friend_edges = solo_friend_edges + [(3, 1), (4, 1), (2, 3)]
+        merged_engage_edges = solo_engage_edges + [(0, 1), (1, 3)]
+        merged = self._build_graph(
+            user_x=user_x,
+            item_x=item_x,
+            friend_edges=merged_friend_edges,
+            engage_edges=merged_engage_edges,
+            user_order=[0, 1, 2, 3, 4],
+            item_order=[0, 1],
+        )
+        solo = self._build_graph(
+            user_x=user_x,
+            item_x=item_x,
+            friend_edges=solo_friend_edges,
+            engage_edges=solo_engage_edges,
+            user_order=[0, 2, 4, 1, 3],
+            item_order=[1, 0],
+        )
+
+        def encode_anchor(data: HeteroData, anchor_node_ids: Tensor) -> Tensor:
+            # Same seed so both encoders have identical weights.
+            torch.manual_seed(0)
+            encoder = GraphTransformerEncoder(
+                node_type_to_feat_dim_map={self._user: 8, self._item: 8},
+                edge_type_to_feat_dim_map={self._friends: 0, self._engages: 0},
+                hid_dim=16,
+                out_dim=8,
+                num_layers=2,
+                num_heads=2,
+                max_seq_len=10,
+                hop_distance=2,
+                sampling_direction="in",
+                dropout_rate=0.0,
+                attention_dropout_rate=0.0,
+                relation_attention_mode="edge_type_hgt",
+                relation_message_mode="edge_type_attention",
+            )
+            encoder.eval()
+            with torch.no_grad():
+                # Relation message weights start at zero; randomize every weight
+                # so relation edges change the output.
+                for parameter in encoder.parameters():
+                    parameter.normal_(std=0.5)
+                embeddings = encoder(
+                    data=data,
+                    anchor_node_type=self._user,
+                    device=self._device,
+                    anchor_node_ids=anchor_node_ids,
+                )
+            return embeddings[0]
+
+        merged_anchor = encode_anchor(merged, anchor_node_ids=torch.tensor([0, 1]))
+        solo_anchor = encode_anchor(solo, anchor_node_ids=torch.tensor([0]))
+        torch.testing.assert_close(merged_anchor, solo_anchor, atol=1e-5, rtol=1e-5)
 
 
 if __name__ == "__main__":

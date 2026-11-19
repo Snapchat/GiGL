@@ -1,4 +1,5 @@
 import os
+from enum import Enum
 
 # KFP doesn't support list[str] for runtime parameters, so we need to use List instead.
 from typing import Final, List, Optional
@@ -14,9 +15,7 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 from gigl.common import LocalUri
 from gigl.common.logger import Logger
 from gigl.common.types.resource_config import CommonPipelineComponentConfigs
-from gigl.orchestration.kubeflow.utils.glt_backend import (
-    check_glt_backend_eligibility_component,
-)
+from gigl.orchestration.kubeflow.cleanup_component import cleanup_child_jobs_op
 from gigl.orchestration.kubeflow.utils.log_metrics import log_metrics_to_ui
 from gigl.orchestration.kubeflow.utils.resource import add_task_resource_requirements
 from gigl.src.common.constants.components import GiGLComponents
@@ -28,6 +27,22 @@ _COMPONENTS_BASE_PATH: Final[str] = os.path.join(
 )
 
 logger = Logger()
+
+
+class ExitTask(str, Enum):
+    """What the pipeline runs when it exits, whatever the outcome.
+
+    A KFP pipeline has exactly one exit task, so this is an either/or choice made at
+    compile time.
+
+    EMAIL: Send a Vertex AI notification email to ``notification_emails``.
+    CLEANUP: Cancel the Vertex AI, Dataflow, and Dataproc jobs the run launched.
+        Meant for CI, where nobody reads the email and orphaned jobs hold capacity.
+    """
+
+    EMAIL = "email"
+    CLEANUP = "cleanup"
+
 
 SPECED_COMPONENTS: Final[list[str]] = [
     GiGLComponents.ConfigValidator.value,
@@ -74,9 +89,9 @@ def _generate_component_task(
     elif component == GiGLComponents.ConfigValidator:
         component_task = _speced_component_op_dict[component](
             job_name=job_name,
-            task_config_uri=task_config_uri,
+            source_task_config_uri=task_config_uri,
             start_at=start_at,
-            resource_config_uri=resource_config_uri,
+            source_resource_config_uri=resource_config_uri,
             stop_after=stop_after,
             cpu_docker_uri=common_pipeline_component_configs.cpu_container_image,
             cuda_docker_uri=common_pipeline_component_configs.cuda_container_image,
@@ -160,16 +175,21 @@ def _generate_component_tasks(
         resource_config_uri=resource_config_uri,
         common_pipeline_component_configs=common_pipeline_component_configs,
     )
-    should_use_glt = check_glt_backend_eligibility_component(
-        task_config_uri=template_or_frozen_config_uri,
-        base_image=common_pipeline_component_configs.cpu_container_image,
-    )
+    # Consume the validator's snapshots so downstream tasks use the values that were validated; rereading sources
+    # could resolve different values.
+    composed_task_config_snapshot_uri = validation_check_task.outputs[
+        "composed_task_config_snapshot_uri"
+    ]
+    composed_resource_config_snapshot_uri = validation_check_task.outputs[
+        "composed_resource_config_snapshot_uri"
+    ]
+    should_use_glt = validation_check_task.outputs["should_use_glt_backend"]
 
     with kfp.dsl.Condition(start_at == GiGLComponents.ConfigPopulator.value):
         config_populator_task = _create_config_populator_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             should_use_glt_runtime_param=should_use_glt,
             stop_after=stop_after,
@@ -179,8 +199,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.DataPreprocessor.value):
         data_preprocessor_task = _create_data_preprocessor_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
             should_use_glt_runtime_param=should_use_glt,
@@ -190,8 +210,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.SubgraphSampler.value):
         subgraph_sampler_task = _create_subgraph_sampler_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -200,8 +220,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.SplitGenerator.value):
         split_generator_task = _create_split_generator_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -210,8 +230,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.Trainer.value):
         trainer_task = _create_trainer_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -220,8 +240,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.Inferencer.value):
         inferencer_task = _create_inferencer_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
             stop_after=stop_after,
         )
@@ -230,8 +250,8 @@ def _generate_component_tasks(
     with kfp.dsl.Condition(start_at == GiGLComponents.PostProcessor.value):
         post_processor_task = _create_post_processor_task_op(
             job_name=job_name,
-            task_config_uri=template_or_frozen_config_uri,
-            resource_config_uri=resource_config_uri,
+            task_config_uri=composed_task_config_snapshot_uri,
+            resource_config_uri=composed_resource_config_snapshot_uri,
             common_pipeline_component_configs=common_pipeline_component_configs,
         )
         post_processor_task.after(validation_check_task)
@@ -240,12 +260,15 @@ def _generate_component_tasks(
 def generate_pipeline(
     common_pipeline_component_configs: CommonPipelineComponentConfigs,
     tag: Optional[str] = None,
+    exit_task: ExitTask = ExitTask.EMAIL,
 ):
     """
     Generates a KFP pipeline definition for GiGL.
     Args:
         common_pipeline_component_configs (CommonPipelineComponentConfigs): Shared configuration between components.
         tag (Optiona[str]): Optional tag, which is provided will be used to tag the pipeline description.
+        exit_task (ExitTask): What runs when the pipeline exits. Defaults to the email notification.
+            With ``ExitTask.CLEANUP`` the ``notification_emails`` parameter is accepted but unused.
 
 
     Returns:
@@ -264,10 +287,14 @@ def generate_pipeline(
         stop_after: Optional[str] = None,
         notification_emails: Optional[List[str]] = None,
     ):
-        with kfp.dsl.ExitHandler(
-            VertexNotificationEmailOp(recipients=notification_emails),
-            name="Gigl Alerts",
-        ):
+        if exit_task == ExitTask.CLEANUP:
+            exit_op = cleanup_child_jobs_op(
+                job_name=job_name, resource_config_uri=resource_config_uri
+            )
+            add_task_resource_requirements(exit_op, common_pipeline_component_configs)
+        else:
+            exit_op = VertexNotificationEmailOp(recipients=notification_emails)
+        with kfp.dsl.ExitHandler(exit_op, name="Gigl Alerts"):
             _generate_component_tasks(
                 job_name=job_name,
                 template_or_frozen_config_uri=template_or_frozen_config_uri,
