@@ -56,6 +56,7 @@ jobs:
         contains(github.event.comment.body, '/unit_test') ||
         contains(github.event.comment.body, '/all_test') ||
         contains(github.event.comment.body, '/integration_test') ||
+        contains(github.event.comment.body, '/spark_integration_tests') ||
         contains(github.event.comment.body, '/e2e_test') ||
         contains(github.event.comment.body, '/notebook_tests') ||
         contains(github.event.comment.body, '/lint_test')
@@ -256,8 +257,17 @@ jobs:
             make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}
 
   integration-tests-spark:
+    needs: prepare
     if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/spark_integration_tests') }}
     runs-on: ubuntu-24.04
+    # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
+    # PRs can only be pushed by collaborators, so `/all_test` etc. run without an approval gate.
+    environment: ${{ needs.prepare.outputs.is_cross_repository == 'true' && 'pr-command-execution' || '' }}
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: write
     timeout-minutes: 120
     steps:
     - name: Run Spark Integration Tests
@@ -265,6 +275,7 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
+        sha: ${{ needs.prepare.outputs.head_sha }}
         should_leave_progress_comments: "true"
         descriptive_workflow_name: "Spark Integration Test"
         setup_gcloud: "true"
