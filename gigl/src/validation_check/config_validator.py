@@ -34,6 +34,7 @@ from gigl.src.validation_check.libs.resource_config_checks import (
     check_if_trainer_resource_config_valid,
 )
 from gigl.src.validation_check.libs.template_config_checks import (
+    check_data_preprocessor_output_format_supported_by_backend,
     check_if_data_preprocessor_config_cls_valid,
     check_if_graph_metadata_valid,
     check_if_inferencer_cls_valid,
@@ -293,6 +294,9 @@ def _validate_resolved_configs(
     check_pipeline_has_valid_start_and_stop_flags(
         start_at=start_at,
         stop_after=stop_after,
+        gbml_config_wrapper=gbml_config_pb_wrapper,
+    )
+    check_data_preprocessor_output_format_supported_by_backend(
         gbml_config_wrapper=gbml_config_pb_wrapper,
     )
     # check user defined classes and their runtime args

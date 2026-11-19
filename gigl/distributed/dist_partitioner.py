@@ -1,7 +1,7 @@
 import gc
 import time
 from collections import abc, defaultdict
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Final, Optional, Tuple, Union
 
 import graphlearn_torch.distributed.rpc as glt_rpc
 import torch
@@ -26,8 +26,48 @@ from gigl.types.graph import (
     to_heterogeneous_node,
     to_homogeneous,
 )
+from gigl.utils.share_memory import allocate_disk_backed, is_disk_backed
 
 logger = Logger()
+
+
+# Size of the RAM staging block used to write rows in id order. It bounds the staging buffer's RAM;
+# larger blocks mean fewer, larger sequential writes to the disk-backed destinations.
+_ORDERED_BLOCK_BYTES: Final = 256 * 1024 * 1024
+
+
+def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
+    """Returns an uninitialized tensor shaped like ``sample`` with ``num_rows`` rows.
+
+    It is disk-backed when spilling is enabled and the tensor is large enough, otherwise in RAM.
+    """
+    shape = (num_rows, *sample.shape[1:])
+    destination = allocate_disk_backed(shape, sample.dtype)
+    return (
+        torch.empty(shape, dtype=sample.dtype) if destination is None else destination
+    )
+
+
+def _concat_chunks(
+    chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
+) -> list[torch.Tensor]:
+    """Returns ``torch.cat([chunk[field] for chunk in chunks])`` for each field, and empties ``chunks``.
+
+    ``chunks`` is mutated on purpose: each chunk is released as soon as it is copied, so the
+    results never coexist in RAM with every chunk the way ``torch.cat``'s do.
+    """
+    num_rows = sum(chunk[fields[0]].shape[0] for chunk in chunks)
+    destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+    chunks.reverse()
+    offset = 0
+    while chunks:
+        chunk = chunks.pop()
+        chunk_rows = chunk[fields[0]].shape[0]
+        for destination, field in zip(destinations, fields):
+            destination[offset : offset + chunk_rows] = chunk[field]
+        offset += chunk_rows
+        del chunk
+    return destinations
 
 
 class DistPartitioner:
@@ -760,6 +800,64 @@ class DistPartitioner:
                 input_label_edge_index, dtype=torch.int64
             )
 
+    def _assemble_node_chunks(
+        self, chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
+    ) -> list[torch.Tensor]:
+        """Join ``fields`` of the received chunks sorted by node id, emptying ``chunks``.
+
+        The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
+        If every destination is in RAM, the chunks are joined and then gathered by id.
+        Otherwise each destination is filled one block of rows at a time, so a spilled field
+        never needs a second full copy in RAM.
+        """
+        node_id_field = len(chunks[0]) - 1
+        num_rows = sum(chunk[node_id_field].shape[0] for chunk in chunks)
+        destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+        if not any(is_disk_backed(destination) for destination in destinations):
+            # The block fill below handles any mix of disk and RAM destinations. This path is only for
+            # the all-RAM case, where freeing each chunk as it is copied peaks lower. The unused
+            # destinations cost nothing because torch.empty does not touch pages.
+            del destinations
+            joined = _concat_chunks(chunks, fields)
+            order = torch.argsort(joined[fields.index(node_id_field)])
+            return [tensor[order] for tensor in joined]
+        chunk_starts = torch.tensor(
+            [0] + [chunk[node_id_field].shape[0] for chunk in chunks]
+        ).cumsum(0)
+        order = torch.argsort(torch.cat([chunk[node_id_field] for chunk in chunks]))
+        row_bytes = max(
+            destination[:1].numel() * destination.element_size()
+            for destination in destinations
+        )
+        block_rows = max(1, _ORDERED_BLOCK_BYTES // max(row_bytes, 1))
+        for block_start in range(0, order.numel(), block_rows):
+            positions = order[block_start : block_start + block_rows]
+            # Locate the chunk holding each row so every chunk is indexed once per field, not once per row.
+            chunk_of_position = (
+                torch.searchsorted(chunk_starts, positions, right=True) - 1
+            )
+            by_chunk = torch.argsort(chunk_of_position, stable=True)
+            counts = torch.bincount(chunk_of_position, minlength=len(chunks)).tolist()
+            block_rows_by_chunk = by_chunk.split(counts)
+            source_rows_by_chunk = positions[by_chunk].split(counts)
+            for destination, field in zip(destinations, fields):
+                # Gather into RAM first: random writes to a disk-backed destination are slow, a
+                # single sequential copy of the finished block is not.
+                staging = torch.empty(
+                    (positions.numel(), *destination.shape[1:]),
+                    dtype=destination.dtype,
+                )
+                for chunk_index, (block_rows_of_chunk, source_rows) in enumerate(
+                    zip(block_rows_by_chunk, source_rows_by_chunk)
+                ):
+                    if source_rows.numel() > 0:
+                        staging[block_rows_of_chunk] = chunks[chunk_index][field][
+                            source_rows - chunk_starts[chunk_index]
+                        ]
+                destination[block_start : block_start + positions.numel()] = staging
+        chunks.clear()
+        return destinations
+
     def _remove_key_from_member_dict(
         self, field_name: str, entity_key: Union[NodeType, EdgeType]
     ) -> None:
@@ -1088,26 +1186,35 @@ class DistPartitioner:
 
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
-            partitioned_ids = torch.cat([r[-1] for r in partitioned_results])
+            node_id_ind = len(partitioned_results[0]) - 1
+            fields: list[int] = []
+            for ind in (
+                node_feature_ind,
+                node_packed_feature_ind,
+                node_label_ind,
+                node_id_ind,
+            ):
+                if ind is not None:
+                    fields.append(ind)
+            # Rows come back sorted by node id, which the range-based id2idx requires.
+            assembled = dict(
+                zip(fields, self._assemble_node_chunks(partitioned_results, fields))
+            )
+            partitioned_ids = assembled[node_id_ind]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
                 raise ValueError(
                     f"Node ids are not unique for node type {node_type}. Please ensure that node ids are unique and contiguous across all machines from 0 to total_num_nodes - 1."
                 )
 
             # We don't store the partitioned node ids in the returned data, since they are available from the range-based node partition book.
-            # Instead, we sort the features and labels by node id so that the range-based id2idx corresponds correctly to the rows.
-            sorted_node_ids_indices = torch.argsort(partitioned_ids)
             del partitioned_ids
 
             gc.collect()
 
-            # Partitioned node features are stored at the 0th index ineach tuple of the partitioned results.
             if has_node_features:
                 assert node_feature_ind is not None
                 node_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_feature_ind] for r in partitioned_results])[
-                        sorted_node_ids_indices
-                    ],
+                    feats=assembled[node_feature_ind],
                     ids=None,
                 )
 
@@ -1117,9 +1224,7 @@ class DistPartitioner:
             if has_node_packed_features:
                 assert node_packed_feature_ind is not None
                 node_packed_feature_partition_data = FeaturePartitionData(
-                    feats=torch.cat(
-                        [r[node_packed_feature_ind] for r in partitioned_results]
-                    )[sorted_node_ids_indices],
+                    feats=assembled[node_packed_feature_ind],
                     ids=None,
                 )
 
@@ -1129,16 +1234,13 @@ class DistPartitioner:
             if has_node_labels:
                 assert node_label_ind is not None
                 node_label_partition_data = FeaturePartitionData(
-                    feats=torch.cat([r[node_label_ind] for r in partitioned_results])[
-                        sorted_node_ids_indices
-                    ],
+                    feats=assembled[node_label_ind],
                     ids=None,
                 )
 
             else:
                 node_label_partition_data = None
-
-            del sorted_node_ids_indices
+            del assembled
         else:  # if len(partitioned_results) == 0
             if node_feat_dim is not None:
                 node_feature_partition_data = FeaturePartitionData(

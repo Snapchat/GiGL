@@ -25,8 +25,8 @@ class SerializedTFRecordInfo:
     ParquetDataLoader.load_as_torch_tensors() for loading torch tensors.
     """
 
-    # Uri Prefix for stored TfRecords
-    tfrecord_uri_prefix: Uri
+    # Uri Prefix for stored TfRecords. None when the entity was written only as Parquet.
+    tfrecord_uri_prefix: Optional[Uri]
     # Feature names to load for the current entity
     feature_keys: Sequence[str]
     # A dict of feature name -> FeatureSpec (eg. FixedLenFeature, VarlenFeature, SparseFeature, RaggedFeature).
@@ -50,11 +50,25 @@ class SerializedTFRecordInfo:
     # tfrecord_uri_prefix is ignored.
     parquet_uri_prefix: Optional[Uri] = None
 
+    def __post_init__(self) -> None:
+        if self.tfrecord_uri_prefix is None and self.parquet_uri_prefix is None:
+            raise ValueError(
+                "At least one of tfrecord_uri_prefix or parquet_uri_prefix must be set."
+            )
+
     @property
     def data_uri_prefix(self) -> Uri:
-        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise."""
+        """The Uri Prefix the entity is loaded from, Parquet if it is set and TFRecord otherwise.
+
+        Raises:
+            ValueError: If neither ``parquet_uri_prefix`` nor ``tfrecord_uri_prefix`` is set.
+        """
         if self.parquet_uri_prefix is not None:
             return self.parquet_uri_prefix
+        if self.tfrecord_uri_prefix is None:
+            raise ValueError(
+                "Neither parquet_uri_prefix nor tfrecord_uri_prefix is set."
+            )
         return self.tfrecord_uri_prefix
 
     @property
