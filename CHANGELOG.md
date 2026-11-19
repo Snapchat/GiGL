@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- With `include_sampled_edges=True` and a binding `max_fetch_iterations`, a PPR anchor's relation edges, and so its
+  embedding, no longer depend on which positives are co-seeded in the same ABLP batch. Original edges are now extracted
+  per seed-type walk and typed channel, and a node's expanded flag is kept only if that walk cached one of its edge rows
+  by @mkolodner-sc
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,
