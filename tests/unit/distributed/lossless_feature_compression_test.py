@@ -1,7 +1,7 @@
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional, Union, cast
+from typing import Callable, Optional, Union, cast
 from unittest import mock
 
 import numpy as np
@@ -11,7 +11,6 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.data import Feature
-from graphlearn_torch.distributed import shutdown_rpc
 from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
@@ -50,7 +49,7 @@ from tests.test_assets.distributed.run_distributed_dataset import (
 )
 from tests.test_assets.distributed.utils import (
     assert_tensor_equality,
-    create_test_process_group,
+    run_checks_in_one_process,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -221,11 +220,10 @@ def _ring_edges() -> torch.Tensor:
     )
 
 
-# GLT loaders must run in their own process, so each scenario is a module-level function run via mp.spawn.
+# GLT loaders must run in their own process, so each scenario is a module-level function run via mp.spawn by run_checks_in_one_process.
 def _assert_node_batches_equal_expected(
-    _: int, dataset: DistDataset, expected: torch.Tensor
+    dataset: DistDataset, expected: torch.Tensor
 ) -> None:
-    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -239,13 +237,12 @@ def _assert_node_batches_equal_expected(
         assert_tensor_equality(batch.x, expected[batch.node])
         nodes_seen += batch.node.shape[0]
     assert nodes_seen > 0
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _assert_heterogeneous_batches_equal_expected(
-    _: int, dataset: DistDataset, expected: dict[str, torch.Tensor]
+    dataset: DistDataset, expected: dict[str, torch.Tensor]
 ) -> None:
-    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -262,13 +259,12 @@ def _assert_heterogeneous_batches_equal_expected(
             )
             seen.add(node_type)
     assert seen == {_USER, _STORY}
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _assert_incoming_edge_batches_equal_expected(
-    _: int, dataset: DistDataset, expected_edge_features: torch.Tensor
+    dataset: DistDataset, expected_edge_features: torch.Tensor
 ) -> None:
-    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[1],
@@ -284,13 +280,12 @@ def _assert_incoming_edge_batches_equal_expected(
     assert_tensor_equality(
         batch[_USER_TO_STORY].edge_attr, expected_edge_features[destinations]
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _assert_unsampled_compressed_type_is_a_full_width_placeholder(
-    _: int, dataset: DistDataset, expected_user_features: torch.Tensor, story_dim: int
+    dataset: DistDataset, expected_user_features: torch.Tensor, story_dim: int
 ) -> None:
-    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[0],
@@ -303,16 +298,14 @@ def _assert_unsampled_compressed_type_is_a_full_width_placeholder(
     assert_tensor_equality(batch[_USER].x, expected_user_features[batch[_USER].node])
     # No story node was sampled, but a model still expects an (empty) story feature matrix of its full width.
     assert batch[_STORY].x.shape == (0, story_dim)
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _assert_ablp_batch_equal_expected(
-    _: int,
     dataset: DistDataset,
     expected_node_features: torch.Tensor,
     expected_edge_features: dict[tuple[int, int], torch.Tensor],
 ) -> None:
-    create_test_process_group()
     loader = DistABLPLoader(
         dataset=dataset,
         num_neighbors=[2],
@@ -334,7 +327,10 @@ def _assert_ablp_batch_equal_expected(
             )
         batch_count += 1
     assert batch_count == 1
-    shutdown_rpc()
+    loader.shutdown()
+
+
+_LoaderCase = tuple[Callable[..., None], tuple]
 
 
 def _unpacked_rows(dataset: DistDataset, key: Optional[object]) -> torch.Tensor:
@@ -349,9 +345,14 @@ def _unpacked_rows(dataset: DistDataset, key: Optional[object]) -> torch.Tensor:
 
 
 class LosslessCompressionLoaderTest(TestCase):
-    """Loaders return the uncompressed float32 rows for datasets whose columns were compressed at build time."""
+    """Loaders return the uncompressed float32 rows for datasets whose columns were compressed at build time.
 
-    def test_node_loader_mixes_quantized_and_lossless_columns(self) -> None:
+    Every scenario builds its dataset in the parent process and returns the checking function and its arguments.
+    All scenarios then run one after another in a single spawned process, since each spawn costs a full import of
+    the test module.
+    """
+
+    def _node_loader_mixes_quantized_and_lossless_columns(self) -> _LoaderCase:
         # Logical columns: 0 and 3 are 2-bit quantized by preprocessing, 1 and 4 are ids, 2 and 5 are real.
         features = _id_features(_NUM_NODES, {1: (-1, 70), 4: (0, 5000)}, 6, seed=0)
         features[:, [0, 3]] = (torch.arange(_NUM_NODES) % 4).float().unsqueeze(1)
@@ -407,11 +408,11 @@ class LosslessCompressionLoaderTest(TestCase):
         )
         expected = features.clone()
         expected[:, [0, 3]] = dequantize_torch_tensor(quantized, quantized_metadata)
-        mp.spawn(fn=_assert_node_batches_equal_expected, args=(dataset, expected))
+        return _assert_node_batches_equal_expected, (dataset, expected)
 
-    def test_heterogeneous_loader_compresses_only_the_node_type_with_integral_columns(
+    def _heterogeneous_loader_compresses_only_the_node_type_with_integral_columns(
         self,
-    ) -> None:
+    ) -> _LoaderCase:
         expected = {
             _USER: _id_features(5, {2: (-1, 70), 3: (0, 1247)}, 5, seed=1),
             _STORY: _id_features(5, {}, 3, seed=2),
@@ -460,12 +461,11 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_node_labels=None,
             )
         )
-        mp.spawn(
-            fn=_assert_heterogeneous_batches_equal_expected,
-            args=(dataset, expected),
-        )
+        return _assert_heterogeneous_batches_equal_expected, (dataset, expected)
 
-    def test_fully_compressed_homogeneous_node_features_need_no_raw_store(self) -> None:
+    def _fully_compressed_homogeneous_node_features_need_no_raw_store(
+        self,
+    ) -> _LoaderCase:
         features = _id_features(
             _NUM_NODES, {0: (-1, 70), 1: (0, 5000), 2: (-1, 200)}, 3, seed=5
         )
@@ -498,9 +498,11 @@ class LosslessCompressionLoaderTest(TestCase):
         self.assertEqual(
             dataset.node_feature_info, FeatureInfo(dim=3, dtype=torch.float32)
         )
-        mp.spawn(fn=_assert_node_batches_equal_expected, args=(dataset, features))
+        return _assert_node_batches_equal_expected, (dataset, features)
 
-    def test_unsampled_fully_compressed_node_type_keeps_its_logical_width(self) -> None:
+    def _unsampled_fully_compressed_node_type_keeps_its_logical_width(
+        self,
+    ) -> _LoaderCase:
         user_features = _id_features(5, {}, 5, seed=6)
         story_features = _id_features(
             5, {0: (0, 100), 1: (0, 100), 2: (0, 100)}, 3, seed=7
@@ -554,12 +556,13 @@ class LosslessCompressionLoaderTest(TestCase):
                 _STORY: FeatureInfo(dim=3, dtype=torch.float32),
             },
         )
-        mp.spawn(
-            fn=_assert_unsampled_compressed_type_is_a_full_width_placeholder,
-            args=(dataset, user_features, 3),
+        return _assert_unsampled_compressed_type_is_a_full_width_placeholder, (
+            dataset,
+            user_features,
+            3,
         )
 
-    def test_incoming_edge_loader_returns_compressed_edge_features(self) -> None:
+    def _incoming_edge_loader_returns_compressed_edge_features(self) -> _LoaderCase:
         edge_features = _id_features(5, {0: (-1, 70), 2: (0, 1247)}, 3, seed=3)
         raw, packed, metadata = _compress(edge_features)
         assert raw is not None and packed is not None and metadata is not None
@@ -596,12 +599,9 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_node_labels=None,
             )
         )
-        mp.spawn(
-            fn=_assert_incoming_edge_batches_equal_expected,
-            args=(dataset, edge_features),
-        )
+        return _assert_incoming_edge_batches_equal_expected, (dataset, edge_features)
 
-    def test_ablp_loader_returns_compressed_node_and_edge_features(self) -> None:
+    def _ablp_loader_returns_compressed_node_and_edge_features(self) -> _LoaderCase:
         node_features = _id_features(3, {0: (-1, 70), 2: (0, 1247)}, 4, seed=4)
         edge_features = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         node_raw, node_packed, node_metadata = _compress(node_features)
@@ -682,18 +682,32 @@ class LosslessCompressionLoaderTest(TestCase):
                 partitioned_node_labels=None,
             )
         )
-        mp.spawn(
-            fn=_assert_ablp_batch_equal_expected,
-            args=(
-                dataset,
-                node_features,
-                {(0, 1): edge_features[0], (1, 0): edge_features[1]},
-            ),
+        return _assert_ablp_batch_equal_expected, (
+            dataset,
+            node_features,
+            {(0, 1): edge_features[0], (1, 0): edge_features[1]},
         )
+
+    def test_loaders_return_uncompressed_rows(self) -> None:
+        cases = [
+            self._node_loader_mixes_quantized_and_lossless_columns(),
+            self._heterogeneous_loader_compresses_only_the_node_type_with_integral_columns(),
+            self._fully_compressed_homogeneous_node_features_need_no_raw_store(),
+            self._unsampled_fully_compressed_node_type_keeps_its_logical_width(),
+            self._incoming_edge_loader_returns_compressed_edge_features(),
+            self._ablp_loader_returns_compressed_node_and_edge_features(),
+        ]
+        checks = []
+        for check, args in cases:
+            checks.append((getattr(check, "__name__", "check"), check, args))
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
 
 class BuildDatasetLosslessCompressionTest(TestCase):
     """``build_dataset`` infers the encoding of every node feature column from the real partitioned data on every rank."""
+
+    # Datasets built from the small heterogeneous files, shared by the tests that only read them.
+    _small_heterogeneous_cache: dict[tuple[FeatureCompression, bool], DistDataset] = {}
 
     def _build_small_heterogeneous(
         self,
@@ -701,7 +715,29 @@ class BuildDatasetLosslessCompressionTest(TestCase):
         weight_edge_feat_name: Optional[dict[EdgeType, str]] = None,
         should_load_tensors_in_parallel: bool = True,
     ) -> DistDataset:
-        """Builds the small local heterogeneous dataset, so no large dataset has to fit in shared memory."""
+        """Builds the small local heterogeneous dataset, so no large dataset has to fit in shared memory.
+
+        Builds without edge weights are cached per compression mode and load mode, because the tests only read them.
+        """
+        cache_key = (feature_compression, should_load_tensors_in_parallel)
+        if weight_edge_feat_name is None:
+            if cache_key not in self._small_heterogeneous_cache:
+                self._small_heterogeneous_cache[cache_key] = (
+                    self._build_small_heterogeneous_uncached(
+                        feature_compression, None, should_load_tensors_in_parallel
+                    )
+                )
+            return self._small_heterogeneous_cache[cache_key]
+        return self._build_small_heterogeneous_uncached(
+            feature_compression, weight_edge_feat_name, should_load_tensors_in_parallel
+        )
+
+    def _build_small_heterogeneous_uncached(
+        self,
+        feature_compression: FeatureCompression,
+        weight_edge_feat_name: Optional[dict[EdgeType, str]],
+        should_load_tensors_in_parallel: bool,
+    ) -> DistDataset:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         serialized_graph_metadata = _write_small_heterogeneous_dataset(

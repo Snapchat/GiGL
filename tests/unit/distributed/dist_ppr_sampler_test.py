@@ -36,7 +36,6 @@ import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
 from graphlearn_torch.typing import reverse_edge_type
-from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
@@ -55,7 +54,10 @@ from tests.test_assets.distributed.test_dataset import (
     create_heterogeneous_dataset_for_ablp,
     create_homogeneous_dataset,
 )
-from tests.test_assets.distributed.utils import create_test_process_group
+from tests.test_assets.distributed.utils import (
+    create_test_process_group,
+    run_checks_in_one_process,
+)
 from tests.test_assets.test_case import TestCase
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,7 @@ _NUM_TEST_USERS = 3
 _NUM_TEST_STORIES = 3
 
 _TEST_ALPHA = 0.5
+_EDGE_DIRS: list[Literal["in", "out"]] = ["in", "out"]
 _TEST_EPS = 1e-6
 _TEST_MAX_PPR_NODES = 5
 
@@ -387,14 +390,11 @@ def _assert_typed_ppr_edge_attrs(
 # Spawned process functions
 # ---------------------------------------------------------------------------
 def _run_ppr_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate homogeneous PPR loader and verify each batch against NetworkX PPR."""
-    create_test_process_group()
-
     dataset = create_homogeneous_dataset(edge_index=_TEST_EDGE_INDEX, edge_dir=edge_dir)
 
     # This dataset has no edge features, so with_edge is derived as False. PPR
@@ -497,18 +497,15 @@ def _run_ppr_loader_correctness_check(
     assert batches_checked == _NUM_TEST_NODES, (
         f"Expected {_NUM_TEST_NODES} batches, got {batches_checked}"
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _run_ppr_hetero_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate heterogeneous PPR loader and verify each batch against NetworkX PPR."""
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset(
         edge_indices=_TEST_HETERO_EDGE_INDICES, edge_dir=edge_dir
     )
@@ -571,7 +568,7 @@ def _run_ppr_hetero_loader_correctness_check(
     assert batches_checked == _NUM_TEST_USERS, (
         f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _run_typed_ppr_loader_shape_check(_: int) -> None:
@@ -651,7 +648,6 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
 
 
 def _run_ppr_ablp_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
@@ -666,8 +662,6 @@ def _run_ppr_ablp_loader_correctness_check(
     The ABLP dataset is created inside this spawned process because the
     splitter requires torch.distributed to be initialized.
     """
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset_for_ablp(
         positive_labels={0: [0, 1], 1: [1, 2], 2: [0, 2]},
         train_node_ids=[0, 1],
@@ -767,13 +761,11 @@ def _run_ppr_ablp_loader_correctness_check(
         batches_checked += 1
 
     assert batches_checked > 0, "Expected at least one ABLP batch"
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
+def _run_ppr_labeled_homogeneous_ablp_loader_check() -> None:
     """Verify PPR works for labeled homogeneous DistABLPLoader inputs."""
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset_for_ablp(
         positive_labels={0: [1], 1: [2], 2: [0]},
         negative_labels={0: [2], 1: [0], 2: [1]},
@@ -815,7 +807,7 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
     assert datum.edge_attr.size(1) == 2
     assert datum.edge_index.size(1) == datum.edge_attr.size(0)
 
-    shutdown_rpc()
+    loader.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -1004,44 +996,51 @@ class DistPPRSamplerTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_correctness_homogeneous(self, _, edge_dir: str) -> None:
-        """Verify PPR scores match NetworkX pagerank on a small homogeneous graph."""
-        mp.spawn(
-            fn=_run_ppr_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
-        )
+    def test_ppr_sampler_correctness_homogeneous(self) -> None:
+        """Verify PPR scores match NetworkX pagerank on a small homogeneous graph (edge_dir in and out)."""
+        checks = []
+        for edge_dir in _EDGE_DIRS:
+            checks.append(
+                (
+                    f"homogeneous edge_dir={edge_dir}",
+                    _run_ppr_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_correctness_heterogeneous(self, _, edge_dir: str) -> None:
-        """Verify PPR scores match NetworkX pagerank on a heterogeneous bipartite graph."""
-        mp.spawn(
-            fn=_run_ppr_hetero_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
-        )
+    def test_ppr_sampler_correctness_heterogeneous(self) -> None:
+        """Verify PPR scores match NetworkX pagerank on a heterogeneous bipartite graph (edge_dir in and out)."""
+        checks = []
+        for edge_dir in _EDGE_DIRS:
+            checks.append(
+                (
+                    f"heterogeneous edge_dir={edge_dir}",
+                    _run_ppr_hetero_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_ablp_correctness(self, _, edge_dir: str) -> None:
-        """Verify PPR scores through DistABLPLoader on a heterogeneous graph."""
-        mp.spawn(
-            fn=_run_ppr_ablp_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+    def test_ppr_sampler_ablp_correctness(self) -> None:
+        """Verify PPR through DistABLPLoader (edge_dir in and out), plus homogeneous ABLP seed dictionaries."""
+        checks = []
+        for edge_dir in _EDGE_DIRS:
+            checks.append(
+                (
+                    f"ablp edge_dir={edge_dir}",
+                    _run_ppr_ablp_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+        checks.append(
+            (
+                "labeled homogeneous ablp",
+                _run_ppr_labeled_homogeneous_ablp_loader_check,
+                (),
+            )
         )
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
     def test_ppr_sampler_destination_only_node_type(self) -> None:
         """Verify PPR output includes destination-only node types."""
@@ -1061,10 +1060,6 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
         """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
         mp.spawn(fn=_run_ppr_ablp_label_edges_do_not_affect_anchor_ppr, args=())
-
-    def test_ppr_sampler_homogeneous_ablp(self) -> None:
-        """Verify PPR handles homogeneous ABLP seed dictionaries."""
-        mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
 
 
 if __name__ == "__main__":

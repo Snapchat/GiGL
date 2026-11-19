@@ -13,7 +13,6 @@ from typing import MutableMapping
 import torch
 import torch.multiprocessing as mp
 from absl.testing import absltest
-from graphlearn_torch.distributed import shutdown_rpc
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
@@ -39,7 +38,7 @@ from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
     run_distributed_partitioner,
 )
-from tests.test_assets.distributed.utils import create_test_process_group
+from tests.test_assets.distributed.utils import run_checks_in_one_process
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -304,7 +303,6 @@ def _build_heterogeneous_bipartite_partial_weight_graph() -> tuple[
 
 
 def _run_weighted_sampling_correctness_homogeneous(
-    _: int,
     dataset: DistDataset,
     n_hub: int,
 ) -> None:
@@ -314,7 +312,6 @@ def _run_weighted_sampling_correctness_homogeneous(
     hub=2.0, good=1.0, bad=0.0.  Any subgraph batch containing a bad node
     (feature==0.0) means a weight=0 edge was sampled — a test failure.
     """
-    create_test_process_group()
     loader = DistNeighborLoader(
         dataset=dataset,
         input_nodes=torch.arange(n_hub),
@@ -340,11 +337,10 @@ def _run_weighted_sampling_correctness_homogeneous(
         )
         count += 1
     assert count == n_hub, f"Expected {n_hub} batches (one per hub seed), got {count}"
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _run_weighted_sampling_correctness_heterogeneous(
-    _: int,
     dataset: DistDataset,
     n_user: int,
 ) -> None:
@@ -353,7 +349,6 @@ def _run_weighted_sampling_correctness_heterogeneous(
     Seeds are all user nodes.  Item features encode type: good=1.0, bad=0.0.
     Any batch containing a bad item node means a weight=0 edge was sampled.
     """
-    create_test_process_group()
     node_ids = dataset.node_ids
     assert not isinstance(node_ids, torch.Tensor) and node_ids is not None, (
         "Expected heterogeneous dataset with dict node_ids"
@@ -380,7 +375,7 @@ def _run_weighted_sampling_correctness_heterogeneous(
     assert count == n_user, (
         f"Expected {n_user} batches (one per user seed), got {count}"
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -752,70 +747,66 @@ class DistributedWeightedSamplingTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_weighted_sampling_never_traverses_zero_weight_edges_homogeneous(
-        self,
-    ) -> None:
-        """Homogeneous: weight=0 edges to bad nodes are never traversed.
+    def test_weighted_sampling_never_traverses_zero_weight_edges(self) -> None:
+        """Weight=0 edges to bad nodes are never traversed: homogeneous, heterogeneous, partial weights.
 
-        Graph: 10 hub seeds, each with 50 good neighbors (weight=1) and 40 bad
+        Homogeneous: 10 hub seeds, each with 50 good neighbors (weight=1) and 40 bad
         neighbors (weight=0).  Good nodes have 5 further weight=1 edges for 2nd-hop
         sampling.  Fanout [10, 5] samples fewer neighbors than available good ones,
         so the weighted sampler actively selects from the pool each hop.
+
+        Heterogeneous: 10 user seeds, each with 40 good items (weight=1) and 20 bad
+        items (weight=0).  Good items have weight=1 back-edges to all users for 2nd-hop.
+        Fanout [10, 5] is smaller than the 40 available good items, so the sampler
+        actively selects.
+
+        Partial weights: U2I is weighted (good items weight=1, bad items weight=0) — bad
+        items must never appear.  I2U has no weights registered, so it uses uniform
+        sampling.  Verifies that mixing weighted and unweighted edge types in one
+        heterogeneous graph does not crash and that weighted edges still behave correctly.
+
+        All three run in one spawned process.
         """
         partition_output, n_hub, _, _ = _build_homogeneous_bipartite_weight_graph()
         assert isinstance(partition_output.partitioned_edge_index, GraphPartitionData)
         expected_weights = partition_output.partitioned_edge_index.weights
 
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
+        homogeneous_dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        homogeneous_dataset.build(partition_output=partition_output)
 
-        self.assertTrue(dataset.has_edge_weights)
-        self.assertIsNotNone(dataset.edge_weights)
-        assert isinstance(dataset.edge_weights, torch.Tensor)
-        torch.testing.assert_close(dataset.edge_weights, expected_weights)
+        self.assertTrue(homogeneous_dataset.has_edge_weights)
+        self.assertIsNotNone(homogeneous_dataset.edge_weights)
+        assert isinstance(homogeneous_dataset.edge_weights, torch.Tensor)
+        torch.testing.assert_close(homogeneous_dataset.edge_weights, expected_weights)
 
-        mp.spawn(
-            fn=_run_weighted_sampling_correctness_homogeneous,
-            args=(dataset, n_hub),
-        )
-
-    def test_weighted_sampling_never_traverses_zero_weight_edges_heterogeneous(
-        self,
-    ) -> None:
-        """Heterogeneous: weight=0 user→item edges to bad items are never traversed.
-
-        Graph: 10 user seeds, each with 40 good items (weight=1) and 20 bad items
-        (weight=0).  Good items have weight=1 back-edges to all users for 2nd-hop.
-        Fanout [10, 5] is smaller than the 40 available good items, so the sampler
-        actively selects.
-        """
         partition_output, n_user, _, _ = _build_heterogeneous_bipartite_weight_graph()
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
+        heterogeneous_dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        heterogeneous_dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_weighted_sampling_correctness_heterogeneous,
-            args=(dataset, n_user),
-        )
-
-    def test_weighted_sampling_partial_weights_heterogeneous(self) -> None:
-        """Partial weights: weighted U2I respects weights; unweighted I2U samples uniformly.
-
-        U2I is weighted (good items weight=1, bad items weight=0) — bad items must
-        never appear.  I2U has no weights registered, so it uses uniform sampling.
-        Verifies that mixing weighted and unweighted edge types in one heterogeneous
-        graph does not crash and that weighted edges still behave correctly.
-        """
-        partition_output, n_user, _, _ = (
+        partition_output, n_partial_user, _, _ = (
             _build_heterogeneous_bipartite_partial_weight_graph()
         )
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
+        partial_weight_dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        partial_weight_dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_weighted_sampling_correctness_heterogeneous,
-            args=(dataset, n_user),
-        )
+        checks = [
+            (
+                "homogeneous",
+                _run_weighted_sampling_correctness_homogeneous,
+                (homogeneous_dataset, n_hub),
+            ),
+            (
+                "heterogeneous",
+                _run_weighted_sampling_correctness_heterogeneous,
+                (heterogeneous_dataset, n_user),
+            ),
+            (
+                "partial weights",
+                _run_weighted_sampling_correctness_heterogeneous,
+                (partial_weight_dataset, n_partial_user),
+            ),
+        ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
 
 if __name__ == "__main__":

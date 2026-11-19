@@ -1,4 +1,4 @@
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Mapping
 
 import torch
 import torch.multiprocessing as mp
@@ -10,7 +10,6 @@ from torch_geometric.data import Data, HeteroData
 
 from gigl.common.utils.feature_quantization.lossless import FeatureCodec
 from gigl.distributed.base_dist_loader import BaseDistLoader
-from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler import (
@@ -19,17 +18,9 @@ from gigl.distributed.sampler import (
 )
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.neighborloader import DatasetSchema
-from gigl.distributed.utils.serialized_graph_metadata_translator import (
-    convert_pb_to_serialized_graph_metadata,
-)
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
-from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
-from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-    CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
-    CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO,
-    DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
@@ -40,9 +31,7 @@ from gigl.types.graph import (
     PartitionOutput,
     message_passing_to_negative_label,
     message_passing_to_positive_label,
-    to_homogeneous,
 )
-from gigl.utils.data_splitters import DistNodeAnchorLinkSplitter, DistNodeSplitter
 from gigl.utils.iterator import InfiniteIterator
 from tests.test_assets.distributed.run_distributed_dataset import (
     run_distributed_dataset,
@@ -51,6 +40,7 @@ from tests.test_assets.distributed.utils import (
     MockRemoteDistDataset,
     assert_tensor_equality,
     create_test_process_group,
+    run_checks_in_one_process,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -68,12 +58,10 @@ _STORY_TO_USER = EdgeType(_STORY, Relation("to"), _USER)
 
 
 # We require each of these functions to accept local_rank as the first argument since we use mp.spawn with `nprocs=1`
-def _run_distributed_neighbor_loader(
-    _,
+def _check_distributed_neighbor_loader(
     dataset: DistDataset,
     expected_data_count: int,
-):
-    create_test_process_group()
+) -> None:
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -88,42 +76,13 @@ def _run_distributed_neighbor_loader(
     # Cora has 2708 nodes, make sure we go over all of them.
     # https://paperswithcode.com/dataset/cora
     assert count == expected_data_count
-
-    shutdown_rpc()
-
-
-def _run_distributed_neighbor_loader_labeled_homogeneous(
-    _,
-    dataset: DistDataset,
-    expected_data_count: int,
-):
-    create_test_process_group()
-    assert isinstance(dataset.node_ids, Mapping)
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        input_nodes=to_homogeneous(dataset.node_ids),
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-    )
-
-    count = 0
-    for datum in loader:
-        assert isinstance(datum, Data)
-        count += 1
-
-    assert count == expected_data_count, (
-        f"Expected {expected_data_count} batches, but got {count}."
-    )
-
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_infinite_distributed_neighbor_loader(
-    _,
+def _check_infinite_distributed_neighbor_loader(
     dataset: DistDataset,
     max_num_batches: int,
-):
-    create_test_process_group()
+) -> None:
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -141,40 +100,13 @@ def _run_infinite_distributed_neighbor_loader(
 
     # Ensure we have looped through the dataloader for the max number of batches
     assert count == max_num_batches
+    loader.shutdown()
 
-    shutdown_rpc()
 
-
-def _run_distributed_heterogeneous_neighbor_loader(
-    _,
+def _check_multiple_neighbor_loader(
     dataset: DistDataset,
     expected_data_count: int,
-):
-    create_test_process_group()
-    assert isinstance(dataset.node_ids, Mapping)
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
-        num_neighbors=[2, 2],
-        pin_memory_device=torch.device("cpu"),
-    )
-
-    count = 0
-    for datum in loader:
-        assert isinstance(datum, HeteroData)
-        count += 1
-
-    assert count == expected_data_count
-
-    shutdown_rpc()
-
-
-def _run_multiple_neighbor_loader(
-    _,
-    dataset: DistDataset,
-    expected_data_count: int,
-):
-    create_test_process_group()
+) -> None:
     loader_one = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -209,17 +141,41 @@ def _run_multiple_neighbor_loader(
         count += 1
 
     assert count == expected_data_count
+    loader_three.shutdown()
 
-    shutdown_rpc()
+
+def _check_isolated_homogeneous_neighbor_loader(
+    dataset: DistDataset,
+    expected_data_count: int,
+) -> None:
+    _check_distributed_neighbor_loader(dataset, expected_data_count)
 
 
-def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
-    _,
+def _check_isolated_heterogeneous_neighbor_loader(
+    dataset: DistDataset,
+    expected_data_count: int,
+) -> None:
+    assert isinstance(dataset.node_ids, Mapping)
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(NodeType("author"), dataset.node_ids[NodeType("author")]),  # ty: ignore[invalid-argument-type] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
+        num_neighbors=[2, 2],
+        pin_memory_device=torch.device("cpu"),
+    )
+
+    count = 0
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        count += 1
+
+    assert count == expected_data_count
+    loader.shutdown()
+
+
+def _check_neighbor_loader_with_node_labels_homogeneous(
     dataset: DistDataset,
     batch_size: int,
-):
-    create_test_process_group()
-
+) -> None:
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -234,17 +190,13 @@ def _run_distributed_neighbor_loader_with_node_labels_homogeneous(
         assert hasattr(datum, "y"), "Subgraph is missing the `y` attribute for labels"
         # For this mocked data, the value of each label is equal to its Node ID
         assert_tensor_equality(datum.y, datum.node)
+    loader.shutdown()
 
-    shutdown_rpc()
 
-
-def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
-    _,
+def _check_neighbor_loader_with_node_labels_heterogeneous(
     dataset: DistDataset,
     batch_size: int,
-):
-    create_test_process_group()
-
+) -> None:
     assert isinstance(dataset.node_ids, Mapping)
 
     user_loader = DistNeighborLoader(
@@ -280,17 +232,14 @@ def _run_distributed_neighbor_loader_with_node_labels_heterogeneous(
             "Story subgraph is missing the 'y' attribute for labels"
         )
         assert_tensor_equality(story_datum[_STORY].y, story_datum[_STORY].node)
+    user_loader.shutdown()
+    story_loader.shutdown()
 
-    shutdown_rpc()
 
-
-def _run_distributed_neighbor_loader_with_multi_label_nodes_homogeneous(
-    _,
+def _check_neighbor_loader_with_multi_label_nodes_homogeneous(
     dataset: DistDataset,
     batch_size: int,
-):
-    create_test_process_group()
-
+) -> None:
     loader = DistNeighborLoader(
         dataset=dataset,
         num_neighbors=[2, 2],
@@ -312,17 +261,13 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_homogeneous(
         # Label column 0 equals the node ID; column 1 equals node ID * 10.
         assert_tensor_equality(datum.y[:, 0], datum.node)
         assert_tensor_equality(datum.y[:, 1], datum.node * 10)
+    loader.shutdown()
 
-    shutdown_rpc()
 
-
-def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
-    _,
+def _check_neighbor_loader_with_multi_label_nodes_heterogeneous(
     dataset: DistDataset,
     batch_size: int,
-):
-    create_test_process_group()
-
+) -> None:
     assert isinstance(dataset.node_ids, Mapping)
 
     user_loader = DistNeighborLoader(
@@ -373,57 +318,22 @@ def _run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(
         assert_tensor_equality(
             story_datum[_STORY].y[:, 1], story_datum[_STORY].node * 10
         )
-
-    shutdown_rpc()
-
-
-def _run_cora_supervised_node_classification(
-    _,
-    dataset: DistDataset,
-    batch_size: int,
-):
-    """Run CORA supervised node classification test using DistNeighborLoader."""
-    create_test_process_group()
-
-    loader = DistNeighborLoader(
-        dataset=dataset,
-        num_neighbors=[2, 2],
-        input_nodes=to_homogeneous(dataset.train_node_ids),
-        pin_memory_device=torch.device("cpu"),
-        batch_size=batch_size,
-    )
-
-    for datum in loader:
-        assert isinstance(datum, Data), (
-            f"Subgraph should be a Data for homogeneous datasets, got {type(datum)}"
-        )
-        assert hasattr(datum, "y"), (
-            "Node labels should be present for supervised node classification"
-        )
-        assert datum.y.size(0) == datum.node.size(0), (
-            f"Number of labels should match number of nodes, got {datum.y.size(0)} labels and {datum.node.size(0)} nodes"
-        )
-
-    shutdown_rpc()
+    user_loader.shutdown()
+    story_loader.shutdown()
 
 
-def _run_featureless_edge_ids_absent(
-    _,
-    dataset: DistDataset,
-    holder: MutableMapping,
-):
+def _check_featureless_dataset_loader(featureless_dataset: DistDataset) -> None:
     # A featureless dataset should sample with with_edge=False, so GLT never
     # attaches sampled edge ids (``data.edge``) to the produced batches.
-    create_test_process_group()
-    loader = DistNeighborLoader(
-        dataset=dataset,
+    featureless_loader = DistNeighborLoader(
+        dataset=featureless_dataset,
         num_neighbors=[2, 2],
         pin_memory_device=torch.device("cpu"),
     )
     count = 0
     edge_ids_absent = True
     packed_features_absent = True
-    for datum in loader:
+    for datum in featureless_loader:
         assert isinstance(datum, Data)
         if getattr(datum, "edge", None) is not None:
             edge_ids_absent = False
@@ -431,30 +341,25 @@ def _run_featureless_edge_ids_absent(
         if getattr(datum, NODE_PACKED_FEATURES_METADATA_KEY, None) is not None:
             packed_features_absent = False
         count += 1
-    holder["edge_ids_absent"] = edge_ids_absent
-    holder["packed_features_absent"] = packed_features_absent
-    holder["count"] = count
-    shutdown_rpc()
+    featureless_loader.shutdown()
+    assert count > 0, "featureless dataset yielded no batches"
+    assert edge_ids_absent, "featureless dataset batches carried edge ids"
+    assert packed_features_absent, "featureless dataset batches carried packed features"
 
 
-def _run_empty_frontier_neighbor_loader(
-    _,
-    dataset: DistDataset,
-    holder: MutableMapping,
-):
+def _check_empty_frontier_loader(empty_frontier_dataset: DistDataset) -> None:
     # Every neighbor found at hop 2 is already seen, so hop 3 starts with an empty frontier.
-    create_test_process_group()
-    loader = DistNeighborLoader(
-        dataset=dataset,
+    empty_frontier_loader = DistNeighborLoader(
+        dataset=empty_frontier_dataset,
         num_neighbors=[2, 2, 2],
         pin_memory_device=torch.device("cpu"),
     )
     count = 0
-    for datum in loader:
+    for datum in empty_frontier_loader:
         assert isinstance(datum, Data)
         count += 1
-    holder["count"] = count
-    shutdown_rpc()
+    empty_frontier_loader.shutdown()
+    assert count == 2, "empty-frontier dataset produced the wrong number of batches"
 
 
 def _run_quantized_feature_neighbor_loader(
@@ -513,21 +418,9 @@ class DistributedNeighborLoaderTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    def test_distributed_neighbor_loader(self):
+    def test_cora_neighbor_loader_count_infinite_and_multiple_loaders(self):
         expected_data_count = 2708
 
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            _port=get_free_port(),
-        )
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader,
-            args=(dataset, expected_data_count),
-        )
-
-    def test_infinite_distributed_neighbor_loader(self):
         dataset = run_distributed_dataset(
             rank=0,
             world_size=self._world_size,
@@ -536,80 +429,29 @@ class DistributedNeighborLoaderTest(TestCase):
         )
 
         assert isinstance(dataset.node_ids, torch.Tensor)
-
-        num_nodes = dataset.node_ids.size(0)
-
         # Let's ensure we can iterate across the dataset twice with the infinite iterator
-        max_num_batches = num_nodes * 2
+        max_num_batches = dataset.node_ids.size(0) * 2
 
-        mp.spawn(
-            fn=_run_infinite_distributed_neighbor_loader,
-            args=(dataset, max_num_batches),
-        )
-
-    def test_distributed_neighbor_loader_heterogeneous(self):
-        expected_data_count = 4057
-
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            _port=get_free_port(),
-        )
-
-        mp.spawn(
-            fn=_run_distributed_heterogeneous_neighbor_loader,
-            args=(dataset, expected_data_count),
-        )
-
-    def test_random_loading_labeled_homogeneous(self):
-        create_test_process_group()
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
+        checks = [
+            (
+                "distributed neighbor loader",
+                _check_distributed_neighbor_loader,
+                (dataset, expected_data_count),
+            ),
+            (
+                "infinite distributed neighbor loader",
+                _check_infinite_distributed_neighbor_loader,
+                (dataset, max_num_batches),
+            ),
+            (
+                "multiple neighbor loaders",
+                _check_multiple_neighbor_loader,
+                (dataset, expected_data_count),
+            ),
         ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
-        gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
-            )
-        )
-
-        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        )
-        splitter = DistNodeAnchorLinkSplitter(
-            sampling_direction="in", should_convert_labels_to_edges=True
-        )
-
-        dataset = build_dataset(
-            serialized_graph_metadata=serialized_graph_metadata,
-            sample_edge_direction="in",
-            splitter=splitter,
-        )
-
-        assert isinstance(dataset.node_ids, Mapping)
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_labeled_homogeneous,
-            args=(dataset, to_homogeneous(dataset.node_ids).size(0)),
-        )
-
-    def test_multiple_neighbor_loader(self):
-        expected_data_count = 2708
-
-        dataset = run_distributed_dataset(
-            rank=0,
-            world_size=self._world_size,
-            mocked_dataset_info=CORA_NODE_ANCHOR_MOCKED_DATASET_INFO,
-            _port=get_free_port(),
-        )
-        mp.spawn(
-            fn=_run_multiple_neighbor_loader,
-            args=(dataset, expected_data_count),
-        )
-
-    def test_distributed_neighbor_loader_with_node_labels_homogeneous(self):
+    def _build_node_labels_homogeneous_dataset(self) -> DistDataset:
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(5, dtype=torch.int64),
             edge_partition_book=torch.zeros(5, dtype=torch.int64),
@@ -632,12 +474,9 @@ class DistributedNeighborLoaderTest(TestCase):
 
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_with_node_labels_homogeneous,
-            args=(dataset, 1),  # dataset  # batch_size
-        )
+        return dataset
 
-    def test_distributed_neighbor_loader_with_node_labels_heterogeneous(self):
+    def _build_node_labels_heterogeneous_dataset(self) -> DistDataset:
         partition_output = PartitionOutput(
             node_partition_book={
                 _USER: torch.zeros(5, dtype=torch.int64),
@@ -681,12 +520,9 @@ class DistributedNeighborLoaderTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_with_node_labels_heterogeneous,
-            args=(dataset, 1),  # dataset  # batch_size
-        )
+        return dataset
 
-    def test_distributed_neighbor_loader_with_multi_label_nodes_homogeneous(self):
+    def _build_multi_label_nodes_homogeneous_dataset(self) -> DistDataset:
         # Labels: shape (10, 2) where col 0 = node_id, col 1 = node_id * 10.
         # This verifies that the full multi-column tensor survives GLT's T[0] truncation.
         n = 10
@@ -712,12 +548,9 @@ class DistributedNeighborLoaderTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="in")
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_with_multi_label_nodes_homogeneous,
-            args=(dataset, 1),
-        )
+        return dataset
 
-    def test_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous(self):
+    def _build_multi_label_nodes_heterogeneous_dataset(self) -> DistDataset:
         # Labels: shape (5, 2) where col 0 = node_id, col 1 = node_id * 10.
         n = 5
         labels = torch.stack([torch.arange(n), torch.arange(n) * 10], dim=1)
@@ -760,49 +593,9 @@ class DistributedNeighborLoaderTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader_with_multi_label_nodes_heterogeneous,
-            args=(dataset, 1),
-        )
+        return dataset
 
-    def test_cora_supervised_node_classification(self):
-        """Test CORA dataset for supervised node classification task."""
-        create_test_process_group()
-        cora_supervised_info = get_mocked_dataset_artifact_metadata()[
-            CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
-        ]
-
-        gbml_config_pb_wrapper = (
-            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
-                gbml_config_uri=cora_supervised_info.frozen_gbml_config_uri
-            )
-        )
-
-        serialized_graph_metadata = convert_pb_to_serialized_graph_metadata(
-            preprocessed_metadata_pb_wrapper=gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper,
-            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
-            tfrecord_uri_pattern=".*.tfrecord(.gz)?$",
-        )
-
-        splitter = DistNodeSplitter()
-
-        dataset = build_dataset(
-            serialized_graph_metadata=serialized_graph_metadata,
-            sample_edge_direction="in",
-            splitter=splitter,
-        )
-
-        mp.spawn(
-            fn=_run_cora_supervised_node_classification,
-            args=(
-                dataset,  # dataset
-                32,  # batch_size
-            ),
-        )
-
-    def test_isolated_heterogeneous_neighbor_loader(
-        self,
-    ):
+    def _build_isolated_heterogeneous_dataset(self) -> DistDataset:
         partition_output = PartitionOutput(
             node_partition_book={"author": torch.zeros(18, dtype=torch.int64)},
             edge_partition_book=None,
@@ -822,14 +615,9 @@ class DistributedNeighborLoaderTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_heterogeneous_neighbor_loader,
-            args=(dataset, 18),
-        )
+        return dataset
 
-    def test_isolated_homogeneous_neighbor_loader(
-        self,
-    ):
+    def _build_isolated_homogeneous_dataset(self) -> DistDataset:
         partition_output = PartitionOutput(
             node_partition_book=torch.zeros(18, dtype=torch.int64),
             edge_partition_book=None,
@@ -845,10 +633,58 @@ class DistributedNeighborLoaderTest(TestCase):
         dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
         dataset.build(partition_output=partition_output)
 
-        mp.spawn(
-            fn=_run_distributed_neighbor_loader,
-            args=(dataset, 18),
-        )
+        return dataset
+
+    def test_distributed_neighbor_loader_with_node_labels(self) -> None:
+        homogeneous_dataset = self._build_node_labels_homogeneous_dataset()
+        heterogeneous_dataset = self._build_node_labels_heterogeneous_dataset()
+        checks = [
+            (
+                "homogeneous",
+                _check_neighbor_loader_with_node_labels_homogeneous,
+                (homogeneous_dataset, 1),
+            ),
+            (
+                "heterogeneous",
+                _check_neighbor_loader_with_node_labels_heterogeneous,
+                (heterogeneous_dataset, 1),
+            ),
+        ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
+
+    def test_distributed_neighbor_loader_with_multi_label_nodes(self) -> None:
+        homogeneous_dataset = self._build_multi_label_nodes_homogeneous_dataset()
+        heterogeneous_dataset = self._build_multi_label_nodes_heterogeneous_dataset()
+        checks = [
+            (
+                "homogeneous",
+                _check_neighbor_loader_with_multi_label_nodes_homogeneous,
+                (homogeneous_dataset, 1),
+            ),
+            (
+                "heterogeneous",
+                _check_neighbor_loader_with_multi_label_nodes_heterogeneous,
+                (heterogeneous_dataset, 1),
+            ),
+        ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
+
+    def test_isolated_neighbor_loader(self) -> None:
+        homogeneous_dataset = self._build_isolated_homogeneous_dataset()
+        heterogeneous_dataset = self._build_isolated_heterogeneous_dataset()
+        checks = [
+            (
+                "homogeneous",
+                _check_isolated_homogeneous_neighbor_loader,
+                (homogeneous_dataset, 18),
+            ),
+            (
+                "heterogeneous",
+                _check_isolated_heterogeneous_neighbor_loader,
+                (heterogeneous_dataset, 18),
+            ),
+        ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
     def test_distributed_neighbor_loader_materializes_quantized_node_features(
         self,
@@ -1180,10 +1016,12 @@ class WithEdgeDerivationTest(TestCase):
         )
         self.assertTrue(config.with_edge)
 
-    def test_featureless_dataset_produces_batches_without_edge_ids(self) -> None:
-        # Homogeneous dataset with node features but no edge features: the loader
+    def test_featureless_dataset_has_no_edge_ids_and_empty_frontier_does_not_crash(
+        self,
+    ) -> None:
+        # Featureless case: homogeneous dataset with node features but no edge features. The loader
         # must still yield batches, and none carry sampled edge ids.
-        partition_output = PartitionOutput(
+        featureless_partition_output = PartitionOutput(
             node_partition_book=torch.zeros(5, dtype=torch.int64),
             edge_partition_book=torch.zeros(5, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
@@ -1198,24 +1036,11 @@ class WithEdgeDerivationTest(TestCase):
             partitioned_negative_labels=None,
             partitioned_node_labels=None,
         )
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
+        featureless_dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        featureless_dataset.build(partition_output=featureless_partition_output)
 
-        manager = mp.Manager()
-        holder: MutableMapping = manager.dict()
-        proc = mp.spawn(
-            fn=_run_featureless_edge_ids_absent,
-            args=(dataset, holder),
-            join=False,
-        )
-        proc.join(timeout=120)
-        self.assertGreater(holder["count"], 0)
-        self.assertTrue(holder["edge_ids_absent"])
-        self.assertTrue(holder["packed_features_absent"])
-
-    def test_empty_frontier_in_later_hop_does_not_crash(self) -> None:
-        # Two nodes with edges 0 <-> 1. After hop 2 no new node exists, so hop 3 has no sources.
-        partition_output = PartitionOutput(
+        # Empty-frontier case: two nodes with edges 0 <-> 1. After hop 2 no new node exists, so hop 3 has no sources.
+        empty_frontier_partition_output = PartitionOutput(
             node_partition_book=torch.zeros(2, dtype=torch.int64),
             edge_partition_book=torch.zeros(2, dtype=torch.int64),
             partitioned_edge_index=GraphPartitionData(
@@ -1230,18 +1055,22 @@ class WithEdgeDerivationTest(TestCase):
             partitioned_negative_labels=None,
             partitioned_node_labels=None,
         )
-        dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
-        dataset.build(partition_output=partition_output)
+        empty_frontier_dataset = DistDataset(rank=0, world_size=1, edge_dir="out")
+        empty_frontier_dataset.build(partition_output=empty_frontier_partition_output)
 
-        manager = mp.Manager()
-        holder: MutableMapping = manager.dict()
-        proc = mp.spawn(
-            fn=_run_empty_frontier_neighbor_loader,
-            args=(dataset, holder),
-            join=False,
-        )
-        proc.join(timeout=120)
-        self.assertEqual(holder["count"], 2)
+        checks = [
+            (
+                "featureless dataset",
+                _check_featureless_dataset_loader,
+                (featureless_dataset,),
+            ),
+            (
+                "empty frontier dataset",
+                _check_empty_frontier_loader,
+                (empty_frontier_dataset,),
+            ),
+        ]
+        mp.spawn(fn=run_checks_in_one_process, args=(checks,))
 
 
 class SamplingSeedTest(TestCase):

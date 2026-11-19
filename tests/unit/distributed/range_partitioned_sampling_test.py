@@ -113,20 +113,40 @@ def _to_lists(value: Any) -> Any:
 def _sample_on_partition(
     rank: int,
     rpc_port: int,
+    process_group_ports: dict[tuple[Literal["in", "out"], bool], int],
+    output: dict,
+) -> None:
+    """Sample every node from this rank for each edge_dir and partition book kind.
+
+    All four cases run in this one process, one after another, over a single RPC session
+    (GLT cannot re-initialize RPC after a shutdown), so the module imports and RPC setup
+    are paid once. Results are stored in ``output`` under (rank, edge_dir, range_partitioned).
+    """
+    init_worker_group(world_size=_NUM_PARTITIONS, rank=rank)
+    init_rpc(master_addr="127.0.0.1", master_port=rpc_port, num_rpc_threads=4)
+    for (
+        edge_dir,
+        range_partitioned,
+    ), process_group_port in process_group_ports.items():
+        output[(rank, edge_dir, range_partitioned)] = _sample_case(
+            rank, process_group_port, edge_dir, range_partitioned
+        )
+    shutdown_rpc()
+
+
+def _sample_case(
+    rank: int,
     process_group_port: int,
     edge_dir: Literal["in", "out"],
     range_partitioned: bool,
-    output: dict,
-) -> None:
-    """Sample every node from this rank, through routing and directly, and record the results."""
+) -> dict[str, Any]:
+    """Sample every node from this rank, through routing and directly, and return the results."""
     torch.distributed.init_process_group(
         "gloo",
         init_method=f"tcp://127.0.0.1:{process_group_port}",
         rank=rank,
         world_size=_NUM_PARTITIONS,
     )
-    init_worker_group(world_size=_NUM_PARTITIONS, rank=rank)
-    init_rpc(master_addr="127.0.0.1", master_port=rpc_port, num_rpc_threads=4)
     dataset = _partition_dataset(rank, edge_dir, range_partitioned)
     assert isinstance(dataset.graph, dict)
     start, _ = _PARTITION_RANGES[rank]
@@ -169,38 +189,80 @@ def _sample_on_partition(
     )
     result["ppr"] = _to_lists(ppr_output)
     barrier()
-    output[rank] = result
     sampler.shutdown_loop()
     ppr_sampler.shutdown_loop()
-    shutdown_rpc()
     torch.distributed.destroy_process_group()
+    return result
 
 
-def _run(edge_dir: Literal["in", "out"], range_partitioned: bool) -> dict[int, Any]:
+def _run() -> dict[tuple[int, str, bool], Any]:
+    """Spawn the partitions once and return results keyed by (rank, edge_dir, range_partitioned)."""
     output = mp.Manager().dict()
+    process_group_ports = {
+        (edge_dir, range_partitioned): get_free_port()
+        for edge_dir in ("in", "out")
+        for range_partitioned in (False, True)
+    }
     mp.spawn(
         _sample_on_partition,
-        args=(get_free_port(), get_free_port(), edge_dir, range_partitioned, output),
+        args=(get_free_port(), process_group_ports, output),
         nprocs=_NUM_PARTITIONS,
     )
     return dict(output)
 
 
+def _assert_routed_hop_matches_edges(
+    test: TestCase,
+    routed: dict[str, Any],
+    edge_type: EdgeType,
+    edge_dir: str,
+    case: str,
+) -> None:
+    """The routed full-fanout hop returns, for each seed in order, exactly its neighbors in the graph."""
+    edges = _edges(edge_type)
+    sampled_from, neighbor = 0, 1
+    if edge_dir == "in":
+        sampled_from, neighbor = 1, 0
+    expected: dict[int, list[int]] = {seed: [] for seed in range(_NUM_NODES)}
+    for source, destination in zip(
+        edges[sampled_from].tolist(), edges[neighbor].tolist()
+    ):
+        expected[source].append(destination)
+    position = 0
+    for seed, count in enumerate(routed["nbr_num"]):
+        got = sorted(routed["nbr"][position : position + count])
+        test.assertEqual(got, sorted(expected[seed]), f"{case} seed {seed}")
+        position += count
+    test.assertEqual(position, len(routed["nbr"]), case)
+
+
 class RangePartitionedSamplingTest(TestCase):
-    @parameterized.expand([param("in", edge_dir="in"), param("out", edge_dir="out")])
-    def test_compressed_id_offsets_sample_exactly_as_rows_for_every_id(
-        self, _name: str, edge_dir: Literal["in", "out"]
-    ) -> None:
-        every_row = _run(edge_dir, range_partitioned=False)
-        offset_rows = _run(edge_dir, range_partitioned=True)
-        for rank in range(_NUM_PARTITIONS):
-            self.assertEqual(set(offset_rows[rank]), set(every_row[rank]))
-            for key, expected in every_row[rank].items():
-                self.assertEqual(offset_rows[rank][key], expected, f"rank {rank} {key}")
-        # The graph must give the samplers real work: some neighbors from every partition.
-        sampled = every_row[0][f"routed/{_FOLLOWS}/-1"]
-        self.assertGreater(len(sampled["nbr"]), _NUM_NODES)
-        self.assertEqual(every_row[0]["degrees"]["user"][27:], [0, 0, 0])
+    def test_compressed_id_offsets_sample_exactly_as_rows_for_every_id(self) -> None:
+        results = _run()
+        for edge_dir in ("in", "out"):
+            for rank in range(_NUM_PARTITIONS):
+                every_row = results[(rank, edge_dir, False)]
+                offset_rows = results[(rank, edge_dir, True)]
+                self.assertEqual(set(offset_rows), set(every_row))
+                for edge_type in (_FOLLOWS, _LIKES):
+                    for kind, result in (("tensor", every_row), ("range", offset_rows)):
+                        _assert_routed_hop_matches_edges(
+                            self,
+                            result[f"routed/{edge_type}/-1"],
+                            edge_type,
+                            edge_dir,
+                            f"{kind} {edge_dir} rank {rank} {edge_type}",
+                        )
+                for key, expected in every_row.items():
+                    self.assertEqual(
+                        offset_rows[key], expected, f"{edge_dir} rank {rank} {key}"
+                    )
+            # The graph must give the samplers real work: some neighbors from every partition.
+            sampled = results[(0, edge_dir, False)][f"routed/{_FOLLOWS}/-1"]
+            self.assertGreater(len(sampled["nbr"]), _NUM_NODES)
+            self.assertEqual(
+                results[(0, edge_dir, False)]["degrees"]["user"][27:], [0, 0, 0]
+            )
 
 
 class GlobalIdNeighborSamplerTest(TestCase):
