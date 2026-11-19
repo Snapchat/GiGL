@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - Nov 19, 2026
+
 ### Added
 
 - Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
@@ -136,7 +138,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
 - Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
   `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
-  https://github.com/Snapchat/GiGL/pull/PENDING
+  https://github.com/Snapchat/GiGL/pull/845
   - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
     `.python-version` value), 3.12.14 or 3.13.15.
   - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
@@ -199,9 +201,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
   dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
-  https://github.com/Snapchat/GiGL/pull/PENDING
+  https://github.com/Snapchat/GiGL/pull/770
 - Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by
-  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/710
 
 ## [0.3.1] - Jun 4, 2026
 
