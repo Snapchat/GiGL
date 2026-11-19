@@ -25,7 +25,6 @@ The test_spec_uri is a yaml file of the following format:
     ```yaml
     tests:
       "name_of_the_test":
-        name_suffix: "_on_${now:}"
         task_config_uri: "path/to/task_config.yaml"
         resource_config_uri: "path/to/resource_config.yaml"
         uses_in_memory_sampling: "True"
@@ -52,6 +51,7 @@ Examples:
 
 import argparse
 import os
+import sys
 import textwrap
 import uuid
 from dataclasses import dataclass, field
@@ -82,9 +82,12 @@ class E2ETest:
     Args:
         task_config_uri: The URI of the task config to use.
         resource_config_uri: The URI of the resource config to use.
-        name_suffix: The suffix to add to the job name; job name will be of form:
-            <test_name><name_suffix>_<6 random hex chars>, where <test_name> is the key in
-            :attr:`E2ETestsSpec.tests`.
+        name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
+            where <test_name> is the key in :attr:`E2ETestsSpec.tests`. The default names the Python minor and
+            ends with 6 random hex chars (e.g. `_py313_20260101_120000_a1b2c3`), so that runs started in the
+            same second, on the same or different minors, do not share GCS paths or BigQuery tables.
+            The random hex is generated once per process, so all tests in one run share it.
+            A custom suffix gets no random hex; add your own if runs can start in the same second.
         start_at: Specify the component where to start the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         stop_after: Specify the component where to stop the pipeline. Choices are defined in:
@@ -96,7 +99,11 @@ class E2ETest:
     task_config_uri: str
     resource_config_uri: str
     name_suffix: str = (
-        "_on_${now:}"  # Makes use of gigl.common.omegaconf_resolvers#now_resolver()
+        f"_py{sys.version_info.major}{sys.version_info.minor}"
+        # Makes use of gigl.common.omegaconf_resolvers#now_resolver(). There is no "_on" before the
+        # time: the longest test names must still fit the 51-char KFP job name limit.
+        "_${now:}"
+        f"_{uuid.uuid4().hex[:6]}"
     )
     start_at: str = "config_populator"
     stop_after: Optional[str] = None
@@ -116,11 +123,6 @@ class E2ETestsSpec:
     tests: dict[str, E2ETest] = field(default_factory=dict)
 
 
-def build_e2e_job_name(job_name: str, name_suffix: str) -> str:
-    """Returns the pipeline job name, with a random suffix so runs started in the same second differ."""
-    return f"{job_name}{name_suffix}_{uuid.uuid4().hex[:6]}"
-
-
 def run_all_e2e_tests(
     tests: dict[str, E2ETest],
     compiled_pipeline_path: Uri,
@@ -130,7 +132,7 @@ def run_all_e2e_tests(
     runs_to_wait_on: list[PipelineJob] = []
     github_run_id = os.environ.get("GITHUB_RUN_ID")
     for job_name, job in tests.items():
-        full_job_name = build_e2e_job_name(job_name, job.name_suffix)
+        full_job_name = f"{job_name}{job.name_suffix}"
         if github_run_id:
             job.run_labels[GITHUB_RUN_ID_LABEL_KEY] = github_run_id
         logger.info(f"Compiling and running job: {full_job_name}")

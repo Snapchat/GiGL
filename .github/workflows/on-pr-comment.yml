@@ -129,8 +129,58 @@ jobs:
           Any push after this point will NOT change what runs: the job aborts if the PR branch has moved off this SHA.
           ${{ steps.resolve.outputs.is_cross_repository == 'true' && 'This PR is from a fork, so a reviewer must approve the `pr-command-execution` environment before the command runs — approve only if this is the commit you intend to execute.' || 'Same-repo PR: the command runs without extra approval.' }}
 
-  unit-test-python:
+  # Reads SUPPORTED_PYTHON_VERSIONS and the comment to pick the unit-test and e2e legs. GitHub rejects
+  # `matrix` in a job-level `if`, so the matrix jobs read their legs from this job's outputs. The scripts
+  # run from the default branch; the PR supplies only `gigl/dep_vars.env` and `.python-version`, read as
+  # data from the commit `prepare` froze, so the legs match the code the command jobs run.
+  plan:
+    name: Plan the Python and E2E test matrices
     needs: prepare
+    if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test') || contains(github.event.comment.body, '/e2e_test')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Only for the failure comment below.
+      pull-requests: write
+      issues: write
+    outputs:
+      minors: ${{ steps.versions.outputs.minors }}
+      matrix: ${{ steps.e2e.outputs.matrix }}
+    steps:
+    - name: Checkout default branch
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Fetch the PR's version files
+      env:
+        HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+      run: |
+        git fetch --depth=1 origin "${HEAD_SHA}"
+        mkdir -p "${RUNNER_TEMP}/pr/gigl"
+        git show "${HEAD_SHA}:gigl/dep_vars.env" > "${RUNNER_TEMP}/pr/gigl/dep_vars.env"
+        git show "${HEAD_SHA}:.python-version" > "${RUNNER_TEMP}/pr/.python-version"
+
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
+
+    - name: Plan E2E matrix
+      id: e2e
+      env:
+        COMMENT_BODY: ${{ github.event.comment.body }}
+      run: python3 .github/scripts/e2e_matrix.py --repo-root "${RUNNER_TEMP}/pr" >> "${GITHUB_OUTPUT}"
+
+    - name: Comment that the plan failed
+      if: ${{ failure() }}
+      uses: snapchat/gigl/.github/actions/comment-on-pr@main
+      with:
+        pr_number: ${{ github.event.issue.number }}
+        message: "Could not read `SUPPORTED_PYTHON_VERSIONS` or `.python-version` from this PR, so the Python unit and e2e jobs did not start. If this PR is behind `main`, merge `main` into it and comment again. Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  unit-test-python:
+    needs: [prepare, plan]
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/unit_test_py') || endsWith(github.event.comment.body, '/unit_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
@@ -143,6 +193,10 @@ jobs:
       issues: write
     # TODO(kmonte): Reduce this :(
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(needs.plan.outputs.minors) }}
     steps:
     - name: Run Python Unit Tests
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
@@ -151,7 +205,7 @@ jobs:
         pr_number: ${{ github.event.issue.number }}
         sha: ${{ needs.prepare.outputs.head_sha }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "Python Unit Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} Unit Test"
         setup_gcloud: "true"
         # We use cloud run here instead of using github hosted runners because of limitation of tests
         # using GFile library (a.k.a anything that does IO w/ Tensorflow). GFile does not understand
@@ -161,6 +215,7 @@ jobs:
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         command: |
           make unit_test_py
 
@@ -275,8 +330,11 @@ jobs:
         command: |
             make integration_tests_spark
 
+  # `/e2e_test all` (exactly one space) runs every supported Python minor; `/e2e_test` and
+  # `/all_test` run only the default one. The non-default minors run the in-memory (GLT)
+  # pipelines only.
   integration-e2e-test:
-    needs: prepare
+    needs: [prepare, plan]
     if: ${{ github.event.issue.pull_request && (contains(github.event.comment.body, '/e2e_test') || contains(github.event.comment.body, '/all_test')) }}
     runs-on: ubuntu-24.04
     # Only fork PRs (untrusted author controls the branch) require human approval. Same-repo
@@ -288,24 +346,29 @@ jobs:
       pull-requests: write
       issues: write
     timeout-minutes: 155 # Tests as of 2025-05-16 are taking ~110 mins to complete, 40% buffer
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-    - name: Run E2E Tests
+    - name: Run E2E Tests (`/e2e_test all` adds the GLT pipelines on every other Python minor)
       uses: snapchat/gigl/.github/actions/run-command-on-pr@main
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         pr_number: ${{ github.event.issue.number }}
         sha: ${{ needs.prepare.outputs.head_sha }}
         should_leave_progress_comments: "true"
-        descriptive_workflow_name: "E2E Test"
+        descriptive_workflow_name: "Python ${{ matrix.python }} E2E Test"
         setup_gcloud: "true"
         use_cloud_run: "true"
         gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
         workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
         gcp_service_account_email: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+        python_version: ${{ matrix.python }}
         # No fail fast here: a PR author wants to see every failing pipeline in one pass.
         # GITHUB_RUN_ID labels the pipeline runs so the cancel step below can find them.
         command: |
-          make run_all_e2e_tests GITHUB_RUN_ID=${{ github.run_id }}
+          make ${{ matrix.target }} GITHUB_RUN_ID=${{ github.run_id }}
     - name: Cancel GCP resources from this run
       if: cancelled()
       uses: snapchat/gigl/.github/actions/cancel-ci-gcp-resources@main
