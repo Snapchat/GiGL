@@ -37,6 +37,10 @@ from gigl.src.common.utils.bq import BqUtils
 from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
+from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+    DataPreprocessorOutputFormat,
+)
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -139,6 +143,10 @@ class DataPreprocessorPipelineTest(TestCase):
         gbml_config_pb.shared_config.preprocessed_metadata_uri = GcsUri.join(
             output_directory, "preprocessed_metadata.yaml"
         ).uri
+        # This test checks the TFRecord output; the Parquet output is covered by parquet_writer_test.py.
+        gbml_config_pb.feature_flags[DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG] = (
+            DataPreprocessorOutputFormat.TFRECORD.value
+        )
 
         logger.info(f"Will be using gbml_config_pb: {gbml_config_pb} to run the test.")
 

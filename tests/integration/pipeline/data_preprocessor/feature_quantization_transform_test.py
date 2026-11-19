@@ -110,9 +110,11 @@ class FeatureQuantizationTransformTest(TestCase):
             )
 
             preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
-            preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
-                0
-            ].node_id_key = "node_id"
+            node_metadata = (
+                preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[0]
+            )
+            node_metadata.node_id_key = "node_id"
+            node_metadata.tfrecord_uri_prefix = temp_dir
             edge_metadata = (
                 preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[0]
             )
