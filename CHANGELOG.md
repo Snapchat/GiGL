@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
+  `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
+  entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc
 - Make the sampling-loader bring-up RPC timeout configurable via `GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS` (workers reset
   to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
   bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and
@@ -94,6 +97,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   only for glibc 2.39 and later, so `install_py_deps.sh` fails on Ubuntu 22.04 by @kmontemayor2-sc
 - `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
   packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
+- The data preprocessor writes Parquet by default; set the `data_preprocessor_output_format` feature flag to `tfrecord`
+  to keep writing TFRecords. Configs without the GLT backend (`should_run_glt_backend`) must set it to `tfrecord`,
+  because the subgraph sampler reads only TFRecords, and the config validator rejects Parquet output for them. Parquet
+  output leaves `tfrecord_uri_prefix` empty in the preprocessed metadata by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
