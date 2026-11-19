@@ -176,6 +176,7 @@ typing-stubs = [
   "types-tqdm==4.67.0.20250513",
 ]
 test = [
+  "cloudpickle", # Imported by tests/unit/test_assets/runtime_type_checking_test.py; otherwise only a transitive dep of tensordict.
   "parameterized==0.9.0",
   "typeguard>=2,<3", # Jaxtyping documents known incompatibilities with Typeguard 3 and 4.
 ]
