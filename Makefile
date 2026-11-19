@@ -210,8 +210,10 @@ format_cpp:
 
 format: format_py format_cpp format_scala format_md format_whitespace
 
+# --python-platform linux: GiGL targets Linux (CI and every image). Without it ty checks as the host OS, so on macOS it
+# flags Linux-only APIs such as os.posix_fallocate and psutil.Process.cpu_affinity.
 type_check:
-	uv run ty check --python-version ${PYTHON_MINOR} ${PYTHON_DIRS}
+	uv run ty check --python-version ${PYTHON_MINOR} --python-platform linux ${PYTHON_DIRS}
 
 build_cpp_extensions:
 	$(MAKE) -C gigl-core build_cpp_extensions
