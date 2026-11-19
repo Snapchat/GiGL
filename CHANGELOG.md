@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.4.0] - Nov 19, 2026
 
+This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,
+@mkolodner-sc, @dsaini2-sc, @yliu2-sc, @zfan3-sc, @svij-sc, and @kmontemayor2-sc.
+
+Some highlights:
+
+1. GiGL now has Graph Transformer architectures built in
+2. GiGL now supports running on mulitple Python versions
+3. GiGL Data Preprocessor now writes to Parquet by default (saving ~40% Dataflow CPU and RAM at scale)
+4. GiGL can injest Parquet for live subgraph sampling (approx 14x faster than TFRecord)
+5. GiGL can partition edges at scale ~10x faster
+6. GiGL samples at scale > 2x faster
+
 ### Added
 
 - Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
