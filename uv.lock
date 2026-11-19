@@ -1114,15 +1114,16 @@ pyg27-torch28-cu128 = [
 transform = [
     { name = "apache-beam", extra = ["gcp"] },
     { name = "pyarrow" },
-    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-transform", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tensorflow-data-validation" },
+    { name = "tensorflow-metadata" },
+    { name = "tensorflow-transform" },
+    { name = "tfx-bsl" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "astroid" },
+    { name = "cloudpickle" },
     { name = "dprint-py" },
     { name = "mistune" },
     { name = "mypy-protobuf" },
@@ -1193,6 +1194,7 @@ lint = [
     { name = "ty" },
 ]
 test = [
+    { name = "cloudpickle" },
     { name = "parameterized" },
     { name = "typeguard" },
 ]
@@ -1243,10 +1245,10 @@ requires-dist = [
     { name = "scikit-learn" },
     { name = "tensorboard", specifier = "~=2.21" },
     { name = "tensorflow", specifier = "~=2.21.0" },
-    { name = "tensorflow-data-validation", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.21.0" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.21.0" },
-    { name = "tensorflow-transform", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.21.0" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' and extra == 'transform'", specifier = "==1.21.0" },
+    { name = "tensorflow-data-validation", marker = "extra == 'transform'", specifier = "==1.21.0" },
+    { name = "tensorflow-metadata", marker = "extra == 'transform'", specifier = "==1.21.0" },
+    { name = "tensorflow-transform", marker = "extra == 'transform'", specifier = "==1.21.0" },
+    { name = "tfx-bsl", marker = "extra == 'transform'", specifier = "==1.21.0" },
     { name = "torch", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cu128'", specifier = "==2.8", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "gigl", extra = "pyg27-torch28-cu128" } },
     { name = "torch", marker = "extra == 'pyg27-torch28-cpu'", specifier = "==2.8", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
     { name = "torch-cluster", marker = "sys_platform != 'darwin' and extra == 'pyg27-torch28-cpu'", index = "https://data.pyg.org/whl/torch-2.8.0+cpu.html", conflict = { package = "gigl", extra = "pyg27-torch28-cpu" } },
@@ -1267,6 +1269,7 @@ provides-extras = ["transform", "pyg27-torch28-cpu", "pyg27-torch28-cu128", "exp
 [package.metadata.requires-dev]
 dev = [
     { name = "astroid", specifier = "==3.3.11" },
+    { name = "cloudpickle" },
     { name = "dprint-py", specifier = "==0.56.0.0" },
     { name = "mistune", specifier = ">=2.0.3" },
     { name = "mypy-protobuf", specifier = "==3.3.0" },
@@ -1337,6 +1340,7 @@ lint = [
     { name = "ty", specifier = "==0.0.31" },
 ]
 test = [
+    { name = "cloudpickle" },
     { name = "parameterized", specifier = "==0.9.0" },
     { name = "typeguard", specifier = ">=2,<3" },
 ]
@@ -1380,12 +1384,12 @@ name = "google-api-python-client"
 version = "1.12.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-api-core", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-auth", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-auth-httplib2", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "httplib2", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "six", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "uritemplate", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "google-api-core" },
+    { name = "google-auth" },
+    { name = "google-auth-httplib2" },
+    { name = "httplib2" },
+    { name = "six" },
+    { name = "uritemplate" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dd/12/07e966db6bfa4bd440af2f83ca6cc7bd61c2f4859992b7103437e8a98ce1/google-api-python-client-1.12.11.tar.gz", hash = "sha256:1b4bd42a46321e13c0542a9e4d96fa05d73626f07b39f83a73a947d70ca706a9", size = 146876, upload-time = "2022-03-15T13:49:56.711Z" }
 wheels = [
@@ -4292,7 +4296,7 @@ name = "pydot"
 version = "1.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyparsing", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "pyparsing" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/13/6e/916cdf94f9b38ae0777b254c75c3bdddee49a54cc4014aac1460a7a172b3/pydot-1.4.2.tar.gz", hash = "sha256:248081a39bcb56784deb018977e428605c1c758f10897a339fce1dd728ff007d", size = 137681, upload-time = "2021-02-15T15:43:08.87Z" }
 wheels = [
@@ -5447,18 +5451,18 @@ name = "tensorflow-data-validation"
 version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "joblib", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pandas", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyfarmhash", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "six", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "pyfarmhash" },
+    { name = "six" },
+    { name = "tensorflow" },
+    { name = "tensorflow-metadata" },
+    { name = "tfx-bsl" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/e9/f735c55516d3a65e25011608b9d9cd75450f0d0c5903c09896cf6c1fcf2f/tensorflow_data_validation-1.21.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:230b390d2ee1aeab808123cc7ddf198fa2ffdb4e7b51fb75dd2f1e692ca456e0", size = 1350898, upload-time = "2026-06-11T16:52:39.396Z" },
@@ -5474,9 +5478,9 @@ name = "tensorflow-metadata"
 version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "googleapis-common-protos", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "googleapis-common-protos" },
+    { name = "protobuf" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/85/8c/f82ce771571deed4c69d2b053038385fb7ff7cdca4762cc8f7114b95b4f3/tensorflow_metadata-1.21.0.tar.gz", hash = "sha256:2108ed8ea40df9ac4f7c506a62e9ecf5dcd40678b3308dcee2ec9e0e59d60609", size = 24577, upload-time = "2026-06-09T06:52:43.894Z" }
 wheels = [
@@ -5488,9 +5492,9 @@ name = "tensorflow-serving-api"
 version = "2.19.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "grpcio", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "tensorflow" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/57/fc2450da659c5228e92841e6bd59ea96a9074b0f3f6fcfe4ae1552fc6edf/tensorflow_serving_api-2.19.1-py2.py3-none-any.whl", hash = "sha256:7121f4cb83c1b31f92b15edb6cdd7b36e690dbf0b9774edf72ff386cbd52925e", size = 26924, upload-time = "2025-08-19T04:54:01.553Z" },
@@ -5501,16 +5505,16 @@ name = "tensorflow-transform"
 version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pydot", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tf-keras", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tfx-bsl", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "numpy" },
+    { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "pydot" },
+    { name = "tensorflow" },
+    { name = "tensorflow-metadata" },
+    { name = "tf-keras" },
+    { name = "tfx-bsl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fe/c8/fbfecd0df52fcffacfe890894f679dcc6dfcdbd05690e3ba4965d20477fe/tensorflow_transform-1.21.0.tar.gz", hash = "sha256:6f0ad1efc985ab8138c1f84f3f625ecc5e989a39e5a881afcbb3a2348fbc14b1", size = 394408, upload-time = "2026-06-11T22:09:19.554Z" }
 wheels = [
@@ -5531,7 +5535,7 @@ name = "tf-keras"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "tensorflow" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/80/b005b59f9ccdbabc1b6cd07ca1126cbd4d902288438f0c00072f91a43c6f/tf_keras-2.21.0.tar.gz", hash = "sha256:f9af0f2546cd5532de0fae7a481f34a1ca2253737d4cd1000f6b713dc733f770", size = 1255377, upload-time = "2026-03-18T22:12:02.103Z" }
 wheels = [
@@ -5543,17 +5547,17 @@ name = "tfx-bsl"
 version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "apache-beam", extra = ["gcp"], marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "dill", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "google-api-python-client", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "numpy", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pandas", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "protobuf", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "pyarrow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-metadata", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
-    { name = "tensorflow-serving-api", marker = "sys_platform != 'darwin' or extra != 'extra-4-gigl-pyg27-torch28-cpu' or (extra == 'extra-4-gigl-pyg27-torch28-cpu' and extra == 'extra-4-gigl-pyg27-torch28-cu128')" },
+    { name = "absl-py" },
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "dill" },
+    { name = "google-api-python-client" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "tensorflow" },
+    { name = "tensorflow-metadata" },
+    { name = "tensorflow-serving-api" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/07/fb50c28313d35c91c88486eb389a194ac8a759377f11ded2822c5e77e02d/tfx_bsl-1.21.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:c6476d7e0b3b60003c3a0e9b664a1b9263ca4fb8984ac6e8e5493b3b1cecfd21", size = 4294549, upload-time = "2026-06-10T22:38:46.939Z" },
