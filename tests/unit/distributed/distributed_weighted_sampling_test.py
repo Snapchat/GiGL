@@ -18,9 +18,7 @@ from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
 from gigl.common.utils.garbage_collection import freeze_gc
-from gigl.distributed import DistPartitioner
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.utils.networking import get_free_port
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -423,7 +421,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                DistPartitioner,
                 rank_to_edge_weights,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
@@ -480,7 +477,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                DistPartitioner,
                 None,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
@@ -525,7 +521,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
-                DistPartitioner,
                 rank_to_edge_weights,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
@@ -583,7 +578,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
-                DistPartitioner,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
             join=True,
@@ -607,7 +601,7 @@ class WeightedEdgePartitionerTestCase(TestCase):
             )
 
     def test_features_and_weights_produce_consistent_edge_ids(self) -> None:
-        """Both registered: GraphPartitionData.edge_ids must equal FeaturePartitionData.ids."""
+        """Both registered: edge ids, weights, and feature rows must line up on each rank."""
         master_port = get_free_port()
         manager = Manager()
         output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
@@ -627,7 +621,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                DistPartitioner,
                 rank_to_edge_weights,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
@@ -645,10 +638,31 @@ class WeightedEdgePartitionerTestCase(TestCase):
             self.assertIsNotNone(gpd.weights)
             assert gpd.edge_ids is not None
 
+            assert gpd.weights is not None
+            # Range partitioning infers edge ids from the edge partition book, so feature
+            # rows carry no ids and must line up with edge_ids by position.
+            self.assertIsNone(feat_part.ids)
+            num_edges = gpd.edge_index.size(1)
+            self.assertEqual(gpd.edge_ids.numel(), num_edges)
+            self.assertEqual(gpd.weights.numel(), num_edges)
+            self.assertEqual(feat_part.feats.size(0), num_edges)
             torch.testing.assert_close(
                 gpd.edge_ids,
-                feat_part.ids,
-                msg=f"Rank {rank}: GraphPartitionData.edge_ids must equal FeaturePartitionData.ids",
+                torch.arange(int(gpd.edge_ids[0]), int(gpd.edge_ids[0]) + num_edges),
+                msg=f"Rank {rank}: edge_ids must be a contiguous range",
+            )
+            # The mocked weights and edge features are both the source node id / 10, so each
+            # row must match the source node of the edge at the same position.
+            expected_values = gpd.edge_index[0].float() / 10.0
+            torch.testing.assert_close(
+                gpd.weights,
+                expected_values,
+                msg=f"Rank {rank}: weights must line up with edge_index",
+            )
+            torch.testing.assert_close(
+                feat_part.feats,
+                expected_values.unsqueeze(1).expand_as(feat_part.feats),
+                msg=f"Rank {rank}: edge feature rows must line up with edge_index",
             )
 
     def test_heterogeneous_partial_weights_by_edge_type(self) -> None:
@@ -678,7 +692,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 self._master_ip_address,
                 master_port,
                 InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                DistPartitioner,
                 rank_to_edge_weights,
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
@@ -710,77 +723,6 @@ class WeightedEdgePartitionerTestCase(TestCase):
             self.assertIsNone(
                 u2i_gpd.edge_ids,
                 msg=f"Rank {rank}: U2I edge_ids must be None",
-            )
-
-    def test_range_partitioner_homogeneous_weights_partitioned_correctly(self) -> None:
-        """DistRangePartitioner: edge weights land on the correct rank after range-based partitioning.
-
-        Mirrors test_homogeneous_weights_partitioned_correctly but uses DistRangePartitioner.
-        With range-based partitioning, edge_ids are sequential per-rank (0..3 on rank 0,
-        4..7 on rank 1), and the registered weights (src_node_id / 10.0) equal
-        edge_id * 0.1 for this test graph.
-        """
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        rank_to_edge_weights = {
-            0: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float() / 10.0,
-            1: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float() / 10.0,
-        }
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,  # is_heterogeneous
-                RANK_TO_MOCKED_GRAPH,
-                True,  # should_assign_edges_by_src_node
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
-                DistRangePartitioner,
-                rank_to_edge_weights,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, partition_output in output_dict.items():
-            partitioned_edge_index = partition_output.partitioned_edge_index
-            self.assertIsInstance(partitioned_edge_index, GraphPartitionData)
-            assert isinstance(partitioned_edge_index, GraphPartitionData)
-
-            weights = partitioned_edge_index.weights
-            self.assertIsNotNone(
-                weights,
-                msg=f"Rank {rank}: expected weights in GraphPartitionData, got None",
-            )
-            assert weights is not None
-
-            edge_ids = partitioned_edge_index.edge_ids
-            self.assertIsNotNone(
-                edge_ids,
-                msg=f"Rank {rank}: edge_ids must be present when features are registered",
-            )
-            assert edge_ids is not None
-
-            self.assertIsNotNone(
-                partition_output.edge_partition_book,
-                msg=f"Rank {rank}: edge partition book must be retained for weights",
-            )
-
-            self.assertEqual(
-                weights.shape,
-                edge_ids.shape,
-                msg=f"Rank {rank}: weights and edge_ids must have the same length",
-            )
-
-            expected_weights = edge_ids.float() * 0.1
-            torch.testing.assert_close(
-                weights.sort().values,
-                expected_weights.sort().values,
-                msg=f"Rank {rank}: partitioned weights do not match expected src_node_id / 10.0",
             )
 
 

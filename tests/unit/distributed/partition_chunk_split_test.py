@@ -20,10 +20,8 @@ class _RecordingPartitionManager:
 
 def _mask_loop_split(
     input_data: Optional[Tuple[torch.Tensor, ...]],
-    rank_indices: torch.Tensor,
     chunk_rank: torch.Tensor,
     world_size: int,
-    generate_pb: bool,
 ) -> list:
     """Reference: one masking pass per destination rank."""
     input_indices = torch.arange(len(chunk_rank), dtype=torch.int64)
@@ -33,10 +31,7 @@ def _mask_loop_split(
         data = None
         if input_data is not None:
             data = tuple(t[per_rank_indices] for t in input_data)
-        pb_indices = None
-        if generate_pb:
-            pb_indices = rank_indices[per_rank_indices]
-        result.append((data, pb_indices))
+        result.append((data, None))
     return result
 
 
@@ -56,7 +51,6 @@ class PartitionChunkSplitTest(TestCase):
             param("int64_book_300_ranks", world_size=300, num_items=5000),
             param("empty_chunk", world_size=4, num_items=0),
             param("int32_ids", world_size=5, num_items=500, id_dtype=torch.int32),
-            param("generate_pb", world_size=7, num_items=500, generate_pb=True),
             param("no_input_data", world_size=7, num_items=500, has_data=False),
             param("book_int64", world_size=7, num_items=500, book_dtype=torch.int64),
         ]
@@ -67,7 +61,6 @@ class PartitionChunkSplitTest(TestCase):
         world_size: int,
         num_items: int,
         id_dtype: torch.dtype = torch.int64,
-        generate_pb: bool = False,
         has_data: bool = True,
         book_dtype: torch.dtype = torch.uint8,
     ) -> None:
@@ -79,8 +72,7 @@ class PartitionChunkSplitTest(TestCase):
         dst = torch.randint(0, 10_000, (num_items,)).to(id_dtype)
         features = torch.randn(num_items, 6)
         edge_ids = torch.arange(num_items, dtype=torch.int64)
-        # Distinct from the positions in the chunk, so mixing up the two would fail.
-        pb_indices = torch.randperm(num_items) + 1_000_000
+        rank_indices = torch.arange(num_items, dtype=torch.int64)
         input_data = None
         if has_data:
             input_data = (src, dst, features, edge_ids)
@@ -94,16 +86,13 @@ class PartitionChunkSplitTest(TestCase):
         partitioner._partition_mgr = _RecordingPartitionManager()
         partitioner._partition_single_chunk_data(
             input_data=input_data,
-            rank_indices=pb_indices,
+            rank_indices=rank_indices,
             partition_function=lambda _, __: chunk_rank,
             chunk_start_pos=0,
             chunk_end_pos=num_items,
-            generate_pb=generate_pb,
         )
 
-        expected = _mask_loop_split(
-            input_data, pb_indices, chunk_rank.long(), world_size, generate_pb
-        )
+        expected = _mask_loop_split(input_data, chunk_rank.long(), world_size)
         actual = partitioner._partition_mgr.chunk_res
         self.assertEqual(len(actual), world_size)
         for (actual_data, actual_pb), (expected_data, expected_pb) in zip(

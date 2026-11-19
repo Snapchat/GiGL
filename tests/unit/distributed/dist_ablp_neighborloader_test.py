@@ -12,8 +12,6 @@ from torch_geometric.data import Data, HeteroData
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -1175,18 +1173,11 @@ class DistABLPLoaderTest(TestCase):
     @parameterized.expand(
         [
             param(
-                "Tensor-based partitioning, list fanout",
-                partitioner_class=DistPartitioner,
+                "List fanout",
                 fanout=[2, 2],
             ),
             param(
-                "Range-based partitioning, list fanout",
-                partitioner_class=DistRangePartitioner,
-                fanout=[2, 2],
-            ),
-            param(
-                "Range-based partitioning, dict fanout",
-                partitioner_class=DistRangePartitioner,
+                "Dict fanout",
                 fanout={
                     EdgeType(NodeType("user"), Relation("to"), NodeType("story")): [
                         2,
@@ -1203,7 +1194,6 @@ class DistABLPLoaderTest(TestCase):
     def test_toy_heterogeneous_ablp(
         self,
         _,
-        partitioner_class: type[DistPartitioner],
         fanout: Union[list[int], dict[EdgeType, list[int]]],
     ):
         create_test_process_group()
@@ -1237,7 +1227,6 @@ class DistABLPLoaderTest(TestCase):
             sample_edge_direction="in",
             _ssl_positive_label_percentage=0.1,
             splitter=splitter,
-            partitioner_class=partitioner_class,
         )
 
         mp.spawn(

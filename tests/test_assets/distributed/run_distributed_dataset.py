@@ -1,4 +1,4 @@
-from typing import MutableMapping, Optional, Type, Union
+from typing import MutableMapping, Optional, Union
 
 import torch.distributed as dist
 
@@ -6,7 +6,6 @@ from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
 from gigl.common.utils.vertex_ai_context import DistributedContext
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -51,7 +50,6 @@ def run_distributed_dataset(
     mocked_dataset_info: MockedDatasetInfo,
     should_load_tensors_in_parallel: bool = True,
     output_dict: Optional[MutableMapping[int, DistDataset]] = None,
-    partitioner_class: Optional[Type[DistPartitioner]] = None,
     splitter: Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]] = None,
     _use_process_group: bool = True,  # TODO: (svij) Marked for deprecation, use_process_group will default to be True in the future
     _port: Optional[int] = None,  # TODO: (svij) Marked for deprecation
@@ -66,7 +64,6 @@ def run_distributed_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
             Defaults to True.
         output_dict (Optional[MutableMapping[int, DistDataset]]): Dict initialized by mp.Manager().dict() in which outputs will be written to
-        partitioner_class (Optional[Type[DistPartitioner]]): Optional partitioner class to pass into `build_dataset`
         splitter (Optional[Union[NodeAnchorLinkSplitter, NodeSplitter]]): Provided splitter for testing
         weight_edge_feat_name: Passed into `build_dataset`
     """
@@ -100,7 +97,6 @@ def run_distributed_dataset(
             distributed_context=distributed_context,
             sample_edge_direction=sample_edge_direction,
             should_load_tensors_in_parallel=should_load_tensors_in_parallel,
-            partitioner_class=partitioner_class,
             splitter=splitter,
             weight_edge_feat_name=weight_edge_feat_name,
         )
