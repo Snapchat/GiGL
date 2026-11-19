@@ -25,7 +25,6 @@ The test_spec_uri is a yaml file of the following format:
     ```yaml
     tests:
       "name_of_the_test":
-        name_suffix: "_on_${now:}" # Optional, default is "_py<major><minor>_${now:}_<6 random hex chars>".
         task_config_uri: "path/to/task_config.yaml"
         resource_config_uri: "path/to/resource_config.yaml"
         uses_in_memory_sampling: "True"
