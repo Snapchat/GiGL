@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- The mocked test datasets also hold Parquet files, and their preprocessed metadata sets `parquet_uri_prefix` next to
+  `tfrecord_uri_prefix`. All mocked datasets are regenerated with one new version, so GLT tests load them with
+  `ParquetDataLoader` by @kmontemayor2-sc
 - Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
   `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
   entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc
