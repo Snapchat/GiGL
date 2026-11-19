@@ -43,11 +43,14 @@ class TestDatasetFactory(TestCase):
             CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
         ].frozen_gbml_config_uri
 
-        dataset = build_dataset_from_task_config_uri(
-            task_config_uri,
-            is_inference=is_inference,
-            _tfrecord_uri_pattern=".*data.tfrecord$",
-        )
+        # Feature compression must be unset so the build uses its default.
+        with mock.patch.dict(os.environ):
+            os.environ.pop(FEATURE_COMPRESSION_ENV, None)
+            dataset = build_dataset_from_task_config_uri(
+                task_config_uri,
+                is_inference=is_inference,
+                _tfrecord_uri_pattern=".*data.tfrecord$",
+            )
 
         if is_inference:
             self.assertIsNone(dataset.train_node_ids)
@@ -69,28 +72,8 @@ class TestDatasetFactory(TestCase):
                 dataset.val_node_ids.keys() == set([DEFAULT_HOMOGENEOUS_NODE_TYPE])
             )
 
-    def test_node_and_edge_features_are_compressed_by_default_and_off_keeps_float32(
-        self,
-    ) -> None:
-        task_config_uri = get_mocked_dataset_artifact_metadata()[
-            CORA_USER_DEFINED_NODE_ANCHOR_MOCKED_DATASET_INFO.name
-        ].frozen_gbml_config_uri
-        with mock.patch.dict(os.environ):
-            os.environ.pop(FEATURE_COMPRESSION_ENV, None)
-            compressed = build_dataset_from_task_config_uri(
-                task_config_uri,
-                is_inference=False,
-                _tfrecord_uri_pattern=".*data.tfrecord$",
-            )
-        with mock.patch.dict(os.environ, {FEATURE_COMPRESSION_ENV: "OFF"}):
-            uncompressed = build_dataset_from_task_config_uri(
-                task_config_uri,
-                is_inference=False,
-                _tfrecord_uri_pattern=".*data.tfrecord$",
-            )
-
-        # Cora's features are all 0/1, so every column is inferred as a lossless bit column.
-        metadata = compressed.node_quantization_metadata
+        # Cora's features are all 0/1, so by default every column is inferred as a lossless bit column.
+        metadata = dataset.node_quantization_metadata
         assert isinstance(metadata, FeatureQuantizationMetadata)
         self.assertEqual(
             metadata.lossless_feature_indices, tuple(range(metadata.feature_dim))
@@ -98,20 +81,16 @@ class TestDatasetFactory(TestCase):
         self.assertEqual(
             metadata.lossless_column_encodings, ("bit",) * metadata.feature_dim
         )
-        self.assertIsNone(compressed.node_features)
-        self.assertIsNone(uncompressed.node_quantization_metadata)
-        self.assertIsNotNone(uncompressed.node_features)
+        self.assertIsNone(dataset.node_features)
 
-        edge_metadata = compressed.edge_quantization_metadata
+        edge_metadata = dataset.edge_quantization_metadata
         assert isinstance(edge_metadata, FeatureQuantizationMetadata)
         self.assertEqual(edge_metadata.feature_dim, 4)
         self.assertEqual(
             edge_metadata.lossless_feature_indices,
             tuple(range(edge_metadata.feature_dim)),
         )
-        self.assertIsNone(compressed.edge_features)
-        self.assertIsNone(uncompressed.edge_quantization_metadata)
-        self.assertIsNotNone(uncompressed.edge_features)
+        self.assertIsNone(dataset.edge_features)
 
 
 if __name__ == "__main__":

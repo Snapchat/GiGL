@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from absl.testing import absltest
 
 import gigl.distributed.graph_store.dist_server as dist_server_module
@@ -39,7 +38,6 @@ from tests.test_assets.distributed.test_dataset import (
 from tests.test_assets.distributed.utils import (
     MockGraphStoreInfo,
     create_test_process_group,
-    get_process_group_init_method,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -1347,48 +1345,6 @@ class TestRemoteDistDatasetSharding(RemoteDistDatasetTestBase):
             )
 
 
-def _test_fetch_free_ports_on_storage_cluster(
-    rank: int,
-    world_size: int,
-    init_process_group_init_method: str,
-    num_ports: int,
-    mock_ports: list[int],
-):
-    """Test function to run in spawned processes."""
-    dist.init_process_group(
-        backend="gloo",
-        init_method=init_process_group_init_method,
-        world_size=world_size,
-        rank=rank,
-    )
-    try:
-        cluster_info = _create_mock_graph_store_info(
-            num_compute_nodes=world_size,
-            num_processes_per_compute=1,
-            compute_node_rank=rank,
-        )
-        remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
-
-        with patch(
-            "gigl.distributed.graph_store.remote_dist_dataset.request_server",
-            return_value=mock_ports,
-        ):
-            ports = remote_dataset.fetch_free_ports_on_storage_cluster(num_ports)
-
-        assert len(ports) == num_ports, f"Expected {num_ports} ports, got {len(ports)}"
-
-        # Verify all ranks get the same ports via all_gather
-        gathered_ports = [None] * world_size
-        dist.all_gather_object(gathered_ports, ports)
-
-        for i, rank_ports in enumerate(gathered_ports):
-            assert rank_ports == mock_ports, (
-                f"Rank {i} got {rank_ports}, expected {mock_ports}"
-            )
-    finally:
-        dist.destroy_process_group()
-
-
 class TestGetFreePortsOnStorageCluster(RemoteDistDatasetTestBase):
     def setUp(self) -> None:
         global _test_server
@@ -1396,18 +1352,36 @@ class TestGetFreePortsOnStorageCluster(RemoteDistDatasetTestBase):
         _test_server = DistServer(dataset)
         dist_server_module._dist_server = _test_server
 
-    def test_fetch_free_ports_on_storage_cluster_distributed(self):
-        """Test that free ports are correctly broadcast across all ranks."""
-        init_method = get_process_group_init_method()
-        world_size = 2
+    def test_fetch_free_ports_on_storage_cluster_broadcasts_rank_zero_ports(self):
+        """Only compute rank 0 asks the server; every other rank receives its ports by broadcast."""
         num_ports = 3
         mock_ports = [10000, 10001, 10002]
 
-        mp.spawn(
-            fn=_test_fetch_free_ports_on_storage_cluster,
-            args=(world_size, init_method, num_ports, mock_ports),
-            nprocs=world_size,
-        )
+        def fake_broadcast(ports: list, src: int) -> None:
+            # Stands in for the gloo broadcast: rank 0's values overwrite the placeholders in place.
+            ports[:] = mock_ports
+
+        for compute_node_rank in (0, 1):
+            cluster_info = _create_mock_graph_store_info(
+                num_compute_nodes=2,
+                num_processes_per_compute=1,
+                compute_node_rank=compute_node_rank,
+            )
+            remote_dataset = RemoteDistDataset(cluster_info=cluster_info, local_rank=0)
+            with (
+                patch.object(dist, "is_initialized", return_value=True),
+                patch.object(
+                    dist, "broadcast_object_list", side_effect=fake_broadcast
+                ) as broadcast,
+                patch(
+                    "gigl.distributed.graph_store.remote_dist_dataset.request_server",
+                    return_value=mock_ports,
+                ) as request_server_mock,
+            ):
+                ports = remote_dataset.fetch_free_ports_on_storage_cluster(num_ports)
+            self.assertEqual(ports, mock_ports)
+            self.assertEqual(broadcast.call_args.kwargs["src"], 0)
+            self.assertEqual(request_server_mock.call_count, 1 - compute_node_rank)
 
     def test_fetch_free_ports_fails_without_process_group(self):
         """Test that fetch_free_ports_on_storage_cluster raises when dist not initialized."""
