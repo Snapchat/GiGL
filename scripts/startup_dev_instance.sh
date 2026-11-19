@@ -109,10 +109,6 @@ fi
 
 # Permission for docker.sock
 sudo chmod 777 /var/run/docker.sock
-# Ensure we can run multi-arch docker builds
-docker buildx create --driver=docker-container --use
-sudo apt-get install -y qemu-user-static
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
 # Opinionated decision to install zsh as well - its better than bash
 if ! command -v zsh >/dev/null 2>&1; then
