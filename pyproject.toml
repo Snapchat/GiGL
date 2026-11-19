@@ -65,15 +65,16 @@ transform = [
   "apache-beam[gcp]==2.76.0",
   "pyarrow>14",
   # Tensorflow transform packages.
-  # These packages are excluded on darwin machines; they are not validated on macOS.
-  # These packages are also required to be in sync.
+  # These packages are required to be in sync.
   # See the following for the compatibility matrix: https://pypi.org/project/tensorflow-transform/
-  # tensorflow-data-validation 1.21.0 publishes manylinux_2_39 wheels only, so installing
+  # tensorflow-data-validation 1.21.0 publishes manylinux_2_39 wheels on Linux, so installing
   # this extra on Linux needs glibc 2.39+; every runtime image is Ubuntu 24.04 (glibc 2.39).
-  "tensorflow-data-validation==1.21.0 ; sys_platform != 'darwin'",
-  "tensorflow-metadata==1.21.0 ; sys_platform != 'darwin'",
-  "tensorflow-transform==1.21.0 ; sys_platform != 'darwin'",
-  "tfx-bsl==1.21.0 ; sys_platform != 'darwin'",
+  # macOS arm64 wheels exist for tfx-bsl and tensorflow-data-validation (cp311-cp313), so
+  # the extra installs there too, e.g. for `make mock_assets`.
+  "tensorflow-data-validation==1.21.0",
+  "tensorflow-metadata==1.21.0",
+  "tensorflow-transform==1.21.0",
+  "tfx-bsl==1.21.0",
 ]
 pyg27-torch28-cpu = [
   "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility
