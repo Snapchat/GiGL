@@ -1,6 +1,7 @@
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import torch
+from graphlearn_torch.distributed import shutdown_rpc
 
 from gigl.common import LocalUri
 from gigl.distributed.graph_store.remote_dist_dataset import RemoteDistDataset
@@ -71,6 +72,38 @@ def create_test_process_group() -> None:
         world_size=1,
         init_method=get_process_group_init_method(),
     )
+
+
+def run_checks_in_one_process(
+    _: int, checks: Sequence[tuple[str, Callable[..., None], tuple]]
+) -> None:
+    """Runs every check in this one process, with a fresh process group per check.
+
+    Meant to be the target of ``mp.spawn``; the first argument is the spawn rank and is ignored.
+    Spawning (and re-importing) a process per check dominates test time, so checks share one.
+
+    GLT cannot re-init RPC after ``shutdown_rpc()``, so RPC is shut down once after all checks.
+    Each check must therefore shut down only its own loader/sampler (never call ``shutdown_rpc``)
+    and must not create its own process group.
+
+    Args:
+        _: The rank supplied by ``mp.spawn``. Ignored.
+        checks: ``(name, check, args)`` tuples, run in order as ``check(*args)``.
+
+    Raises:
+        AssertionError: If a check fails; the failing check's name is added as a note.
+    """
+    for name, check, args in checks:
+        if not torch.distributed.is_initialized():
+            create_test_process_group()
+        try:
+            check(*args)
+        except AssertionError as e:
+            e.add_note(f"check: {name}")
+            raise
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
+    shutdown_rpc()
 
 
 class MockGraphStoreInfo(GraphStoreInfo):
