@@ -115,8 +115,9 @@ performance testing.
 
 One your PR is "Added to the merge queue", the changes will only merge once our CI
 [runs these tests](https://github.com/Snapchat/GiGL/blob/main/.github/workflows/on-pr-merge.yml) and all of their status
-checks succeed. The only caveat to this is the large scale performance testing that runs @ some regular cadence but is
-not visible to open source users currently.
+checks succeed. The caveats to this are the large scale performance testing that runs @ some regular cadence but is not
+visible to open source users currently, and the `ci-integration-tests-spark` job, which runs in the merge queue but is
+not a required status check.
 
 ### Types of Tests
 
@@ -149,6 +150,13 @@ Run all integration tests:
 
 ```
 /integration_test
+```
+
+Run the integration tests for the legacy Spark components (Subgraph Sampler and Split Generator). `/all_test` does not
+run these:
+
+```
+/spark_integration_tests
 ```
 
 Run all end-to-end tests:
@@ -261,6 +269,14 @@ make integration_test PY_TEST_FILES="file_loader_test.py"
 
 All integration tests are organized in `tests/integration` folder with the python entry point being
 `tests/integration/main.py`
+
+The integration tests for the legacy Spark components (Subgraph Sampler and Split Generator) are in a separate group in
+the `tests/integration_tests_spark` folder, with the python entry point being `tests/integration_tests_spark/main.py`.
+They need the Scala toolchain (do not install with `SKIP_SCALA=1`) and do not use the `src-cpu` image. Run them using:
+
+```bash
+make integration_tests_spark
+```
 
 </details>
 

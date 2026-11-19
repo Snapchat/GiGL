@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
+  `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
+  entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc
 - Make the sampling-loader bring-up RPC timeout configurable via `GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS` (workers reset
   to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
   bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and
@@ -88,8 +91,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- `scripts/create_dev_instance.py` creates dev VMs from the Ubuntu 24.04 Deep Learning VM image
+  `common-cu129-ubuntu-2404-nvidia-580-v20261111` (glibc 2.39, CUDA 12.9, NVIDIA driver 580) instead of the Ubuntu 22.04
+  CUDA 12.8 image, whose support ended on August 1, 2026. The locked `tensorflow-data-validation` 1.21 has Linux wheels
+  only for glibc 2.39 and later, so `install_py_deps.sh` fails on Ubuntu 22.04 by @kmontemayor2-sc
 - `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
   packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
+- The data preprocessor writes Parquet by default; set the `data_preprocessor_output_format` feature flag to `tfrecord`
+  to keep writing TFRecords. Configs without the GLT backend (`should_run_glt_backend`) must set it to `tfrecord`,
+  because the subgraph sampler reads only TFRecords, and the config validator rejects Parquet output for them. Parquet
+  output leaves `tfrecord_uri_prefix` empty in the preprocessed metadata by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
@@ -161,6 +172,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
   would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
   @kmontemayor2-sc
+- The partitioners write each machine's node features and labels into a tensor allocated once, on disk when
+  `GIGL_TENSOR_SPILL_DIR` is set, instead of joining the received chunks with `torch.cat`. Range partitioning fills it
+  in node id order rather than sorting a joined copy; with spilling on, its peak anonymous memory drops from ~2x the
+  features to ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/825
 
 ### Fixed
 

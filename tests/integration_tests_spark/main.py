@@ -1,0 +1,38 @@
+import multiprocessing
+import sys
+
+from tests.test_assets.runtime_type_checking import install_runtime_typechecking
+
+install_runtime_typechecking()
+
+import gigl.src.common.constants.local_fs as local_fs_constants
+from gigl.common import LocalUri
+from gigl.common.utils.test_utils import parse_args, run_tests
+from gigl.src.common.utils.metrics_service_provider import initialize_metrics
+from tests.test_assets.uri_constants import DEFAULT_NABLP_TASK_CONFIG_URI
+
+
+def run(pattern: str = "*_test.py") -> bool:
+    initialize_metrics(
+        task_config_uri=DEFAULT_NABLP_TASK_CONFIG_URI,
+        service_name="integration_tests_spark",
+    )
+    return run_tests(
+        start_dir=LocalUri.join(
+            local_fs_constants.get_project_root_directory(),
+            "tests",
+            "integration_tests_spark",
+        ),
+        pattern=pattern,
+        use_sequential_execution=True,
+    )
+
+
+if __name__ == "__main__":
+    # Tests run Beam pipelines on the DirectRunner, which runs them through Prism and
+    # leaves gRPC threads in this process. gRPC is not fork-safe, so a process pool that
+    # forks after such a test (e.g. `GcsUtils.upload_files_to_gcs`) can abort its children
+    # with `BrokenProcessPool`. Forkserver starts children from a clean helper process.
+    multiprocessing.set_start_method("forkserver")
+    was_successful: bool = run(pattern=parse_args().test_file_pattern)
+    sys.exit(not was_successful)

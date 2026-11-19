@@ -17,11 +17,16 @@ from gigl.common.utils.gcs import GcsUtils
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.constants.graph_metadata import DEFAULT_CONDENSED_NODE_TYPE
 from gigl.src.common.types import AppliedTaskIdentifier
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
 from gigl.src.data_preprocessor.lib.ingest.reference import NodeDataReference
-from gigl.src.data_preprocessor.lib.types import NodeDataPreprocessingSpec, TFTensorDict
+from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+    DataPreprocessorOutputFormat,
+    NodeDataPreprocessingSpec,
+    TFTensorDict,
+)
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
@@ -132,6 +137,10 @@ class PretrainedTransformFnTest(TestCase):
             mocked_dataset_name,
             "preprocessed_metadata.yaml",
         ).uri
+        # This test reads the TFRecord output; the Parquet output is covered by parquet_writer_test.py.
+        gbml_config_pb.feature_flags[DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG] = (
+            DataPreprocessorOutputFormat.TFRECORD.value
+        )
 
         task_config_uri = LocalUri(tempfile.NamedTemporaryFile(delete=False).name)
         self._proto_utils.write_proto_to_yaml(proto=gbml_config_pb, uri=task_config_uri)
@@ -144,7 +153,7 @@ class PretrainedTransformFnTest(TestCase):
         extra_data_preprocessor_args: dict[str, str],
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput:
         applied_task_identifier = AppliedTaskIdentifier(
-            f"pretrained_transform_fn_test_{run_name}_{current_formatted_datetime()}"
+            new_test_run_id(f"pretrained_transform_fn_test_{run_name}")
         )
         self._applied_tasks_to_cleanup.append(applied_task_identifier)
         task_config_uri = self._write_task_config(

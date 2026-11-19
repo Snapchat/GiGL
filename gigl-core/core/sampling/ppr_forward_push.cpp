@@ -24,6 +24,15 @@ struct NodeScore {
     int32_t nodeId;
     double score;
 };
+
+// Orders by score descending, breaking ties by node id so selection among
+// equal scores does not depend on hash container iteration order.
+bool higherNodeScore(const NodeScore& a, const NodeScore& b) {
+    if (a.score != b.score) {
+        return a.score > b.score;
+    }
+    return a.nodeId < b.nodeId;
+}
 } // namespace
 
 // Pack (node_id, etype_id) into a single uint64 for use as a hash key.
@@ -40,6 +49,28 @@ static int32_t unpackEdgeTypeId(uint64_t key) {
     // Match packKey(): discard the high source-node bits, then interpret the
     // low 32 bits using the original signed int32_t edge-type representation.
     return static_cast<int32_t>(static_cast<uint32_t>(key));
+}
+
+// Reads one node's total out-degree from a resolved degree view. Returns 0 for a
+// destination-only node type: it has no outgoing edge types, so it has no degree data.
+static inline int32_t readTotalDegree(int32_t nodeId, int32_t nodeTypeId, const DegreeView& degreeView) {
+    if (degreeView.degreesInt32.empty() && degreeView.degreesInt64.empty()) {
+        return 0;
+    }
+    const auto numDegrees = static_cast<int64_t>(degreeView.degreesInt32.size() + degreeView.degreesInt64.size());
+    TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
+    TORCH_CHECK(nodeId < numDegrees,
+                "Node ID ",
+                nodeId,
+                " out of range for degree tensor of ntype_id ",
+                nodeTypeId,
+                " (size=",
+                numDegrees,
+                "). This indicates corrupted graph data or a sampler bug.");
+    if (!degreeView.degreesInt32.empty()) {
+        return degreeView.degreesInt32[nodeId];
+    }
+    return static_cast<int32_t>(std::min<int64_t>(degreeView.degreesInt64[nodeId], INT32_MAX));
 }
 
 PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
@@ -105,12 +136,55 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
             _edgeTypeToSrcNtypeId[edgeTypeId] = nodeTypeId;
         }
     }
+    // Resolve each degree tensor's dtype and data pointer once so the push loop
+    // reads degrees without per-call tensor dispatch. _degreeTensors keeps the
+    // storage alive.
+    TORCH_CHECK(static_cast<int32_t>(_degreeTensors.size()) == _numNodeTypes,
+                "Expected one degree tensor per node type (",
+                _numNodeTypes,
+                "), got ",
+                _degreeTensors.size(),
+                ".");
+    _degreeViews.resize(_degreeTensors.size());
+    for (size_t nodeTypeIndex = 0; nodeTypeIndex < _degreeTensors.size(); ++nodeTypeIndex) {
+        const auto& degreeTensor = _degreeTensors[nodeTypeIndex];
+        if (degreeTensor.numel() == 0) {
+            // Only destination-only node types have no degree data. An empty tensor for
+            // a type with outgoing edges would read every degree as 0 and corrupt scores.
+            TORCH_CHECK(_nodeTypeToEdgeTypeIds[nodeTypeIndex].empty(),
+                        "Degree tensor for ntype_id ",
+                        nodeTypeIndex,
+                        " is empty, but the node type has outgoing edge types.");
+            continue;
+        }
+        if (degreeTensor.scalar_type() == torch::kInt) {
+            _degreeViews[nodeTypeIndex].degreesInt32 =
+                c10::ArrayRef<int32_t>(degreeTensor.data_ptr<int32_t>(), degreeTensor.numel());
+        } else if (degreeTensor.scalar_type() == torch::kLong) {
+            _degreeViews[nodeTypeIndex].degreesInt64 =
+                c10::ArrayRef<int64_t>(degreeTensor.data_ptr<int64_t>(), degreeTensor.numel());
+        } else {
+            TORCH_CHECK(false,
+                        "Unsupported degree tensor dtype: ",
+                        degreeTensor.scalar_type(),
+                        ". Expected torch.int32 or torch.int64.");
+        }
+    }
+
     // Allocate per-seed, per-node-type state.
     // .assign(n, val) fills a vector with n independent copies of val — like [val for _ in range(n)] in Python.
     _state.assign(_batchSize, std::vector<SeedNodeTypeState>(_numNodeTypes));
+    // Pre-size the seed node type's tables to skip the first several rehashes.
+    // The sizes are about the median final table size per seed on a production-scale
+    // graph, rounded to a power of two. Other node types are sized on demand so
+    // heterogeneous states do not pay for tables a seed may never reach.
+    for (auto& perSeedState : _state) {
+        perSeedState[seedNodeTypeId].residualStates.reserve(1024);
+        perSeedState[seedNodeTypeId].pprScores.reserve(128);
+    }
 
     // accessor<dtype, ndim>() returns a typed view into the tensor's data that
-    // supports [i] indexing with bounds checking in debug builds.
+    // supports direct [i] indexing without a per-access dispatch.
     auto seedNodeAcc = seedNodes.accessor<int64_t, 1>();
     _numNodesInQueue = _batchSize;
     for (int32_t seedIdx = 0; seedIdx < _batchSize; ++seedIdx) {
@@ -118,8 +192,8 @@ PPRForwardPush::PPRForwardPush(const torch::Tensor& seedNodes,
         // PPR initialisation: each seed starts with residual = alpha (the
         // restart probability).  The first push will move alpha into ppr_score
         // and distribute (1-alpha)*alpha to the seed's neighbors.
-        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0};
-        _state[seedIdx][seedNodeTypeId].queue.insert(seedNodeId);
+        _state[seedIdx][seedNodeTypeId].residualStates[seedNodeId] = ResidualState{_alpha, 0, true};
+        _state[seedIdx][seedNodeTypeId].queue.push_back(seedNodeId);
     }
 }
 
@@ -140,7 +214,7 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
     // nodesToLookup[edgeTypeId] = set of node IDs that need a neighbor fetch for
     // edge type edgeTypeId this round.  Using a set deduplicates nodes that appear
     // in multiple seeds' queues: we only fetch each (node, etype) pair once.
-    std::unordered_map<int32_t, std::unordered_set<int32_t>> nodesToLookup;
+    ska::flat_hash_map<int32_t, ska::flat_hash_set<int32_t>> nodesToLookup;
 
     // TODO: For homogeneous graphs _numNodeTypes == 1, so the inner loop always
     // executes exactly once (nodeTypeId=0).  std::vector indexing is cheap, but a
@@ -159,8 +233,19 @@ std::optional<std::unordered_map<int32_t, torch::Tensor>> PPRForwardPush::drainQ
             seedNodeTypeState.queuedNodes = std::move(seedNodeTypeState.queue);
             seedNodeTypeState.queue.clear();
             _numNodesInQueue -= static_cast<int32_t>(seedNodeTypeState.queuedNodes.size());
+            // Pushes within one round read residuals that earlier pushes in the same
+            // round may have updated, so the processing order affects the result.
+            // Ascending node id keeps the order independent of discovery order.
+            std::sort(seedNodeTypeState.queuedNodes.begin(), seedNodeTypeState.queuedNodes.end());
 
             for (int32_t nodeId : seedNodeTypeState.queuedNodes) {
+                // A drained node may be queued again while the snapshot is pushed.
+                auto drainedStateIter = seedNodeTypeState.residualStates.find(nodeId);
+                TORCH_CHECK(drainedStateIter != seedNodeTypeState.residualStates.end(),
+                            "PPR drain expected residual state for queued node ",
+                            nodeId,
+                            ".");
+                drainedStateIter->second.queued = false;
                 for (int32_t edgeTypeId : _nodeTypeToEdgeTypeIds[nodeTypeId]) {
                     if (_neighborCache.find(packKey(nodeId, edgeTypeId)) == _neighborCache.end()) {
                         nodesToLookup[edgeTypeId].insert(nodeId);
@@ -279,7 +364,7 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                         ".");
         }
 
-        // accessor<int64_t, 1>() gives a bounds-checked, typed 1-D view into
+        // accessor<int64_t, 1>() gives a typed 1-D view into
         // each tensor's data — equivalent to iterating over a NumPy array.
         auto nodeIdsAccessor = nodeIdsTensor.accessor<int64_t, 1>();
         auto flatNeighborIdsAccessor = flatNeighborIdsTensor.accessor<int64_t, 1>();
@@ -345,6 +430,9 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                             ".");
                 auto& sourceState = sourceStateIter->second;
                 const double sourceResidual = sourceState.residual;
+                // Copied because inserting neighbors may rehash residualStates and
+                // invalidate sourceState when source and destination node types match.
+                const int32_t neighborHop = sourceState.minHop + 1;
 
                 // a. Absorb: move residual into the PPR score.
                 srcNodeTypeState.pprScores[sourceNodeId] += sourceResidual;
@@ -396,21 +484,30 @@ void PPRForwardPush::pushResiduals(const NeighborFetchMap& fetchedByEtypeId) {
                     // c. Accumulate residual for each neighbor and re-enqueue if threshold
                     // exceeded.
                     auto& dstNodeTypeState = _state[seedIdx][dstNodeTypeId];
+                    TORCH_CHECK(dstNodeTypeId < static_cast<int32_t>(_degreeViews.size()),
+                                "nodeTypeId ",
+                                dstNodeTypeId,
+                                " out of range [0, ",
+                                _degreeViews.size(),
+                                "). This indicates a construction bug in the sampler.");
+                    const DegreeView& dstDegreeView = _degreeViews[dstNodeTypeId];
                     for (int32_t neighborNodeId : neighborList->get()) {
-                        const int32_t neighborHop = sourceState.minHop + 1;
-                        auto residualStateIter =
-                            dstNodeTypeState.residualStates.emplace(neighborNodeId, ResidualState{0.0, neighborHop})
-                                .first;
+                        auto residualStateIter = dstNodeTypeState.residualStates
+                                                     .emplace(neighborNodeId, ResidualState{0.0, neighborHop, false})
+                                                     .first;
                         auto& residualState = residualStateIter->second;
                         residualState.residual += residualPerNeighbor;
                         residualState.minHop = std::min(residualState.minHop, neighborHop);
 
-                        double threshold = _requeueThresholdFactor *
-                                           static_cast<double>(getTotalDegree(neighborNodeId, dstNodeTypeId));
-
-                        if (dstNodeTypeState.queue.find(neighborNodeId) == dstNodeTypeState.queue.end() &&
-                            residualState.residual >= threshold) {
-                            dstNodeTypeState.queue.insert(neighborNodeId);
+                        if (residualState.queued) {
+                            continue;
+                        }
+                        double threshold =
+                            _requeueThresholdFactor *
+                            static_cast<double>(readTotalDegree(neighborNodeId, dstNodeTypeId, dstDegreeView));
+                        if (residualState.residual >= threshold) {
+                            residualState.queued = true;
+                            dstNodeTypeState.queue.push_back(neighborNodeId);
                             ++_numNodesInQueue;
                         }
                     }
@@ -615,10 +712,8 @@ static std::vector<NodeScore> selectFinalizedPPRPairs(const SeedNodeTypeState& n
             scorePairs.push_back(NodeScore{nodeId, score});
         }
         if (numReturnedPairs < static_cast<int32_t>(scorePairs.size())) {
-            std::nth_element(scorePairs.begin(),
-                             scorePairs.begin() + numReturnedPairs,
-                             scorePairs.end(),
-                             [](const auto& a, const auto& b) { return a.score > b.score; });
+            std::nth_element(
+                scorePairs.begin(), scorePairs.begin() + numReturnedPairs, scorePairs.end(), higherNodeScore);
         }
 
         for (int32_t rankIdx = 0; rankIdx < numReturnedPairs; ++rankIdx) {
@@ -646,8 +741,8 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
     const int32_t residualTopUpBudget =
         std::max<int32_t>(0, sequenceLength - static_cast<int32_t>(selectedPairs.size()));
     if (residualTopUpBudget > 0) {
-        const std::unordered_map<int32_t, double>& pprScoresByNodeId = nodeTypeState.pprScores;
-        std::unordered_set<int32_t> selectedPPRNodeIds;
+        const ska::flat_hash_map<int32_t, double>& pprScoresByNodeId = nodeTypeState.pprScores;
+        ska::flat_hash_set<int32_t> selectedPPRNodeIds;
         selectedPPRNodeIds.reserve(selectedPairs.size());
         for (const auto& selectedPair : selectedPairs) {
             selectedPPRNodeIds.insert(selectedPair.nodeId);
@@ -673,10 +768,8 @@ static void appendResidualTopUpPairs(const SeedNodeTypeState& nodeTypeState,
         const int32_t residualTopK = std::min(residualTopUpBudget, static_cast<int32_t>(residualPairs.size()));
         if (residualTopK > 0) {
             if (residualTopK < static_cast<int32_t>(residualPairs.size())) {
-                std::nth_element(residualPairs.begin(),
-                                 residualPairs.begin() + residualTopK,
-                                 residualPairs.end(),
-                                 [](const auto& a, const auto& b) { return a.score > b.score; });
+                std::nth_element(
+                    residualPairs.begin(), residualPairs.begin() + residualTopK, residualPairs.end(), higherNodeScore);
             }
 
             for (int32_t rankIdx = 0; rankIdx < residualTopK; ++rankIdx) {
@@ -934,9 +1027,7 @@ PPRExtractResult PPRForwardPush::extractTopKWithResidualTopUp(int32_t maxPPRNode
             // the previous behavior: selected finalized and top-up rows are ordered
             // together by emitted score, so top-up rows may interleave after selection.
             if (selectedPairs.size() > 1) {
-                std::sort(selectedPairs.begin(), selectedPairs.end(), [](const auto& a, const auto& b) {
-                    return a.score > b.score;
-                });
+                std::sort(selectedPairs.begin(), selectedPairs.end(), higherNodeScore);
             }
 
             for (const auto& [nodeId, score] : selectedPairs) {
@@ -1075,40 +1166,6 @@ PPRExtractResult extractTypedTopKWithResidualTopUp(const std::vector<PPRForwardP
     }
 
     return extractedTypedPPRByNodeTypeId;
-}
-
-int32_t PPRForwardPush::getTotalDegree(int32_t nodeId, int32_t nodeTypeId) const {
-    TORCH_CHECK(nodeTypeId >= 0, "nodeTypeId ", nodeTypeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeTypeId < static_cast<int32_t>(_degreeTensors.size()),
-                "nodeTypeId ",
-                nodeTypeId,
-                " out of range [0, ",
-                _degreeTensors.size(),
-                "). This indicates a construction bug in the sampler.");
-    const auto& degreeTensor = _degreeTensors[nodeTypeId];
-    if (degreeTensor.numel() == 0) {
-        return 0;
-    }
-    TORCH_CHECK(nodeId >= 0, "Node ID ", nodeId, " is negative, which indicates a sampler bug.");
-    TORCH_CHECK(nodeId < static_cast<int32_t>(degreeTensor.size(0)),
-                "Node ID ",
-                nodeId,
-                " out of range for degree tensor of ntype_id ",
-                nodeTypeId,
-                " (size=",
-                degreeTensor.size(0),
-                "). This indicates corrupted graph data or a sampler bug.");
-    if (degreeTensor.scalar_type() == torch::kInt) {
-        return degreeTensor.data_ptr<int32_t>()[nodeId];
-    }
-    if (degreeTensor.scalar_type() == torch::kLong) {
-        return static_cast<int32_t>(std::min<int64_t>(degreeTensor.data_ptr<int64_t>()[nodeId], INT32_MAX));
-    }
-    TORCH_CHECK(false,
-                "Unsupported degree tensor dtype: ",
-                degreeTensor.scalar_type(),
-                ". Expected torch.int32 or torch.int64.");
-    return 0; // unreachable; suppresses compiler warning
 }
 
 } // namespace gigl

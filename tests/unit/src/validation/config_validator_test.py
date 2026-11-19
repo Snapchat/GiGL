@@ -165,6 +165,8 @@ def _create_valid_offline_subgraph_sampling_task_config() -> gbml_config_pb2.Gbm
         dataset_config=dataset_config,
         trainer_config=trainer_config,
         inferencer_config=inferencer_config,
+        # The subgraph sampler reads only TFRecords.
+        feature_flags={"data_preprocessor_output_format": "tfrecord"},
     )
 
 

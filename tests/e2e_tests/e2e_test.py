@@ -25,7 +25,7 @@ The test_spec_uri is a yaml file of the following format:
     ```yaml
     tests:
       "name_of_the_test":
-        name_suffix: "_on_${now:}"
+        name_suffix: "_on_${now:}" # Optional, default is "_py<major><minor>_${now:}_<6 random hex chars>".
         task_config_uri: "path/to/task_config.yaml"
         resource_config_uri: "path/to/resource_config.yaml"
         uses_in_memory_sampling: "True"
@@ -54,6 +54,7 @@ import argparse
 import os
 import sys
 import textwrap
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -83,9 +84,11 @@ class E2ETest:
         task_config_uri: The URI of the task config to use.
         resource_config_uri: The URI of the resource config to use.
         name_suffix: The suffix to add to the job name; job name will be of form: <test_name><name_suffix>,
-            where <test_name> is the key in :attr:`E2ETestsSpec.tests`. The default names the Python minor
-            (e.g. `_py313_on_20260101_120000`) so that runs of one test on several minors, started in the
-            same second, do not share GCS paths or BigQuery tables.
+            where <test_name> is the key in :attr:`E2ETestsSpec.tests`. The default names the Python minor and
+            ends with 6 random hex chars (e.g. `_py313_20260101_120000_a1b2c3`), so that runs started in the
+            same second, on the same or different minors, do not share GCS paths or BigQuery tables.
+            The random hex is generated once per process, so all tests in one run share it.
+            A custom suffix gets no random hex; add your own if runs can start in the same second.
         start_at: Specify the component where to start the pipeline. Choices are defined in:
             :attr:`gigl.src.common.constants.components.GiGLComponents`.
         stop_after: Specify the component where to stop the pipeline. Choices are defined in:
@@ -98,7 +101,10 @@ class E2ETest:
     resource_config_uri: str
     name_suffix: str = (
         f"_py{sys.version_info.major}{sys.version_info.minor}"
-        "_on_${now:}"  # Makes use of gigl.common.omegaconf_resolvers#now_resolver()
+        # Makes use of gigl.common.omegaconf_resolvers#now_resolver(). There is no "_on" before the
+        # time: the longest test names must still fit the 51-char KFP job name limit.
+        "_${now:}"
+        f"_{uuid.uuid4().hex[:6]}"
     )
     start_at: str = "config_populator"
     stop_after: Optional[str] = None
