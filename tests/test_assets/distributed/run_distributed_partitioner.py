@@ -1,8 +1,8 @@
 from enum import Enum
-from typing import Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 import torch
-from graphlearn_torch.distributed import init_rpc, init_worker_group
+from graphlearn_torch.distributed import init_rpc, init_worker_group, shutdown_rpc
 
 from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed import DistPartitioner
@@ -30,33 +30,41 @@ class InputDataStrategy(Enum):
 
 
 @freeze_gc()
-def run_distributed_partitioner(
+def run_distributed_partitioner_cases(
     rank: int,
-    output_dict: dict[int, PartitionOutput],
+    output_dicts: list[dict[int, PartitionOutput]],
+    cases: list[dict[str, Any]],
+    master_addr: str,
+    master_port: int,
+) -> None:
+    """
+    Runs several partitioning cases in sequence on a specific rank, initializing rpc only once.
+    Spawning the ranks and importing dominates the cost of one case, so tests run many cases in one spawn.
+    Args:
+        rank (int): Current rank of process
+        output_dicts (list[dict[int, PartitionOutput]]): One mp.Manager().dict() per case, in which the outputs of that case are written to.
+        cases (list[dict[str, Any]]): One dict per case with the keyword arguments of `_partition_on_rank` other than `rank`.
+        master_addr (str): Master address for initializing rpc for partitioning
+        master_port (int): Master port for initializing rpc for partitioning
+    """
+    init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
+    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
+    for output_dict, case in zip(output_dicts, cases):
+        output_dict[rank] = _partition_on_rank(rank=rank, **case)
+    shutdown_rpc()
+
+
+def _partition_on_rank(
+    rank: int,
     is_heterogeneous: bool,
     rank_to_input_graph: dict[int, TestGraphData],
     should_assign_edges_by_src_node: bool,
-    master_addr: str,
-    master_port: int,
     input_data_strategy: InputDataStrategy,
     rank_to_edge_weights: Optional[
         dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     ] = None,
-) -> None:
-    """
-    Runs the distributed partitioner on a specific rank.
-    Args:
-        rank (int): Current rank of process
-        output_dict: dict[int, PartitionOutput]: Dict initialized by mp.Manager().dict() in which outputs of partitioner will be written to. This is a mapping of rank to Partition output.
-        is_heterogeneous (bool): Whether homogeneous or heterogeneous inputs should be used
-        rank_to_input_graph (dict[int, TestGraphData]): Mapping of rank to mocked input graph for testing partitioning
-        should_assign_edges_by_src_node (bool): Whether to partion edges according to the partition book of the source node or destination node
-        master_addr (str): Master address for initializing rpc for partitioning
-        master_port (int): Master port for initializing rpc for partitioning
-        input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
-        rank_to_edge_weights (Optional[dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]]): Optional mapping of rank to 1D edge weight tensor (or dict per EdgeType for heterogeneous). Only supported with REGISTER_ALL_ENTITIES_SEPARATELY strategy.
-    """
-
+) -> PartitionOutput:
+    """Partitions the mocked input graph of `rank`. Requires rpc to already be initialized."""
     input_graph = rank_to_input_graph[rank]
     node_ids: Union[torch.Tensor, dict[NodeType, torch.Tensor]]
     edge_index: Union[torch.Tensor, dict[EdgeType, torch.Tensor]]
@@ -95,8 +103,6 @@ def run_distributed_partitioner(
 
     partition_output: PartitionOutput
 
-    init_worker_group(world_size=MOCKED_NUM_PARTITIONS, rank=rank)
-    init_rpc(master_addr=master_addr, master_port=master_port, num_rpc_threads=4)
     dist_partitioner: DistPartitioner
 
     if input_data_strategy in (
@@ -275,4 +281,4 @@ def run_distributed_partitioner(
         )
         partition_output = dist_partitioner.partition()
 
-    output_dict[rank] = partition_output
+    return partition_output

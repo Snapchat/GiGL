@@ -22,6 +22,7 @@ from graphlearn_torch.partition import RangePartitionBook
 from graphlearn_torch.sampler import NodeSamplerInput
 from parameterized import param, parameterized
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     _GlobalIdNeighborSampler,
@@ -187,6 +188,9 @@ def _run(edge_dir: Literal["in", "out"], range_partitioned: bool) -> dict[int, A
 
 
 class RangePartitionedSamplingTest(TestCase):
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
+
     @parameterized.expand([param("in", edge_dir="in"), param("out", edge_dir="out")])
     def test_compressed_id_offsets_sample_exactly_as_rows_for_every_id(
         self, _name: str, edge_dir: Literal["in", "out"]
@@ -205,6 +209,9 @@ class RangePartitionedSamplingTest(TestCase):
 
 class GlobalIdNeighborSamplerTest(TestCase):
     """``_GlobalIdNeighborSampler`` on topologies with and without a row offset."""
+
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
 
     def _sampler(
         self,

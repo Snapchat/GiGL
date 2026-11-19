@@ -28,7 +28,7 @@ reversal is needed since both follow the original edge direction.
 
 import heapq
 from collections import defaultdict
-from typing import Literal
+from typing import Callable, Literal
 
 import networkx as nx
 import torch
@@ -36,9 +36,9 @@ import torch.multiprocessing as mp
 from absl.testing import absltest
 from graphlearn_torch.distributed import shutdown_rpc
 from graphlearn_torch.typing import reverse_edge_type
-from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.logger import Logger
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
@@ -57,6 +57,8 @@ from tests.test_assets.distributed.test_dataset import (
 )
 from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
+
+logger = Logger()
 
 # ---------------------------------------------------------------------------
 # Homogeneous test graph (5 nodes, undirected edges stored as bidirectional)
@@ -387,14 +389,11 @@ def _assert_typed_ppr_edge_attrs(
 # Spawned process functions
 # ---------------------------------------------------------------------------
 def _run_ppr_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate homogeneous PPR loader and verify each batch against NetworkX PPR."""
-    create_test_process_group()
-
     dataset = create_homogeneous_dataset(edge_index=_TEST_EDGE_INDEX, edge_dir=edge_dir)
 
     # This dataset has no edge features, so with_edge is derived as False. PPR
@@ -497,18 +496,15 @@ def _run_ppr_loader_correctness_check(
     assert batches_checked == _NUM_TEST_NODES, (
         f"Expected {_NUM_TEST_NODES} batches, got {batches_checked}"
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
 def _run_ppr_hetero_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
 ) -> None:
     """Iterate heterogeneous PPR loader and verify each batch against NetworkX PPR."""
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset(
         edge_indices=_TEST_HETERO_EDGE_INDICES, edge_dir=edge_dir
     )
@@ -571,13 +567,11 @@ def _run_ppr_hetero_loader_correctness_check(
     assert batches_checked == _NUM_TEST_USERS, (
         f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
     )
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_typed_ppr_loader_shape_check(_: int) -> None:
+def _run_typed_ppr_loader_shape_check() -> None:
     """Verify typed PPR runs through DistNeighborLoader into HeteroData."""
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset(
         edge_indices=_TEST_HETERO_EDGE_INDICES,
         edge_dir="out",
@@ -619,6 +613,7 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
     assert batches_checked == _NUM_TEST_USERS, (
         f"Expected {_NUM_TEST_USERS} batches, got {batches_checked}"
     )
+    loader.shutdown()
 
     empty_story_loader = DistNeighborLoader(
         dataset=dataset,
@@ -647,11 +642,10 @@ def _run_typed_ppr_loader_shape_check(_: int) -> None:
     empty_story_edge_attr = empty_story_datum[(str(USER), "ppr", STORY)].edge_attr
     assert tuple(empty_story_edge_attr.shape) == (0, 8)
 
-    shutdown_rpc()
+    empty_story_loader.shutdown()
 
 
 def _run_ppr_ablp_loader_correctness_check(
-    _: int,
     alpha: float,
     max_ppr_nodes: int,
     edge_dir: Literal["in", "out"],
@@ -666,8 +660,6 @@ def _run_ppr_ablp_loader_correctness_check(
     The ABLP dataset is created inside this spawned process because the
     splitter requires torch.distributed to be initialized.
     """
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset_for_ablp(
         positive_labels={0: [0, 1], 1: [1, 2], 2: [0, 2]},
         train_node_ids=[0, 1],
@@ -767,13 +759,11 @@ def _run_ppr_ablp_loader_correctness_check(
         batches_checked += 1
 
     assert batches_checked > 0, "Expected at least one ABLP batch"
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
+def _run_ppr_labeled_homogeneous_ablp_loader_check() -> None:
     """Verify PPR works for labeled homogeneous DistABLPLoader inputs."""
-    create_test_process_group()
-
     dataset = create_heterogeneous_dataset_for_ablp(
         positive_labels={0: [1], 1: [2], 2: [0]},
         negative_labels={0: [2], 1: [0], 2: [1]},
@@ -815,13 +805,13 @@ def _run_ppr_labeled_homogeneous_ablp_loader_check(_: int) -> None:
     assert datum.edge_attr.size(1) == 2
     assert datum.edge_index.size(1) == datum.edge_attr.size(0)
 
-    shutdown_rpc()
+    loader.shutdown()
 
 
 # ---------------------------------------------------------------------------
 # Bug regression runners
 # ---------------------------------------------------------------------------
-def _run_ppr_destination_only_node_type(_: int) -> None:
+def _run_ppr_destination_only_node_type() -> None:
     """Verify PPR output includes destination-only node types.
 
     Uses a one-directional USER->STORY graph (no STORY->USER edges) so that
@@ -829,8 +819,6 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     STORY nodes appear in the PPR output despite having no outgoing edges and
     being absent from _node_type_to_edge_types.
     """
-    create_test_process_group()
-
     # One-directional graph: USER->STORY only, so STORY is destination-only.
     # user 0 -> story 0, user 0 -> story 1, user 1 -> story 0
     edge_index = torch.tensor([[0, 0, 1], [0, 1, 0]])
@@ -865,13 +853,11 @@ def _run_ppr_destination_only_node_type(_: int) -> None:
     )
     assert (datum[ppr_edge_type].edge_attr[:, 0] > 0).all()
 
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
+def _run_ppr_loader_preserves_original_edges_for_selected_nodes() -> None:
     """Verify opt-in hetero PPR output includes original edges over selected nodes."""
-    create_test_process_group()
-
     edge_index = torch.tensor([[0, 0, 0], [0, 1, 2]])
     dataset = create_heterogeneous_dataset(
         edge_indices={USER_TO_STORY: edge_index},
@@ -929,10 +915,10 @@ def _run_ppr_loader_preserves_original_edges_for_selected_nodes(_: int) -> None:
         int(count) for count in datum.num_sampled_edges[original_output_edge_type]
     ] == [original_edge_index.size(1)]
 
-    shutdown_rpc()
+    loader.shutdown()
 
 
-def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
+def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr() -> None:
     """Verify that ABLP label edges are excluded from anchor-seed PPR walks.
 
     Uses a graph where user 0's positive label target (story 1) is NOT
@@ -940,8 +926,6 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
     in user 0's PPR neighborhood, confirming that label edge types are not
     traversed during PPR walks.
     """
-    create_test_process_group()
-
     # Message-passing graph: user 0 <-> story 0, user 1 <-> story 2
     # Positive label edges: user 0 -> story 1 (NOT in message graph)
     dataset = create_heterogeneous_dataset_for_ablp(
@@ -989,6 +973,22 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
         "story 0 missing from user 0's PPR output — message-passing edge was not traversed"
     )
 
+    loader.shutdown()
+
+
+# GLT loaders must run in their own process, so the scenarios of a test share one process started with mp.spawn.
+# Each scenario builds its loader, checks it and shuts it down; the RPC layer is shut down once after the last scenario
+# because it cannot be initialized again in the same process.
+def _run_scenarios(
+    _: int, scenarios: list[tuple[str, Callable[..., None], tuple]]
+) -> None:
+    create_test_process_group()
+    for name, scenario, args in scenarios:
+        logger.info(f"Running scenario: {name}")
+        try:
+            scenario(*args)
+        except Exception as e:
+            raise AssertionError(f"Scenario '{name}' failed") from e
     shutdown_rpc()
 
 
@@ -1004,67 +1004,67 @@ class DistPPRSamplerTest(TestCase):
             torch.distributed.destroy_process_group()
         super().tearDown()
 
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_correctness_homogeneous(self, _, edge_dir: str) -> None:
-        """Verify PPR scores match NetworkX pagerank on a small homogeneous graph."""
-        mp.spawn(
-            fn=_run_ppr_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+    def test_ppr_sampler_neighbor_loader_scenarios(self) -> None:
+        """Verify PPR through DistNeighborLoader: NetworkX correctness, typed channels and edge cases."""
+        scenarios: list[tuple[str, Callable[..., None], tuple]] = []
+        for edge_dir in ("in", "out"):
+            scenarios.append(
+                (
+                    f"homogeneous correctness edge_dir_{edge_dir}",
+                    _run_ppr_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+            scenarios.append(
+                (
+                    f"heterogeneous correctness edge_dir_{edge_dir}",
+                    _run_ppr_hetero_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+        scenarios.append(
+            (
+                "destination-only node type",
+                _run_ppr_destination_only_node_type,
+                (),
+            )
         )
-
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_correctness_heterogeneous(self, _, edge_dir: str) -> None:
-        """Verify PPR scores match NetworkX pagerank on a heterogeneous bipartite graph."""
-        mp.spawn(
-            fn=_run_ppr_hetero_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+        scenarios.append(
+            (
+                "preserve original edges for selected nodes",
+                _run_ppr_loader_preserves_original_edges_for_selected_nodes,
+                (),
+            )
         )
+        scenarios.append(("typed channel attrs", _run_typed_ppr_loader_shape_check, ()))
+        mp.spawn(fn=_run_scenarios, args=(scenarios,))
 
-    @parameterized.expand(
-        [
-            param("edge_dir_in", edge_dir="in"),
-            param("edge_dir_out", edge_dir="out"),
-        ]
-    )
-    def test_ppr_sampler_ablp_correctness(self, _, edge_dir: str) -> None:
-        """Verify PPR scores through DistABLPLoader on a heterogeneous graph."""
-        mp.spawn(
-            fn=_run_ppr_ablp_loader_correctness_check,
-            args=(_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+    def test_ppr_sampler_ablp_loader_scenarios(self) -> None:
+        """Verify PPR through DistABLPLoader: NetworkX correctness, label-edge exclusion and homogeneous inputs."""
+        scenarios: list[tuple[str, Callable[..., None], tuple]] = []
+        for edge_dir in ("in", "out"):
+            scenarios.append(
+                (
+                    f"ablp correctness edge_dir_{edge_dir}",
+                    _run_ppr_ablp_loader_correctness_check,
+                    (_TEST_ALPHA, _TEST_MAX_PPR_NODES, edge_dir),
+                )
+            )
+        scenarios.append(
+            (
+                "ablp ignores label edges for anchor ppr",
+                _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr,
+                (),
+            )
         )
-
-    def test_ppr_sampler_destination_only_node_type(self) -> None:
-        """Verify PPR output includes destination-only node types."""
-        mp.spawn(fn=_run_ppr_destination_only_node_type, args=())
-
-    def test_ppr_sampler_can_preserve_original_edges_for_selected_nodes(self) -> None:
-        """Verify PPR can retain original hetero edges over selected nodes."""
-        mp.spawn(
-            fn=_run_ppr_loader_preserves_original_edges_for_selected_nodes,
-            args=(),
+        scenarios.append(
+            (
+                "homogeneous ablp",
+                _run_ppr_labeled_homogeneous_ablp_loader_check,
+                (),
+            )
         )
-
-    def test_typed_ppr_sampler_loader_outputs_channel_attrs(self) -> None:
-        """Verify typed PPR runs end-to-end through the loader."""
-        mp.spawn(fn=_run_typed_ppr_loader_shape_check, args=())
-
-    def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
-        """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
-        mp.spawn(fn=_run_ppr_ablp_label_edges_do_not_affect_anchor_ppr, args=())
-
-    def test_ppr_sampler_homogeneous_ablp(self) -> None:
-        """Verify PPR handles homogeneous ABLP seed dictionaries."""
-        mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
+        mp.spawn(fn=_run_scenarios, args=(scenarios,))
 
 
 if __name__ == "__main__":

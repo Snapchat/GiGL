@@ -122,14 +122,19 @@ class TestDegreeComputation(TestCase):
         self.assertEqual(result[STORY].numel(), 0)
 
 
-def _run_local_world_size_correction_homogeneous(
+def _run_local_world_size_correction(
     rank: int,
     world_size: int,
     init_method: str,
     edge_index: torch.Tensor,
-    expected_degrees: torch.Tensor,
+    expected_homogeneous_degrees: torch.Tensor,
+    edge_indices: dict[EdgeType, torch.Tensor],
+    expected_heterogeneous_degrees: dict[NodeType, torch.Tensor],
 ) -> None:
-    """Worker function for multi-process local_world_size correction test (homogeneous)."""
+    """Worker function for multi-process local_world_size correction test.
+
+    Checks the homogeneous and the heterogeneous graph on one process group.
+    """
     dist.init_process_group(
         backend="gloo",
         init_method=init_method,
@@ -142,34 +147,18 @@ def _run_local_world_size_correction_homogeneous(
         result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
 
         assert isinstance(result, torch.Tensor)
-        assert_tensor_equality(result, expected_degrees)
-    finally:
-        dist.destroy_process_group()
+        assert_tensor_equality(result, expected_homogeneous_degrees)
 
-
-def _run_local_world_size_correction_heterogeneous(
-    rank: int,
-    world_size: int,
-    init_method: str,
-    edge_indices: dict[EdgeType, torch.Tensor],
-    expected_degrees: dict[NodeType, torch.Tensor],
-) -> None:
-    """Worker function for multi-process local_world_size correction test (heterogeneous)."""
-    dist.init_process_group(
-        backend="gloo",
-        init_method=init_method,
-        world_size=world_size,
-        rank=rank,
-    )
-    try:
         dataset = create_heterogeneous_dataset(edge_indices=edge_indices)
         assert dataset.graph is not None
-        result = compute_and_broadcast_degree_tensor(dataset.graph, dataset.edge_dir)
+        hetero_result = compute_and_broadcast_degree_tensor(
+            dataset.graph, dataset.edge_dir
+        )
 
-        assert not isinstance(result, torch.Tensor)
-        assert set(result.keys()) == set(expected_degrees.keys())
-        for node_type, expected in expected_degrees.items():
-            assert_tensor_equality(result[node_type], expected)
+        assert not isinstance(hetero_result, torch.Tensor)
+        assert set(hetero_result.keys()) == set(expected_heterogeneous_degrees.keys())
+        for node_type, expected in expected_heterogeneous_degrees.items():
+            assert_tensor_equality(hetero_result[node_type], expected)
     finally:
         dist.destroy_process_group()
 
@@ -182,34 +171,31 @@ class TestLocalWorldSizeCorrection(TestCase):
     The all-reduce should correctly divide by local_world_size=2.
     """
 
-    def test_local_world_size_correction_homogeneous(self):
+    def test_local_world_size_correction(self):
         """Test over-counting correction with 2 processes sharing the same data."""
         edge_index = DEFAULT_HOMOGENEOUS_EDGE_INDEX
         num_nodes = int(edge_index.max().item() + 1)
 
         raw_degrees = _compute_expected_degrees_from_edge_index(edge_index, num_nodes)
-        expected_degrees = raw_degrees  # After correction: (2*raw) / 2 = raw
+        # After correction: (2*raw) / 2 = raw
+        expected_homogeneous_degrees = raw_degrees
 
-        init_method = get_process_group_init_method()
-        mp.spawn(
-            fn=_run_local_world_size_correction_homogeneous,
-            args=(2, init_method, edge_index, expected_degrees),
-            nprocs=2,
-        )
-
-    def test_local_world_size_correction_heterogeneous(self):
-        """Test over-counting correction for heterogeneous graphs with 2 processes."""
-        edge_indices = DEFAULT_HETEROGENEOUS_EDGE_INDICES
-
-        expected_degrees = {
+        expected_heterogeneous_degrees = {
             USER: torch.ones(5, dtype=torch.int32),
             STORY: torch.ones(5, dtype=torch.int32),
         }
 
         init_method = get_process_group_init_method()
         mp.spawn(
-            fn=_run_local_world_size_correction_heterogeneous,
-            args=(2, init_method, edge_indices, expected_degrees),
+            fn=_run_local_world_size_correction,
+            args=(
+                2,
+                init_method,
+                edge_index,
+                expected_homogeneous_degrees,
+                DEFAULT_HETEROGENEOUS_EDGE_INDICES,
+                expected_heterogeneous_degrees,
+            ),
             nprocs=2,
         )
 

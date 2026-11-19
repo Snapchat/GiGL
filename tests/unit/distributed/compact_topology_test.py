@@ -14,6 +14,7 @@ from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.partition import RangePartitionBook
 from parameterized import param, parameterized
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
@@ -42,6 +43,9 @@ def _random_coo(num_nodes: int, num_edges: int, seed: int) -> torch.Tensor:
 
 
 class CompactTopologyTest(TestCase):
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
+
     def test_it_has_exactly_the_attributes_of_a_real_topology(self) -> None:
         """``__init__`` skips GLT's, so a field GLT adds later would otherwise be missed.
 
@@ -122,6 +126,9 @@ class CompactTopologyTest(TestCase):
 
 
 class PerEdgeMetadataTest(TestCase):
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
+
     @parameterized.expand(
         [
             param(
@@ -199,6 +206,9 @@ class InitializeGraphTest(TestCase):
     ``GraphPartitionData`` is a frozen dataclass, so anything this path tries to write back to it
     raises only when the method itself runs.
     """
+
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
 
     def _dataset(self) -> DistDataset:
         return DistDataset(rank=0, world_size=1, edge_dir="in")
@@ -431,6 +441,9 @@ class InitializeGraphTest(TestCase):
 class RangePartitionRowOffsetTest(TestCase):
     """Under range partitioning a rank stores its rows from its range start, with that start as the row offset."""
 
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
+
     _BOOK = RangePartitionBook(partition_ranges=[(0, 10), (10, 25)], partition_idx=1)
 
     def _build(
@@ -527,6 +540,9 @@ class RangePartitionRowOffsetTest(TestCase):
 
 
 class BuildReleasesEachCooTest(TestCase):
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
+
     def test_each_coo_is_freed_before_the_next_edge_type_is_built(self) -> None:
         """Through ``build()`` with an edge splitter, whose local once kept every COO alive."""
         user, item = NodeType("user"), NodeType("item")
@@ -585,6 +601,9 @@ class BuildReleasesEachCooTest(TestCase):
 
 class SamplingParityTest(TestCase):
     """Compact graphs preserve GLT sampling outputs and original edge identity."""
+
+    def setUp(self) -> None:
+        self.enterContext(freeze_gc())
 
     @parameterized.expand(
         [

@@ -84,15 +84,15 @@ def _local_stores(
 
 
 def _lookup_on_partition(
-    rank: int, master_port: int, output: dict, is_heterogeneous: bool
+    rank: int,
+    router: RpcDataPartitionRouter,
+    output: dict,
+    is_heterogeneous: bool,
 ) -> None:
     """Looks up every type through GLT ``DistFeature`` objects and through the fused feature.
 
     Heterogeneous data has a type with both stores, a raw-only type and a sidecar-only type.
     """
-    init_worker_group(world_size=2, rank=rank)
-    init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
-    router = RpcDataPartitionRouter(rpc_sync_data_partitions(2, rank))
     owner = torch.arange(_NUM_ENTITIES) % 2
     types = ["user", "story", "ad"] if is_heterogeneous else [None]
     globals_by_type = {t: _features(seed) for seed, t in enumerate(types)}
@@ -165,12 +165,21 @@ def _lookup_on_partition(
         else:
             matches &= fused_packed is None
     barrier()
-    output[rank] = (
+    output[(rank, is_heterogeneous)] = (
         matches,
         separate_raw.served_requests + separate_packed.served_requests,
         counting_fused.served_requests,
     )
     barrier()
+
+
+def _lookup_on_partitions(rank: int, master_port: int, output: dict) -> None:
+    """Runs the homogeneous and the heterogeneous lookups on one RPC group, then shuts RPC down once."""
+    init_worker_group(world_size=2, rank=rank)
+    init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
+    router = RpcDataPartitionRouter(rpc_sync_data_partitions(2, rank))
+    for is_heterogeneous in (False, True):
+        _lookup_on_partition(rank, router, output, is_heterogeneous)
     shutdown_rpc()
 
 
@@ -582,19 +591,28 @@ class FusedDistFeatureStitchTest(TestCase):
 
 
 class FusedDistFeatureTest(TestCase):
-    def _run(self, is_heterogeneous: bool) -> dict:
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
         output = mp.Manager().dict()
         mp.spawn(
-            _lookup_on_partition,
-            args=(get_free_port(), output, is_heterogeneous),
+            _lookup_on_partitions,
+            args=(get_free_port(), output),
             nprocs=2,
         )
-        return dict(output)
+        cls._output = dict(output)
+
+    def _results(self, is_heterogeneous: bool) -> dict:
+        return {
+            rank: result
+            for (rank, heterogeneous), result in self._output.items()
+            if heterogeneous == is_heterogeneous
+        }
 
     def test_homogeneous_lookup_matches_separate_lookups_with_half_the_requests(
         self,
     ) -> None:
-        for rank, (matches, separate_requests, fused_requests) in self._run(
+        for rank, (matches, separate_requests, fused_requests) in self._results(
             False
         ).items():
             self.assertTrue(matches, f"rank {rank} fetched different rows")
@@ -604,7 +622,7 @@ class FusedDistFeatureTest(TestCase):
     def test_heterogeneous_lookup_needs_one_request_per_type_and_partition(
         self,
     ) -> None:
-        for rank, (matches, separate_requests, fused_requests) in self._run(
+        for rank, (matches, separate_requests, fused_requests) in self._results(
             True
         ).items():
             self.assertTrue(matches, f"rank {rank} fetched different rows")

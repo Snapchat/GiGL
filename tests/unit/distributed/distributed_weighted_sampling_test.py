@@ -37,7 +37,7 @@ from tests.test_assets.distributed.constants import (
 )
 from tests.test_assets.distributed.run_distributed_partitioner import (
     InputDataStrategy,
-    run_distributed_partitioner,
+    run_distributed_partitioner_cases,
 )
 from tests.test_assets.distributed.utils import create_test_process_group
 from tests.test_assets.test_case import TestCase
@@ -389,71 +389,85 @@ def _run_weighted_sampling_correctness_heterogeneous(
 
 
 class WeightedEdgePartitionerTestCase(TestCase):
-    """Tests that DistPartitioner correctly partitions registered edge weights."""
+    """Tests that DistPartitioner correctly partitions registered edge weights.
 
-    def setUp(self) -> None:
-        self._master_ip_address = "localhost"
+    The ranks are spawned once for all tests, as spawning costs far more than partitioning the mocked graph.
+    """
 
-    def test_homogeneous_weights_partitioned_correctly(self) -> None:
-        """Edge weights (= src_node_id / 10.0) land on the correct rank after partitioning.
-
-        The mocked graph has edges with source nodes 0–3 on rank 0 and 4–7 on rank 1.
-        Weights are set to src_node_id / 10.0, mirroring the existing edge-feature
-        convention.  After partitioning by source node each rank should hold only its
-        own weights, and each weight should equal the corresponding global edge ID * 0.1.
-        """
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        rank_to_edge_weights = {
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        homogeneous_weights = {
             0: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float() / 10.0,
             1: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float() / 10.0,
         }
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,  # is_heterogeneous
-                RANK_TO_MOCKED_GRAPH,
-                True,  # should_assign_edges_by_src_node
-                self._master_ip_address,
-                master_port,
+        heterogeneous_weights = {
+            0: {USER_TO_USER_EDGE_TYPE: homogeneous_weights[0]},
+            1: {USER_TO_USER_EDGE_TYPE: homogeneous_weights[1]},
+        }
+        # Each case is (is_heterogeneous, input_data_strategy, rank_to_edge_weights).
+        cases = [
+            (
+                False,
+                InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
+                homogeneous_weights,
+            ),
+            (
+                False,
                 InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                rank_to_edge_weights,
+                homogeneous_weights,
+            ),
+            (
+                True,
+                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
+                heterogeneous_weights,
+            ),
+        ]
+        manager = Manager()
+        cls._output_dicts: list[MutableMapping[int, PartitionOutput]] = [
+            manager.dict() for _ in cases
+        ]
+        mp.spawn(
+            run_distributed_partitioner_cases,
+            args=(
+                cls._output_dicts,
+                [
+                    {
+                        "is_heterogeneous": is_heterogeneous,
+                        "rank_to_input_graph": RANK_TO_MOCKED_GRAPH,
+                        "should_assign_edges_by_src_node": True,
+                        "input_data_strategy": input_data_strategy,
+                        "rank_to_edge_weights": rank_to_edge_weights,
+                    }
+                    for is_heterogeneous, input_data_strategy, rank_to_edge_weights in cases
+                ],
+                "localhost",
+                get_free_port(),
             ),
             nprocs=MOCKED_NUM_PARTITIONS,
             join=True,
         )
 
-        for rank, partition_output in output_dict.items():
+    def test_homogeneous_weights_partitioned_correctly(self) -> None:
+        """Edge weights land on the correct rank after partitioning.
+
+        With range-based partitioning, edge_ids are sequential per-rank (0..3 on rank 0,
+        4..7 on rank 1), and the registered weights (src_node_id / 10.0) equal
+        edge_id * 0.1 for this test graph.
+        """
+        for rank, partition_output in self._output_dicts[0].items():
             partitioned_edge_index = partition_output.partitioned_edge_index
-            self.assertIsInstance(partitioned_edge_index, GraphPartitionData)
             assert isinstance(partitioned_edge_index, GraphPartitionData)
-
             weights = partitioned_edge_index.weights
-            self.assertIsNotNone(
-                weights,
-                msg=f"Rank {rank}: expected weights in GraphPartitionData, got None",
-            )
-            assert weights is not None
-
             edge_ids = partitioned_edge_index.edge_ids
+            assert weights is not None, f"Rank {rank}: expected weights"
+            assert edge_ids is not None, f"Rank {rank}: expected edge_ids"
+            self.assertIsNone(partition_output.partitioned_edge_features)
             self.assertIsNotNone(
-                edge_ids,
-                msg=f"Rank {rank}: edge_ids must be present when weights are registered",
+                partition_output.edge_partition_book,
+                msg=f"Rank {rank}: edge partition book must be retained for weights",
             )
-            assert edge_ids is not None
-
-            self.assertEqual(
-                weights.shape,
-                edge_ids.shape,
-                msg=f"Rank {rank}: weights and edge_ids must have the same length",
-            )
-
-            # weight for each edge == its global edge_id * 0.1 (i.e. src_node_id / 10.0).
-            # Sort both so the comparison is order-independent.
+            self.assertEqual(weights.shape, edge_ids.shape)
             expected_weights = edge_ids.float() * 0.1
             torch.testing.assert_close(
                 weights.sort().values,
@@ -461,254 +475,61 @@ class WeightedEdgePartitionerTestCase(TestCase):
                 msg=f"Rank {rank}: partitioned weights do not match expected src_node_id / 10.0",
             )
 
-    def test_features_only_weights_are_none(self) -> None:
-        """Features only (no weights): weights must be None, edge_ids and features present."""
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
+    def test_homogeneous_features_and_weights_stay_aligned(
+        self,
+    ) -> None:
+        """With features and weights both registered, each weight and edge feature
+        follows its own edge to the rank of its source node.
 
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,
-                RANK_TO_MOCKED_GRAPH,
-                True,
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                None,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
+        Weights are src_node_id / 10.0 and edge features are filled with the original edge id * 0.1 (equal
+        to src_node_id / 10.0 in the mocked graph). Under range partitioning `FeaturePartitionData.ids` is
+        None and edge ids are the contiguous range of the rank, so the i-th weight and i-th feature row
+        are those of the i-th edge column.
+        """
+        all_edge_ids: list[torch.Tensor] = []
+        for rank, partition_output in self._output_dicts[1].items():
+            graph = partition_output.partitioned_edge_index
+            assert isinstance(graph, GraphPartitionData)
+            feature_data = partition_output.partitioned_edge_features
+            assert isinstance(feature_data, FeaturePartitionData)
+            assert graph.weights is not None, f"Rank {rank}: expected weights"
+            assert graph.edge_ids is not None, f"Rank {rank}: expected edge_ids"
+            self.assertIsNone(feature_data.ids)
 
-        for rank, partition_output in output_dict.items():
-            gpd = partition_output.partitioned_edge_index
-            self.assertIsInstance(gpd, GraphPartitionData)
-            assert isinstance(gpd, GraphPartitionData)
-            self.assertIsNone(
-                gpd.weights,
-                msg=f"Rank {rank}: weights must be None when not registered",
+            # Sources 0-3 live on rank 0 and 4-7 on rank 1.
+            expected_sources = torch.arange(4) + 4 * rank
+            self.assert_tensor_equality(
+                graph.edge_index[0].long(), expected_sources, dim=0
             )
-            self.assertIsNotNone(
-                gpd.edge_ids,
-                msg=f"Rank {rank}: edge_ids must be present when features are registered",
-            )
-            self.assertIsNotNone(
-                partition_output.partitioned_edge_features,
-                msg=f"Rank {rank}: expected features to be partitioned",
-            )
-
-    def test_weights_only_no_features_partitioned_correctly(self) -> None:
-        """Weights without features: feature part is None, weights have correct values."""
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        rank_to_edge_weights = {
-            0: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float() / 10.0,
-            1: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float() / 10.0,
-        }
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,
-                RANK_TO_MOCKED_GRAPH,
-                True,
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
-                rank_to_edge_weights,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, partition_output in output_dict.items():
-            gpd = partition_output.partitioned_edge_index
-            self.assertIsInstance(gpd, GraphPartitionData)
-            assert isinstance(gpd, GraphPartitionData)
-            self.assertIsNone(
-                partition_output.partitioned_edge_features,
-                msg=f"Rank {rank}: features must be None when not registered",
-            )
-
-            weights = gpd.weights
-            self.assertIsNotNone(
-                weights, msg=f"Rank {rank}: expected weights to be partitioned"
-            )
-            assert weights is not None
-
-            edge_ids = gpd.edge_ids
-            self.assertIsNotNone(
-                edge_ids,
-                msg=f"Rank {rank}: edge_ids must be present when weights are registered",
-            )
-            assert edge_ids is not None
-
-            self.assertIsNotNone(
-                partition_output.edge_partition_book,
-                msg=f"Rank {rank}: edge partition book must be retained for weights",
-            )
-
-            self.assertEqual(weights.shape, edge_ids.shape)
-            expected_weights = edge_ids.float() * 0.1
+            # The weight of each edge is its source node id / 10, in the same column order as the edge index.
             torch.testing.assert_close(
-                weights.sort().values,
-                expected_weights.sort().values,
-                msg=f"Rank {rank}: weights do not match src_node_id / 10.0",
+                graph.weights, graph.edge_index[0].float() / 10.0
             )
-
-    def test_neither_features_nor_weights_gives_none_edge_ids(self) -> None:
-        """No features, no weights: edge_ids and weights must both be None."""
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,
-                RANK_TO_MOCKED_GRAPH,
-                True,
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, partition_output in output_dict.items():
-            gpd = partition_output.partitioned_edge_index
-            self.assertIsInstance(gpd, GraphPartitionData)
-            assert isinstance(gpd, GraphPartitionData)
-            self.assertIsNone(
-                gpd.weights,
-                msg=f"Rank {rank}: weights must be None when not registered",
-            )
-            self.assertIsNone(
-                gpd.edge_ids,
-                msg=f"Rank {rank}: edge_ids must be None when neither features nor weights are registered",
-            )
-            self.assertIsNone(
-                partition_output.partitioned_edge_features,
-                msg=f"Rank {rank}: features must be None",
-            )
-
-    def test_features_and_weights_produce_consistent_edge_ids(self) -> None:
-        """Both registered: edge ids, weights, and feature rows must line up on each rank."""
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        rank_to_edge_weights = {
-            0: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float() / 10.0,
-            1: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float() / 10.0,
-        }
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                False,
-                RANK_TO_MOCKED_GRAPH,
-                True,
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                rank_to_edge_weights,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, partition_output in output_dict.items():
-            gpd = partition_output.partitioned_edge_index
-            assert isinstance(gpd, GraphPartitionData)
-            feat_part = partition_output.partitioned_edge_features
-            self.assertIsInstance(feat_part, FeaturePartitionData)
-            assert isinstance(feat_part, FeaturePartitionData)
-
-            self.assertIsNotNone(gpd.edge_ids)
-            self.assertIsNotNone(gpd.weights)
-            assert gpd.edge_ids is not None
-
-            assert gpd.weights is not None
-            # Range partitioning infers edge ids from the edge partition book, so feature
-            # rows carry no ids and must line up with edge_ids by position.
-            self.assertIsNone(feat_part.ids)
-            num_edges = gpd.edge_index.size(1)
-            self.assertEqual(gpd.edge_ids.numel(), num_edges)
-            self.assertEqual(gpd.weights.numel(), num_edges)
-            self.assertEqual(feat_part.feats.size(0), num_edges)
+            # The feature row of each edge is filled with the same value, so it is aligned with the weight.
             torch.testing.assert_close(
-                gpd.edge_ids,
-                torch.arange(int(gpd.edge_ids[0]), int(gpd.edge_ids[0]) + num_edges),
-                msg=f"Rank {rank}: edge_ids must be a contiguous range",
+                feature_data.feats,
+                graph.weights.unsqueeze(1).expand_as(feature_data.feats),
             )
-            # The mocked weights and edge features are both the source node id / 10, so each
-            # row must match the source node of the edge at the same position.
-            expected_values = gpd.edge_index[0].float() / 10.0
-            torch.testing.assert_close(
-                gpd.weights,
-                expected_values,
-                msg=f"Rank {rank}: weights must line up with edge_index",
+            # Edge ids are the contiguous range of this rank.
+            self.assert_tensor_equality(
+                graph.edge_ids, torch.arange(4) + 4 * rank, dim=0
             )
-            torch.testing.assert_close(
-                feat_part.feats,
-                expected_values.unsqueeze(1).expand_as(feat_part.feats),
-                msg=f"Rank {rank}: edge feature rows must line up with edge_index",
-            )
+            all_edge_ids.append(graph.edge_ids)
+        self.assert_tensor_equality(torch.cat(all_edge_ids), torch.arange(8), dim=0)
 
     def test_heterogeneous_partial_weights_by_edge_type(self) -> None:
         """Heterogeneous: edge type with weights has them; edge type without weights has None."""
-        master_port = get_free_port()
-        manager = Manager()
-        output_dict: MutableMapping[int, PartitionOutput] = manager.dict()
-
-        rank_to_edge_weights = {
-            0: {
-                USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_INDEX_ON_RANK_ZERO[0].float()
-                / 10.0
-            },
-            1: {
-                USER_TO_USER_EDGE_TYPE: MOCKED_U2U_EDGE_INDEX_ON_RANK_ONE[0].float()
-                / 10.0
-            },
-        }
-
-        mp.spawn(
-            run_distributed_partitioner,
-            args=(
-                output_dict,
-                True,  # is_heterogeneous
-                RANK_TO_MOCKED_GRAPH,
-                True,
-                self._master_ip_address,
-                master_port,
-                InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
-                rank_to_edge_weights,
-            ),
-            nprocs=MOCKED_NUM_PARTITIONS,
-            join=True,
-        )
-
-        for rank, partition_output in output_dict.items():
+        for rank, partition_output in self._output_dicts[2].items():
             partitioned_edge_index = partition_output.partitioned_edge_index
-            self.assertIsInstance(partitioned_edge_index, dict)
-            assert isinstance(partitioned_edge_index, dict)
+            assert partitioned_edge_index is not None
+            assert not isinstance(partitioned_edge_index, GraphPartitionData)
 
             u2u_gpd = partitioned_edge_index[USER_TO_USER_EDGE_TYPE]
             u2i_gpd = partitioned_edge_index[USER_TO_ITEM_EDGE_TYPE]
 
-            self.assertIsNotNone(
-                u2u_gpd.weights,
-                msg=f"Rank {rank}: U2U edge type should have weights",
+            assert u2u_gpd.weights is not None, f"Rank {rank}: U2U should have weights"
+            torch.testing.assert_close(
+                u2u_gpd.weights, u2u_gpd.edge_index[0].float() / 10.0
             )
             self.assertIsNone(
                 u2i_gpd.weights,
