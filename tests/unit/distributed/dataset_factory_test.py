@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 from collections import abc
 from unittest import mock
 
@@ -112,6 +114,29 @@ class TestDatasetFactory(TestCase):
         self.assertIsNone(compressed.edge_features)
         self.assertIsNone(uncompressed.edge_quantization_metadata)
         self.assertIsNotNone(uncompressed.edge_features)
+
+    def test_import_gigl_distributed_does_not_load_heavy_packages(self) -> None:
+        # Every spawned sampling worker imports gigl.distributed, so loading TensorFlow, Apache Beam or the Vertex AI
+        # client there costs seconds per process. These packages must be imported lazily by the code that uses them.
+        heavy_packages = [
+            "tensorflow",
+            "apache_beam",
+            "tensorflow_transform",
+            "tfx_bsl",
+            "tensorflow_data_validation",
+            "tensorflow_metadata",
+            "google.cloud.aiplatform",
+        ]
+        script = (
+            "import sys\n"
+            "import torch\n"
+            "import gigl.distributed\n"
+            f"print('LOADED:', [name for name in {heavy_packages!r} if name in sys.modules])\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
+        self.assertIn("LOADED: []", result.stdout)
 
 
 if __name__ == "__main__":

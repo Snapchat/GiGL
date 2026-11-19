@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType
-from gigl.src.data_preprocessor.lib.types import InstanceDictPTransform
+from gigl.src.data_preprocessor.lib.tf_beam_types import InstanceDictPTransform
 
 
 @dataclass(frozen=True)

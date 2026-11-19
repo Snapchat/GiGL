@@ -11,10 +11,12 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
-from gigl.src.data_preprocessor.lib.types import (
+from gigl.src.data_preprocessor.lib.tf_beam_types import (
     DEFAULT_TF_FLOAT_DTYPE,
     DEFAULT_TF_INT_DTYPE,
     DEFAULT_TF_STRING_DTYPE,
+)
+from gigl.src.data_preprocessor.lib.types import (
     EdgeDataPreprocessingSpec,
     FeatureSpecDict,
     NodeDataPreprocessingSpec,

@@ -1,7 +1,7 @@
-from dataclasses import dataclass, field
-from typing import Callable, cast
+from __future__ import annotations
 
-from tensorflow_metadata.proto.v0.schema_pb2 import Schema
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable, cast
 
 import gigl.common.utils.local_fs as LocalFsUtils
 from gigl.common import GcsUri, LocalUri, Uri, UriFactory
@@ -20,6 +20,10 @@ from gigl.src.data_preprocessor.lib.types import (
     FeatureVocabDict,
 )
 from snapchat.research.gbml import preprocessed_metadata_pb2
+
+if TYPE_CHECKING:
+    # Imported only for type checking so that importing this module does not load TensorFlow.
+    from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
 logger = Logger()
 

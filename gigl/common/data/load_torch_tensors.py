@@ -19,7 +19,6 @@ from torch.multiprocessing import Manager
 
 from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
 from gigl.common.data.parquet_loader import ParquetDataLoader
-from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.common.logger import Logger
 from gigl.common.utils.feature_quantization.lossless_compression import (
     FeatureCompression,
@@ -373,6 +372,9 @@ def _data_loading_process(
                     rank=rank, world_size=world_size
                 ).load_as_torch_tensors(serialized_entity_tf_record_info)
             else:
+                # Imported here so that importing this module does not load TensorFlow.
+                from gigl.common.data.tf_record_loader import TFRecordDataLoader
+
                 loaded_entity = TFRecordDataLoader(
                     rank=rank, world_size=world_size
                 ).load_as_torch_tensors(

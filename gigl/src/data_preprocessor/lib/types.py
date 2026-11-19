@@ -1,31 +1,22 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, Optional, Tuple
-
-import apache_beam as beam
-import tensorflow as tf
-from apache_beam import PCollection
-from tensorflow_metadata.proto.v0.schema_pb2 import Feature
-from tensorflow_transform import common_types
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Tuple
 
 from gigl.common import Uri
 from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 
+if TYPE_CHECKING:
+    # Imported only for type checking so that importing this module does not load TensorFlow.
+    from tensorflow_metadata.proto.v0.schema_pb2 import Feature
+    from tensorflow_transform import common_types
+
 # TODO (mkolodner-sc): Move these variables to a more general location, as they are used even outside of context of data preprocessor
 
 InstanceDict = dict[str, Any]
-TFTensorDict = dict[str, common_types.TensorType]
-FeatureSpecDict = dict[str, common_types.FeatureSpecType]
+TFTensorDict = dict[str, "common_types.TensorType"]
+FeatureSpecDict = dict[str, "common_types.FeatureSpecType"]
 FeatureIndexDict = dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
-FeatureSchemaDict = dict[str, Feature]
+FeatureSchemaDict = dict[str, "Feature"]
 FeatureVocabDict = dict[str, list[str]]
-
-
-# Only these 3 dtypes are supported in TFTransform
-# See https://www.tensorflow.org/tfx/guide/transform#understanding_the_inputs_to_the_preprocessing_fn
-DEFAULT_TF_INT_DTYPE = tf.int64
-DEFAULT_TF_FLOAT_DTYPE = tf.float32
-DEFAULT_TF_STRING_DTYPE = tf.string
 
 
 class FeatureSchema(NamedTuple):
@@ -131,9 +122,3 @@ class EdgeDataPreprocessingSpec(NamedTuple):
             features_outputs={self.features_outputs},
             labels_outputs={self.labels_outputs})
         """
-
-
-class InstanceDictPTransform(beam.PTransform, ABC):
-    @abstractmethod
-    def expand(self, input_or_inputs: PCollection[Any]) -> PCollection[InstanceDict]:
-        raise NotImplementedError

@@ -5,17 +5,20 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Final, Optional
 
 import omegaconf
 
 from gigl.common import GcsUri
 from gigl.common.logger import Logger
-from gigl.common.services.vertex_ai import LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY
 from gigl.common.utils.gcs import GcsUtils
 from gigl.env.distributed import DistributedContext
 
 logger = Logger()
+
+LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
+    "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+)
 
 
 _VAI_EXCEPTION = Exception("Not running in Vertex AI job.")

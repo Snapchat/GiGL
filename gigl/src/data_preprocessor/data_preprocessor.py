@@ -58,11 +58,11 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
+from gigl.src.data_preprocessor.lib.tf_beam_types import DEFAULT_TF_INT_DTYPE
 from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
-    DEFAULT_TF_INT_DTYPE,
     EdgeDataPreprocessingSpec,
     EdgeOutputIdentifier,
     FeatureSpecDict,

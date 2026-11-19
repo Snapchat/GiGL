@@ -1,14 +1,17 @@
-from typing import Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Tuple
 
 import absl
 import absl.logging
-import tensorflow as tf
-from tensorflow_data_validation import load_schema_text
-from tensorflow_metadata.proto.v0.schema_pb2 import Schema
-from tensorflow_transform.tf_metadata import schema_utils
 
 from gigl.common import GcsUri, LocalUri, Uri
 from gigl.src.data_preprocessor.lib.types import FeatureIndexDict, FeatureSpecDict
+
+if TYPE_CHECKING:
+    # Imported only for type checking so that importing this module does not load TensorFlow.
+    import tensorflow as tf
+    from tensorflow_metadata.proto.v0.schema_pb2 import Schema
 
 # We suppress noisy tensorflow logs to minimize unintentional clutter in logging:
 # https://stackoverflow.com/questions/69485127/disabling-useless-logs-ouputs-from-tfx-setuptools
@@ -20,6 +23,10 @@ def load_tf_schema_uri_str_to_feature_spec(uri: Uri) -> Tuple[Schema, FeatureSpe
         raise ValueError(
             f"Invalid uri: {uri}. Uri has to either be a GCS or local uri string."
         )
+    # Imported here so that importing this module does not load TensorFlow.
+    from tensorflow_data_validation import load_schema_text
+    from tensorflow_transform.tf_metadata import schema_utils
+
     schema = load_schema_text(uri.uri)
     feature_spec = schema_utils.schema_as_feature_spec(schema).feature_spec
     return schema, feature_spec

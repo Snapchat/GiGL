@@ -77,13 +77,11 @@ from google.cloud.aiplatform_v1.types import (
 
 from gigl.common import GcsUri, Uri
 from gigl.common.logger import Logger
-
-logger = Logger()
-
-LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY: Final[str] = (
-    "LEADER_WORKER_INTERNAL_IP_FILE_PATH"
+from gigl.common.utils.vertex_ai_context import (
+    LEADER_WORKER_INTERNAL_IP_FILE_PATH_ENV_KEY,
 )
 
+logger = Logger()
 
 DEFAULT_PIPELINE_TIMEOUT_S: Final[int] = 60 * 60 * 36  # 36 hours
 DEFAULT_CUSTOM_JOB_TIMEOUT_S: Final[int] = 60 * 60 * 24  # 24 hours

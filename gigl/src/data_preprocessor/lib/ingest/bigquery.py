@@ -9,7 +9,7 @@ from gigl.src.data_preprocessor.lib.ingest.reference import (
     EdgeDataReference,
     NodeDataReference,
 )
-from gigl.src.data_preprocessor.lib.types import InstanceDictPTransform
+from gigl.src.data_preprocessor.lib.tf_beam_types import InstanceDictPTransform
 
 logger = Logger()
 
