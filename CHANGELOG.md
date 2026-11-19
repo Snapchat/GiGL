@@ -184,7 +184,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `ModuleNotFoundError: tensorflow_metadata` by @kmontemayor2-sc
 - The `pyg27-torch28-cpu` extra installs `pyg_lib`, `torch_cluster`, `torch_scatter`, `torch_sparse` and
   `torch_spline_conv` on macOS arm64, so PyG's `NeighborLoader` works there by @kmontemayor2-sc
-- `make type_check` passes `--python-platform linux` to `ty`, so it no longer reports Linux-only APIs such as
+- `ty` is configured with `python-platform = "linux"`, so type checking no longer reports Linux-only APIs such as
   `os.posix_fallocate` when run on macOS by @kmontemayor2-sc
 - `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
   tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so

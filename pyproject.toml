@@ -339,6 +339,11 @@ known-first-party = ["gigl", "tests", "snapchat", "scripts"]
 [tool.ty.src]
 exclude = ["*_pb2.py", "*_pb2.pyi", "**/*.ipynb"]
 
+[tool.ty.environment]
+# GiGL targets Linux (CI and every image). Without this ty checks as the host OS, so on macOS it flags Linux-only
+# APIs such as os.posix_fallocate and psutil.Process.cpu_affinity.
+python-platform = "linux"
+
 [tool.ty.analysis]
 # Treat all types from unresolved third-party modules as Any instead of Unknown,
 # preventing cascading type errors (e.g. unresolved-attribute, invalid-argument-type)
