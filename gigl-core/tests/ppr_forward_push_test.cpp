@@ -747,16 +747,20 @@ TEST(PPRForwardPush, Int64DegreeTensorMatchesInt32) {
     EXPECT_EQ(scoresByNode(int32State, 0, 10, true), scoresByNode(int64State, 0, 10, true));
 }
 
-// A node type without degree data has degree 0, so every discovered node is
-// queued and then absorbs its residual.
-TEST(PPRForwardPush, EmptyDegreeTensorQueuesEveryDiscoveredNode) {
-    const double alpha = 0.5;
-    auto state = makeStateWithDegrees(torch::empty({0}, torch::kInt));
-    runToConvergence(state, {{0, {{0, {1}}}}});
-    auto scores = scoresByNode(state, 0, 10, false);
-    ASSERT_EQ(scores.size(), 2U);
-    EXPECT_NEAR(scores[0], alpha, 1e-12);
-    EXPECT_NEAR(scores[1], (1.0 - alpha) * alpha, 1e-12);
+// Only destination-only node types may have an empty degree tensor.
+TEST(PPRForwardPush, EmptyDegreeTensorForNodeTypeWithEdgesThrows) {
+    EXPECT_THROW(makeStateWithDegrees(torch::empty({0}, torch::kInt)), c10::Error);
+}
+
+TEST(PPRForwardPush, DegreeTensorCountMustMatchNodeTypeCount) {
+    EXPECT_THROW(PPRForwardPush(torch::tensor({0}, torch::kLong),
+                                /*seedNodeTypeId=*/0,
+                                /*alpha=*/0.5,
+                                /*requeueThresholdFactor=*/1e-6,
+                                /*nodeTypeToEdgeTypeIds=*/{{0}, {}},
+                                /*edgeTypeToDstNtypeId=*/{1},
+                                {torch::tensor({1}, torch::kInt)}),
+                 c10::Error);
 }
 
 // Source type 0 reaches destination type 1 through two edge types. The residual
@@ -848,4 +852,16 @@ TEST(PPRForwardPush, OutputIsIndependentOfNeighborOrder) {
     auto reversedTopk = reversedState.extractTopKWithResidualTopUp(/*maxPPRNodes=*/10, /*enableResidualTopUp=*/true);
     EXPECT_TRUE(torch::equal(topk.at(0).ids, reversedTopk.at(0).ids));
     EXPECT_TRUE(torch::equal(topk.at(0).weights, reversedTopk.at(0).weights));
+}
+
+// Degree tensors must be int32 or int64; any other dtype is rejected at construction.
+TEST(PPRForwardPush, ConstructorRejectsUnsupportedDegreeDtype) {
+    EXPECT_THROW(PPRForwardPush(torch::tensor(std::vector<int64_t>{0}, torch::kLong),
+                                /*seedNodeTypeId=*/0,
+                                /*alpha=*/0.15,
+                                /*requeueThresholdFactor=*/1e-6,
+                                /*nodeTypeToEdgeTypeIds=*/{{0}},
+                                /*edgeTypeToDstNtypeId=*/{0},
+                                {torch::tensor(std::vector<float>{1.0F}, torch::kFloat)}),
+                 c10::Error);
 }
