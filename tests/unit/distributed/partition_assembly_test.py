@@ -7,7 +7,11 @@ from unittest import mock
 import torch
 from parameterized import param, parameterized
 
-from gigl.distributed.dist_partitioner import DistPartitioner, _concat_chunks
+from gigl.distributed.dist_partitioner import (
+    DistPartitioner,
+    _copy_chunks_into,
+    _empty_rows,
+)
 from gigl.utils.share_memory import is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -45,15 +49,18 @@ class PartitionAssemblyTest(TestCase):
                 os.environ.pop("GIGL_TENSOR_SPILL_DIR", None)
             yield
 
-    def test_concat_chunks_keeps_chunk_order(self) -> None:
+    def test_copy_chunks_into_keeps_chunk_order(self) -> None:
         chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=0)
-        expected = [torch.cat([chunk[field] for chunk in chunks]) for field in (0, 2)]
+        expected = {
+            field: torch.cat([chunk[field] for chunk in chunks]) for field in (0, 2)
+        }
+        destinations = {field: torch.empty_like(expected[field]) for field in (0, 2)}
 
-        assembled = _concat_chunks(chunks, [0, 2])
+        _copy_chunks_into(chunks, destinations)
 
         self.assertEqual(chunks, [])
-        for result, reference in zip(assembled, expected):
-            torch.testing.assert_close(result, reference, rtol=0, atol=0)
+        for field, reference in expected.items():
+            torch.testing.assert_close(destinations[field], reference, rtol=0, atol=0)
 
     @parameterized.expand(
         [
@@ -74,9 +81,10 @@ class PartitionAssemblyTest(TestCase):
                 block_bytes,
             ),
         ):
-            features, labels, ids = DistPartitioner()._assemble_node_chunks(
-                chunks, [0, 1, 2]
+            assembled = DistPartitioner()._assemble_node_chunks(
+                chunks, [0, 1, 2], node_id_field=2
             )
+        features, labels, ids = assembled[0], assembled[1], assembled[2]
 
         self.assertEqual(chunks, [])
         self.assertEqual(is_disk_backed(features), spill)
@@ -88,18 +96,20 @@ class PartitionAssemblyTest(TestCase):
 
     def test_results_are_disk_backed_when_spilling(self) -> None:
         with self._spill_env(True):
-            tensor_results = _concat_chunks(
+            copied_chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=2)
+            copied = {
+                field: _empty_rows(1000, copied_chunks[0][field]) for field in (0, 2)
+            }
+            _copy_chunks_into(copied_chunks, copied)
+            assembled = DistPartitioner()._assemble_node_chunks(
                 _received_chunks(num_nodes=1000, num_chunks=7, seed=2),
                 [0, 2],
-            )
-            range_results = DistPartitioner()._assemble_node_chunks(
-                _received_chunks(num_nodes=1000, num_chunks=7, seed=2),
-                [0, 2],
+                node_id_field=2,
             )
 
-        for result in tensor_results + range_results:
+        for result in [*copied.values(), *assembled.values()]:
             self.assertTrue(is_disk_backed(result))
-        torch.testing.assert_close(range_results[1], torch.arange(1000))
+        torch.testing.assert_close(assembled[2], torch.arange(1000))
 
     def test_assemble_node_chunks_spills_when_only_some_fields_are_large(self) -> None:
         # Features (12000 B) spill; labels and ids (8000 B each) stay in RAM. Labels come first so
@@ -107,9 +117,10 @@ class PartitionAssemblyTest(TestCase):
         chunks = _received_chunks(num_nodes=1000, num_chunks=7, seed=3)
 
         with self._spill_env(True, min_bytes=10000):
-            labels, features, ids = DistPartitioner()._assemble_node_chunks(
-                chunks, [1, 0, 2]
+            assembled = DistPartitioner()._assemble_node_chunks(
+                chunks, [1, 0, 2], node_id_field=2
             )
+        labels, features, ids = assembled[1], assembled[0], assembled[2]
 
         self.assertTrue(is_disk_backed(features))
         self.assertFalse(is_disk_backed(labels))

@@ -1,4 +1,5 @@
 import gc
+import math
 import time
 from collections import abc, defaultdict
 from typing import Callable, Final, Optional, Tuple, Union
@@ -48,26 +49,24 @@ def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _concat_chunks(
-    chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
-) -> list[torch.Tensor]:
-    """Returns ``torch.cat([chunk[field] for chunk in chunks])`` for each field, and empties ``chunks``.
+def _copy_chunks_into(
+    chunks: list[Tuple[torch.Tensor, ...]], destinations: dict[int, torch.Tensor]
+) -> None:
+    """Copies each chunk's fields into ``destinations`` (keyed by field), in chunk order, and empties ``chunks``.
 
     ``chunks`` is mutated on purpose: each chunk is released as soon as it is copied, so the
-    results never coexist in RAM with every chunk the way ``torch.cat``'s do.
+    destinations never coexist in RAM with every chunk the way ``torch.cat``'s results do.
     """
-    num_rows = sum(chunk[fields[0]].shape[0] for chunk in chunks)
-    destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
+    first_field = next(iter(destinations))
     chunks.reverse()
     offset = 0
     while chunks:
         chunk = chunks.pop()
-        chunk_rows = chunk[fields[0]].shape[0]
-        for destination, field in zip(destinations, fields):
+        chunk_rows = chunk[first_field].shape[0]
+        for field, destination in destinations.items():
             destination[offset : offset + chunk_rows] = chunk[field]
         offset += chunk_rows
         del chunk
-    return destinations
 
 
 class DistPartitioner:
@@ -801,59 +800,82 @@ class DistPartitioner:
             )
 
     def _assemble_node_chunks(
-        self, chunks: list[Tuple[torch.Tensor, ...]], fields: list[int]
-    ) -> list[torch.Tensor]:
+        self,
+        chunks: list[Tuple[torch.Tensor, ...]],
+        fields: list[int],
+        node_id_field: int,
+    ) -> dict[int, torch.Tensor]:
         """Join ``fields`` of the received chunks sorted by node id, emptying ``chunks``.
 
+        ``node_id_field`` is the position of the node ids within each chunk tuple, and must be in ``fields``.
         The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
         If every destination is in RAM, the chunks are joined and then gathered by id.
         Otherwise each destination is filled one block of rows at a time, so a spilled field
         never needs a second full copy in RAM.
+
+        Returns:
+            The sorted tensor for each field in ``fields``, keyed by field.
         """
-        node_id_field = len(chunks[0]) - 1
-        num_rows = sum(chunk[node_id_field].shape[0] for chunk in chunks)
-        destinations = [_empty_rows(num_rows, chunks[0][field]) for field in fields]
-        if not any(is_disk_backed(destination) for destination in destinations):
+        chunk_node_ids = [chunk[node_id_field] for chunk in chunks]
+        chunk_row_counts = [node_ids.shape[0] for node_ids in chunk_node_ids]
+        num_rows = sum(chunk_row_counts)
+        destinations: dict[int, torch.Tensor] = {}
+        for field in fields:
+            destinations[field] = _empty_rows(num_rows, chunks[0][field])
+        if not any(is_disk_backed(tensor) for tensor in destinations.values()):
             # The block fill below handles any mix of disk and RAM destinations. This path is only for
-            # the all-RAM case, where freeing each chunk as it is copied peaks lower. The unused
-            # destinations cost nothing because torch.empty does not touch pages.
-            del destinations
-            joined = _concat_chunks(chunks, fields)
-            order = torch.argsort(joined[fields.index(node_id_field)])
-            return [tensor[order] for tensor in joined]
-        chunk_starts = torch.tensor(
-            [0] + [chunk[node_id_field].shape[0] for chunk in chunks]
-        ).cumsum(0)
-        order = torch.argsort(torch.cat([chunk[node_id_field] for chunk in chunks]))
-        row_bytes = max(
-            destination[:1].numel() * destination.element_size()
-            for destination in destinations
-        )
-        block_rows = max(1, _ORDERED_BLOCK_BYTES // max(row_bytes, 1))
-        for block_start in range(0, order.numel(), block_rows):
+            # the all-RAM case, where freeing each chunk as it is copied peaks lower. The destinations
+            # allocated above are reused: torch.empty does not touch pages, so they cost nothing until written.
+            # chunk_node_ids must go first, or it would keep every chunk's ids alive.
+            del chunk_node_ids
+            _copy_chunks_into(chunks, destinations)
+            order = torch.argsort(destinations[node_id_field])
+            # Gather one field at a time so each joined tensor is freed once its sorted copy exists.
+            for field in fields:
+                destinations[field] = destinations[field][order]
+            return destinations
+        chunk_starts = torch.tensor([0] + chunk_row_counts).cumsum(0)
+        order = torch.argsort(torch.cat(chunk_node_ids))
+        del chunk_node_ids
+        row_bytes = 1
+        for tensor in destinations.values():
+            row_bytes = max(
+                row_bytes, math.prod(tensor.shape[1:]) * tensor.element_size()
+            )
+        block_rows = max(1, _ORDERED_BLOCK_BYTES // row_bytes)
+        for block_start in range(0, num_rows, block_rows):
+            # Rows of the concatenated chunks, in the order they belong in this block.
             positions = order[block_start : block_start + block_rows]
-            # Locate the chunk holding each row so every chunk is indexed once per field, not once per row.
+            # Locate the chunk holding each row once per block, so the per-field work below is
+            # one gather per chunk rather than per row.
             chunk_of_position = (
                 torch.searchsorted(chunk_starts, positions, right=True) - 1
             )
             by_chunk = torch.argsort(chunk_of_position, stable=True)
             counts = torch.bincount(chunk_of_position, minlength=len(chunks)).tolist()
             block_rows_by_chunk = by_chunk.split(counts)
-            source_rows_by_chunk = positions[by_chunk].split(counts)
-            for destination, field in zip(destinations, fields):
+            row_in_chunk = (positions - chunk_starts[chunk_of_position])[by_chunk]
+            source_rows_by_chunk = row_in_chunk.split(counts)
+            # Only the chunks that contribute rows to this block, shared by every field.
+            contributions: list[tuple[int, torch.Tensor, torch.Tensor]] = []
+            for chunk_index, count in enumerate(counts):
+                if count > 0:
+                    contributions.append(
+                        (
+                            chunk_index,
+                            block_rows_by_chunk[chunk_index],
+                            source_rows_by_chunk[chunk_index],
+                        )
+                    )
+            for field, destination in destinations.items():
                 # Gather into RAM first: random writes to a disk-backed destination are slow, a
                 # single sequential copy of the finished block is not.
                 staging = torch.empty(
                     (positions.numel(), *destination.shape[1:]),
                     dtype=destination.dtype,
                 )
-                for chunk_index, (block_rows_of_chunk, source_rows) in enumerate(
-                    zip(block_rows_by_chunk, source_rows_by_chunk)
-                ):
-                    if source_rows.numel() > 0:
-                        staging[block_rows_of_chunk] = chunks[chunk_index][field][
-                            source_rows - chunk_starts[chunk_index]
-                        ]
+                for chunk_index, rows_in_block, source_rows in contributions:
+                    staging[rows_in_block] = chunks[chunk_index][field][source_rows]
                 destination[block_start : block_start + positions.numel()] = staging
         chunks.clear()
         return destinations
@@ -1197,8 +1219,8 @@ class DistPartitioner:
                 if ind is not None:
                     fields.append(ind)
             # Rows come back sorted by node id, which the range-based id2idx requires.
-            assembled = dict(
-                zip(fields, self._assemble_node_chunks(partitioned_results, fields))
+            assembled = self._assemble_node_chunks(
+                partitioned_results, fields, node_id_ind
             )
             partitioned_ids = assembled[node_id_ind]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():
