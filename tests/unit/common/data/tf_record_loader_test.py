@@ -1,6 +1,8 @@
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional, Tuple, Union
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
@@ -10,16 +12,15 @@ from parameterized import param, parameterized
 from torch.testing import assert_close
 
 from gigl.common import UriFactory
-from gigl.common.data.dataloaders import (
-    SerializedTFRecordInfo,
-    TFDatasetOptions,
-    TFRecordDataLoader,
-    _get_labels_from_features,
-)
 from gigl.common.data.load_torch_tensors import (
     SerializedGraphMetadata,
-    load_torch_tensors_from_tf_record,
+    load_torch_tensors,
     remove_sampling_weight_from_edge_quantization_metadata,
+)
+from gigl.common.data.loader_types import SerializedTFRecordInfo, TFDatasetOptions
+from gigl.common.data.tf_record_loader import (
+    TFRecordDataLoader,
+    _get_labels_from_features,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
@@ -32,6 +33,7 @@ from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
     CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
 )
 from gigl.types.graph import FeatureQuantizationMetadata
+from gigl.utils.share_memory import is_disk_backed
 from tests.test_assets.test_case import TestCase
 
 _FEATURE_SPEC_WITH_ENTITY_KEY: FeatureSpecDict = {
@@ -312,9 +314,55 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.features, expected_feature_tensor)
 
-        self.assertIsNone(loaded.quantized_features)
+        self.assertIsNone(loaded.packed_features)
 
         assert_close(loaded.labels, expected_label_tensor)
+
+    def test_load_as_torch_tensors_assembles_into_spilled_destination(self) -> None:
+        """With tensor spilling on, assembled tensors are disk-backed and byte-identical.
+
+        Exercises the ``allocate_disk_backed`` assembly path in ``load_as_torch_tensors``: the
+        loaded tensors must equal the in-memory (``tf.concat``) result, and the assembled tensors
+        must be backed by a spill file rather than anonymous memory.
+        """
+        info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=UriFactory.create_uri(self.data_dir),
+            feature_spec=_FEATURE_SPEC_WITH_ENTITY_KEY,
+            feature_keys=["feature_0", "feature_1"],
+            feature_dim=2,
+            entity_key="node_id",
+            label_keys=["label_0"],
+            tfrecord_uri_pattern="100.tfrecord",
+        )
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        opts = TFDatasetOptions(deterministic=True)
+
+        in_memory = loader.load_as_torch_tensors(info, tf_dataset_options=opts)
+        assert in_memory.features is not None  # narrow Optional for is_disk_backed
+        self.assertFalse(is_disk_backed(in_memory.ids))
+        self.assertFalse(is_disk_backed(in_memory.features))
+
+        spill_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(spill_dir.cleanup)
+        # A 1-byte threshold forces even these tiny fixtures down the disk-backed path.
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GIGL_TENSOR_SPILL_DIR": spill_dir.name,
+                "GIGL_TENSOR_SPILL_MIN_BYTES": "1",
+            },
+        ):
+            spilled = loader.load_as_torch_tensors(info, tf_dataset_options=opts)
+        assert spilled.features is not None and spilled.labels is not None
+
+        # Values, dtypes and shapes match the in-memory assembly ...
+        assert_close(spilled.ids, in_memory.ids)
+        assert_close(spilled.features, in_memory.features)
+        assert_close(spilled.labels, in_memory.labels)
+        # ... but the assembled tensors now live in spill files, not anonymous memory.
+        self.assertTrue(is_disk_backed(spilled.ids))
+        self.assertTrue(is_disk_backed(spilled.features))
+        self.assertTrue(is_disk_backed(spilled.labels))
 
     def test_load_as_torch_tensors_decodes_packed_node_features(self) -> None:
         packed_feature_values = [[1, 2], [254, 255]]
@@ -354,7 +402,7 @@ class TFRecordDataLoaderTest(TestCase):
         assert_close(loaded.ids, torch.tensor([0, 1]))
         self.assertIsNone(loaded.features)
         assert_close(
-            loaded.quantized_features,
+            loaded.packed_features,
             torch.tensor(packed_feature_values, dtype=torch.uint8),
         )
         self.assertIsNone(loaded.labels)
@@ -408,6 +456,17 @@ class TFRecordDataLoaderTest(TestCase):
                 entity_key=("src_node_id", "dst_node_id"),
             ),
             param(
+                "node_with_two_wide_label",
+                feature_keys=[],
+                feature_dim=0,
+                expected_node_ids=torch.empty(0, dtype=torch.int64),
+                expected_features=None,
+                expected_label_tensor=torch.empty(0, 2),  # 1 label with 2 values
+                entity_key="node_id",
+                label_keys=["label"],
+                feature_spec={"label": tf.io.FixedLenFeature([2], tf.float32)},
+            ),
+            param(
                 "node_with_label_only",
                 feature_keys=[],
                 feature_dim=0,
@@ -416,6 +475,7 @@ class TFRecordDataLoaderTest(TestCase):
                 expected_label_tensor=torch.empty(0, 1),  # 1 label
                 entity_key="node_id",
                 label_keys=["label"],
+                feature_spec={"label": tf.io.FixedLenFeature([], tf.int64)},
             ),
             param(
                 "node_with_features_and_label",
@@ -426,6 +486,7 @@ class TFRecordDataLoaderTest(TestCase):
                 expected_label_tensor=torch.empty(0, 1),  # 1 label
                 entity_key="node_id",
                 label_keys=["label"],
+                feature_spec={"label": tf.io.FixedLenFeature([], tf.int64)},
             ),
         ]
     )
@@ -439,6 +500,7 @@ class TFRecordDataLoaderTest(TestCase):
         expected_label_tensor: Optional[torch.Tensor],
         entity_key: Union[str, Tuple[str, str]],
         label_keys: list[str] = [],
+        feature_spec: FeatureSpecDict = {},
     ):
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
@@ -447,7 +509,8 @@ class TFRecordDataLoaderTest(TestCase):
         loaded = loader.load_as_torch_tensors(
             serialized_tf_record_info=SerializedTFRecordInfo(
                 tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
-                feature_spec={},  # Doesn't matter what this is.
+                # Only the label keys' shapes are read, to size the empty labels.
+                feature_spec=feature_spec,
                 feature_keys=feature_keys,
                 feature_dim=feature_dim,
                 entity_key=entity_key,
@@ -458,8 +521,81 @@ class TFRecordDataLoaderTest(TestCase):
 
         assert_close(loaded.ids, expected_node_ids)
         assert_close(loaded.features, expected_features)
-        self.assertIsNone(loaded.quantized_features)
+        self.assertIsNone(loaded.packed_features)
         assert_close(loaded.labels, expected_label_tensor)
+
+    def test_load_rejects_entity_without_tfrecord_prefix(self) -> None:
+        loader = TFRecordDataLoader(rank=0, world_size=1)
+        with self.assertRaises(ValueError):
+            loader.load_as_torch_tensors(
+                serialized_tf_record_info=SerializedTFRecordInfo(
+                    tfrecord_uri_prefix=None,
+                    parquet_uri_prefix=UriFactory.create_uri("gs://bucket/nodes/"),
+                    feature_spec={},
+                    feature_keys=[],
+                    feature_dim=0,
+                    entity_key="node_id",
+                ),
+            )
+
+    def test_serialized_info_requires_a_data_prefix(self) -> None:
+        with self.assertRaises(ValueError):
+            SerializedTFRecordInfo(
+                tfrecord_uri_prefix=None,
+                feature_spec={},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            )
+
+    def test_empty_rank_label_width_matches_populated_rank(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        # One file for two ranks, so rank 1 has no files.
+        with tf.io.TFRecordWriter(str(Path(temp_dir.name) / "0.tfrecord")) as writer:
+            for node_id in range(3):
+                example = tf.train.Example(
+                    features=tf.train.Features(
+                        feature={
+                            "node_id": tf.train.Feature(
+                                int64_list=tf.train.Int64List(value=[node_id])
+                            ),
+                            "label": tf.train.Feature(
+                                float_list=tf.train.FloatList(
+                                    value=[node_id, node_id + 0.5]
+                                )
+                            ),
+                        }
+                    )
+                )
+                writer.write(example.SerializeToString())
+        info = SerializedTFRecordInfo(
+            tfrecord_uri_prefix=UriFactory.create_uri(temp_dir.name),
+            feature_spec={
+                "node_id": tf.io.FixedLenFeature([], tf.int64),
+                "label": tf.io.FixedLenFeature([2], tf.float32),
+            },
+            feature_keys=[],
+            feature_dim=0,
+            entity_key="node_id",
+            label_keys=["label"],
+            tfrecord_uri_pattern=".*\\.tfrecord$",
+        )
+
+        populated = TFRecordDataLoader(rank=0, world_size=2).load_as_torch_tensors(
+            serialized_tf_record_info=info,
+            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        )
+        empty = TFRecordDataLoader(rank=1, world_size=2).load_as_torch_tensors(
+            serialized_tf_record_info=info,
+            tf_dataset_options=TFDatasetOptions(deterministic=True),
+        )
+
+        self.assertEqual(tuple(populated.ids.shape), (3,))
+        self.assertEqual(tuple(empty.ids.shape), (0,))
+        assert populated.labels is not None and empty.labels is not None
+        self.assertEqual(tuple(populated.labels.shape), (3, 2))
+        self.assertEqual(tuple(empty.labels.shape), (0, 2))
 
     @parameterized.expand(
         [
@@ -599,9 +735,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
-        loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+        loaded = load_torch_tensors(
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -673,8 +808,8 @@ class TFRecordDataLoaderTest(TestCase):
         )
 
         with self.assertRaises(ValueError):
-            load_torch_tensors_from_tf_record(
-                tf_record_dataloader=TFRecordDataLoader(rank=0, world_size=1),
+            load_torch_tensors(
+                world_size=1,
                 serialized_graph_metadata=serialized_graph_metadata,
                 should_load_tensors_in_parallel=False,
                 weight_edge_feat_name="quantized_weight",
@@ -729,6 +864,57 @@ class TFRecordDataLoaderTest(TestCase):
                 quantized_feature_indices=(2,),
                 clip_min=0.0,
                 clip_max=3.0,
+            ),
+        )
+
+    def test_sampling_weight_removal_shifts_lossless_feature_indices(self) -> None:
+        missing_path = UriFactory.create_uri("/does/not/exist")
+        serialized_graph_metadata = SerializedGraphMetadata(
+            node_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={"node_id": tf.io.FixedLenFeature([], tf.int64)},
+                feature_keys=[],
+                feature_dim=0,
+                entity_key="node_id",
+            ),
+            edge_entity_info=SerializedTFRecordInfo(
+                tfrecord_uri_prefix=missing_path,
+                feature_spec={
+                    "src_id": tf.io.FixedLenFeature([], tf.int64),
+                    "dst_id": tf.io.FixedLenFeature([], tf.int64),
+                    "raw_embedding": tf.io.FixedLenFeature([2], tf.float32),
+                    "weight": tf.io.FixedLenFeature([], tf.float32),
+                },
+                feature_keys=["raw_embedding", "weight"],
+                feature_dim=3,
+                entity_key=("src_id", "dst_id"),
+            ),
+            edge_quantization_metadata=FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=5,
+                quantized_feature_indices=(4,),
+                clip_min=0.0,
+                clip_max=3.0,
+                lossless_feature_indices=(3,),
+                lossless_column_encodings=("int8",),
+            ),
+        )
+
+        adjusted_metadata = remove_sampling_weight_from_edge_quantization_metadata(
+            serialized_graph_metadata=serialized_graph_metadata,
+            weight_edge_feat_name="weight",
+        )
+
+        self.assertEqual(
+            adjusted_metadata,
+            FeatureQuantizationMetadata(
+                bits=2,
+                feature_dim=4,
+                quantized_feature_indices=(3,),
+                clip_min=0.0,
+                clip_max=3.0,
+                lossless_feature_indices=(2,),
+                lossless_column_encodings=("int8",),
             ),
         )
 
@@ -830,9 +1016,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
-        loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+        loaded = load_torch_tensors(
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),
@@ -920,9 +1105,8 @@ class TFRecordDataLoaderTest(TestCase):
                     ).SerializeToString()
                 )
 
-        loader = TFRecordDataLoader(rank=0, world_size=1)
-        loaded = load_torch_tensors_from_tf_record(
-            tf_record_dataloader=loader,
+        loaded = load_torch_tensors(
+            world_size=1,
             serialized_graph_metadata=SerializedGraphMetadata(
                 node_entity_info=SerializedTFRecordInfo(
                     tfrecord_uri_prefix=UriFactory.create_uri(node_dir.name),

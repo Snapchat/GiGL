@@ -4,7 +4,6 @@
 # DistNeighborSampler for k-hop, DistPPRNeighborSampler for PPR) instead of
 # GLT's DistNeighborSampler directly.
 
-import datetime
 import queue
 from threading import Barrier, BrokenBarrierError
 from typing import Optional, Union, cast
@@ -17,7 +16,6 @@ from graphlearn_torch.distributed import (
     DistDataset,
     DistMpSamplingProducer,
     MpDistSamplingWorkerOptions,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -44,7 +42,14 @@ from gigl.distributed.constants import (
     sampling_worker_init_timeout_seconds,
 )
 from gigl.distributed.sampler_options import SamplerOptions
-from gigl.distributed.utils.dist_sampler import create_dist_sampler
+from gigl.distributed.utils.dist_sampler import (
+    create_dist_sampler,
+    join_workers_with_shared_deadline,
+)
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_channels_from_env,
+)
 
 logger = Logger()
 
@@ -52,7 +57,7 @@ logger = Logger()
 def _narrow_rpc_timeout_after_init(rank: int, bringup_rpc_timeout: float) -> None:
     """Reset the RPC agent's request timeout once a sampling worker is past its init barrier.
 
-    ``init_rpc`` sets the agent's default request timeout to the bring-up tolerance, which is
+    ``init_rpc_from_env`` sets the agent's default request timeout to the bring-up tolerance, which is
     deliberately generous so cross-rank skew does not kill the gather -- but leaving it there
     would mean every steady-state sampling and feature-collection RPC also waits that long
     before a stuck request surfaces. The init barrier is precisely the boundary between the two
@@ -92,14 +97,9 @@ def _sampling_worker_loop(
             group_name="_sampling_worker_subprocess",
         )
         if worker_options.use_all2all:
-            torch.distributed.init_process_group(
-                backend="gloo",
-                timeout=datetime.timedelta(seconds=worker_options.rpc_timeout),
-                rank=worker_options.worker_ranks[rank],
-                world_size=worker_options.worker_world_size,
-                init_method="tcp://{}:{}".format(
-                    worker_options.master_addr, worker_options.master_port
-                ),
+            raise ValueError(
+                "All-to-all feature collection (use_all2all=True) is not supported; "
+                "features are fetched through the fused feature store."
             )
 
         if worker_options.num_rpc_threads is None:
@@ -112,7 +112,7 @@ def _sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(num_rpc_threads + 1)
 
-        init_rpc(
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
@@ -221,6 +221,8 @@ class DistSamplingProducer(DistMpSamplingProducer):
 
     def init(self):
         r"""Create the subprocess pool. Init samplers and rpc server."""
+        # Fail here on a bad channel value instead of inside every spawned worker.
+        sampling_rpc_channels_from_env()
         if self.sampling_config.seed is not None:
             seed_everything(self.sampling_config.seed)
         if not self.sampling_config.shuffle:
@@ -261,7 +263,7 @@ class DistSamplingProducer(DistMpSamplingProducer):
         """Wait for every sampling worker to reach the init barrier, but not forever.
 
         An unbounded ``barrier.wait()`` here is the difference between a job that fails and a job
-        that hangs. Each worker must complete GLT's ``init_rpc``, which itself gathers all
+        that hangs. Each worker must complete ``init_rpc_from_env``, which itself gathers all
         ``num_workers x world_size`` workers within the bring-up tolerance; a worker that loses
         that gather dies, never reaches this barrier, and leaves this process blocked forever
         while its peers sit in collectives until the training process group's own timeout fires.
@@ -298,7 +300,32 @@ class DistSamplingProducer(DistMpSamplingProducer):
             self.shutdown()
             raise RuntimeError(
                 f"sampling workers did not reach the init barrier within {timeout_seconds}s; "
-                f"{diagnosis}. A worker that loses GLT's init_rpc gather dies before this "
+                f"{diagnosis}. A worker that loses the init_rpc gather dies before this "
                 f"barrier. Raise {SAMPLING_RPC_INIT_TIMEOUT_ENV} (this bound is a multiple of "
                 f"it) if init is legitimately slower than this on a cold cache."
             ) from None
+
+    def shutdown(self) -> None:
+        """Stops the sampling workers, waiting at most ``MP_STATUS_CHECK_INTERVAL`` in total.
+
+        Same as GLT's ``DistMpSamplingProducer.shutdown`` [1] except that the grace period
+        is a single deadline shared by all workers.
+        See :func:`join_workers_with_shared_deadline`.
+
+        [1]:
+        https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_sampling_producer.py#L223-L239
+        """
+        if self._shutdown:
+            return
+        self._shutdown = True
+        try:
+            for task_queue in self._task_queues:
+                task_queue.put((MpCommand.STOP, None))
+            join_workers_with_shared_deadline(self._workers, MP_STATUS_CHECK_INTERVAL)
+            for task_queue in self._task_queues:
+                task_queue.cancel_join_thread()
+                task_queue.close()
+        finally:
+            for worker in self._workers:
+                if worker.is_alive():
+                    worker.terminate()

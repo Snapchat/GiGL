@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import os
-from distutils.util import strtobool
 from typing import Optional, Sequence
 
 import gigl.env.dep_constants as dep_constants
@@ -16,6 +15,7 @@ from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
 from gigl.common.utils.gcs import GcsUtils
+from gigl.common.utils.parse import str_to_bool
 from gigl.env.pipelines_config import get_resource_config
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.constants.metrics import TIMER_SUBGRAPH_SAMPLER_S
@@ -29,6 +29,7 @@ from gigl.src.common.utils.metrics_service_provider import (
 from gigl.src.common.utils.spark_job_manager import (
     DataprocClusterInitData,
     SparkJobManager,
+    build_subgraph_sampler_cluster_name,
 )
 from gigl.src.subgraph_sampler.lib.ingestion_protocol import BaseIngestion
 
@@ -100,11 +101,9 @@ class SubgraphSampler:
         # Default to the Spark 3.5 runner (Dataproc 2.2): Google blocks cluster creation on
         # Dataproc image 2.0 starting 2026-08-25. Setting the `use_spark35_runner`
         # experimental flag to "False" remains a temporary escape hatch until then.
-        use_spark35: bool = bool(
-            strtobool(
-                gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.experimental_flags.get(
-                    "use_spark35_runner", "True"
-                )
+        use_spark35: bool = str_to_bool(
+            gbml_config_pb_wrapper.dataset_config.subgraph_sampler_config.experimental_flags.get(
+                "use_spark35_runner", "True"
             )
         )
         if use_graph_db:
@@ -165,12 +164,12 @@ class SubgraphSampler:
             logger.info("Ingestion complete. Cleaning up...")
             graph_db_ingestion_config.clean_up()
 
-        # must match pattern (?:[a-z](?:[-a-z0-9]{0,49}[a-z0-9])?)
-        if not cluster_name:
-            cluster_name = f"sgs_{applied_task_identifier}"
-        cluster_name = cluster_name.replace("_", "-")[:50]
-        if cluster_name.endswith("-"):
-            cluster_name = cluster_name[:-1] + "Z"
+        if cluster_name:
+            cluster_name = SparkJobManager.get_sanitized_dataproc_cluster_name(
+                cluster_name
+            )
+        else:
+            cluster_name = build_subgraph_sampler_cluster_name(applied_task_identifier)
 
         gcs_utils = GcsUtils()
 

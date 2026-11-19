@@ -37,7 +37,6 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs isort: skip
 
 import argparse
 from collections.abc import Iterable, Mapping
-from distutils.util import strtobool
 from typing import Literal
 
 import torch
@@ -48,6 +47,7 @@ from torch_geometric.data import HeteroData
 from examples.tutorial.KDD_2025.utils import LOCAL_SAVED_MODEL_URI, init_model
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
+from gigl.common.utils.parse import str_to_bool
 from gigl.distributed import (
     DistABLPLoader,
     DistDataset,
@@ -269,7 +269,7 @@ if __name__ == "__main__":
         logger.info(f"Test node type {node_type} has {node_ids.size(0)} nodes.")  # ty: ignore[unresolved-attribute] TODO(ty-torch-keyed-access): fix ty false positives for torch-backed keyed container access.
     training_process_port = get_free_port()
     logger.info(f"Will train for {max_training_batches} batches.")
-    if strtobool(args.use_local_saved_model):
+    if str_to_bool(args.use_local_saved_model):
         model_uri = LOCAL_SAVED_MODEL_URI
     else:
         model_uri = gbml_config_pb_wrapper.shared_config.trained_model_metadata.trained_model_uri

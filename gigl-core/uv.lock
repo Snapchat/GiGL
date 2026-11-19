@@ -1,8 +1,8 @@
 version = 1
 revision = 3
-requires-python = "==3.11.*"
+requires-python = ">=3.11, <3.14"
 
 [[package]]
 name = "gigl-core"
-version = "0.2.0"
+version = "0.3.1"
 source = { editable = "." }

@@ -15,6 +15,7 @@ from gigl.distributed.constants import (
 from gigl.distributed.dist_sampling_producer import (
     DistSamplingProducer,
     _narrow_rpc_timeout_after_init,
+    _sampling_worker_loop,
 )
 from tests.test_assets.test_case import TestCase
 
@@ -121,6 +122,34 @@ class WorkerInitBarrierTest(_EnvRestoringTestCase):
         barrier = std_mp.get_context("spawn").Barrier(1)
 
         producer._wait_for_workers_at_barrier(barrier)
+
+
+class AllToAllRejectionTest(TestCase):
+    def test_worker_loop_rejects_all_to_all(self) -> None:
+        worker_options = mock.MagicMock()
+        worker_options.worker_world_size = 1
+        worker_options.worker_ranks = [0]
+        worker_options.use_all2all = True
+
+        with (
+            mock.patch("gigl.distributed.dist_sampling_producer.init_worker_group"),
+            mock.patch("gigl.distributed.dist_sampling_producer.shutdown_rpc"),
+        ):
+            with self.assertRaises(ValueError):
+                _sampling_worker_loop(
+                    0,
+                    mock.MagicMock(),
+                    mock.MagicMock(),
+                    None,
+                    mock.MagicMock(),
+                    worker_options,
+                    mock.MagicMock(),
+                    mock.MagicMock(),
+                    mock.MagicMock(),
+                    mock.MagicMock(),
+                    mock.MagicMock(),
+                    None,
+                )
 
 
 if __name__ == "__main__":

@@ -1,20 +1,45 @@
 substitutions:
   _CMD: ""
+  # Commit hashes of the active checkout. Cloud Build does not upload .git, so the Makefile cannot read them itself.
+  # The run-cloud-run-command-on-active-checkout action passes them. The Makefile reads them from the environment.
+  _GIT_HASH: ""
+  _SHORT_GIT_HASH: ""
+  # _BUILDER_IMAGE, the builder image that runs _CMD, has no default. The run-cloud-run-command-on-active-checkout
+  # action passes it from gigl/dep_vars.env, and Cloud Build fails a submit that uses it without a value.
+
+  # GitHub Actions run id, so a cancelled workflow can find and cancel its build by tag.
+  _GITHUB_RUN_ID: "local"
+# The tag must match cloud_build_tag_for_github_run in gigl/src/common/constants/ci.py.
+tags:
+  - "gigl-ci-run-${_GITHUB_RUN_ID}"
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
-  - name: us-central1-docker.pkg.dev/external-snap-ci-github-gigl/gigl-base-images/gigl-builder:86b4bc2e01ded1e5181c56fb7f85015833676308.115.1
+  - name: ${_BUILDER_IMAGE}
     entrypoint: /bin/bash
     # Route sbt through Google's Maven Central mirror to avoid 429 rate limits from repo1.maven.org.
     # Intentionally set here (CI env) rather than in scala/.sbtopts or scala_spark35/.sbtopts to avoid
     # affecting downstream consumers of GiGL (e.g. as a submodule) that have their own Maven routing.
     env:
       - 'SBT_OPTS=-Dsbt.override.build.repos=true -Dsbt.repository.config=repositories'
+      - 'GIT_HASH=${_GIT_HASH}'
+      - 'SHORT_GIT_HASH=${_SHORT_GIT_HASH}'
     args:
       - -c
       - |
         set -e
         set -x
+
+        # Step containers get Docker's default 64 MB /dev/shm, too small for tests that share
+        # DBLP-sized tensors across processes. Enlarging it needs a privileged step; fail if refused.
+        df -h /dev/shm
+        mount -o remount,size=16G /dev/shm \
+          || sudo mount -o remount,size=16G /dev/shm \
+          || {
+            echo "ERROR: could not enlarge /dev/shm, we need larger shared memory for DBLP tests!"
+            exit 1
+          }
+        df -h /dev/shm
 
         if [[ -z "${_CMD}" ]]; then
           echo "Error: _CMD is not set."
@@ -31,7 +56,9 @@ steps:
         source ~/.profile
         docker version
         docker buildx create --driver=docker-container --use
-        docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+        # Pinned by digest: this image runs --privileged, so a repointed :latest tag would be arbitrary
+        # root code in every CI job. Refresh the digest deliberately (see RELEASING.md).
+        docker run --rm --privileged multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 --reset -p yes
         gcloud auth configure-docker us-central1-docker.pkg.dev
         # Install GiGL
         uv pip install -e .

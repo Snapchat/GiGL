@@ -34,9 +34,13 @@ from gigl.src.common.types.pb_wrappers.preprocessed_metadata import (
     PreprocessedMetadataPbWrapper,
 )
 from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.common.utils.timeout import timeout
 from gigl.src.data_preprocessor.data_preprocessor import DataPreprocessor
+from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+    DataPreprocessorOutputFormat,
+)
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -139,6 +143,10 @@ class DataPreprocessorPipelineTest(TestCase):
         gbml_config_pb.shared_config.preprocessed_metadata_uri = GcsUri.join(
             output_directory, "preprocessed_metadata.yaml"
         ).uri
+        # This test checks the TFRecord output; the Parquet output is covered by parquet_writer_test.py.
+        gbml_config_pb.feature_flags[DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG] = (
+            DataPreprocessorOutputFormat.TFRECORD.value
+        )
 
         logger.info(f"Will be using gbml_config_pb: {gbml_config_pb} to run the test.")
 
@@ -168,21 +176,21 @@ class DataPreprocessorPipelineTest(TestCase):
             gbml_config_pb_wrapper.graph_metadata_pb_wrapper.condensed_edge_type_to_edge_type_map
         )
 
-        self.assertEquals(
+        self.assertEqual(
             len(condensed_node_type_to_node_type_map),
             len(mocked_dataset_info.node_types),
         )
-        self.assertEquals(
+        self.assertEqual(
             len(condensed_edge_type_to_edge_type_map),
             len(mocked_dataset_info.edge_types),
         )
 
-        self.assertEquals(
+        self.assertEqual(
             condensed_node_type_to_node_type_map[DEFAULT_CONDENSED_NODE_TYPE],
             mocked_dataset_info.default_node_type,
         )
 
-        self.assertEquals(
+        self.assertEqual(
             condensed_edge_type_to_edge_type_map[DEFAULT_CONDENSED_EDGE_TYPE].relation,
             mocked_dataset_info.default_edge_type.relation,
         )
@@ -603,7 +611,9 @@ class DataPreprocessorPipelineTest(TestCase):
 
     def __run_test_for_mocked_dataset(self, mocked_dataset_info: MockedDatasetInfo):
         applied_task_id = AppliedTaskIdentifier(
-            f"data_preprocessor_pipeline_test_{mocked_dataset_info.name}_{current_formatted_datetime()}"
+            new_test_run_id(
+                f"data_preprocessor_pipeline_test_{mocked_dataset_info.name}"
+            )
         )
         frozen_gbml_config_uri: LocalUri = self.__generate_gbml_config_pb_for_mocked_dataset_using_passthrough_preprocessor(
             applied_task_identifier=applied_task_id,

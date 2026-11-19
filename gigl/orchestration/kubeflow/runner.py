@@ -89,7 +89,7 @@ from gigl.orchestration.kubeflow.kfp_orchestrator import (
     DEFAULT_KFP_COMPILED_PIPELINE_DEST_PATH,
     KfpOrchestrator,
 )
-from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS
+from gigl.orchestration.kubeflow.kfp_pipeline import SPECED_COMPONENTS, ExitTask
 from gigl.src.common.constants.components import GiGLComponents
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.utils.time import current_formatted_datetime
@@ -332,6 +332,18 @@ def _get_parser() -> argparse.ArgumentParser:
         default=[],
         help="Email to send notification to. See https://cloud.google.com/vertex-ai/docs/pipelines/email-notifications for more details.",
     )
+    parser.add_argument(
+        "--exit_task",
+        choices=[exit_task.value for exit_task in ExitTask],
+        default=ExitTask.EMAIL.value,
+        help="""Compile time choice of what the pipeline runs when it exits.
+        'email' (default) sends the Vertex AI notification email to --notification_emails.
+        'cleanup' instead cancels the Vertex AI custom jobs, Dataflow jobs, and Dataproc clusters the run
+        launched, which is what CI wants when a run is cancelled. It replaces the email; a pipeline has one exit task.
+        Dataflow jobs are matched by the prefix 'gigl-<job_name>-', so job names must not be prefixes of one
+        another when cleanup is enabled.
+        Only applicable for the compile action.""",
+    )
     return parser
 
 
@@ -416,6 +428,7 @@ if __name__ == "__main__":
             dst_compiled_pipeline_path=compiled_pipeline_path,
             additional_job_args=parsed_additional_job_args,
             tag=args.pipeline_tag,
+            exit_task=ExitTask(args.exit_task),
         )
         logger.info(
             f"Pipeline finished compiling, exported to: {pipeline_bundle_path.uri}"

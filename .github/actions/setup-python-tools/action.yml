@@ -39,12 +39,12 @@ runs:
     steps:
       # Step 1: Set up Python environment
       - name: "Set up Python"
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version-file: ".python-version"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: "0.12.9" # Matches the version in requirements/install_py_deps.sh
 
@@ -55,7 +55,7 @@ runs:
         # NOTE: If upgrading, please ensure that the generated
         # credentials file is gitignored/ docker ignored: `gha-creds-*.json`
         # More info: https://github.com/google-github-actions/auth/issues/123
-        uses: 'google-github-actions/auth@v2' # WARNING: See note above.
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13 -- WARNING: See note above.
         with:
           project_id: ${{ inputs.gcp_project_id }}
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
@@ -66,7 +66,7 @@ runs:
       # Step 4: Install gcloud tooling
       - name: Set Up Cloud SDK
         if: inputs.setup_gcloud == 'true'
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
         with:
           project_id: ${{ inputs.gcp_project_id }}
 

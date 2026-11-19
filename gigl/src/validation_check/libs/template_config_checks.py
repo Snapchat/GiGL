@@ -1,5 +1,5 @@
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from gigl.common import UriFactory
 from gigl.common.logger import Logger
@@ -15,6 +15,10 @@ from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrappe
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.data_preprocessor.lib.data_preprocessor_config import (
     DataPreprocessorConfig,
+)
+from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+    DataPreprocessorOutputFormat,
 )
 from gigl.src.inference.v1.lib.base_inferencer import BaseInferencer
 from gigl.src.post_process.lib.base_post_processor import BasePostProcessor
@@ -55,6 +59,39 @@ def check_pipeline_has_valid_start_and_stop_flags(
                     f"Invalid component {component} for GLT Backend"
                     f"GLT Backend does not support components {GLT_BACKEND_UNSUPPORTED_COMPONENTS}."
                 )
+
+
+def check_data_preprocessor_output_format_supported_by_backend(
+    gbml_config_wrapper: GbmlConfigPbWrapper,
+) -> None:
+    """
+    Check that the data preprocessor output format can be read by the backend's components.
+
+    Configs that do not use the GLT backend run the subgraph sampler, which reads only TFRecords.
+    They must set the ``data_preprocessor_output_format`` feature flag to ``tfrecord``, since the default is ``parquet``.
+
+    Args:
+        gbml_config_wrapper: The task config to check.
+
+    Raises:
+        ValueError: If the flag is not a valid output format, or if Parquet output is selected without the GLT backend.
+    """
+    output_format = DataPreprocessorOutputFormat(
+        gbml_config_wrapper.gbml_config_pb.feature_flags.get(
+            DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+            DataPreprocessorOutputFormat.PARQUET.value,
+        )
+    )
+    if (
+        not gbml_config_wrapper.should_use_glt_backend
+        and output_format == DataPreprocessorOutputFormat.PARQUET
+    ):
+        raise ValueError(
+            f"Parquet data preprocessor output is only supported with the GLT backend; "
+            f"the subgraph sampler reads only TFRecords. "
+            f"Set the feature flag {DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG}: "
+            f"{DataPreprocessorOutputFormat.TFRECORD.value} in the task config."
+        )
 
 
 def check_if_runtime_args_all_str(args_name: str, runtime_args: dict[str, Any]) -> None:
@@ -128,6 +165,22 @@ def check_if_task_metadata_valid(
         )
 
 
+def _assert_has_data_uri_prefix(
+    proto: Union[
+        preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput,
+        preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo,
+    ],
+) -> None:
+    """Asserts that the preprocessed output records where its data is.
+
+    TFRecord output sets ``tfrecord_uri_prefix`` and Parquet output sets ``parquet_uri_prefix``.
+    """
+    assert proto.tfrecord_uri_prefix or proto.parquet_uri_prefix, (
+        "Invalid preprocessed metadata; one of 'tfrecord_uri_prefix' or "
+        "'parquet_uri_prefix' must be non-empty."
+    )
+
+
 def check_if_preprocessed_metadata_valid(
     gbml_config_pb: gbml_config_pb2.GbmlConfig,
 ) -> None:
@@ -179,7 +232,6 @@ def check_if_preprocessed_metadata_valid(
         for field in [
             "node_id_key",
             "schema_uri",
-            "tfrecord_uri_prefix",
             "transform_fn_assets_uri",
             "enumerated_node_ids_bq_table",
             "enumerated_node_data_bq_table",
@@ -187,6 +239,7 @@ def check_if_preprocessed_metadata_valid(
             assert_proto_field_value_is_truthy(
                 proto=node_metadata_output, field_name=field
             )
+        _assert_has_data_uri_prefix(proto=node_metadata_output)
 
     for (
         _,
@@ -201,13 +254,13 @@ def check_if_preprocessed_metadata_valid(
         # Check if all required fields are present in the main edge info.
         for field in [
             "schema_uri",
-            "tfrecord_uri_prefix",
             "transform_fn_assets_uri",
             "enumerated_edge_data_bq_table",
         ]:
             assert_proto_field_value_is_truthy(
                 proto=edge_metadata_output.main_edge_info, field_name=field
             )
+        _assert_has_data_uri_prefix(proto=edge_metadata_output.main_edge_info)
 
 
 def check_if_graph_metadata_valid(

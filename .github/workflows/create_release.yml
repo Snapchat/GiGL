@@ -33,7 +33,7 @@ on:
 jobs:
   # First job: Bump version and create release branch
   bump_version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -43,10 +43,17 @@ jobs:
       new_version: ${{ steps.get_new_version.outputs.new_version }}
       release_branch_name: ${{ steps.get_new_version.outputs.release_branch_name }}
       bump_type: ${{ steps.set_vars.outputs.bump_type }}
+      minors: ${{ steps.versions.outputs.minors }}
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    # Read before the bump and the push, so a bad list fails before the release branch exists. The bump
+    # does not change SUPPORTED_PYTHON_VERSIONS, so this is the release branch's list.
+    - name: Read SUPPORTED_PYTHON_VERSIONS
+      id: versions
+      run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
 
     - name: Setup Machine for bumping version
       uses: ./.github/actions/setup-python-tools
@@ -88,6 +95,13 @@ jobs:
           --bump_type "${BUMP_TYPE}" \
           --project "${PROJECT}"
 
+    # bump_version rewrites the gigl-core version in gigl-core/pyproject.toml, so gigl-core/uv.lock is re-locked here
+    # and picked up by the commit step below. The root uv.lock needs no step: the `uv run` calls re-lock it. The
+    # gigl-core lock holds only the gigl-core entry, so the version line is the only thing that can change.
+    - name: Re-lock gigl-core after the version bump
+      working-directory: gigl-core
+      run: uv lock
+
     # Capture new version and create release branch name
     - name: Get new version
       id: get_new_version
@@ -108,10 +122,20 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         to_new_branch_named: ${{ steps.get_new_version.outputs.release_branch_name }}
 
-
+  # One leg per Python minor, each run in that minor's builder image.
   release_gigl_kfp_pipeline:
     needs: bump_version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      # A failing minor must not cancel another minor's leg in the middle of its pushes.
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(needs.bump_version.outputs.minors) }}
+    # Runs in the release environment so GCP_SERVICE_ACCOUNT_EMAIL resolves to the release
+    # service account, the only identity allowed to push release images to public-gigl.
+    # The PR/test service account cannot. See RELEASING.md, "Release identity and permissions".
+    environment:
+      name: release
     permissions:
       contents: write
       pull-requests: write
@@ -119,7 +143,7 @@ jobs:
 
     steps:
     - name: Checkout release branch
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
@@ -135,13 +159,9 @@ jobs:
     - name: Release GiGL KFP pipeline
       uses: snapchat/gigl/.github/actions/run-cloud-run-command-on-active-checkout@main
       with:
-        cmd: |
-            source gigl/dep_vars.env && make \
-            DOCKER_IMAGE_DATAFLOW_RUNTIME_NAME_WITH_TAG=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_DATAFLOW_CPU \
-            DOCKER_IMAGE_MAIN_CUDA_NAME_WITH_TAG=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CUDA \
-            DOCKER_IMAGE_MAIN_CPU_NAME_WITH_TAG=$DEFAULT_GIGL_RELEASE_SRC_IMAGE_CPU \
-            compiled_pipeline_path=$DEFAULT_GIGL_RELEASE_KFP_PIPELINE_PATH \
-            compile_gigl_kubeflow_pipeline
+        python_version: ${{ matrix.python }}
+        # The builder image's UV_PYTHON selects the minor; `python_version` picks that builder.
+        cmd: make release_kfp_pipeline
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
 
@@ -187,7 +207,7 @@ jobs:
       - bump_version
       - release_gigl_kfp_pipeline
       # - release_dev_workbench_image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -195,7 +215,7 @@ jobs:
 
     steps:
     - name: Checkout release branch
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.bump_version.outputs.release_branch_name }}
 
