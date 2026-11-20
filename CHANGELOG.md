@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Add `GIGL_RANK_LOCAL_CSR_ROWS=off` to keep the full-range CSR layout under range partitioning (every rank stores a row
+  for each id below its range end, offset 0) instead of the rank-local rows from #885. Callers that sample with global
+  ids through GLT's own samplers get no neighbors on ranks above 0 with the rank-local layout. The variable is read once
+  when the dataset is built and must be the same on every machine by @kmontemayor2-sc
 - Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
   `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
   entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc

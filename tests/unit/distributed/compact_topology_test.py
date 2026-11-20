@@ -4,6 +4,7 @@ The consumer is a compiled extension, so these compare sampled neighbourhoods ag
 own build rather than asserting hand-written expectations.
 """
 
+import os
 import weakref
 from multiprocessing.reduction import ForkingPickler
 from typing import Literal, Union
@@ -12,12 +13,14 @@ from unittest import mock
 import torch
 from graphlearn_torch.data import Graph, Topology
 from graphlearn_torch.partition import RangePartitionBook
+from graphlearn_torch.sampler import NeighborSampler
 from parameterized import param, parameterized
 
 from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
 from gigl.utils.csr import (
+    RANK_LOCAL_CSR_ROWS_ENV,
     CompactTopology,
     get_compressed_id_offset,
     to_local_compressed_ids,
@@ -524,6 +527,76 @@ class RangePartitionRowOffsetTest(TestCase):
             ),
             torch.tensor([15, 0, 7, 14, 15]),
         )
+
+
+class RankLocalRowsOptOutTest(TestCase):
+    """``GIGL_RANK_LOCAL_CSR_ROWS=off`` keeps a row for every id below the rank's range end, from offset 0."""
+
+    _BOOK = RangePartitionBook(partition_ranges=[(0, 10), (10, 25)], partition_idx=1)
+
+    def _build(
+        self,
+        edge_index: torch.Tensor,
+        edge_dir: Literal["in", "out"],
+        node_partition_book: Union[torch.Tensor, RangePartitionBook],
+        rank_local_rows: str,
+    ) -> DistDataset:
+        dataset = DistDataset(rank=1, world_size=2, edge_dir=edge_dir)
+        with mock.patch.dict(os.environ, {RANK_LOCAL_CSR_ROWS_ENV: rank_local_rows}):
+            dataset._initialize_graph(
+                partitioned_edge_index={
+                    _EDGE_TYPE: GraphPartitionData(edge_index=edge_index, edge_ids=None)
+                },
+                node_partition_book={
+                    NodeType("user"): node_partition_book,
+                    NodeType("item"): node_partition_book,
+                },
+                edge_features_registered=False,
+            )
+        return dataset
+
+    @parameterized.expand(
+        [
+            param("out", edge_dir="out", edge_index=[[10, 24, 12], [3, 0, 24]]),
+            param("in", edge_dir="in", edge_index=[[3, 0, 24], [10, 24, 12]]),
+        ]
+    )
+    def test_rows_start_at_zero(
+        self, _name: str, edge_dir: Literal["in", "out"], edge_index: list[list[int]]
+    ) -> None:
+        coo = torch.tensor(edge_index)
+        dataset = self._build(coo.clone(), edge_dir, self._BOOK, "off")
+
+        assert isinstance(dataset.graph, dict)
+        topology = dataset.graph[_EDGE_TYPE].topo
+        self.assertEqual(get_compressed_id_offset(topology), 0)
+        self.assertEqual(topology.indptr.numel(), 25 + 1)
+        row, col, _, _ = topology.to_coo()
+        self.assertEqual(
+            sorted(zip(row.tolist(), col.tolist())),
+            sorted(zip(coo[0].tolist(), coo[1].tolist())),
+        )
+
+    def test_an_edge_past_the_rank_range_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self._build(torch.tensor([[25], [12]]), "out", self._BOOK, "off")
+
+    def test_glt_samples_global_seeds_as_it_does_on_a_tensor_book(self) -> None:
+        """GLT's own ``NeighborSampler`` does not translate global ids to rank-local rows."""
+        coo = torch.tensor([[10, 24, 12, 12], [3, 0, 24, 5]])
+        seeds = torch.tensor([10, 12, 24])
+        outputs = []
+        for book in (self._BOOK, torch.zeros(25)):
+            dataset = self._build(coo.clone(), "out", book, "off")
+            assert isinstance(dataset.graph, dict)
+            sampler = NeighborSampler(
+                dataset.graph[_EDGE_TYPE], [-1], device=torch.device("cpu")
+            )
+            outputs.append(sampler.sample_one_hop(seeds, -1))
+        range_output, tensor_output = outputs
+        self.assertEqual(range_output.nbr.tolist(), tensor_output.nbr.tolist())
+        self.assertEqual(range_output.nbr_num.tolist(), tensor_output.nbr_num.tolist())
+        self.assertEqual(range_output.nbr_num.tolist(), [1, 2, 1])
 
 
 class BuildReleasesEachCooTest(TestCase):

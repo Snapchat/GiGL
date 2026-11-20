@@ -21,8 +21,9 @@ from within-row sorting; it matters when one row owns a meaningful fraction of t
 """
 
 import gc
+import os
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Final, Literal, Optional
 
 import torch
 from graphlearn_torch.data import Topology
@@ -431,6 +432,33 @@ class CompactTopology(Topology):
             else:
                 col = col + self.compressed_id_offset
         return row, col, edge_ids, edge_weights
+
+
+RANK_LOCAL_CSR_ROWS_ENV: Final[str] = "GIGL_RANK_LOCAL_CSR_ROWS"
+
+
+def resolve_rank_local_csr_rows() -> bool:
+    """Whether range-partitioned builds store only each rank's rows, from ``GIGL_RANK_LOCAL_CSR_ROWS``.
+
+    ``on`` (or unset or empty) stores each rank's rows from the start of its range, which is recorded as
+    the topology's ``compressed_id_offset``. GiGL's samplers translate global seed ids to those rows.
+    ``off`` stores a row for every id below the end of the rank's range with an offset of 0, so callers
+    that sample with global ids, such as GLT's own samplers, find the rows they expect.
+    The value is case-insensitive. It is read when the dataset is built and recorded as each topology's
+    offset, so sampling processes need not see the variable. Every machine must use the same value, and
+    it must be set before ``build_dataset``.
+
+    Raises:
+        ValueError: If the value is not ``on`` or ``off``.
+    """
+    raw_value = os.environ.get(RANK_LOCAL_CSR_ROWS_ENV, "").lower()
+    if raw_value in ("", "on"):
+        return True
+    if raw_value == "off":
+        return False
+    raise ValueError(
+        f"{RANK_LOCAL_CSR_ROWS_ENV}={raw_value!r} is not one of ['on', 'off']"
+    )
 
 
 def get_compressed_id_offset(topology: Topology) -> int:

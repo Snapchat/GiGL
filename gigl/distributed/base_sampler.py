@@ -137,6 +137,9 @@ def _is_range_partitioned_compact(data: DistDataset) -> bool:
     GiGL's compact build (:class:`gigl.utils.csr.CompactTopology`) under a range partition book
     stores rows from the rank's range start, as recorded in ``compressed_id_offset``.
     This holds on every rank, including rank 0, whose offset is 0, so all ranks agree.
+    It stays true under ``GIGL_RANK_LOCAL_CSR_ROWS=off``, where every offset is 0 and each rank stores a
+    row for every id below its range end; negative sampling and subgraph extraction in GiGL's samplers
+    still raise.
     Graphs that fall back to GLT's build, and tensor partition books, keep a row per id.
 
     Args:
