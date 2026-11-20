@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from typing import Set, Tuple, Type, TypeVar, cast
+from typing import Set, Type, TypeVar, cast
 
 import numpy as np
 
@@ -393,7 +393,7 @@ class SplitGeneratorPipelineTest(TestCase):
         self,
         node_classification_dataset_metadata_pb: dataset_metadata_pb2.SupervisedNodeClassificationDataset,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-    ) -> Tuple[
+    ) -> tuple[
         supervised_node_classification.NodeClassificationSplitData,
         supervised_node_classification.NodeClassificationSplitData,
         supervised_node_classification.NodeClassificationSplitData,
@@ -449,7 +449,7 @@ class SplitGeneratorPipelineTest(TestCase):
         self,
         node_anchor_dataset_metadata_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-    ) -> Tuple[
+    ) -> tuple[
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,

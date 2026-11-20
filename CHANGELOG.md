@@ -22,6 +22,10 @@ Some highlights:
 
 ### Added
 
+- Add `GIGL_RANK_LOCAL_CSR_ROWS=off` to keep the full-range CSR layout under range partitioning (every rank stores a row
+  for each id below its range end, offset 0) instead of the rank-local rows from #885. Callers that sample with global
+  ids through GLT's own samplers get no neighbors on ranks above 0 with the rank-local layout. The variable is read once
+  when the dataset is built and must be the same on every machine by @kmontemayor2-sc
 - Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
   `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
   entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc
@@ -193,6 +197,13 @@ Some highlights:
 
 ### Fixed
 
+- The `transform` extra installs on macOS arm64: `tensorflow-data-validation`, `tensorflow-metadata`,
+  `tensorflow-transform` and `tfx-bsl` are no longer excluded on darwin, so `make mock_assets` no longer fails with
+  `ModuleNotFoundError: tensorflow_metadata` by @kmontemayor2-sc
+- The `pyg27-torch28-cpu` extra installs `pyg_lib`, `torch_cluster`, `torch_scatter`, `torch_sparse` and
+  `torch_spline_conv` on macOS arm64, so PyG's `NeighborLoader` works there by @kmontemayor2-sc
+- `ty` is configured with `python-platform = "linux"`, so type checking no longer reports Linux-only APIs such as
+  `os.posix_fallocate` when run on macOS by @kmontemayor2-sc
 - `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
   tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
   they leaked the label at train time and made embeddings depend on batch composition
