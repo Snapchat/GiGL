@@ -6,7 +6,11 @@ import torch
 from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
-from gigl.utils.csr import CompactTopology, _scatter_in_bands, build_csr_from_coo
+from gigl.utils.csr import (
+    CompactTopology,
+    _scatter_in_bands,
+    build_csr_from_coo,
+)
 from gigl.utils.csr_parallel import parallel_scatter
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
