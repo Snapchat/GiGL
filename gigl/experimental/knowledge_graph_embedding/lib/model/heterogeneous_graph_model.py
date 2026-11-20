@@ -411,7 +411,7 @@ class HeterogeneousGraphSparseEmbeddingModelAndLoss(nn.Module):
             batch (Union[EdgeBatch, NodeBatch]): The input batch, which can be either an EdgeBatch or a NodeBatch.
 
         Returns:
-            Tuple[torch.Tensor, Tuple]: A tuple containing the loss and a tuple of (loss, logits, labels) for EdgeBatch,
+            tuple[torch.Tensor, tuple]: A tuple containing the loss and a tuple of (loss, logits, labels) for EdgeBatch,
                                         or (dummy_loss, node_embeddings) for NodeBatch.
         """
         if (

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 from absl.testing import absltest
@@ -19,7 +19,7 @@ class _RecordingPartitionManager:
 
 
 def _mask_loop_split(
-    input_data: Optional[Tuple[torch.Tensor, ...]],
+    input_data: Optional[tuple[torch.Tensor, ...]],
     rank_indices: torch.Tensor,
     chunk_rank: torch.Tensor,
     world_size: int,

@@ -1,5 +1,4 @@
 import os
-from typing import Tuple
 
 from gigl.common.logger import Logger
 from gigl.distributed.dist_context import DistributedContext
@@ -12,7 +11,7 @@ def set_process_env_vars_for_torch_dist(
     num_processes_on_current_machine: int,
     machine_context: DistributedContext,
     port: int = 29500,
-) -> Tuple[int, int, int, int]:
+) -> tuple[int, int, int, int]:
     """
     This function sets the environment variables required for
     distributed training with PyTorch.  It assumes a multi-machine
@@ -26,7 +25,7 @@ def set_process_env_vars_for_torch_dist(
         machine_context (DistributedContext): The context containing information about the distributed setup.
 
     Returns:
-        Tuple[int, int, int, int]: A tuple containing:
+        tuple[int, int, int, int]: A tuple containing:
             - local_rank (int): The local rank of the process on the current machine.
             - rank (int): The global rank of the process across all machines.
             - local_world_size (int): The number of processes on the current machine.

@@ -4,7 +4,7 @@ import tempfile
 import typing
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tempfile import _TemporaryFileWrapper as TemporaryFileWrapper
-from typing import IO, AnyStr, Iterable, Optional, Tuple, Union
+from typing import IO, AnyStr, Iterable, Optional, Union
 
 import google.cloud.exceptions as google_exceptions
 import google.cloud.storage as storage
@@ -51,7 +51,7 @@ def _upload_file_to_gcs(
 
 
 def _pickling_safe_upload_file_to_gcs(
-    obj: Tuple[Tuple[LocalUri, GcsUri], Optional[str]],
+    obj: tuple[tuple[LocalUri, GcsUri], Optional[str]],
 ):
     file_paths, project = obj
     source_file_path, dest_gcs_path = file_paths
@@ -298,7 +298,7 @@ class GcsUtils:
     @staticmethod
     def get_bucket_and_blob_path_from_gcs_path(
         gcs_path: GcsUri,
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         gcs_path_str: str = gcs_path.uri
         gcs_parts: list[str] = gcs_path_str.split(
             "/"

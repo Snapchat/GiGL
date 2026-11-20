@@ -1,7 +1,7 @@
 """Types shared by the TFRecord and Parquet loaders."""
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, Optional, Sequence, Tuple, Union
+from typing import NamedTuple, Optional, Sequence, Union
 
 import torch
 from jaxtyping import Int64, Shaped, UInt8
@@ -36,8 +36,8 @@ class SerializedTFRecordInfo:
     feature_spec: FeatureSpecDict
     # Feature dimension of current entity
     feature_dim: int
-    # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a Tuple[str, str] for the source and destination ids.
-    entity_key: Union[str, Tuple[str, str]]
+    # Entity ID Key for current entity. If this is a Node Entity, this must be a string. If this is an edge entity, this must be a tuple[str, str] for the source and destination ids.
+    entity_key: Union[str, tuple[str, str]]
     # Packed uint8 feature name to load for the current node entity.
     packed_feature_key: Optional[str] = None
     # Number of packed uint8 columns for the current node entity.
