@@ -90,7 +90,7 @@ PPR_RELATION_FEATURES_NAME = "ppr_relation_features"
 PPR_EXPANDED_FEATURE_NAME = "ppr_is_expanded"
 
 
-def _validate_reserved_anchor_feature_usage(
+def validate_reserved_anchor_feature_usage(
     pairwise_bias_attr_names: list[str],
     anchor_bias_attr_names: list[str],
     anchor_input_attr_names: list[str],
@@ -104,6 +104,15 @@ def _validate_reserved_anchor_feature_usage(
     ``sequence_construction_method='ppr'``. Shared by
     ``heterodata_to_graph_transformer_input`` and ``GraphTransformerEncoder`` so
     the rules stay defined in one place.
+
+    Args:
+        pairwise_bias_attr_names: Names requested as pairwise attention biases.
+        anchor_bias_attr_names: Names requested as anchor-relative scalar biases.
+        anchor_input_attr_names: Names requested as anchor-relative token inputs.
+        sequence_construction_method: Sequence construction method in use.
+
+    Raises:
+        ValueError: If a reserved PPR feature is placed where it is not allowed.
     """
     # Neither reserved PPR feature may be used as a pairwise attention bias;
     # both are anchor-relative (produced per (anchor, neighbor) edge).
@@ -438,7 +447,7 @@ def tensors_to_graph_transformer_input(
     anchor_input_attr_names = anchor_based_input_attr_names or []
     pairwise_bias_attr_names = pairwise_attention_bias_attr_names or []
 
-    _validate_reserved_anchor_feature_usage(
+    validate_reserved_anchor_feature_usage(
         pairwise_bias_attr_names=pairwise_bias_attr_names,
         anchor_bias_attr_names=anchor_bias_attr_names,
         anchor_input_attr_names=anchor_input_attr_names,
