@@ -589,8 +589,12 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         With a relation attention mode, the layer adds the per-edge relation scores
         to a per-layer copy of the ragged ``bias.per_pair``, so attention runs SDPA
-        per length bucket. With ``first_token_output`` it adds them to the per-key
-        bias instead, and the kernel runs.
+        per length bucket in training. At inference (no gradient) a per-pair bias,
+        pairwise or relation, runs the varlen kernel once per length bucket when
+        the bucket lengths are multiples of 8. With ``first_token_output`` it adds
+        them to the per-key bias instead, and the kernel runs. At inference a
+        per-key-only bias runs the kernel with a stride-0 bias, and training folds
+        it into q and k.
 
         In training, attention dropout runs SDPA per length bucket, not the varlen
         kernel.
@@ -1446,13 +1450,18 @@ class GraphTransformerEncoder(nn.Module):
 
         With ``attention_dropout_rate > 0``, training attention runs SDPA per length
         bucket on the GPU, and eval attention runs the varlen kernel. With pairwise
-        attention biases, attention runs SDPA per length bucket on every layer that
-        queries all tokens, and the last ``anchor_only`` layer runs the kernel with
-        row 0 of the bias as a per-key bias. Relation attention
+        attention biases, training attention runs SDPA per length bucket on every
+        layer that queries all tokens. At inference those layers run the varlen
+        kernel once per length bucket with that bucket's bias, when the bucket
+        lengths are multiples of 8. The last ``anchor_only`` layer runs the kernel
+        with row 0 of the bias as a per-key bias. Relation attention
         (``edge_type_bilinear``, ``edge_type_hgt``) adds the per-edge relation
-        scores to a per-layer copy of the length-bucketed per-pair bias, so those
-        layers also run SDPA per length bucket. The last ``anchor_only`` layer adds
-        the scores to the per-key bias instead and runs the kernel.
+        scores to a per-layer copy of the length-bucketed per-pair bias, so in
+        training those layers also run SDPA per length bucket, and at inference
+        the kernel per bucket. The last ``anchor_only`` layer adds the scores to the
+        per-key bias instead and runs the kernel. A per-key-only bias runs the
+        kernel with a stride-0 bias at inference, without widening the head dim.
+        Training folds it into q and k.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
