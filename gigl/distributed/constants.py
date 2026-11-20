@@ -121,3 +121,32 @@ def sampling_worker_init_timeout_seconds() -> int:
     ``GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS`` moves both bounds coherently.
     """
     return SAMPLING_WORKER_INIT_TIMEOUT_MULTIPLIER * sampling_rpc_init_timeout_seconds()
+
+
+# Whether a range-partitioned dataset build stores only each rank's CSR rows.
+# Allowed values (case-insensitive): "on" or "off". Unset or empty means "on".
+#   on:  Stores each rank's rows from the start of its range, and records that start as the
+#        topology's ``compressed_id_offset``. GiGL's samplers translate global seed ids to those rows.
+#   off: Stores a row for every id below the end of the rank's range, with an offset of 0, so callers
+#        that sample with global ids, such as GLT's own samplers, find the rows they expect.
+# Read once when the dataset is built; sampling processes need not see it. Must be identical on every
+# node of a job, and must be set before ``build_dataset``.
+RANK_LOCAL_CSR_ROWS_ENV: Final[str] = "GIGL_RANK_LOCAL_CSR_ROWS"
+
+
+def resolve_rank_local_csr_rows() -> bool:
+    """Whether range-partitioned builds store only each rank's rows, from ``GIGL_RANK_LOCAL_CSR_ROWS``.
+
+    See the comment above ``RANK_LOCAL_CSR_ROWS_ENV`` for what each value does.
+
+    Raises:
+        ValueError: If the value is not ``on`` or ``off``.
+    """
+    raw_value = os.environ.get(RANK_LOCAL_CSR_ROWS_ENV, "").lower()
+    if raw_value in ("", "on"):
+        return True
+    if raw_value == "off":
+        return False
+    raise ValueError(
+        f"{RANK_LOCAL_CSR_ROWS_ENV}={raw_value!r} is not one of ['on', 'off']"
+    )
