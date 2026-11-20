@@ -337,11 +337,16 @@ def pack_khop_layout(
     sampling_direction: Literal["in", "out"] = "out",
     max_candidates: int = MAX_LAYOUT_CANDIDATES,
     ordering: KhopOrdering = "node_id",
+    sort_by_length: bool = False,
 ) -> PackedLayout:
     """Builds the k-hop token layout of every anchor and packs it.
 
     Runs ``khop_layout``, decodes each cell into its node and hop, and calls
-    ``pack_sequences``. The arguments are those of ``khop_layout``.
+    ``pack_sequences``. The arguments are those of ``khop_layout``, plus:
+
+    Args:
+        sort_by_length: Whether to pack the sequences longest first and plan
+            buckets, as in ``pack_sequences``.
 
     Returns:
         The packed layout. ``node_index`` is the node of each token and
@@ -362,4 +367,5 @@ def pack_khop_layout(
         max_seq_len,
         node_grid=layout >> hop_bits,
         attr_grids={"hop_distance": layout & ((1 << hop_bits) - 1)},
+        sort_by_length=sort_by_length,
     )
