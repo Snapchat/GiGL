@@ -14,6 +14,7 @@ from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import resolve_rank_local_csr_rows
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.partition_book import get_ids_on_rank, get_total_ids
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -28,7 +29,7 @@ from gigl.types.graph import (
     GraphPartitionData,
     PartitionOutput,
 )
-from gigl.utils.csr import CompactTopology, resolve_rank_local_csr_rows
+from gigl.utils.csr import CompactTopology
 from gigl.utils.data_splitters import (
     NodeAnchorLinkSplitter,
     NodeSplitter,

@@ -16,11 +16,11 @@ from graphlearn_torch.partition import RangePartitionBook
 from graphlearn_torch.sampler import NeighborSampler
 from parameterized import param, parameterized
 
+from gigl.distributed.constants import RANK_LOCAL_CSR_ROWS_ENV
 from gigl.distributed.dist_dataset import DistDataset, _has_per_edge_metadata
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
 from gigl.utils.csr import (
-    RANK_LOCAL_CSR_ROWS_ENV,
     CompactTopology,
     get_compressed_id_offset,
     to_local_compressed_ids,

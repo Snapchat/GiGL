@@ -29,6 +29,7 @@ from gigl.distributed.base_sampler import (
     _GlobalIdNeighborSampler,
     _is_range_partitioned_compact,
 )
+from gigl.distributed.constants import RANK_LOCAL_CSR_ROWS_ENV
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.utils import get_free_port
@@ -36,7 +37,6 @@ from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
 from gigl.utils.csr import (
-    RANK_LOCAL_CSR_ROWS_ENV,
     CompactTopology,
     get_compressed_id_offset,
 )

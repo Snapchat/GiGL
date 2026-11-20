@@ -7,11 +7,9 @@ from graphlearn_torch.utils import coo_to_csr
 from parameterized import param, parameterized
 
 from gigl.utils.csr import (
-    RANK_LOCAL_CSR_ROWS_ENV,
     CompactTopology,
     _scatter_in_bands,
     build_csr_from_coo,
-    resolve_rank_local_csr_rows,
 )
 from gigl.utils.csr_parallel import parallel_scatter
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
@@ -26,31 +24,6 @@ def _reference_csr(
         row.to(torch.int64), col.to(torch.int64), node_sizes=(num_rows, num_rows)
     )
     return indptr, indices
-
-
-class ResolveRankLocalCsrRowsTest(TestCase):
-    @parameterized.expand(
-        [
-            param("empty", value="", expected=True),
-            param("on", value="on", expected=True),
-            param("on_uppercase", value="ON", expected=True),
-            param("off", value="off", expected=False),
-            param("off_uppercase", value="OFF", expected=False),
-        ]
-    )
-    def test_values(self, _name: str, value: str, expected: bool) -> None:
-        with mock.patch.dict(os.environ, {RANK_LOCAL_CSR_ROWS_ENV: value}):
-            self.assertEqual(resolve_rank_local_csr_rows(), expected)
-
-    def test_unset_means_on(self) -> None:
-        with mock.patch.dict(os.environ):
-            os.environ.pop(RANK_LOCAL_CSR_ROWS_ENV, None)
-            self.assertTrue(resolve_rank_local_csr_rows())
-
-    def test_an_unknown_value_raises(self) -> None:
-        with mock.patch.dict(os.environ, {RANK_LOCAL_CSR_ROWS_ENV: "bogus"}):
-            with self.assertRaises(ValueError):
-                resolve_rank_local_csr_rows()
 
 
 class BuildCsrFromCooTest(TestCase):
