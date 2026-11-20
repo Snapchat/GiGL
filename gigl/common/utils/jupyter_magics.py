@@ -1,4 +1,3 @@
-# type: ignore
 import hashlib
 import os
 import pathlib
@@ -18,8 +17,15 @@ from torch_geometric.data import HeteroData
 from gigl.common import Uri
 from gigl.common.collections.frozen_dict import FrozenDict
 from gigl.src.common.graph_builder.pyg_graph_builder import PygGraphBuilder
+from gigl.src.common.graph_builder.pyg_graph_data import PygGraphData
 from gigl.src.common.translators.gbml_protos_translator import GbmlProtosTranslator
-from gigl.src.common.types.graph_data import CondensedNodeType, EdgeType, Node, NodeType
+from gigl.src.common.types.graph_data import (
+    CondensedNodeType,
+    EdgeType,
+    Node,
+    NodeId,
+    NodeType,
+)
 from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.utils.file_loader import FileLoader
 from snapchat.research.gbml import training_samples_schema_pb2
@@ -27,7 +33,7 @@ from snapchat.research.gbml import training_samples_schema_pb2
 gigl_root_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent
 
 
-def change_working_dir_to_gigl_root():
+def change_working_dir_to_gigl_root() -> None:
     """
     Can be used inside notebooks to change the working directory to the GIGL root directory.
     This is useful for ensuring that relative imports and file paths work correctly no matter where the notebook is located.
@@ -141,7 +147,7 @@ class PbVisualizer:
             global_root_node = (
                 pb.root_node.node_id,
                 graph_metadata_pb_wrapper.condensed_node_type_to_node_type_map[
-                    pb.root_node.condensed_node_type
+                    CondensedNodeType(pb.root_node.condensed_node_type)
                 ],
             )
 
@@ -162,14 +168,18 @@ class PbVisualizer:
                 (condensed_node_type, global_node.id)
             ]
             subgraph_node_to_unenumerated_node_id_map[node] = Node(
-                id=unenumerated_node_id,
+                id=NodeId(unenumerated_node_id),
                 type=NodeType(unenumerated_node_type),
             )
 
+        if not isinstance(graph_data, PygGraphData):
+            raise TypeError(f"Expected PygGraphData, got {type(graph_data).__name__}")
         return GraphVisualizer.visualize_graph(
             data=graph_data.to_hetero_data(),
             layout_mode=layout_mode,
-            subgraph_node_to_unenumerated_node_id_map=subgraph_node_to_unenumerated_node_id_map,
+            subgraph_node_to_unenumerated_node_id_map=FrozenDict(
+                subgraph_node_to_unenumerated_node_id_map
+            ),
             pos_edges=pos_edges,
             global_root_node=global_root_node,
         )
