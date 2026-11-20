@@ -64,7 +64,7 @@ Example Usage:
 from typing import Literal, NamedTuple, Optional, TypedDict
 
 import torch
-from jaxtyping import Bool, Float, Int, Int64
+from jaxtyping import Bool, Float, Float32, Int, Int64
 from torch import Tensor
 from torch_geometric.data import HeteroData
 from torch_geometric.typing import EdgeType, NodeType
@@ -671,13 +671,13 @@ def tensors_to_graph_transformer_input(
             if attr_name not in {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         }
     )
-    anchor_based_matrices = _get_sparse_feature_matrices(
+    anchor_based_matrices = get_sparse_feature_matrices(
         graph_attr_dict=graph_attr_dict,
         attr_names=anchor_matrix_attr_names,
         missing_attr_error_prefix="Anchor-based attribute",
     )
 
-    pairwise_pe_matrices = _get_sparse_feature_matrices(
+    pairwise_pe_matrices = get_sparse_feature_matrices(
         graph_attr_dict=graph_attr_dict,
         attr_names=pairwise_bias_attr_names,
         missing_attr_error_prefix="Pairwise PE attribute",
@@ -825,11 +825,24 @@ def _validate_ppr_sequence_input(
             )
 
 
-def _get_sparse_feature_matrices(
+def get_sparse_feature_matrices(
     graph_attr_dict: dict[str, Tensor],
     attr_names: Optional[list[str]],
     missing_attr_error_prefix: str,
 ) -> list[Tensor]:
+    """Collects the sparse feature matrices for the requested attribute names.
+
+    Args:
+        graph_attr_dict: Sparse matrices keyed by attribute name.
+        attr_names: Names to collect, in order; ``None`` collects nothing.
+        missing_attr_error_prefix: Prefix of the error raised for a missing name.
+
+    Returns:
+        The matrices in the order of ``attr_names``.
+
+    Raises:
+        ValueError: If a requested name is not in ``graph_attr_dict``.
+    """
     matrices: list[Tensor] = []
     for attr_name in attr_names or []:
         if attr_name not in graph_attr_dict:
@@ -1521,7 +1534,7 @@ def _lookup_anchor_relative_features(
     anchor_for_entry = anchor_indices[valid_batch_idx]
 
     for attr_idx, pe_matrix in enumerate(csr_matrices):
-        pe_values = _lookup_csr_values(
+        pe_values = lookup_csr_values(
             csr_matrix=pe_matrix,
             row_indices=anchor_for_entry,
             col_indices=valid_node_idx,
@@ -2058,12 +2071,12 @@ def _get_k_hop_neighbors_sparse(
     return _binarize_sparse_tensor(sparse_tensor=reachable, device=device)
 
 
-def _lookup_csr_values(
+def lookup_csr_values(
     csr_matrix: Tensor,
-    row_indices: Tensor,
-    col_indices: Tensor,
+    row_indices: Int[Tensor, "num_lookups"],
+    col_indices: Int[Tensor, "num_lookups"],
     default_value: float = 0.0,
-) -> Tensor:
+) -> Float32[Tensor, "num_lookups"]:
     """
     Look up values in a CSR sparse matrix for given (row, col) pairs.
 

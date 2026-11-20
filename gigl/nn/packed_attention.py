@@ -46,10 +46,12 @@ Data flow of a packed forward::
 
 Constraints:
   - The varlen kernel is CUDA only; other devices use the padded SDPA path.
-  - ``head_dim`` must be a multiple of 8 for the aligned kernels.
-  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it; the
-    varlen kernel takes none of it yet, so on CUDA a bias raises
-    ``NotImplementedError``.
+  - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
+    ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
+    q so the kernel's scores match the unpadded head dim.
+  - A ``PackedAttentionBias`` is part of the call. The CPU path applies it. On
+    CUDA a ``per_key`` bias runs on the kernel by folding it into q and k as an
+    extra head-dim column; a ``per_pair`` bias raises ``NotImplementedError``.
   - Attention dropout is not supported; the kernel's varlen dropout has not been
     tested against the padded path.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
@@ -97,6 +99,7 @@ Results:
       The model stopped being the bottleneck; sampling was.
 """
 
+import math
 from typing import Callable, NamedTuple, Optional, cast
 
 import torch
@@ -164,7 +167,8 @@ def _(
     max_seqlen_k: int,
     compute_log_sumexp: bool,
 ) -> tuple[Tensor, Tensor]:
-    output = torch.empty_like(query)
+    # The per-key fold widens q and k but not v, so the output takes v's head dim.
+    output = query.new_empty((*query.shape[:-1], value.size(-1)))
     logsumexp_size = 0
     if compute_log_sumexp:
         # The kernel pads the logsumexp rows to a multiple of 32.
@@ -271,15 +275,69 @@ torch.library.register_autograd(
 )
 
 
+def _pad_head_dim(tensor: Tensor, multiple: int = 8) -> Tensor:
+    """Zero-pads the last dim of ``tensor`` up to a multiple of ``multiple``."""
+    remainder = tensor.size(-1) % multiple
+    if remainder == 0:
+        return tensor
+    return F.pad(tensor, (0, multiple - remainder))
+
+
+def _rescale_query(query: Tensor, padded_dim: int) -> Tensor:
+    """Scales q so the kernel's scores use the unpadded head dim.
+
+    The factor is ``sqrt(padded_dim / head_dim)``. The kernel scales scores by
+    ``1 / sqrt(padded_dim)``. An explicit ``scale`` is not passed because torch
+    2.8's meta backward rejects it, and compiled training traces that meta
+    backward.
+    """
+    return query * math.sqrt(padded_dim / query.size(-1))
+
+
+def _pad_query_key(query: Tensor, key: Tensor) -> tuple[Tensor, Tensor]:
+    """Zero-pads q and k to a multiple of 8 and rescales q for the padded head dim.
+
+    Multiplying q by ``sqrt(d_pad / d)`` makes
+    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d)``.
+    """
+    key = _pad_head_dim(key)
+    query = _pad_head_dim(_rescale_query(query, key.size(-1)))
+    return query, key
+
+
+def _fold_per_key_bias(
+    query: Float[Tensor, "num_queries num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    per_key: Float[Tensor, "num_tokens num_heads"],
+) -> tuple[Tensor, Tensor]:
+    """Folds a per-key score bias into q and k as one extra head-dim column.
+
+    With ``d`` the head dim and ``d_pad`` ``d + 1`` rounded up to a multiple of 8,
+    ``query' = [query * sqrt(d_pad / d), 1, 0...]`` and
+    ``key' = [key, per_key * sqrt(d_pad), 0...]``. The kernel's default scale
+    ``1 / sqrt(d_pad)`` then gives
+    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d) + per_key``. The bias is cast to
+    the key dtype.
+    """
+    head_dim = query.size(-1)
+    padded_dim = (head_dim + 1 + 7) // 8 * 8
+    query = _rescale_query(query, padded_dim)
+    ones = torch.ones_like(query[..., :1])
+    key_bias = (per_key.to(key.dtype) * math.sqrt(padded_dim)).unsqueeze(-1)
+    query = _pad_head_dim(torch.cat([query, ones], dim=-1))
+    key = _pad_head_dim(torch.cat([key, key_bias], dim=-1))
+    return query, key
+
+
 def _varlen_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
-    value: Float[Tensor, "num_key_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_key_tokens num_heads value_dim"],
     cu_seqlens_q: Int32[Tensor, "num_sequences_plus_one"],
     cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
-) -> Float[Tensor, "num_query_tokens num_heads head_dim"]:
+) -> Float[Tensor, "num_query_tokens num_heads value_dim"]:
     """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
 
     Query sequence ``i`` attends to key sequence ``i``, so padded positions cost
@@ -288,8 +346,12 @@ def _varlen_attention(
     be compiled). Differentiable in ``query``, ``key`` and ``value`` through the
     backward registered on ``gigl::varlen_attention``.
 
-    CUDA only; see the module docstring for the head dim and dropout limits. The
-    backward is non-deterministic unless
+    CUDA only; see the module docstring for the dropout limit. The head dims of
+    ``query`` and ``key`` must be a multiple of 8; ``value`` may differ. The
+    kernel scales scores by ``1 / sqrt(head_dim)`` of the head dim it is given.
+    It picks its tile size from the head dim, so a padded head dim can move
+    the call to the next size tier (64 padded to 72 lands in the tier for dims up
+    to 128). The backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
 
@@ -468,8 +530,8 @@ def packed_attention(
     is all the anchor readout of the last layer needs. An empty
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
-    The varlen kernel takes no bias: on CUDA, a ``per_key`` or ``per_pair`` bias
-    raises ``NotImplementedError``.
+    On CUDA, ``per_key`` runs on the varlen kernel through ``_fold_per_key_bias``;
+    a ``per_pair`` bias raises ``NotImplementedError``.
 
     Every sequence must contain at least one token (``lengths >= 1``). An empty
     sequence gives wrong output on the padded path and is not supported.
@@ -484,10 +546,13 @@ def packed_attention(
         raise NotImplementedError(
             "A per_pair bias is not supported on the CUDA varlen path."
         )
+    head_dim = query.size(-1)
     if bias is not None and bias.per_key is not None:
-        raise NotImplementedError(
-            "A per_key bias is not supported on the CUDA varlen path."
-        )
+        query, key = _fold_per_key_bias(query, key, bias.per_key)
+    elif head_dim % 8 != 0:
+        query, key = _pad_query_key(query, key)
+    if head_dim % 8 != 0:
+        value = _pad_head_dim(value)
     if query_is_first_token:
         cu_seqlens_q = torch.arange(
             layout.cu_seqlens.size(0), dtype=torch.int32, device=query.device
@@ -496,7 +561,7 @@ def packed_attention(
     else:
         cu_seqlens_q = layout.cu_seqlens
         max_seqlen_q = min(layout.max_seq_len, query.size(0))
-    return _varlen_attention(
+    output = _varlen_attention(
         query,
         key,
         value,
@@ -505,3 +570,4 @@ def packed_attention(
         max_seqlen_q,
         min(layout.max_seq_len, key.size(0)),
     )
+    return output[..., :head_dim]

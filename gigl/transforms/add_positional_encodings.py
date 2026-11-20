@@ -437,7 +437,7 @@ class AddHeteroHopDistanceEncoding(BaseTransform):
             dist_vals = torch.zeros(0, dtype=torch.float, device=device)
 
         # Create sparse distance matrix in CSR format directly
-        # CSR is more efficient for row-based lookups in _lookup_csr_values
+        # CSR is more efficient for row-based lookups in lookup_csr_values
         # Unreachable pairs have value 0 (not stored)
         # Reachable pairs have value = hop distance (1 to h_max)
         dist_coo = torch.sparse_coo_tensor(
