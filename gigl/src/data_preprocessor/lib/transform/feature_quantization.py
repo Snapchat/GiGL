@@ -145,7 +145,7 @@ def _build_quantization_stats(
             quantized_feature_keys=quantization_spec.feature_keys,
         )
         # ApproximateQuantiles.Globally declares its input as
-        # Union[T, Sequence[T], Tuple[T, float]], so a list[float] input leaves T
+        # Union[T, Sequence[T], tuple[T, float]], so a list[float] input leaves T
         # ambiguous and the inferred output type is not list[float] (Beam 2.56 infers
         # List[Any], Beam 2.76 infers List[Union[float, List[float]]]). With
         # input_batched=True each batch is unpacked and the output is a flat

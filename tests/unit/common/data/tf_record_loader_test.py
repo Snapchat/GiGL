@@ -1,7 +1,7 @@
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 from unittest import mock
 
 import numpy as np
@@ -498,7 +498,7 @@ class TFRecordDataLoaderTest(TestCase):
         expected_node_ids: torch.Tensor,
         expected_features: Optional[torch.Tensor],
         expected_label_tensor: Optional[torch.Tensor],
-        entity_key: Union[str, Tuple[str, str]],
+        entity_key: Union[str, tuple[str, str]],
         label_keys: list[str] = [],
         feature_spec: FeatureSpecDict = {},
     ):

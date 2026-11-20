@@ -3,7 +3,7 @@ import itertools
 import os
 import re
 import time
-from typing import Iterable, Optional, Sequence, Tuple, Union
+from typing import Iterable, Optional, Sequence, Union
 
 import google.api_core.retry
 import google.cloud.bigquery as bigquery
@@ -216,7 +216,7 @@ class BqUtils:
         return BqUtils.format_bq_path(joined_path)
 
     @staticmethod
-    def parse_bq_table_path(bq_table_path: str) -> Tuple[str, str, str]:
+    def parse_bq_table_path(bq_table_path: str) -> tuple[str, str, str]:
         """
         Parses a joined bq table path into its project, dataset, and table names
         Args:
@@ -515,7 +515,7 @@ class BqUtils:
         self,
         bq_path: str,
         schema: list[bigquery.SchemaField],
-        rows: Iterable[Tuple],
+        rows: Iterable[tuple],
     ) -> None:
         first_item = next(iter(rows), None)
         if first_item is None:

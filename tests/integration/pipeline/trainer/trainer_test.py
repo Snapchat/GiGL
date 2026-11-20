@@ -1,7 +1,6 @@
 import datetime
 import json
 import tempfile
-from typing import Tuple
 
 import torch
 
@@ -57,7 +56,7 @@ class TrainerTest(TestCase):
 
     def __generate_and_populate_mocked_dataset_info_gbml_config_pb(
         self, mocked_dataset_info: MockedDatasetInfo
-    ) -> Tuple[gbml_config_pb2.GbmlConfig, LocalUri, GcsUri]:
+    ) -> tuple[gbml_config_pb2.GbmlConfig, LocalUri, GcsUri]:
         task_name = mocked_dataset_info.name
         artifact_metadata = get_mocked_dataset_artifact_metadata()[task_name]
         gbml_config_pb = self.__proto_utils.read_proto_from_yaml(
