@@ -353,7 +353,7 @@ class DatasetAssetMocker:
         )
 
         # Mock SubgraphSampler inputs ("run Data Preprocessor")
-        mock_input_for_subgraph_sampler.generate_preprocessed_tfrecord_data(
+        mock_input_for_subgraph_sampler.generate_preprocessed_data(
             mocked_dataset_info=self._mocked_dataset_info,
             version=self._version,
             gbml_config_pb=self._frozen_gbml_config_pb,
@@ -403,7 +403,7 @@ class DatasetAssetMocker:
         )
 
         # Mock SubgraphSampler inputs ("run Data Preprocessor")
-        mock_input_for_subgraph_sampler.generate_preprocessed_tfrecord_data(
+        mock_input_for_subgraph_sampler.generate_preprocessed_data(
             mocked_dataset_info=self._mocked_dataset_info,
             version=self._version,
             gbml_config_pb=self._frozen_gbml_config_pb,

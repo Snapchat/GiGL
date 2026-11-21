@@ -22,6 +22,9 @@ Some highlights:
 
 ### Added
 
+- The mocked test datasets also hold Parquet files, and their preprocessed metadata sets `parquet_uri_prefix` next to
+  `tfrecord_uri_prefix`. All mocked datasets are regenerated with one new version, so GLT tests load them with
+  `ParquetDataLoader` by @kmontemayor2-sc
 - Add `GIGL_RANK_LOCAL_CSR_ROWS=off` to keep the full-range CSR layout under range partitioning (every rank stores a row
   for each id below its range end, offset 0) instead of the rank-local rows from #885. Callers that sample with global
   ids through GLT's own samplers get no neighbors on ranks above 0 with the rank-local layout. The variable is read once
