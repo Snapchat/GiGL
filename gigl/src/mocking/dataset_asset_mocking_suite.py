@@ -28,6 +28,11 @@ logger = Logger()
 _HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
     GIGL_ROOT_DIR / "examples/toy_visual_example/graph_config.yaml"
 )
+# The user-defined-edges toy dataset hardcodes positive/negative edges over node ids 0-26,
+# so it needs this 27-node graph, not the 14-node notebook graph above.
+_HOMOGENEOUS_TOY_GRAPH_27_NODES_CONFIG = str(
+    GIGL_ROOT_DIR / "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
+)
 _BIPARTITE_TOY_GRAPH_CONFIG = (
     GIGL_ROOT_DIR / "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
 )
@@ -476,7 +481,7 @@ class DatasetAssetMockingSuite:
         self,
     ) -> MockedDatasetInfo:
         toy_data = self._create_custom_toy_graph(
-            graph_config=_HOMOGENEOUS_TOY_GRAPH_CONFIG
+            graph_config=_HOMOGENEOUS_TOY_GRAPH_27_NODES_CONFIG
         )
 
         pos_edge_index = torch.tensor(
