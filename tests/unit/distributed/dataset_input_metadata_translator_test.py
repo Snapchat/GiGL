@@ -168,10 +168,24 @@ class TranslatorTestCase(TestCase):
         self.assertEqual(
             node_entity_info.data_uri_prefix.uri, "gs://example-bucket/nodes/"
         )
+        # The node override must not change the edge prefixes.
+        condensed_edge_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_edge_type
+        main_edge_info = (
+            preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                condensed_edge_type
+            ].main_edge_info
+        )
         edge_entity_info = serialized_metadata.edge_entity_info
         assert isinstance(edge_entity_info, SerializedTFRecordInfo)
-        self.assertIsNone(edge_entity_info.parquet_uri_prefix)
-        self.assertIsNotNone(edge_entity_info.tfrecord_uri_prefix)
+        assert edge_entity_info.parquet_uri_prefix is not None
+        self.assertEqual(
+            edge_entity_info.parquet_uri_prefix.uri, main_edge_info.parquet_uri_prefix
+        )
+        assert edge_entity_info.tfrecord_uri_prefix is not None
+        self.assertEqual(
+            edge_entity_info.tfrecord_uri_prefix.uri,
+            main_edge_info.tfrecord_uri_prefix,
+        )
 
     @parameterized.expand(
         [
