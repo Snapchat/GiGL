@@ -6,7 +6,9 @@ for every id. Each test builds the same three-partition graph both ways, samples
 rank, and compares the outputs exactly.
 """
 
+import os
 from typing import Any, Literal
+from unittest import mock
 
 import torch
 import torch.multiprocessing as mp
@@ -27,13 +29,17 @@ from gigl.distributed.base_sampler import (
     _GlobalIdNeighborSampler,
     _is_range_partitioned_compact,
 )
+from gigl.distributed.constants import RANK_LOCAL_CSR_ROWS_ENV
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import GraphPartitionData, PartitionOutput
-from gigl.utils.csr import CompactTopology, get_compressed_id_offset
+from gigl.utils.csr import (
+    CompactTopology,
+    get_compressed_id_offset,
+)
 from tests.test_assets.test_case import TestCase
 
 _USER = NodeType("user")
@@ -116,6 +122,7 @@ def _sample_on_partition(
     process_group_port: int,
     edge_dir: Literal["in", "out"],
     range_partitioned: bool,
+    rank_local_rows: bool,
     output: dict,
 ) -> None:
     """Sample every node from this rank, through routing and directly, and record the results."""
@@ -129,12 +136,17 @@ def _sample_on_partition(
     init_rpc(master_addr="127.0.0.1", master_port=rpc_port, num_rpc_threads=4)
     dataset = _partition_dataset(rank, edge_dir, range_partitioned)
     assert isinstance(dataset.graph, dict)
-    start, _ = _PARTITION_RANGES[rank]
+    start, end = _PARTITION_RANGES[rank]
     expected_offset = 0
+    expected_rows = _NUM_NODES
     if range_partitioned:
-        expected_offset = start
+        expected_rows = end
+        if rank_local_rows:
+            expected_offset = start
+            expected_rows = end - start
     for graph in dataset.graph.values():
         assert get_compressed_id_offset(graph.topo) == expected_offset
+        assert graph.topo.indptr.numel() == expected_rows + 1
 
     degrees = compute_and_broadcast_degree_tensor(dataset.graph, edge_dir)
     sampler = BaseDistNeighborSampler(
@@ -176,13 +188,29 @@ def _sample_on_partition(
     torch.distributed.destroy_process_group()
 
 
-def _run(edge_dir: Literal["in", "out"], range_partitioned: bool) -> dict[int, Any]:
+def _run(
+    edge_dir: Literal["in", "out"],
+    range_partitioned: bool,
+    rank_local_rows: bool = True,
+) -> dict[int, Any]:
     output = mp.Manager().dict()
-    mp.spawn(
-        _sample_on_partition,
-        args=(get_free_port(), get_free_port(), edge_dir, range_partitioned, output),
-        nprocs=_NUM_PARTITIONS,
-    )
+    rank_local_rows_value = "off"
+    if rank_local_rows:
+        rank_local_rows_value = "on"
+    # The spawned processes build their datasets with the value they inherit.
+    with mock.patch.dict(os.environ, {RANK_LOCAL_CSR_ROWS_ENV: rank_local_rows_value}):
+        mp.spawn(
+            _sample_on_partition,
+            args=(
+                get_free_port(),
+                get_free_port(),
+                edge_dir,
+                range_partitioned,
+                rank_local_rows,
+                output,
+            ),
+            nprocs=_NUM_PARTITIONS,
+        )
     return dict(output)
 
 
@@ -201,6 +229,20 @@ class RangePartitionedSamplingTest(TestCase):
         sampled = every_row[0][f"routed/{_FOLLOWS}/-1"]
         self.assertGreater(len(sampled["nbr"]), _NUM_NODES)
         self.assertEqual(every_row[0]["degrees"]["user"][27:], [0, 0, 0])
+
+    @parameterized.expand([param("in", edge_dir="in"), param("out", edge_dir="out")])
+    def test_full_range_rows_sample_exactly_as_rows_for_every_id(
+        self, _name: str, edge_dir: Literal["in", "out"]
+    ) -> None:
+        """With rank-local rows off, every rank has offset 0 and rows up to its range end."""
+        every_row = _run(edge_dir, range_partitioned=False)
+        full_range_rows = _run(edge_dir, range_partitioned=True, rank_local_rows=False)
+        for rank in range(_NUM_PARTITIONS):
+            self.assertEqual(set(full_range_rows[rank]), set(every_row[rank]))
+            for key, expected in every_row[rank].items():
+                self.assertEqual(
+                    full_range_rows[rank][key], expected, f"rank {rank} {key}"
+                )
 
 
 class GlobalIdNeighborSamplerTest(TestCase):

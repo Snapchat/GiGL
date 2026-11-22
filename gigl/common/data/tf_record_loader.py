@@ -84,7 +84,7 @@ def _concatenate_features_by_names(
         label_keys (Sequence[str]): Name of the label columns for the current entity.
 
     Returns:
-        Tuple[
+        tuple[
             Optional[tf.Tensor]: A concatenated tensor of the features in the specified order of feature_keys.
             Optional[tf.Tensor]: A concatenated tensor of the labels in the specified order of label_keys.
         ]

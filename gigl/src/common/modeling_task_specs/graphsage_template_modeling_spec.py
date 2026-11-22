@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import torch
 import torch.distributed
@@ -293,7 +293,7 @@ class GraphSageTemplateTrainerSpec(
         main_batch: NodeAnchorBasedLinkPredictionBatch,
         random_negative_batch: RootedNodeNeighborhoodBatch,
         device: torch.device,
-    ) -> Tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
         main_embeddings = self.model(
             main_batch.graph.x.to(device), main_batch.graph.edge_index.to(device)
         )
