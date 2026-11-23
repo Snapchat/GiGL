@@ -157,6 +157,20 @@ class PPRSamplerOptions:
             seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
             an induced message-passing subgraph:
             https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html
+        merge_edge_type_rpcs: Throughput option, output-identical. When ``True``, each
+            PPR fetch round sends one RPC per remote partition carrying the frontier of every
+            edge type, instead of one RPC per (edge type, remote partition). The server runs the
+            same per-edge-type ``sample_one_hop`` calls, and the client stitches each edge type's
+            result exactly as the unmerged path does, so neighbors, counts and edge ids are
+            unchanged. Every rank must use the same value.
+        merge_edge_type_rpc_max_bytes: Only used with ``merge_edge_type_rpcs``. Byte budget for
+            the request and, separately, for the response of one merged RPC. A partition's
+            edge types whose estimated request or response would exceed it are split, in order,
+            across several RPCs; an edge type that exceeds it alone is sent by itself, as in the
+            unmerged path. The estimate is the ids sent, and for the response ``num_neighbors_per_hop``
+            neighbors (plus edge ids when the sampler returns them) per id. GLT's RPC layer
+            (torch RPC over TensorPipe) sets no message-size limit of its own, so the default of
+            512 MiB is a conservative budget that keeps one message well below 2 GiB.
     """
 
     alpha: float = 0.5
@@ -167,6 +181,8 @@ class PPRSamplerOptions:
     max_fetch_iterations: Optional[int] = None
     typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None
     include_sampled_edges: bool = False
+    merge_edge_type_rpcs: bool = False
+    merge_edge_type_rpc_max_bytes: int = 512 * 1024 * 1024
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]

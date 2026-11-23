@@ -51,3 +51,36 @@ def raise_if_sampling_error(msg: SampleMessage) -> None:
         raise RuntimeError(
             "A sampling worker failed while producing this batch:\n" + decoded
         )
+
+
+def raise_if_message_exceeds_channel(msg: SampleMessage, channel: object) -> None:
+    """Raise ``RuntimeError`` if ``msg`` can never fit in ``channel``'s shared-memory buffer.
+
+    GLT's ``ShmQueue`` rejects a message at least as large as its buffer with ``message is too large!``,
+    but it throws while still holding its allocation lock, so every later ``send`` on that channel,
+    including a poison pill, blocks forever. Checking first keeps the channel usable so the error reaches
+    the consumer. The check only catches a message larger than the whole buffer; a message that is smaller
+    but cannot be placed in the ring at its current offset is still rejected by GLT.
+
+    The buffer size is read from the channel's ``max_message_bytes`` attribute, which
+    ``BaseDistLoader.create_colocated_channel`` sets. Channels without it are not checked.
+
+    Args:
+        msg: The message about to be sent.
+        channel: The channel it will be sent on.
+
+    Raises:
+        RuntimeError: If the message's tensor data is at least ``channel.max_message_bytes``.
+    """
+    max_message_bytes = getattr(channel, "max_message_bytes", None)
+    if max_message_bytes is None:
+        return
+    message_bytes = sum(
+        tensor.numel() * tensor.element_size() for tensor in msg.values()
+    )
+    if message_bytes >= max_message_bytes:
+        raise RuntimeError(
+            f"A sampled batch of {message_bytes} bytes cannot fit in the sampling channel, whose shared "
+            f"memory holds {max_message_bytes} bytes. Increase the channel size or reduce the batch size, "
+            "the number of sampled neighbors, or max_ppr_nodes."
+        )
