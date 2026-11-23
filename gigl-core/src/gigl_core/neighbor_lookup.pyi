@@ -18,7 +18,7 @@ def register_csr(
     Args:
         sampler_id (int): The sampler's RPC sampling callee id, identical on every rank.
         edge_type (str): The registry key of the edge type; ``"homogeneous_edge"`` for a homogeneous graph.
-        indptr (torch.Tensor): Contiguous int64 CPU row pointers, shape ``[row_count + 1]``, starting at 0.
+        indptr (torch.Tensor): Contiguous int32 or int64 CPU row pointers, shape ``[row_count + 1]``, starting at 0.
         indices (torch.Tensor): Contiguous int32 or int64 CPU column ids, shape ``[edge_count]``.
         edge_ids (Optional[torch.Tensor]): Contiguous int64 CPU edge ids, shape ``[edge_count]``, or ``None``.
             An empty tensor is treated as ``None``, as GLT does.

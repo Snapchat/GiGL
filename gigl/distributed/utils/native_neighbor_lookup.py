@@ -146,8 +146,8 @@ def _unsupported_reason(graph: Graph) -> Optional[str]:
     if graph.mode != "CPU":
         return f"graph mode is {graph.mode}, not CPU"
     topo = graph.topo
-    if topo.indptr.dtype != torch.int64:
-        return f"indptr is {topo.indptr.dtype}, not int64"
+    if topo.indptr.dtype not in (torch.int32, torch.int64):
+        return f"indptr is {topo.indptr.dtype}, not int32 or int64"
     if topo.indices.dtype not in (torch.int32, torch.int64):
         return f"indices are {topo.indices.dtype}, not int32 or int64"
     if not (topo.indptr.is_contiguous() and topo.indices.is_contiguous()):

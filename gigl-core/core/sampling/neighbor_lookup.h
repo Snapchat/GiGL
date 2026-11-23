@@ -25,7 +25,7 @@ namespace gigl {
 // The CSR of one edge type of one partition. The tensors are references to the dataset's
 // storage, not copies.
 struct RegisteredCsr {
-    torch::Tensor indptr;                 // int64 [rowCount + 1]
+    torch::Tensor indptr;                 // int32 or int64 [rowCount + 1]
     torch::Tensor indices;                // int32 or int64 [edgeCount]
     std::optional<torch::Tensor> edgeIds; // int64 [edgeCount]; none when the graph has no edge ids
     int64_t compressedIdOffset;           // global id of row 0
