@@ -34,7 +34,7 @@ jobs:
       id: versions
       run: python3 .github/scripts/supported_python_versions.py >> "${GITHUB_OUTPUT}"
 
-  # The build jobs, including the cu128 jobs on the self-hosted `gigl-gpu-instances` pool, run before the `release`
+  # The build jobs, including the cu130 jobs on the self-hosted `gigl-gpu-instances` pool, run before the `release`
   # environment's approval and hold no cloud credentials. Who can start them is bounded by repository write access and
   # the protection on `v*` tags. `workflow_dispatch` runs the workflow file from the chosen ref, so an environment gate
   # on these jobs would not stop someone who can push a tag: they could remove the gate in that tag's copy.
@@ -48,12 +48,12 @@ jobs:
       # fail-fast (default true): one failed build cancels the rest, and `publish` never runs.
       matrix:
         python: ${{ fromJSON(needs.python-versions.outputs.minors) }}
-        torch-variant: [cpu, cu128]
+        torch-variant: [cpu, cu130]
         # Each `include` record keys off an existing torch-variant value and only adds `runner`.
         include:
           - torch-variant: cpu
             runner: ubuntu-24.04
-          - torch-variant: cu128
+          - torch-variant: cu130
             runner: gigl-gpu-instances
     runs-on: ${{ matrix.runner }}
     env:
@@ -87,7 +87,7 @@ jobs:
         TORCH_VARIANT: ${{ matrix.torch-variant }}
       run: >
         uv sync --locked --no-default-groups --group gigl-core-build-backend
-        --extra "pyg27-torch28-${TORCH_VARIANT}" --no-install-package gigl-core
+        --extra "pyg28-torch212-${TORCH_VARIANT}" --no-install-package gigl-core
 
     # --no-sync: a plain `uv run` would sync the default `dev` group back into the environment.
     - name: Assert the project environment is this job's minor and torch variant
@@ -112,15 +112,15 @@ jobs:
     - name: Validate the wheel in a clean venv of this minor
       env:
         TORCH_VARIANT: ${{ matrix.torch-variant }}
-        TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu128' }}
+        TORCH_INDEX: ${{ matrix.torch-variant == 'cpu' && 'https://download.pytorch.org/whl/cpu' || 'https://download.pytorch.org/whl/cu130' }}
       run: |
         # gigl-core declares no dependencies, but its extension links torch and gigl_core/__init__.py imports it
         # eagerly, so this variant's torch must be installed alongside it. A fresh venv cannot read the project lock,
-        # so the torch pin repeats `torch==2.8` from the pyg27-torch28 extras in pyproject.toml; a torch bump there
+        # so the torch pin repeats `torch==2.12.1` from the pyg28-torch212 extras in pyproject.toml; a torch bump there
         # must move this line.
         # --clear: on self-hosted runners the venv survives from earlier jobs, and uv refuses to reuse it.
         uv venv --clear --python "${UV_PYTHON}" "${RUNNER_TEMP}/wheel-check"
-        uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.8 gigl-core/dist/*.whl
+        uv pip install --python "${RUNNER_TEMP}/wheel-check" --index-url "${TORCH_INDEX}" torch==2.12.1 gigl-core/dist/*.whl
         "${RUNNER_TEMP}/wheel-check/bin/python" scripts/smoke_test_image.py \
           --python "${UV_PYTHON}" --imports torch,gigl_core --torch-variant "${TORCH_VARIANT}"
 
@@ -172,20 +172,20 @@ jobs:
       fail-fast: false
       matrix:
         # The check URLs name the user because uv sends credentials on the --check-url request only when the URL
-        # carries a username, and the gigl-cu128 index answers anonymous requests with 401.
+        # carries a username, and the gigl-cu130 index answers anonymous requests with 401.
         include:
           - torch-variant: cpu
             publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl
             check-url: https://oauth2accesstoken@us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/
-          - torch-variant: cu128
-            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128
-            check-url: https://oauth2accesstoken@us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/
+          - torch-variant: cu130
+            publish-url: https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu130
+            check-url: https://oauth2accesstoken@us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu130/simple/
     runs-on: ubuntu-24.04
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
     environment:
       # Runs in the release environment so GCP_SERVICE_ACCOUNT_EMAIL resolves to the release
-      # service account, the only identity allowed to publish to the gigl and gigl-cu128
+      # service account, the only identity allowed to publish to the gigl and gigl-cu130
       # registries. See RELEASING.md, "Release identity and permissions".
       name: release
     steps:

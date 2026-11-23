@@ -42,8 +42,8 @@ This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it
 
 The workflow runs:
 
-- One `gigl-core` build job per torch variant (`cpu`, `cu128`) and supported Python minor; the minors come from
-  `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env`. The `cpu` jobs run on a CPU runner and the `cu128` jobs on a GPU
+- One `gigl-core` build job per torch variant (`cpu`, `cu130`) and supported Python minor; the minors come from
+  `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env`. The `cpu` jobs run on a CPU runner and the `cu130` jobs on a GPU
   runner; each checks its wheel (`.github/scripts/check_gigl_core_wheel.py`) and imports it in a clean venv of its
   minor.
 - One `gigl` build job. The pure-Python wheel serves every minor and both registries.
@@ -55,7 +55,7 @@ skips the files the registry already has. A fresh dispatch rebuilds every wheel 
 `SOURCE_DATE_EPOCH` so that a rebuild matches the uploaded file and is skipped, but that is best-effort: a rebuilt file
 that differs from the one already in the registry fails the publish rather than replacing it.
 
-The build jobs, including the `cu128` jobs on the self-hosted GPU pool, run before the `release` environment's approval;
+The build jobs, including the `cu130` jobs on the self-hosted GPU pool, run before the `release` environment's approval;
 only the publish jobs wait for it. The build jobs hold no cloud credentials. Who can start a release is bounded by
 repository write access and the protection on `v*` tags. `workflow_dispatch` runs the workflow file from the chosen ref,
 so an approval gate on the build jobs would not stop someone who can push a tag.
@@ -88,7 +88,7 @@ Nightly builds are triggered automatically by `nightly_release_&_test.yml`, whic
 Jobs that publish release artifacts (`release_gigl_kfp_pipeline` in `create_release.yml`, and all of `release.yml`) run
 in the `release` GitHub environment under a dedicated release identity. Every other job, including the base image and
 integration test builds, runs under the PR/test identity, which cannot push to the release registries (`public-gigl`,
-`gigl`, `gigl-cu128`) or to the release paths in `gs://public-gigl`.
+`gigl`, `gigl-cu130`) or to the release paths in `gs://public-gigl`.
 
 Dispatch `create_release.yml` from `main`. The `release` environment admits only `main` and `release/v*` branches, so a
 dispatch from another branch fails at the environment check.
@@ -103,7 +103,7 @@ Each release run publishes to two self-contained registries:
 | Registry                     | Packages                                                                    |
 | ---------------------------- | --------------------------------------------------------------------------- |
 | `gcp-release-registry-cpu`   | `gigl` (pure Python) + `gigl-core` (CPU wheels, one per Python minor)       |
-| `gcp-release-registry-cu128` | `gigl` (pure Python) + `gigl-core` (CUDA 12.8 wheels, one per Python minor) |
+| `gcp-release-registry-cu130` | `gigl` (pure Python) + `gigl-core` (CUDA 13.0 wheels, one per Python minor) |
 
 Users install from exactly one registry based on their variant — see
 [installation docs](docs/user_guide/getting_started/installation.md).

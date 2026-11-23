@@ -1,11 +1,11 @@
 """Asserts a freshly built ``gigl-core`` wheel is the one the release job meant to build.
 
 Checks that there is exactly one wheel, that its filename carries the ABI tag of ``--python``, and that its
-extension links ``libtorch_cuda.so`` exactly when ``--torch-variant`` is ``cu128``.
+extension links ``libtorch_cuda.so`` exactly when ``--torch-variant`` is ``cu130``.
 
 Example:
     $ uv run --no-sync python .github/scripts/check_gigl_core_wheel.py \
-        --wheel "gigl-core/dist/*.whl" --python 3.12 --torch-variant cu128
+        --wheel "gigl-core/dist/*.whl" --python 3.12 --torch-variant cu130
 """
 
 import argparse
@@ -45,7 +45,7 @@ def links_libtorch_cuda(readelf_dynamic: str) -> bool:
 
 
 def check_torch_variant(wheel: zipfile.ZipFile, torch_variant: str) -> None:
-    """The extension must link libtorch_cuda.so for cu128 and must not for cpu."""
+    """The extension must link libtorch_cuda.so for cu130 and must not for cpu."""
     with tempfile.TemporaryDirectory() as extract_dir:
         sos = [
             n
@@ -63,7 +63,7 @@ def check_torch_variant(wheel: zipfile.ZipFile, torch_variant: str) -> None:
                 capture_output=True,
                 text=True,
             ).stdout
-            linked = "cu128" if links_libtorch_cuda(dynamic) else "cpu"
+            linked = "cu130" if links_libtorch_cuda(dynamic) else "cpu"
             if linked != torch_variant:
                 raise AssertionError(
                     f"{so} links torch {linked}, expected {torch_variant}"
@@ -74,7 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--wheel", required=True)
     parser.add_argument("--python", required=True, help="Python minor, e.g. 3.12")
-    parser.add_argument("--torch-variant", required=True, choices=["cpu", "cu128"])
+    parser.add_argument("--torch-variant", required=True, choices=["cpu", "cu130"])
     args = parser.parse_args()
 
     wheel_path = find_wheel(args.wheel)

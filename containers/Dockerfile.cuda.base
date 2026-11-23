@@ -2,12 +2,12 @@
 
 
 # `-devel` ships nvcc, which gigl-core and GraphLearn-for-PyTorch CUDA builds need; its
-# CUDA 12.8 toolkit has to match the cu128 torch wheels in uv.lock. The base's own torch
+# CUDA 13.0 toolkit has to match the cu130 torch wheels in uv.lock. The base's own torch
 # and Python are unused: requirements/install_py_deps.sh builds the venv at /gigl_deps/.venv.
 # The base must export /usr/local/nvidia/lib and /usr/local/nvidia/lib64 on LD_LIBRARY_PATH,
 # where the container runtime mounts the host GPU driver (pytorch/pytorch images do,
 # nvidia/cuda images do not); `scripts/smoke_test_image.py --image-type cuda` asserts it.
-ARG BASE_IMAGE=pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel@sha256:b574d4ccf6d8856a5d87dcadc667aa4f95dc18d337ef3a28d02b7b01897d7081
+ARG BASE_IMAGE=pytorch/pytorch:2.12.1-cuda13.0-cudnn9-devel@sha256:ac63aaae09996612bdaf12bbf6d5fe840af6bed3100d6dc15fcb5fd1f4f957c4
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-c"]

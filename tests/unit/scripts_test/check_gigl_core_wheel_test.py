@@ -76,8 +76,8 @@ class CheckGiglCoreWheelTest(TestCase):
     )
     def test_torch_variant_reads_the_needed_libraries_of_a_real_extension(self) -> None:
         for links_cuda, variant, other_variant in (
-            (False, "cpu", "cu128"),
-            (True, "cu128", "cpu"),
+            (False, "cpu", "cu130"),
+            (True, "cu130", "cpu"),
         ):
             with tempfile.TemporaryDirectory() as directory:
                 wheel = _write_wheel(directory, _build_extension(directory, links_cuda))

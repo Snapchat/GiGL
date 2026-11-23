@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade to torch 2.12.1, PyG 2.8.1, torchrec 1.7 and fbgemm-gpu 1.7. The CUDA build moves from CUDA 12.8 (`cu128`) to
+  CUDA 13.0 (`cu130`), because torch 2.12 no longer ships CUDA 12.8 wheels. GPU hosts need NVIDIA driver 580 or later,
+  and machines that build the CUDA extensions need a CUDA 13 toolkit.
+- Rename the install extras `pyg27-torch28-cpu` and `pyg27-torch28-cu128` to `pyg28-torch212-cpu` and
+  `pyg28-torch212-cu130`. CUDA `gigl-core` wheels now publish to the `gigl-cu130` registry.
+- macOS arm64 needs macOS 14 or later, because torch 2.12.1 wheels are built for `macosx_14_0`.
+
+### Removed
+
+- Drop the `torch_cluster` and `torch_spline_conv` dependencies. PyG 2.8 ignores them and GiGL does not use them.
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,

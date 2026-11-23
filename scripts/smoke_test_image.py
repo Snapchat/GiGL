@@ -44,7 +44,7 @@ Example:
     In a build job that must have this torch variant, whatever the runner's hardware::
 
         $ python scripts/smoke_test_image.py --python 3.11 --imports torch \
-            --torch-variant cu128
+            --torch-variant cu130
 
     On a GPU host, where the driver is mounted and ``torchrec`` joins the cuda preset::
 
@@ -211,10 +211,10 @@ def check_imports(module_names: list[str]) -> None:
 
 
 def check_torch_variant(variant: str) -> None:
-    """Asserts the installed torch is the ``cpu`` or ``cu128`` build.
+    """Asserts the installed torch is the ``cpu`` or ``cu130`` build.
 
     Args:
-        variant (str): ``cpu`` or ``cu128``, the local version suffix of the torch wheel.
+        variant (str): ``cpu`` or ``cu130``, the local version suffix of the torch wheel.
 
     Raises:
         AssertionError: When the torch version suffix or its CUDA version differs.
@@ -222,11 +222,11 @@ def check_torch_variant(variant: str) -> None:
     import torch
     import torch.version
 
-    # "2.8.0+cu128" -> "cu128"; a wheel without a local suffix, e.g. "2.8.0", has none.
+    # "2.12.1+cu130" -> "cu130"; a wheel without a local suffix, e.g. "2.12.1", has none.
     _, plus, suffix = torch.__version__.rpartition("+")
     assert_equal("torch variant", variant, suffix if plus else "")
     assert_equal(
-        "torch.version.cuda", "12.8" if variant == "cu128" else None, torch.version.cuda
+        "torch.version.cuda", "13.0" if variant == "cu130" else None, torch.version.cuda
     )
 
 
@@ -237,15 +237,15 @@ def check_cuda_build() -> None:
     compiled GLT with ``WITH_CUDA=OFF`` (no CUDA-only symbol), both of which import fine.
 
     Raises:
-        AssertionError: When torch is not a CUDA 12 build or GLT lacks its CUDA symbol.
+        AssertionError: When torch is not a CUDA 13 build or GLT lacks its CUDA symbol.
     """
     import torch
     import torch.version
 
     cuda_version = torch.version.cuda
-    if not isinstance(cuda_version, str) or not cuda_version.startswith("12."):
+    if not isinstance(cuda_version, str) or not cuda_version.startswith("13."):
         raise AssertionError(
-            f"torch.version.cuda: expected a value starting with '12.', got {cuda_version!r}"
+            f"torch.version.cuda: expected a value starting with '13.', got {cuda_version!r}"
         )
     print(f"OK  torch.version.cuda == {cuda_version!r}")
 
@@ -407,10 +407,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--torch-variant",
-        choices=["cpu", "cu128"],
+        choices=["cpu", "cu130"],
         default=None,
         help="Torch build the environment must have: the wheel's local version suffix "
-        "and, for cu128, CUDA 12.8. The checked imports must include torch.",
+        "and, for cu130, CUDA 13.0. The checked imports must include torch.",
     )
     parser.add_argument(
         "--cuda",
