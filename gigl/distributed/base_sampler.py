@@ -66,6 +66,7 @@ from gigl.distributed.utils.native_neighbor_lookup import (
     NativeLookupReply,
     lookup_local,
     lookup_remote,
+    lookup_remote_multi,
     register_partition_csr,
 )
 from gigl.distributed.utils.partition_routing import group_by_partition
@@ -1200,6 +1201,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         that request would exceed ``max_rpc_bytes``, the partition's edge types are split, in order, into
         several requests (see ``_split_requests_by_byte_budget``).
 
+        With the native neighbor lookup on, local nodes use ``lookup_local`` and a remote request is the TorchScript
+        function behind ``lookup_remote_multi``, as in ``_sample_one_hop``. Otherwise local nodes use
+        ``self.sampler.sample_one_hop`` and a remote request is the Python callee ``_RpcMultiEdgeTypeSamplingCallee``.
+
         Args:
             srcs_by_etype: Source node ids per edge type.
             num_nbr: Requested neighbors per source node.
@@ -1250,10 +1255,17 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 srcs, orders, partition_ids, node_pb
             ):
                 if pidx == self.data.partition_idx:
-                    local_results[etype].append(
-                        PartialNeighborOutput(
-                            p_orders, self.sampler.sample_one_hop(p_ids, num_nbr, etype)
+                    # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
+                    if self._native_neighbor_lookup:
+                        local_output = lookup_local(
+                            self.rpc_sample_callee_id, etype, p_ids, num_nbr
                         )
+                    else:
+                        local_output = self.sampler.sample_one_hop(
+                            p_ids, num_nbr, etype
+                        )
+                    local_results[etype].append(
+                        PartialNeighborOutput(p_orders, local_output)
                     )
                 else:
                     remote_routes[etype].append((pidx, p_orders))
@@ -1272,23 +1284,46 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             ):
                 rpc_requests.append((pidx, [requests[index] for index in group]))
         if rpc_requests:
-            futs = [
-                rpc_request_async(
-                    self.rpc_router.get_to_worker(pidx),
-                    self.rpc_multi_etype_callee_id,
-                    args=(
-                        [ids for _, ids in requests],
-                        num_nbr,
-                        [etype for etype, _ in requests],
-                    ),
-                )
-                for pidx, requests in rpc_requests
-            ]
+            # GLT's callee replies with ``NeighborOutput``s; the native lookup with the tuples of their fields.
+            futs: list[
+                Union[
+                    torch.futures.Future[list[NeighborOutput]],
+                    torch.futures.Future[list[NativeLookupReply]],
+                ]
+            ] = []
+            for pidx, requests in rpc_requests:
+                to_worker = self.rpc_router.get_to_worker(pidx)
+                etypes = [etype for etype, _ in requests]
+                ids_per_etype = [ids for _, ids in requests]
+                # GiGL: a native request is served without the interpreter lock, one lookup per edge type.
+                if self._native_neighbor_lookup:
+                    futs.append(
+                        lookup_remote_multi(
+                            to_worker,
+                            self.rpc_sample_callee_id,
+                            etypes,
+                            ids_per_etype,
+                            num_nbr,
+                        )
+                    )
+                else:
+                    futs.append(
+                        rpc_request_async(
+                            to_worker,
+                            self.rpc_multi_etype_callee_id,
+                            args=(ids_per_etype, num_nbr, etypes),
+                        )
+                    )
             res_fut_list = await wrap_torch_future(torch.futures.collect_all(futs))
             for (pidx, requests), res_fut in zip(rpc_requests, res_fut_list):
                 # ``wait`` re-raises a failed remote call, so a failure surfaces here instead of hanging.
-                for (etype, _), output in zip(requests, res_fut.wait(), strict=True):
-                    remote_outputs[(pidx, etype)] = output
+                replies = res_fut.wait()
+                for (etype, _), reply in zip(requests, replies, strict=True):
+                    # GiGL: a native reply is the tuple of ``NeighborOutput``'s fields.
+                    if self._native_neighbor_lookup:
+                        remote_outputs[(pidx, etype)] = NeighborOutput(*reply)
+                    else:
+                        remote_outputs[(pidx, etype)] = reply
 
         results: dict[Optional[EdgeType], NeighborOutput] = {}
         for etype, srcs in srcs_by_etype_on_device.items():

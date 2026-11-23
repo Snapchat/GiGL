@@ -1,11 +1,15 @@
 """Tests for fetching several edge types' neighbors with one RPC per remote partition.
 
 The worker functions run one process per partition, the way ``remote_hop_routing_test`` does, so frontiers
-really route to a remote partition.
+really route to a remote partition. Each check runs with the native neighbor lookup on, where a merged request is a
+TorchScript RPC over the C++ lookup, and off, where it is GLT's Python RPC callee.
 """
 
+import contextlib
+import os
 import signal
-from typing import Any, Callable, Optional, Union
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator, Optional, Union
 from unittest import mock
 
 import torch
@@ -28,6 +32,7 @@ from gigl.distributed.base_sampler import (
     BaseDistNeighborSampler,
     _split_requests_by_byte_budget,
 )
+from gigl.distributed.constants import NATIVE_NEIGHBOR_LOOKUP_ENV
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
@@ -56,6 +61,7 @@ _ITEM_BOUGHT_BY_USER: EdgeType = ("item", "bought_by", "user")
 _USER_FOLLOWS_USER: EdgeType = ("user", "follows", "user")
 _EDGE_TYPES = [_USER_BUYS_ITEM, _ITEM_BOUGHT_BY_USER, _USER_FOLLOWS_USER]
 _TEST_TIMEOUT_SECONDS = 120
+_UNKNOWN_SAMPLER_ID = 10_000
 
 
 def _global_edge_indices() -> dict[EdgeType, torch.Tensor]:
@@ -153,29 +159,91 @@ def _output_as_lists(output: Any) -> Optional[tuple[list[int], list[int], list[i
     return output.nbr.tolist(), output.nbr_num.tolist(), output.edge.tolist()
 
 
+# The functions a hop calls to send a request to another partition: GLT's Python callee, and the native lookup's
+# TorchScript RPCs for one edge type and for several.
+_PYTHON_REQUEST_FUNCTIONS = ("rpc_request_async",)
+_NATIVE_REQUEST_FUNCTIONS = ("lookup_remote", "lookup_remote_multi")
+
+
 class _RpcCounter:
-    """Wraps ``rpc_request_async`` so a test can count the RPCs a call sends."""
+    """Records which request function a hop calls, once per RPC it sends."""
 
     def __init__(self) -> None:
-        self.num_requests = 0
+        self.function_names: list[str] = []
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        self.num_requests += 1
-        return self._real(*args, **kwargs)
-
-    _real = staticmethod(base_sampler.rpc_request_async)
+    @property
+    def num_requests(self) -> int:
+        return len(self.function_names)
 
 
-def _start_sampler(rank: int, master_port: int) -> BaseDistNeighborSampler:
+def _counted(
+    function_name: str, counter: _RpcCounter, real_function: Callable[..., Any]
+) -> Callable[..., Any]:
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        counter.function_names.append(function_name)
+        return real_function(*args, **kwargs)
+
+    return counted
+
+
+@contextmanager
+def _counting_requests() -> Iterator[_RpcCounter]:
+    """Counts the RPCs sent through any of the request functions in ``base_sampler`` while the block runs."""
+    counter = _RpcCounter()
+    with contextlib.ExitStack() as stack:
+        for function_name in _PYTHON_REQUEST_FUNCTIONS + _NATIVE_REQUEST_FUNCTIONS:
+            counted = _counted(
+                function_name, counter, getattr(base_sampler, function_name)
+            )
+            stack.enter_context(mock.patch.object(base_sampler, function_name, counted))
+        yield counter
+
+
+def _init_rpc(rank: int, master_port: int) -> None:
     init_worker_group(world_size=2, rank=rank)
     init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
-    sampler = BaseDistNeighborSampler(
-        data=_partition_dataset(rank),
-        num_neighbors={edge_type: [_NUM_NEIGHBORS] for edge_type in _EDGE_TYPES},
-        with_edge=True,
-        concurrency=1,
+
+
+def _build_sampler(
+    rank: int, native: bool, rank_cannot_serve: Optional[int] = None
+) -> BaseDistNeighborSampler:
+    """A started sampler on the CPU with the native neighbor lookup switched on or off for its construction.
+
+    Constructing a sampler is a collective, so every rank must build the same samplers in the same order. With
+    ``rank_cannot_serve`` set, that rank fails to register its CSR, as a rank with a GPU sampler would.
+    """
+    environment = {NATIVE_NEIGHBOR_LOOKUP_ENV: "on" if native else "off"}
+    cannot_serve = mock.patch.object(
+        base_sampler, "register_partition_csr", return_value=False
     )
+    with mock.patch.dict(os.environ, environment):
+        if rank == rank_cannot_serve:
+            cannot_serve.start()
+        try:
+            sampler = BaseDistNeighborSampler(
+                data=_partition_dataset(rank),
+                num_neighbors={
+                    edge_type: [_NUM_NEIGHBORS] for edge_type in _EDGE_TYPES
+                },
+                with_edge=True,
+                concurrency=1,
+                device=torch.device("cpu"),
+            )
+        finally:
+            if rank == rank_cannot_serve:
+                cannot_serve.stop()
     sampler.start_loop()
+    return sampler
+
+
+def _start_sampler(
+    rank: int,
+    master_port: int,
+    native: bool,
+    rank_cannot_serve: Optional[int] = None,
+) -> BaseDistNeighborSampler:
+    _init_rpc(rank, master_port)
+    sampler = _build_sampler(rank, native, rank_cannot_serve)
     barrier()
     return sampler
 
@@ -197,25 +265,33 @@ def _run_with_timeout(function: Callable[[], None]) -> None:
 def _check_merged_matches_unmerged(
     rank: int,
     master_port: int,
+    native: bool,
     max_rpc_bytes: int,
     expected_requests: dict[str, Optional[int]],
+    rank_cannot_serve: Optional[int] = None,
 ) -> None:
-    """Merged and unmerged hops agree for every scenario, and the merged hop sends the expected RPCs."""
+    """Merged and unmerged hops agree for every scenario, and the merged hop sends the expected RPCs.
+
+    ``native`` is the setting of ``GIGL_NATIVE_NEIGHBOR_LOOKUP``. The hops must use the native lookup only when it is
+    on and every rank can serve it.
+    """
 
     def check() -> None:
-        sampler = _start_sampler(rank, master_port)
+        sampler = _start_sampler(rank, master_port, native, rank_cannot_serve)
+        uses_native_lookup = native and rank_cannot_serve is None
+        assert sampler._native_neighbor_lookup == uses_native_lookup
+        expected_functions = set(_PYTHON_REQUEST_FUNCTIONS)
+        if uses_native_lookup:
+            expected_functions = set(_NATIVE_REQUEST_FUNCTIONS)
         for scenario, frontier in _frontiers(rank).items():
-            counter = _RpcCounter()
-            with mock.patch.object(base_sampler, "rpc_request_async", counter):
+            with _counting_requests() as unmerged_counter:
                 unmerged = {
                     edge_type: sampler.run_task(
                         sampler._sample_one_hop(ids, _NUM_NEIGHBORS, edge_type)
                     )
                     for edge_type, ids in frontier.items()
                 }
-            num_unmerged_requests = counter.num_requests
-            counter = _RpcCounter()
-            with mock.patch.object(base_sampler, "rpc_request_async", counter):
+            with _counting_requests() as merged_counter:
                 merged = sampler.run_task(
                     sampler._sample_one_hop_multi_etype(
                         frontier, _NUM_NEIGHBORS, max_rpc_bytes
@@ -228,10 +304,12 @@ def _check_merged_matches_unmerged(
                 ), f"{scenario} {edge_type}"
             expected = expected_requests[scenario]
             if expected is None:
-                expected = num_unmerged_requests
-            assert counter.num_requests == expected, (
-                f"{scenario}: {counter.num_requests} merged vs {num_unmerged_requests} unmerged requests"
+                expected = unmerged_counter.num_requests
+            assert merged_counter.num_requests == expected, (
+                f"{scenario}: {merged_counter.num_requests} merged vs "
+                f"{unmerged_counter.num_requests} unmerged requests"
             )
+            assert set(merged_counter.function_names) <= expected_functions, scenario
         barrier()
         sampler.shutdown_loop()
         shutdown_rpc()
@@ -239,22 +317,87 @@ def _check_merged_matches_unmerged(
     _run_with_timeout(check)
 
 
-def _check_failed_remote_call_raises(rank: int, master_port: int, merged: bool) -> None:
+def _check_native_merged_matches_python_merged(
+    rank: int, master_port: int, max_rpc_bytes: int
+) -> None:
+    """A merged hop over the native lookup returns the same neighbors, counts and edge ids as over GLT's callee.
+
+    Every node has at most ``_NUM_NEIGHBORS`` neighbors, so both paths return every neighbor in stored order.
+    """
+
+    def check() -> None:
+        _init_rpc(rank, master_port)
+        native_sampler = _build_sampler(rank, native=True)
+        python_sampler = _build_sampler(rank, native=False)
+        barrier()
+        assert native_sampler._native_neighbor_lookup
+        assert not python_sampler._native_neighbor_lookup
+        for scenario, frontier in _frontiers(rank).items():
+            outputs = {}
+            counters = {}
+            for name, sampler in (
+                ("native", native_sampler),
+                ("python", python_sampler),
+            ):
+                with _counting_requests() as counters[name]:
+                    outputs[name] = sampler.run_task(
+                        sampler._sample_one_hop_multi_etype(
+                            frontier, _NUM_NEIGHBORS, max_rpc_bytes
+                        )
+                    )
+            assert set(outputs["native"]) == set(outputs["python"]), scenario
+            for edge_type in frontier:
+                assert _output_as_lists(
+                    outputs["native"][edge_type]
+                ) == _output_as_lists(outputs["python"][edge_type]), (
+                    f"{scenario} {edge_type}"
+                )
+            # The same number of RPCs, each over its own transport.
+            assert counters["native"].num_requests == counters["python"].num_requests
+            assert set(counters["native"].function_names) <= {
+                "lookup_remote_multi",
+                "lookup_remote",
+            }
+            assert set(counters["python"].function_names) <= {"rpc_request_async"}
+        barrier()
+        native_sampler.shutdown_loop()
+        python_sampler.shutdown_loop()
+        shutdown_rpc()
+
+    _run_with_timeout(check)
+
+
+def _to_unknown_sampler(
+    real_function: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Wraps a request function so it addresses a sampler id that GLT's callee table and the native registry lack."""
+
+    def request_unknown_sampler(
+        to_worker: Any, _sampler_id: int, *args: Any, **kwargs: Any
+    ) -> Any:
+        return real_function(to_worker, _UNKNOWN_SAMPLER_ID, *args, **kwargs)
+
+    return request_unknown_sampler
+
+
+def _check_failed_remote_call_raises(
+    rank: int, master_port: int, merged: bool, native: bool
+) -> None:
     """A remote call that fails on the server raises on the caller instead of hanging."""
 
     def check() -> None:
-        sampler = _start_sampler(rank, master_port)
+        sampler = _start_sampler(rank, master_port, native)
+        assert sampler._native_neighbor_lookup == native
         frontier = _frontiers(rank)["mixed_local_and_remote"]
-        real_request = base_sampler.rpc_request_async
-
-        def request_unknown_callee(
-            to_worker: Any, callee_id: int, **kwargs: Any
-        ) -> Any:
-            return real_request(to_worker, 10_000, **kwargs)
-
-        with mock.patch.object(
-            base_sampler, "rpc_request_async", request_unknown_callee
-        ):
+        with contextlib.ExitStack() as stack:
+            for function_name in _PYTHON_REQUEST_FUNCTIONS + _NATIVE_REQUEST_FUNCTIONS:
+                stack.enter_context(
+                    mock.patch.object(
+                        base_sampler,
+                        function_name,
+                        _to_unknown_sampler(getattr(base_sampler, function_name)),
+                    )
+                )
             if merged:
                 coroutine = sampler._sample_one_hop_multi_etype(
                     frontier, _NUM_NEIGHBORS
@@ -330,35 +473,40 @@ def _fetch_as_lists(
     }
 
 
-def _check_ppr_fetch_merged_matches_unmerged(rank: int, master_port: int) -> None:
+def _check_ppr_fetch_merged_matches_unmerged(
+    rank: int, master_port: int, native: bool
+) -> None:
     """The PPR fetch returns the same neighbors, counts and edge ids merged and unmerged."""
 
     def check() -> None:
-        init_worker_group(world_size=2, rank=rank)
-        init_rpc(master_addr="127.0.0.1", master_port=master_port, num_rpc_threads=4)
+        _init_rpc(rank, master_port)
         dataset = _partition_dataset(rank)
         degree_tensors = {
             node_type: torch.ones(_NUM_NODES_PER_TYPE, dtype=torch.int32)
             for node_type in ("user", "item")
         }
-        samplers = [
-            DistPPRNeighborSampler(
-                data=dataset,
-                num_neighbors={
-                    edge_type: [_NUM_NEIGHBORS] for edge_type in _EDGE_TYPES
-                },
-                with_edge=True,
-                concurrency=1,
-                degree_tensors=degree_tensors,
-                num_neighbors_per_hop=_NUM_NEIGHBORS,
-                include_sampled_edges=True,
-                merge_edge_type_rpcs=merge,
-                # 8 bytes forces one request per edge type, so splitting is exercised too.
-                merge_edge_type_rpc_max_bytes=8 if merge else 512 * 1024 * 1024,
-            )
-            for merge in (False, True)
-        ]
+        environment = {NATIVE_NEIGHBOR_LOOKUP_ENV: "on" if native else "off"}
+        with mock.patch.dict(os.environ, environment):
+            samplers = [
+                DistPPRNeighborSampler(
+                    data=dataset,
+                    num_neighbors={
+                        edge_type: [_NUM_NEIGHBORS] for edge_type in _EDGE_TYPES
+                    },
+                    with_edge=True,
+                    concurrency=1,
+                    device=torch.device("cpu"),
+                    degree_tensors=degree_tensors,
+                    num_neighbors_per_hop=_NUM_NEIGHBORS,
+                    include_sampled_edges=True,
+                    merge_edge_type_rpcs=merge,
+                    # 8 bytes forces one request per edge type, so splitting is exercised too.
+                    merge_edge_type_rpc_max_bytes=8 if merge else 512 * 1024 * 1024,
+                )
+                for merge in (False, True)
+            ]
         for sampler in samplers:
+            assert sampler._native_neighbor_lookup == native
             sampler.start_loop()
         barrier()
         unmerged_sampler, merged_sampler = samplers
@@ -552,8 +700,14 @@ class SplitRequestsByByteBudgetTest(TestCase):
 class MergedHopTest(TestCase):
     """``_sample_one_hop_multi_etype`` on two partitions."""
 
+    @parameterized.expand(
+        [
+            param("native_lookup", native=True),
+            param("python_callee", native=False),
+        ]
+    )
     def test_a_merged_hop_matches_per_edge_type_hops_with_one_rpc_per_remote_partition(
-        self,
+        self, _name: str, native: bool
     ) -> None:
         # A scenario with any remote id sends one merged RPC to the other partition, and none otherwise.
         expected_requests = {
@@ -565,42 +719,103 @@ class MergedHopTest(TestCase):
         }
         mp.spawn(
             _check_merged_matches_unmerged,
-            args=(get_free_port(), 512 * 1024 * 1024, expected_requests),
-            nprocs=2,
-        )
-
-    def test_a_tiny_byte_budget_splits_into_per_edge_type_rpcs_with_the_same_results(
-        self,
-    ) -> None:
-        # With a one-byte budget every edge type is its own request, so the RPC count equals the unmerged one.
-        expected_requests = {scenario: None for scenario in _frontiers(0)}
-        mp.spawn(
-            _check_merged_matches_unmerged,
-            args=(get_free_port(), 1, expected_requests),
+            args=(get_free_port(), native, 512 * 1024 * 1024, expected_requests),
             nprocs=2,
         )
 
     @parameterized.expand(
         [
-            param("merged_hop", merged=True),
-            param("per_edge_type_hop", merged=False),
+            param("native_lookup", native=True),
+            param("python_callee", native=False),
+        ]
+    )
+    def test_a_tiny_byte_budget_splits_into_per_edge_type_rpcs_with_the_same_results(
+        self, _name: str, native: bool
+    ) -> None:
+        # With a one-byte budget every edge type is its own request, so the RPC count equals the unmerged one.
+        expected_requests = {scenario: None for scenario in _frontiers(0)}
+        mp.spawn(
+            _check_merged_matches_unmerged,
+            args=(get_free_port(), native, 1, expected_requests),
+            nprocs=2,
+        )
+
+    @parameterized.expand(
+        [
+            param("default_budget", max_rpc_bytes=512 * 1024 * 1024),
+            param("one_request_per_edge_type", max_rpc_bytes=1),
+        ]
+    )
+    def test_the_native_merged_hop_returns_the_same_neighbors_and_edge_ids_as_the_python_one(
+        self, _name: str, max_rpc_bytes: int
+    ) -> None:
+        mp.spawn(
+            _check_native_merged_matches_python_merged,
+            args=(get_free_port(), max_rpc_bytes),
+            nprocs=2,
+        )
+
+    @parameterized.expand(
+        [
+            param("rank_0_cannot_serve", rank_cannot_serve=0),
+            param("rank_1_cannot_serve", rank_cannot_serve=1),
+        ]
+    )
+    def test_a_merged_hop_falls_back_to_the_python_callee_when_a_rank_is_not_registered(
+        self, _name: str, rank_cannot_serve: int
+    ) -> None:
+        # One rank failing to register turns the native lookup off on every rank, so the merged hop is the
+        # Python callee, with the same results and RPC counts as before.
+        expected_requests = {
+            "mixed_local_and_remote": 1,
+            "one_edge_type_empty": 1,
+            "all_edge_types_empty": 0,
+            "sources_without_edges_on_remote_partition": 1,
+            "only_own_partition": 0,
+        }
+        mp.spawn(
+            _check_merged_matches_unmerged,
+            args=(
+                get_free_port(),
+                True,
+                512 * 1024 * 1024,
+                expected_requests,
+                rank_cannot_serve,
+            ),
+            nprocs=2,
+        )
+
+    @parameterized.expand(
+        [
+            param("merged_hop_native", merged=True, native=True),
+            param("merged_hop_python", merged=True, native=False),
+            param("per_edge_type_hop_native", merged=False, native=True),
+            param("per_edge_type_hop_python", merged=False, native=False),
         ]
     )
     def test_a_failed_remote_call_raises_on_the_caller(
-        self, _name: str, merged: bool
+        self, _name: str, merged: bool, native: bool
     ) -> None:
         mp.spawn(
             _check_failed_remote_call_raises,
-            args=(get_free_port(), merged),
+            args=(get_free_port(), merged, native),
             nprocs=2,
         )
 
 
 class PprMergedFetchTest(TestCase):
-    def test_the_ppr_fetch_returns_the_same_tensors_merged_and_unmerged(self) -> None:
+    @parameterized.expand(
+        [
+            param("native_lookup", native=True),
+            param("python_callee", native=False),
+        ]
+    )
+    def test_the_ppr_fetch_returns_the_same_tensors_merged_and_unmerged(
+        self, _name: str, native: bool
+    ) -> None:
         mp.spawn(
             _check_ppr_fetch_merged_matches_unmerged,
-            args=(get_free_port(),),
+            args=(get_free_port(), native),
             nprocs=2,
         )
 

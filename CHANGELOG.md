@@ -11,7 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add `PPRSamplerOptions.merge_edge_type_rpcs`, which sends one RPC per remote partition per PPR fetch round, carrying
   every edge type's frontier, instead of one RPC per edge type and partition. Neighbors, counts and edge ids are
   unchanged. A partition's request is split across several RPCs when its estimated request or response would exceed
-  `merge_edge_type_rpc_max_bytes` (512 MiB by default). Every rank must use the same setting by @mkolodner-sc
+  `merge_edge_type_rpc_max_bytes` (512 MiB by default). With the native neighbor lookup on, a merged request is a
+  TorchScript RPC that runs the C++ lookup once per edge type, so it composes with `GIGL_NATIVE_NEIGHBOR_LOOKUP`; it
+  falls back to a Python callee when that lookup is off or unsupported. Every rank must use the same setting by
+  @mkolodner-sc
 
 ### Changed
 
