@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, NamedTuple, Optional, Tuple
+from enum import Enum
+from typing import Any, Callable, Final, NamedTuple, Optional
 
 import apache_beam as beam
 import tensorflow as tf
@@ -16,7 +17,7 @@ from gigl.common.utils.feature_quantization import SUPPORTED_QUANTIZATION_BITS
 InstanceDict = dict[str, Any]
 TFTensorDict = dict[str, common_types.TensorType]
 FeatureSpecDict = dict[str, common_types.FeatureSpecType]
-FeatureIndexDict = dict[str, Tuple[int, int]]  # feature_name -> (start, end) index
+FeatureIndexDict = dict[str, tuple[int, int]]  # feature_name -> (start, end) index
 FeatureSchemaDict = dict[str, Feature]
 FeatureVocabDict = dict[str, list[str]]
 
@@ -26,6 +27,22 @@ FeatureVocabDict = dict[str, list[str]]
 DEFAULT_TF_INT_DTYPE = tf.int64
 DEFAULT_TF_FLOAT_DTYPE = tf.float32
 DEFAULT_TF_STRING_DTYPE = tf.string
+
+
+# Task config feature flag that selects the data preprocessor output format.
+DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG: Final[str] = "data_preprocessor_output_format"
+
+
+class DataPreprocessorOutputFormat(str, Enum):
+    """Storage format of the transformed features written by the data preprocessor.
+
+    Selected with the ``data_preprocessor_output_format`` feature flag, which defaults to ``parquet``.
+
+    Configs that do not use the GLT backend must set it to ``tfrecord``, because the subgraph sampler reads only TFRecords.
+    """
+
+    TFRECORD = "tfrecord"
+    PARQUET = "parquet"
 
 
 class FeatureSchema(NamedTuple):

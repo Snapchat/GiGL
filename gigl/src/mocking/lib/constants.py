@@ -96,6 +96,17 @@ def get_example_task_node_features_gcs_dir(
     )
 
 
+def get_example_task_node_features_parquet_gcs_dir(
+    task_name: str, version: str, node_type: NodeType
+) -> GcsUri:
+    return GcsUri.join(
+        get_example_task_preprocess_gcs_prefix(task_name=task_name, version=version),
+        "node_features_dir",
+        node_type,
+        "parquet/",
+    )
+
+
 def get_example_task_node_features_schema_gcs_path(
     task_name: str, version: str, node_type: NodeType
 ) -> GcsUri:
@@ -119,6 +130,20 @@ def get_example_task_edge_features_gcs_dir(
         str(edge_type),
     )
     return GcsUri.join(parent_uri, f"{str(edge_usage_type)}_edges", "features/")
+
+
+def get_example_task_edge_features_parquet_gcs_dir(
+    task_name: str,
+    version: str,
+    edge_type: EdgeType,
+    edge_usage_type: EdgeUsageType,
+) -> GcsUri:
+    parent_uri = GcsUri.join(
+        get_example_task_preprocess_gcs_prefix(task_name=task_name, version=version),
+        "edge_features_dir",
+        str(edge_type),
+    )
+    return GcsUri.join(parent_uri, f"{str(edge_usage_type)}_edges", "parquet/")
 
 
 def get_example_task_edge_features_schema_gcs_path(

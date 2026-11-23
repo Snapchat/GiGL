@@ -1,7 +1,7 @@
 import argparse
 import os
 import tempfile
-from typing import Literal, Tuple
+from typing import Literal
 
 import hydra
 from omegaconf import DictConfig
@@ -20,7 +20,7 @@ from gigl.src.common.utils.file_loader import FileLoader
 
 def build_modeling_and_resource_config_from_args(
     mode: Literal["enumerating", "training"],
-) -> Tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]:
+) -> tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]:
     """
     Build the modeling and resource config from command line arguments.
 
@@ -33,7 +33,7 @@ def build_modeling_and_resource_config_from_args(
             or "training" (for model training). Determines fallback config paths.
 
     Returns:
-        Tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]: A tuple containing:
+        tuple[AppliedTaskIdentifier, DictConfig, GiglResourceConfigWrapper]: A tuple containing:
             - Applied task identifier for the current job
             - Hydra modeling configuration (training hyperparameters, model config, etc.)
             - Resource configuration wrapper (project info, compute resources, etc.)

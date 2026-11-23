@@ -1,5 +1,3 @@
-from typing import Tuple
-
 from gigl.src.common.types.pb_wrappers.graph_data_types import (
     EdgePbWrapper,
     NodePbWrapper,
@@ -10,7 +8,7 @@ from snapchat.research.gbml import graph_schema_pb2
 
 def get_dehydrated_node_pb_wrappers_from_edge_wrapper(
     edge_pb_wrapper: EdgePbWrapper, graph_metadata_wrapper: GraphMetadataPbWrapper
-) -> Tuple[NodePbWrapper, NodePbWrapper]:
+) -> tuple[NodePbWrapper, NodePbWrapper]:
     """
     Using graph metadata, returns the source and destination NodePb instances
     corresponding to an EdgePb.  This is used for data splitting.

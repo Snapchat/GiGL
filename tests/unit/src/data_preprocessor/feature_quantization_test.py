@@ -45,6 +45,10 @@ class BuildFeatureMatrixTest(TestCase):
                 column=pa.array([[1.0], []], type=pa.list_(pa.float32())),
             ),
             param(
+                "uneven_rows_with_one_value_per_row_on_average",
+                column=pa.array([[1.0, 2.0], []], type=pa.list_(pa.float32())),
+            ),
+            param(
                 "fixed_size_list_2",
                 column=pa.array(
                     [[1.0, 2.0], [3.0, 4.0]], type=pa.list_(pa.float32(), 2)

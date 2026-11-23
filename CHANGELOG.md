@@ -6,8 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - Nov 19, 2026
+
+This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,
+@mkolodner-sc, @dsaini2-sc, @yliu2-sc, @zfan3-sc, @svij-sc, and @kmontemayor2-sc.
+
+Some highlights:
+
+1. GiGL now has Graph Transformer architectures built in
+2. GiGL now supports running on mulitple Python versions
+3. GiGL Data Preprocessor now writes to Parquet by default (saving ~40% Dataflow CPU and RAM at scale)
+4. GiGL can injest Parquet for live subgraph sampling (approx 14x faster than TFRecord)
+5. GiGL can partition edges at scale ~10x faster
+6. GiGL samples at scale > 2x faster
+
 ### Added
 
+- The mocked test datasets also hold Parquet files, and their preprocessed metadata sets `parquet_uri_prefix` next to
+  `tfrecord_uri_prefix`. All mocked datasets are regenerated with one new version, so GLT tests load them with
+  `ParquetDataLoader` by @kmontemayor2-sc
+- Add `GIGL_RANK_LOCAL_CSR_ROWS=off` to keep the full-range CSR layout under range partitioning (every rank stores a row
+  for each id below its range end, offset 0) instead of the rank-local rows from #885. Callers that sample with global
+  ids through GLT's own samplers get no neighbors on ranks above 0 with the rank-local layout. The variable is read once
+  when the dataset is built and must be the same on every machine by @kmontemayor2-sc
+- Add Parquet output to the data preprocessor, with one `node_id` / `src` / `dst` column per id, a fixed-width float32
+  `features` column, one column per label, and a `FixedSizeBinary` column of packed bytes for quantized features. Each
+  entity directory gets a `_row_counts.json` manifest and the metadata records `parquet_uri_prefix` by @kmontemayor2-sc
 - Make the sampling-loader bring-up RPC timeout configurable via `GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECONDS` (workers reset
   to the 600 s steady-state timeout once initialized, and the wait for workers to initialize is bounded at 3x the
   bring-up timeout); a sampling worker dying before its init barrier now fails the job with the dead workers' ranks and
@@ -20,16 +44,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`gigl/utils/csr.py`), and build each edge type's topology with a `CompactTopology` subclass so GLT's unused `arange`
   edge-id array is never allocated. Graphs with edge weights or edge features keep GLT's build. Peak conversion memory
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
+- `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
+  layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
+  readout, relation modes `none`, no attention biases, `hop_distance` as the only anchor-based input, a head dim
+  divisible by 8, `hop_distance <= 4`, `attention_dropout_rate == 0`, and either value of `prioritize_hop_order`.
+  Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
+  counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
+  float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
+  `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
+  with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
+  without it. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has
+  `hop_distance` or fewer entries by @kmontemayor2-sc
 - Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
   by @kmontemayor2-sc
+- Speed up `DistPartitioner` edge, feature, and label partitioning: each chunk is split by destination rank with one
+  stable sort instead of one boolean-mask pass per rank, and `gc.freeze()` keeps the per-chunk `gc.collect()` from
+  scanning long-lived objects while it holds the GIL. Each rank receives the same items in the same order as before by
+  @kmontemayor2-sc
+- Extend the packed feature sidecar used by feature quantization with a lossless region for categorical id columns
+  (`gigl.common.utils.feature_quantization.lossless.FeatureCodec`), including a 1-bit encoding for 0/1 columns such as
+  one-hot encodings. `FeatureQuantizationMetadata` describes it after the n-bit quantized columns and
+  `dequantize_torch_tensor` decodes both, so the dataset, sampler and loaders carry it without further changes by
+  @kmontemayor2-sc
+- Add lossless compression of node feature columns, on by default. Every column that holds only whole numbers on all
+  ranks (one-hot columns, categorical ids) is stored in the packed feature sidecar as the narrowest integer encoding
+  that holds its values (1 bit for 0/1 columns), inferred from the data, so sampling, RPC and the host-to-device copy
+  move fewer bytes. Other columns, and any column holding a `-0.0`, stay float32, so loaders return bit-identical
+  float32 batches. `build_dataset`, `build_dataset_from_task_config_uri` and Graph Store storage nodes
+  (`build_storage_dataset`) all read the `GIGL_FEATURE_COMPRESSION` environment variable: unset or `auto` compresses,
+  `off` keeps every column float32, and any other value raises by @kmontemayor2-sc
+- Add lossless compression of main edge feature columns, like the node one and on by default. Every column that holds
+  only whole numbers on all ranks is stored in the packed feature sidecar as the narrowest integer encoding that holds
+  its values, and other columns stay float32, so loaders return bit-identical float32 batches. The same
+  `GIGL_FEATURE_COMPRESSION` variable switches it, and the sampling-weight feature is never compressed by
+  @kmontemayor2-sc
+- Convert the data preprocessor's list-typed Arrow columns to numpy arrays through the new `list_column_to_numpy`
+  (`gigl/src/data_preprocessor/lib/transform/arrow_utils.py`), which reads the list offsets directly instead of going
+  through `pyarrow.compute`, and use it in feature quantization by @kmontemayor2-sc
+- GiGL's RPC initialization goes through a vendored copy of GraphLearn-Torch's `init_rpc`
+  (`gigl/distributed/utils/rpc_init.py`) that can select the TensorPipe channels. Set `GIGL_SAMPLING_RPC_CHANNELS` to a
+  comma-separated list of `basic`, `mpt_uv` and `cma` without repeats (first is highest priority; the list must include
+  `basic`, the channel every process can use). `basic` sends each payload over one TCP connection and has the lowest
+  cost per message; `mpt_uv` splits each payload across 16 extra TCP connections, which is 2-5x faster for
+  multi-megabyte payloads and about 25% slower per small message; `cma` copies the payload straight out of the sender's
+  memory (same host only, needs ptrace access) and is faster than `basic` only for multi-megabyte payloads. Each value
+  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default equals
+  GraphLearn-Torch's (`mpt_uv,basic`). Use the same value on every node of a job. A bad value fails in the parent
+  process before workers are spawned for the colocated sampling producer and the graph-store sampling backend, and in
+  the process that initializes RPC (the `mp.spawn` child, or each loader worker at startup) for the dataset-building
+  process and the colocated loader worker. The colocated loader worker, the dataset-building process, the colocated
+  sampling producer and the graph-store sampling worker subprocesses honor the variable. The graph-store `init_server`
+  and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
+  GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
+  hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
+- Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
+  neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
+  releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop
+  thread. For integer partition books the ids and their order are the same as before, including for ids no partition
+  owns, which both routings drop; negative partition ids are now dropped like the mask drops them, and float partition
+  ids are no longer supported. On a 60-machine k-hop sampling job (loader only, no model) it raised throughput by about
+  30% per machine. A custom `id_select` on the dataset keeps GraphLearn-Torch's mask loop. Unit tests hash the copied
+  upstream `_sample_one_hop` and `_remote_selecting_get` sources so a GraphLearn-Torch upgrade that changes them is
+  noticed
 
 ### Changed
 
+- `scripts/create_dev_instance.py` creates dev VMs from the Ubuntu 24.04 Deep Learning VM image
+  `common-cu129-ubuntu-2404-nvidia-580-v20261111` (glibc 2.39, CUDA 12.9, NVIDIA driver 580) instead of the Ubuntu 22.04
+  CUDA 12.8 image, whose support ended on August 1, 2026. The locked `tensorflow-data-validation` 1.21 has Linux wheels
+  only for glibc 2.39 and later, so `install_py_deps.sh` fails on Ubuntu 22.04 by @kmontemayor2-sc
+- `DistDataset.edge_feature_info` reports the full logical width (raw plus packed columns) of an edge type that has
+  packed columns, as `node_feature_info` does, instead of the width of the raw float store alone by @kmontemayor2-sc
+- The data preprocessor writes Parquet by default; set the `data_preprocessor_output_format` feature flag to `tfrecord`
+  to keep writing TFRecords. Configs without the GLT backend (`should_run_glt_backend`) must set it to `tfrecord`,
+  because the subgraph sampler reads only TFRecords, and the config validator rejects Parquet output for them. Parquet
+  output leaves `tfrecord_uri_prefix` empty in the preprocessed metadata by @kmontemayor2-sc
 - A node or edge type that has features always gets `x` / `edge_attr` from the samplers, with zero columns when it has
   only quantized features. The packed `#META` keys are emitted only for types with a quantized sidecar by
   @kmontemayor2-sc
+- Fetch node labels in the same fused request as the node features, so a batch makes one feature request per remote
+  partition per node type instead of two; the `y` labels in batches are unchanged by @kmontemayor2-sc
 - `GraphTransformerEncoder.forward` passes the batch's tensors to the new `tensors_to_graph_transformer_input` instead
   of building an internal `HeteroData`, so `torch.compile` of the whole encoder traces a `HeteroData` batch. Outputs are
   unchanged; `heterodata_to_graph_transformer_input` wraps the new function by @kmontemayor2-sc
@@ -58,9 +155,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dependency by @dsaini2 in https://github.com/Snapchat/GiGL/pull/800
 - Replace every `distutils.util.strtobool` use with `gigl.common.utils.parse.str_to_bool`, which accepts the same
   spellings and returns a `bool`, because Python 3.12 removes `distutils` by @kmontemayor2-sc
+- Support the Python minors listed in `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env` (3.11 to 3.13,
+  `requires-python = ">=3.11,<3.14"`), and publish `gigl-core` wheels for each by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/845
+  - 3.11 stays the default, and the full CI suite runs on Python 3.11.14. Each image runs a pinned patch: 3.11.14 (the
+    `.python-version` value), 3.12.14 or 3.13.15.
+  - **Breaking:** Docker images and the KFP pipeline are published once per Python minor, with a `-py311`, `-py312` or
+    `-py313` suffix (for example `src-cpu:<version>-py312` and `gigl-pipeline-<version>-py312.yaml`). Starting with this
+    release, unsuffixed refs such as `src-cpu:<version>` are not published; update any hand-written image or pipeline
+    refs. `gigl.common.constants` picks the images and pipeline for the running Python minor, because Ray and Beam
+    require one Python per job.
+  - The dependency stack moves to:
+    - TensorFlow 2.21
+    - Apache Beam 2.76.0
+    - `tfx-bsl`, `tensorflow-transform` and `tensorflow-data-validation` 1.21.0
+    - protobuf 6, pyarrow 25 and numpy 2 (tested)
+    - TensorBoard, now a declared dependency
+  - All runtime images require glibc >= 2.39 (Ubuntu 24.04), and Dataflow images are published for `linux/amd64` only.
+  - The CUDA base image is `pytorch/pytorch:2.10.0-cuda12.8-cudnn9-devel`, which exports the NVIDIA driver mount paths
+    (`/usr/local/nvidia/lib{,64}`) on `LD_LIBRARY_PATH`; the image build asserts them with
+    `scripts/smoke_test_image.py`.
+- `retain_edge_ids` now defaults to `False` in `build_dataset`, `DistDataset.build`, `CompactTopology`,
+  `build_csr_from_coo`, and the `build_dataset_from_task_config_uri` runtime args. The memory-lean graph build is used
+  only for graphs without edge features, ids, or weights, which GiGL loaders sample with `with_edge=False`, so the 8
+  bytes per edge of implicit ids are no longer stored. Callers that need per-edge ids on such graphs must pass
+  `retain_edge_ids=True` by @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/877
+- Rename `DistDataset.node_quantized_features` / `edge_quantized_features` (and the `node_quantized_feature_partition` /
+  `edge_quantized_feature_partition` constructor args) to `node_packed_features` / `edge_packed_features` (and
+  `node_packed_feature_partition` / `edge_packed_feature_partition`), because the packed sidecar is not only quantized
+  columns by @kmontemayor2-sc
+- Under a `RangePartitionBook`, each rank's compact CSR/CSC stores only the rows of the ids it owns, so `indptr` no
+  longer grows with rank id. `CompactTopology` takes a required `compressed_id_offset`, the global id of its first row.
+  GiGL's distributed samplers translate global seed ids to local rows, and degree tensors, label lookups and `to_coo`
+  add the offset back. Negative sampling and subgraph extraction raise on such a graph, on every rank. Graphs built with
+  GLT's `init_graph` (edge ids, weights or features) and tensor partition books are unchanged by @kmontemayor2-sc
+- The GLT CSR patch (`0001`) counts distinct column ids in `Graph::InitCPUGraphFromCSR` with `std::thread` chunks and an
+  atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
+  would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
+  @kmontemayor2-sc
+- The partitioners write each machine's node features and labels into a tensor allocated once, on disk when
+  `GIGL_TENSOR_SPILL_DIR` is set, instead of joining the received chunks with `torch.cat`. Range partitioning fills it
+  in node id order rather than sorting a joined copy; with spilling on, its peak anonymous memory drops from ~2x the
+  features to ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/825
 
 ### Fixed
 
+- The `transform` extra installs on macOS arm64: `tensorflow-data-validation`, `tensorflow-metadata`,
+  `tensorflow-transform` and `tfx-bsl` are no longer excluded on darwin, so `make mock_assets` no longer fails with
+  `ModuleNotFoundError: tensorflow_metadata` by @kmontemayor2-sc
+- The `pyg27-torch28-cpu` extra installs `pyg_lib`, `torch_cluster`, `torch_scatter`, `torch_sparse` and
+  `torch_spline_conv` on macOS arm64, so PyG's `NeighborLoader` works there by @kmontemayor2-sc
+- `ty` is configured with `python-platform = "linux"`, so type checking no longer reports Linux-only APIs such as
+  `os.posix_fallocate` when run on macOS by @kmontemayor2-sc
 - `GraphTransformerEncoder` k-hop relation attention and messages no longer use sampled edges into an anchor's last-hop
   tokens. Those edges exist only because another seed in the batch, such as an ABLP positive label, was expanded, so
   they leaked the label at train time and made embeddings depend on batch composition
@@ -81,9 +227,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the
   dataloader `graph_backend` keyword, and remove the model `graph_backend` property by @kmontemayor2-sc in
-  https://github.com/Snapchat/GiGL/pull/PENDING
+  https://github.com/Snapchat/GiGL/pull/770
 - Remove the deprecated `RESOURCE_CONFIG_PATH` environment variable; use `GIGL_RESOURCE_CONFIG_URI` instead by
-  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/PENDING
+  @kmontemayor2-sc in https://github.com/Snapchat/GiGL/pull/710
 
 ## [0.3.1] - Jun 4, 2026
 

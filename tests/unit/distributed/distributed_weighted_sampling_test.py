@@ -17,6 +17,7 @@ from graphlearn_torch.distributed import shutdown_rpc
 from torch.multiprocessing import Manager
 from torch_geometric.data import Data, HeteroData
 
+from gigl.common.utils.garbage_collection import freeze_gc
 from gigl.distributed import DistPartitioner
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_range_partitioner import DistRangePartitioner
@@ -116,8 +117,8 @@ def _build_homogeneous_bipartite_weight_graph() -> tuple[
     )
 
     partition_output = PartitionOutput(
-        node_partition_book=torch.zeros(n),
-        edge_partition_book=torch.zeros(n_edges),
+        node_partition_book=torch.zeros(n, dtype=torch.int64),
+        edge_partition_book=torch.zeros(n_edges, dtype=torch.int64),
         partitioned_edge_index=GraphPartitionData(
             edge_index=edge_index,
             edge_ids=None,
@@ -193,12 +194,12 @@ def _build_heterogeneous_bipartite_weight_graph() -> tuple[
 
     partition_output = PartitionOutput(
         node_partition_book={
-            _USER: torch.zeros(n_user),
-            _ITEM: torch.zeros(n_item),
+            _USER: torch.zeros(n_user, dtype=torch.int64),
+            _ITEM: torch.zeros(n_item, dtype=torch.int64),
         },
         edge_partition_book={
-            _USER_TO_ITEM: torch.zeros(n_u2i_edges),
-            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
+            _USER_TO_ITEM: torch.zeros(n_u2i_edges, dtype=torch.int64),
+            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0], dtype=torch.int64),
         },
         partitioned_edge_index={
             _USER_TO_ITEM: GraphPartitionData(
@@ -268,12 +269,12 @@ def _build_heterogeneous_bipartite_partial_weight_graph() -> tuple[
 
     partition_output = PartitionOutput(
         node_partition_book={
-            _USER: torch.zeros(n_user),
-            _ITEM: torch.zeros(n_item),
+            _USER: torch.zeros(n_user, dtype=torch.int64),
+            _ITEM: torch.zeros(n_item, dtype=torch.int64),
         },
         edge_partition_book={
-            _USER_TO_ITEM: torch.zeros(n_u2i_edges),
-            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0]),
+            _USER_TO_ITEM: torch.zeros(n_u2i_edges, dtype=torch.int64),
+            _ITEM_TO_USER: torch.zeros(gi2u_src.shape[0], dtype=torch.int64),
         },
         partitioned_edge_index={
             _USER_TO_ITEM: GraphPartitionData(
@@ -801,6 +802,7 @@ class DistributedWeightedSamplingTest(TestCase):
 
     def setUp(self) -> None:
         super().setUp()
+        self.enterContext(freeze_gc())
         self._world_size = 1
 
     def tearDown(self) -> None:
