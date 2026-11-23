@@ -95,6 +95,126 @@ class SampledEdgeResult:
     num_sampled_edges: dict[EdgeType, list[int]]
 
 
+def cap_rows_to_per_seed_top_k(
+    scores: dict[NodeType, torch.Tensor],
+    valid_counts: dict[NodeType, torch.Tensor],
+    top_k: int,
+) -> dict[NodeType, torch.Tensor]:
+    """Selects, for each seed, the rows that rank in its top ``top_k`` across node types.
+
+    Rows are ranked by their ``float32`` score, the precision at which the graph transformer ranks PPR
+    tokens. Every row whose score is at least the seed's ``top_k``-th highest score is kept, so a tie at the
+    cutoff keeps all tied rows and never decides which of them survive. A consumer that ranks all rows
+    and keeps its first ``top_k`` therefore picks the same rows from the kept ones, whatever its
+    tie-break between rows.
+
+    Args:
+        scores: Per node type, the ``[num_rows]`` score of each row.
+        valid_counts: Per node type, the ``[num_seeds]`` number of rows each seed owns. Rows are
+            stored seed by seed.
+        top_k: Number of highest-scoring rows to keep per seed.
+
+    Returns:
+        Per node type, a ``[num_rows]`` bool mask of the rows to keep.
+
+    Example:
+        >>> scores = {"a": torch.tensor([0.5, 0.3, 0.9]), "b": torch.tensor([0.5, 0.1])}
+        >>> counts = {"a": torch.tensor([2, 1]), "b": torch.tensor([1, 1])}
+        >>> keep = cap_rows_to_per_seed_top_k(scores, counts, top_k=2)
+        >>> {node_type: mask.tolist() for node_type, mask in keep.items()}
+        {'a': [True, False, True], 'b': [True, True]}
+    """
+    node_types = list(scores)
+    if not node_types:
+        return {}
+    num_seeds = valid_counts[node_types[0]].numel()
+    seed_index_per_row = torch.cat(
+        [
+            torch.repeat_interleave(
+                torch.arange(num_seeds, dtype=torch.long), valid_counts[node_type]
+            )
+            for node_type in node_types
+        ]
+    )
+    all_scores = torch.cat([scores[node_type].float() for node_type in node_types])
+    # Order rows by seed, then by descending score: a stable sort on score, then a stable sort on seed.
+    order_by_score = torch.sort(all_scores, descending=True, stable=True).indices
+    order_by_seed = torch.sort(seed_index_per_row[order_by_score], stable=True).indices
+    ranked_rows = order_by_score[order_by_seed]
+    rows_per_seed = torch.bincount(seed_index_per_row, minlength=num_seeds)
+    first_ranked_row_per_seed = torch.cumsum(rows_per_seed, dim=0) - rows_per_seed
+    # A seed with at least ``top_k`` rows keeps every row scoring at least its top_k-th highest score. A
+    # seed with fewer keeps all of its rows.
+    cutoff_per_seed = torch.full((num_seeds,), -torch.inf)
+    if top_k <= 0:
+        cutoff_per_seed[:] = torch.inf
+    else:
+        has_enough_rows = rows_per_seed >= top_k
+        cutoff_per_seed[has_enough_rows] = all_scores[
+            ranked_rows[first_ranked_row_per_seed[has_enough_rows] + top_k - 1]
+        ]
+    keep_all_rows = all_scores >= cutoff_per_seed[seed_index_per_row]
+    keep_by_node_type: dict[NodeType, torch.Tensor] = {}
+    row_offset = 0
+    for node_type in node_types:
+        num_rows = scores[node_type].numel()
+        keep_by_node_type[node_type] = keep_all_rows[row_offset : row_offset + num_rows]
+        row_offset += num_rows
+    return keep_by_node_type
+
+
+def cap_ppr_result_to_top_k(ppr_result: PPRResult, top_k: int) -> PPRResult:
+    """Drops each seed's rows outside its top ``top_k`` across node types.
+
+    Rows are selected with ``cap_rows_to_per_seed_top_k`` on column 0 of the weights, which is the score
+    (the best channel score for typed PPR). Surviving rows keep their relative order, node type and
+    per-row payload. The cache state is untouched, so original-edge extraction still scans every
+    cached row but only between nodes that survive the cap.
+
+    Args:
+        ppr_result: Heterogeneous PPR output, with every field keyed by node type.
+        top_k: Number of highest-scoring rows to keep per seed, ties kept.
+
+    Returns:
+        A ``PPRResult`` with the dropped rows removed from every field and ``valid_counts`` updated.
+    """
+    assert isinstance(ppr_result.node_ids, dict)
+    assert isinstance(ppr_result.weights, dict)
+    assert isinstance(ppr_result.valid_counts, dict)
+    assert isinstance(ppr_result.is_expanded, dict)
+    old_node_ids = cast(dict[NodeType, torch.Tensor], ppr_result.node_ids)
+    old_weights = cast(dict[NodeType, torch.Tensor], ppr_result.weights)
+    old_valid_counts = cast(dict[NodeType, torch.Tensor], ppr_result.valid_counts)
+    old_is_expanded = cast(dict[NodeType, torch.Tensor], ppr_result.is_expanded)
+    keep_by_node_type = cap_rows_to_per_seed_top_k(
+        {node_type: weights[:, 0] for node_type, weights in old_weights.items()},
+        old_valid_counts,
+        top_k,
+    )
+    node_ids: dict[NodeType, torch.Tensor] = {}
+    weights: dict[NodeType, torch.Tensor] = {}
+    is_expanded: dict[NodeType, torch.Tensor] = {}
+    valid_counts: dict[NodeType, torch.Tensor] = {}
+    for node_type, keep in keep_by_node_type.items():
+        node_ids[node_type] = old_node_ids[node_type][keep]
+        weights[node_type] = old_weights[node_type][keep]
+        is_expanded[node_type] = old_is_expanded[node_type][keep]
+        num_seeds = old_valid_counts[node_type].numel()
+        seed_index_per_row = torch.repeat_interleave(
+            torch.arange(num_seeds), old_valid_counts[node_type]
+        )
+        valid_counts[node_type] = torch.bincount(
+            seed_index_per_row[keep], minlength=num_seeds
+        ).to(old_valid_counts[node_type].dtype)
+    return PPRResult(
+        node_ids=node_ids,
+        weights=weights,
+        valid_counts=valid_counts,
+        is_expanded=is_expanded,
+        cache_state=ppr_result.cache_state,
+    )
+
+
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
     """Personalized PageRank (PPR) based distributed neighbor sampler.
 
@@ -234,6 +354,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             original graph edges alongside virtual PPR edges. The sampler emits
             original edges from adjacency rows fetched while running PPR and whose
             source and destination are both in the final PPR-selected node set.
+        global_top_k_cap: Keep only each seed's ``max_ppr_nodes + 1`` highest-scoring rows across
+            node types (ties kept) before inducing nodes, extracting original edges and fetching
+            features. Only for consumers that read at most ``max_ppr_nodes`` rows per seed; see
+            ``PPRSamplerOptions.global_top_k_cap``.
     """
 
     def __init__(
@@ -251,6 +375,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         max_fetch_iterations: Optional[int] = None,
         typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,
         include_sampled_edges: bool = False,
+        global_top_k_cap: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -265,6 +390,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
         self._include_sampled_edges = include_sampled_edges
+        self._global_top_k_cap = global_top_k_cap
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -1001,6 +1127,21 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                         )
                         for seed_type in seed_types
                     ]
+                )
+            if self._global_top_k_cap:
+                loop = asyncio.get_running_loop()
+                ppr_results = list(
+                    await asyncio.gather(
+                        *[
+                            loop.run_in_executor(
+                                None,
+                                cap_ppr_result_to_top_k,
+                                ppr_result,
+                                self._max_ppr_nodes + 1,
+                            )
+                            for ppr_result in ppr_results
+                        ]
+                    )
                 )
             neighbor_dict: dict[EdgeType, list[torch.Tensor]] = {}
             ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}

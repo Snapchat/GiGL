@@ -157,6 +157,23 @@ class PPRSamplerOptions:
             seed-to-PPR-neighbor ``edge_index`` rows with PPR weights rather than
             an induced message-passing subgraph:
             https://pytorch-geometric.readthedocs.io/en/2.5.3/_modules/torch_geometric/utils/ppr.html
+        global_top_k_cap: Throughput option. When ``True``, each seed keeps only its
+            ``max_ppr_nodes + 1`` highest-scoring rows across node types. Rows tied with the last
+            kept row are all kept, so ties are never broken differently from a consumer that ranks
+            all rows. The rest are dropped before node induction, original-edge extraction and
+            feature fetching. Rows keep their relative order. Ranking uses the ``float32`` score, the
+            precision the graph transformer ranks at. It applies to heterogeneous PPR output (the
+            only case where a seed can emit rows for more than one node type). Defaults to ``False``.
+
+            ``max_ppr_nodes`` bounds the rows emitted per (seed, node type), so a seed can emit
+            several times ``max_ppr_nodes`` rows across node types. The ``+ 1`` leaves room for a
+            consumer that drops the seed from its own sequence.
+
+            Only enable this for a consumer that reads at most ``max_ppr_nodes`` rows per seed, such
+            as the graph transformer with ``max_seq_len <= max_ppr_nodes``. For such a consumer the
+            tokens, their features and the edges among them are identical to the uncapped output.
+            Do NOT enable it for a consumer that reads more than ``max_ppr_nodes`` rows per seed:
+            it would silently lose the rows ranked below the cut.
     """
 
     alpha: float = 0.5
@@ -167,6 +184,7 @@ class PPRSamplerOptions:
     max_fetch_iterations: Optional[int] = None
     typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None
     include_sampled_edges: bool = False
+    global_top_k_cap: bool = False
 
 
 SamplerOptions = Union[KHopNeighborSamplerOptions, PPRSamplerOptions]
