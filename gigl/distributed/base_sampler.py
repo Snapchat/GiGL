@@ -47,8 +47,8 @@ from jaxtyping import Int64, Integer
 
 from gigl.common.logger import Logger
 from gigl.distributed.constants import (
-    NATIVE_NEIGHBOR_RPC_ENV,
-    resolve_native_neighbor_rpc,
+    NATIVE_NEIGHBOR_LOOKUP_ENV,
+    resolve_native_neighbor_lookup,
 )
 from gigl.distributed.sampler import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
@@ -61,7 +61,8 @@ from gigl.distributed.utils.fused_feature import (
     FusedDistFeature,
     build_fused_dist_feature,
 )
-from gigl.distributed.utils.native_neighbor_rpc import (
+from gigl.distributed.utils.native_neighbor_lookup import (
+    lookup_neighbors,
     register_partition_csr,
     send_native_neighbor_request,
 )
@@ -247,7 +248,7 @@ class _GlobalIdNeighborSampler(NeighborSampler):
         super().lazy_init_subgraph_op()
 
 
-_NATIVE_NEIGHBOR_RPC_GATHER_TAG: Final[str] = "gigl_native_neighbor_rpc"
+_NATIVE_NEIGHBOR_LOOKUP_GATHER_TAG: Final[str] = "gigl_native_neighbor_lookup"
 
 
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
@@ -477,10 +478,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # rpc register
         rpc_sample_callee = RpcSamplingCallee(self.sampler, self.device)
         self.rpc_sample_callee_id = rpc_register(rpc_sample_callee)
-        # GiGL: serve remote one-hop requests by native neighbor RPC unless turned off or unsupported.
-        self._native_neighbor_rpc = False
-        if resolve_native_neighbor_rpc():
-            self._native_neighbor_rpc = self._agree_on_native_neighbor_rpc()
+        # GiGL: serve local and remote one-hop lookups with the native neighbor lookup unless turned off or unsupported.
+        self._native_neighbor_lookup = False
+        if resolve_native_neighbor_lookup():
+            self._native_neighbor_lookup = self._agree_on_native_neighbor_lookup()
         rpc_subgraph_callee = RpcSubGraphCallee(self.sampler, self.device)
         self.rpc_subgraph_callee_id = rpc_register(rpc_subgraph_callee)
 
@@ -900,8 +901,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if p_ids.shape[0] > 0:
                 yield pidx, p_ids, torch.masked_select(orders, p_mask)
 
-    def _agree_on_native_neighbor_rpc(self) -> bool:
-        """Registers this partition's CSR for native neighbor requests and agrees with every rank to use them.
+    def _agree_on_native_neighbor_lookup(self) -> bool:
+        """Registers this partition's CSR for native neighbor lookups and agrees with every rank to use them.
 
         The agreement is one ``all_gather`` over the sampling RPC group, so it also orders every rank's registration
         before any rank's first request.
@@ -920,7 +921,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             bool: Whether every rank registered its CSR. When ``False``, every rank uses GLT's Python callee.
 
         Raises:
-            RuntimeError: If a process in the group has ``GIGL_NATIVE_NEIGHBOR_RPC`` set differently.
+            RuntimeError: If a process in the group has ``GIGL_NATIVE_NEIGHBOR_LOOKUP`` set differently.
         """
         registered = register_partition_csr(
             self.rpc_sample_callee_id,
@@ -931,19 +932,20 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             seed=self.seed,
         )
         # Tagged, so a process with the flag off (whose next collective is ``rpc_register``) fails loudly here.
-        gathered = all_gather((_NATIVE_NEIGHBOR_RPC_GATHER_TAG, registered))
+        gathered = all_gather((_NATIVE_NEIGHBOR_LOOKUP_GATHER_TAG, registered))
         for worker_name, value in gathered.items():
             if not (
-                isinstance(value, tuple) and value[0] == _NATIVE_NEIGHBOR_RPC_GATHER_TAG
+                isinstance(value, tuple)
+                and value[0] == _NATIVE_NEIGHBOR_LOOKUP_GATHER_TAG
             ):
                 raise RuntimeError(
-                    f"{NATIVE_NEIGHBOR_RPC_ENV} must be set identically on every process; {worker_name} sent "
-                    f"{value!r} to the native neighbor RPC agreement"
+                    f"{NATIVE_NEIGHBOR_LOOKUP_ENV} must be set identically on every process; {worker_name} sent "
+                    f"{value!r} to the native neighbor lookup agreement"
                 )
         agreed = all(value[1] for value in gathered.values())
         if not agreed:
             logger.info(
-                f"native neighbor RPC off for sampler {self.rpc_sample_callee_id}: a rank cannot serve it"
+                f"native neighbor lookup off for sampler {self.rpc_sample_callee_id}: a rank cannot serve it"
             )
         return agreed
 
@@ -961,6 +963,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
 
         Lines marked ``# GiGL:`` differ from GLT 0.2.4; everything else is copied.
 
+        With the native neighbor lookup on, local and remote nodes go through the same C++ kernel, so one hop uses
+        one kernel and one random stream. The local lookup is a torch operator call, which releases the interpreter
+        lock. With it off, local nodes use ``self.sampler.sample_one_hop`` and remote nodes use GLT's Python callee.
+
         Args:
             srcs: Source node ids for this hop.
             num_nbr: Requested neighbors per source node.
@@ -976,7 +982,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         if self.data.graph_caching:
             nbr_out: Optional[NeighborOutput] = None
             if srcs.numel() > 0:
-                nbr_out = self.sampler.sample_one_hop(srcs, num_nbr, etype)
+                # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
+                if self._native_neighbor_lookup:
+                    nbr_out = lookup_neighbors(
+                        self.rpc_sample_callee_id, etype, srcs, num_nbr
+                    )
+                else:
+                    nbr_out = self.sampler.sample_one_hop(srcs, num_nbr, etype)
             return nbr_out  # type: ignore[return-value]
 
         orders: Int64[torch.Tensor, "num_srcs"] = torch.arange(
@@ -1004,15 +1016,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             srcs, orders, partition_ids, node_pb
         ):
             if pidx == self.data.partition_idx:
-                p_nbr_out: NeighborOutput = self.sampler.sample_one_hop(
-                    p_ids, num_nbr, etype
-                )
+                # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
+                if self._native_neighbor_lookup:
+                    p_nbr_out: NeighborOutput = lookup_neighbors(
+                        self.rpc_sample_callee_id, etype, p_ids, num_nbr
+                    )
+                else:
+                    p_nbr_out = self.sampler.sample_one_hop(p_ids, num_nbr, etype)
                 partition_results.append(PartialNeighborOutput(p_orders, p_nbr_out))
             else:
                 remote_orders_list.append(p_orders)
                 to_worker = self.rpc_router.get_to_worker(pidx)
                 # GiGL: a native request is served without the interpreter lock.
-                if self._native_neighbor_rpc:
+                if self._native_neighbor_lookup:
                     futs.append(
                         send_native_neighbor_request(
                             to_worker,
@@ -1042,7 +1058,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             reply = res_fut.wait()
             # GiGL: a native reply is the tuple of ``NeighborOutput``'s fields; GLT's callee returns a
             # ``NeighborOutput``.
-            if self._native_neighbor_rpc:
+            if self._native_neighbor_lookup:
                 reply = NeighborOutput(*reply)
             partition_results.append(
                 PartialNeighborOutput(

@@ -8,11 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-- Serve remote one-hop neighbor requests with a native lookup, sent as a TorchScript RPC function that calls a C++
-  operator over the partition's CSR (`torch.ops.gigl_core.rpc_lookup_neighbors`), so the serving sampler does not take
-  the Python interpreter lock per request. Sampled neighbors match GLT's Python callee. On by default; set
-  `GIGL_NATIVE_NEIGHBOR_RPC=off` on every process to use the Python callee. Samplers fall back to the Python callee
-  automatically when any rank cannot serve it (a non-CPU sampler device or graph, or weighted sampling)
+- Serve one-hop neighbor lookups, for local and remote nodes, with a native lookup: a C++ operator over the partition's
+  CSR (`torch.ops.gigl_core.lookup_neighbors`). Remote requests are sent as a TorchScript RPC function, so the serving
+  sampler does not take the Python interpreter lock per request; local lookups call the operator from Python, which
+  releases the lock while it runs. Sampled neighbors match GLT's. On by default; set `GIGL_NATIVE_NEIGHBOR_LOOKUP=off`
+  on every process to use GLT's sampler and Python callee. Samplers fall back to the Python callee automatically when
+  any rank cannot serve it (a non-CPU sampler device or graph, or weighted sampling)
 
 ## [0.4.0] - Nov 19, 2026
 

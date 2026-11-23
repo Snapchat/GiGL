@@ -24,7 +24,7 @@
 // or linkable C++ library, so gigl-core cannot call CPURandomSampler. And the TorchScript RPC needs a registered
 // torch operator, which GLT's sampler is not.
 
-#include "rpc_neighbor_lookup.h"
+#include "neighbor_lookup.h"
 
 #include <algorithm>
 #include <atomic>
@@ -225,6 +225,12 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
     const auto csr = findCsr(samplerId, edgeType);
     TORCH_CHECK(
         csr != nullptr, "lookupNeighbors: no CSR registered for sampler ", samplerId, " edge type '", edgeType, "'");
+    return lookupNeighbors(*csr, ids, reqNum);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNeighbors(const RegisteredCsr& csr,
+                                                                                       const torch::Tensor& ids,
+                                                                                       int64_t reqNum) {
     TORCH_CHECK(ids.device().is_cpu(), "lookupNeighbors: ids must be on the CPU");
     TORCH_CHECK(ids.dim() == 1, "lookupNeighbors: ids must be 1-D");
     TORCH_CHECK(ids.scalar_type() == torch::kInt64, "lookupNeighbors: ids must be int64, got ", ids.scalar_type());
@@ -235,8 +241,8 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
     const torch::Tensor contiguousIds = ids.contiguous();
     const auto* idPtr = contiguousIds.data_ptr<int64_t>();
     const int64_t batchSize = contiguousIds.size(0);
-    const int64_t rowCount = csr->indptr.size(0) - 1;
-    const auto* rowPtr = csr->indptr.data_ptr<int64_t>();
+    const int64_t rowCount = csr.indptr.size(0) - 1;
+    const auto* rowPtr = csr.indptr.data_ptr<int64_t>();
     const auto longOptions = torch::TensorOptions().dtype(torch::kInt64);
 
     torch::Tensor counts = torch::empty({batchSize}, longOptions);
@@ -245,7 +251,7 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
     int64_t total = 0;
     for (int64_t i = 0; i < batchSize; ++i) {
         // gigl.utils.csr.to_local_compressed_ids: ids outside [offset, offset + rowCount) have no row.
-        const int64_t row = idPtr[i] - csr->compressedIdOffset;
+        const int64_t row = idPtr[i] - csr.compressedIdOffset;
         int64_t count = 0;
         if (row >= 0 && row < rowCount) {
             count = std::min(reqNum, rowPtr[row + 1] - rowPtr[row]);
@@ -258,13 +264,13 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
     torch::Tensor neighbors = torch::empty({total}, longOptions);
     // None when the registration does not want edge ids; otherwise empty until a non-empty sample fills it.
     std::optional<torch::Tensor> edgeIdsOut;
-    if (csr->withEdge) {
+    if (csr.withEdge) {
         edgeIdsOut = torch::empty({0}, longOptions);
     }
     int64_t* edgeOutPtr = nullptr;
-    if (csr->withEdge && total > 0) {
+    if (csr.withEdge && total > 0) {
         // GLT's SampleWithEdge raises the same way for a non-empty sample without edge ids.
-        TORCH_CHECK(csr->edgeIds.has_value(), "lookupNeighbors: edge ids were requested but the graph has none");
+        TORCH_CHECK(csr.edgeIds.has_value(), "lookupNeighbors: edge ids were requested but the graph has none");
         edgeIdsOut = torch::empty({total}, longOptions);
         edgeOutPtr = edgeIdsOut->data_ptr<int64_t>();
     }
@@ -281,12 +287,12 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
         // (sub-sampled) to 7x slower (copy) at 4,096-65,536 ids. With 16 intra-op threads it wins only at 65,536
         // ids with sub-sampling (0.7x the time), by using cores the other RPC threads need. This loop does one
         // pass with no temporaries, and its row reads are data-dependent gathers, which SIMD does not help.
-        if (csr->indices.scalar_type() == torch::kInt32) {
+        if (csr.indices.scalar_type() == torch::kInt32) {
             gatherRows<int32_t>(
-                *csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
+                csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
         } else {
             gatherRows<int64_t>(
-                *csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
+                csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
         }
     }
     return std::make_tuple(neighbors, counts, edgeIdsOut);

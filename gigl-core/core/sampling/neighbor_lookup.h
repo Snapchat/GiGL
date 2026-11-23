@@ -1,8 +1,9 @@
-// One-hop neighbor lookup that serves remote sampling requests without Python.
+// One-hop neighbor lookup over a registered CSR, for local and remote sampling requests, without Python.
 //
 // GLT answers another rank's neighbor request with a Python RPC callee, so torch RPC takes the
 // interpreter lock to unpickle the request, run the lookup and pickle the reply. A TorchScript
-// function that calls lookupNeighbors runs on the RPC thread with no interpreter lock.
+// function that calls lookupNeighbors runs on the RPC thread with no interpreter lock. The same
+// operator, called from Python for the local partition, releases the lock for the lookup.
 //
 // Each sampler registers the CSR topology of its partition once, keyed by the sampler's RPC
 // callee id (identical on every rank) and the edge type. Lookups take global ids and return
@@ -46,7 +47,8 @@ void unregisterCsr(int64_t samplerId);
 // sub-samples. Threads that sub-sampled before the call keep their generator.
 void setRandomSeed(uint32_t seed);
 
-// Samples up to reqNum neighbors of each global id in `ids` (int64, CPU, 1-D).
+// Samples up to reqNum neighbors of each global id in `ids` (int64, CPU, 1-D) from the CSR registered under
+// (samplerId, edgeType). Raises when nothing is registered there. Delegates to the overload below.
 //
 // Returns (neighbors, counts, edgeIds): int64 flat neighbor ids, int64 per-id counts and int64
 // edge ids (std::nullopt, which TorchScript returns as None, when the registration has withEdge
@@ -56,6 +58,13 @@ void setRandomSeed(uint32_t seed);
 // thread's own generator, so those draws differ from GLT's.
 std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNeighbors(int64_t samplerId,
                                                                                        const std::string& edgeType,
+                                                                                       const torch::Tensor& ids,
+                                                                                       int64_t reqNum);
+
+// The same lookup over a CSR the caller already holds, with no registry involved: for a C++ caller
+// that has the CSR, or a C++ unit test. Checks `ids` as the overload above does. The caller keeps `csr`
+// alive for the call.
+std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNeighbors(const RegisteredCsr& csr,
                                                                                        const torch::Tensor& ids,
                                                                                        int64_t reqNum);
 

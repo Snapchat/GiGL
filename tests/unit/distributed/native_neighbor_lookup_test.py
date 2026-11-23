@@ -1,7 +1,7 @@
-"""The native neighbor RPC must sample exactly what GLT's Python callee samples.
+"""The native neighbor lookup must sample exactly what GLT's sampler and Python callee sample.
 
 The multi-process tests build one three-partition graph with node features, homogeneous or heterogeneous, sample it
-from every rank with ``GIGL_NATIVE_NEIGHBOR_RPC`` off and then on, and compare one-hop neighbors, k-hop samples,
+from every rank with ``GIGL_NATIVE_NEIGHBOR_LOOKUP`` off and then on, and compare one-hop neighbors, k-hop samples,
 PPR tokens and scores, and the collated message with features, exactly.
 """
 
@@ -24,17 +24,20 @@ from graphlearn_torch.sampler import NodeSamplerInput
 from parameterized import param, parameterized
 
 import gigl.distributed.base_sampler as base_sampler_module
-from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.distributed.base_sampler import (
+    BaseDistNeighborSampler,
+    _GlobalIdNeighborSampler,
+)
 from gigl.distributed.constants import (
-    NATIVE_NEIGHBOR_RPC_ENV,
-    resolve_native_neighbor_rpc,
+    NATIVE_NEIGHBOR_LOOKUP_ENV,
+    resolve_native_neighbor_lookup,
 )
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
-from gigl.distributed.utils.native_neighbor_rpc import (
+from gigl.distributed.utils.native_neighbor_lookup import (
     edge_type_key,
     lookup_neighbors,
     register_partition_csr,
@@ -165,8 +168,8 @@ def _sample_on_partition(
     unsupported_rank: Optional[int],
     output: dict,
 ) -> None:
-    """Samples every node from this rank with the native neighbor RPC on or off and records the results."""
-    os.environ[NATIVE_NEIGHBOR_RPC_ENV] = flag_value
+    """Samples every node from this rank with the native neighbor lookup on or off and records the results."""
+    os.environ[NATIVE_NEIGHBOR_LOOKUP_ENV] = flag_value
     torch.distributed.init_process_group(
         "gloo",
         init_method=f"tcp://127.0.0.1:{process_group_port}",
@@ -224,8 +227,12 @@ def _sample_on_partition(
     sampling_callee_ids = {sampler.rpc_sample_callee_id for sampler in samplers}
     python_requests: list[int] = []
     native_requests: list[int] = []
+    local_native_lookups: list[int] = []
+    glt_local_one_hops: list[int] = []
     original_python_request = base_sampler_module.rpc_request_async
     original_native_request = base_sampler_module.send_native_neighbor_request
+    original_local_lookup = base_sampler_module.lookup_neighbors
+    original_glt_one_hop = _GlobalIdNeighborSampler.sample_one_hop
 
     def spy_python_request(worker_name, callee_id, args=None, kwargs=None):
         python_requests.append(callee_id)
@@ -235,6 +242,14 @@ def _sample_on_partition(
         native_requests.append(sampler_id)
         return original_native_request(worker_name, sampler_id, etype, ids, req_num)
 
+    def spy_local_lookup(sampler_id, etype, ids, req_num):
+        local_native_lookups.append(sampler_id)
+        return original_local_lookup(sampler_id, etype, ids, req_num)
+
+    def spy_glt_one_hop(sampler_self, input_seeds, req_num, etype=None):
+        glt_local_one_hops.append(req_num)
+        return original_glt_one_hop(sampler_self, input_seeds, req_num, etype)
+
     seeds = torch.arange(_NUM_NODES)
     result: dict[str, Any] = {}
     with (
@@ -242,6 +257,8 @@ def _sample_on_partition(
         mock.patch.object(
             base_sampler_module, "send_native_neighbor_request", spy_native_request
         ),
+        mock.patch.object(base_sampler_module, "lookup_neighbors", spy_local_lookup),
+        mock.patch.object(_GlobalIdNeighborSampler, "sample_one_hop", spy_glt_one_hop),
     ):
         for edge_type in _edge_types(heterogeneous):
             for fanout in (-1, _LARGE_FANOUT):
@@ -269,11 +286,13 @@ def _sample_on_partition(
             result["indices_dtypes"].append(str(graph.topo.indices.dtype))
     elif dataset.graph is not None:
         result["indices_dtypes"].append(str(dataset.graph.topo.indices.dtype))
-    result["native_flags"] = [sampler._native_neighbor_rpc for sampler in samplers]
+    result["native_flags"] = [sampler._native_neighbor_lookup for sampler in samplers]
     result["python_neighbor_requests"] = sum(
         1 for callee_id in python_requests if callee_id in sampling_callee_ids
     )
     result["native_neighbor_requests"] = len(native_requests)
+    result["local_native_lookups"] = len(local_native_lookups)
+    result["glt_local_one_hops"] = len(glt_local_one_hops)
     output[rank] = result
     barrier()
     for sampler in samplers:
@@ -322,7 +341,7 @@ def _neighbor_sets(
     return neighbors
 
 
-class NativeNeighborRpcParityTest(TestCase):
+class NativeNeighborLookupParityTest(TestCase):
     def _assert_same_samples(
         self,
         python_result: dict[str, Any],
@@ -416,6 +435,11 @@ class NativeNeighborRpcParityTest(TestCase):
             self.assertEqual(python_result["native_neighbor_requests"], 0)
             self.assertEqual(native_result["python_neighbor_requests"], 0)
             self.assertGreater(native_result["native_neighbor_requests"], 0)
+            # Local nodes use the same kernel, and GLT's local sampler is not used.
+            self.assertGreater(native_result["local_native_lookups"], 0)
+            self.assertEqual(native_result["glt_local_one_hops"], 0)
+            self.assertEqual(python_result["local_native_lookups"], 0)
+            self.assertGreater(python_result["glt_local_one_hops"], 0)
             self._assert_same_samples(
                 python_result, native_result, rank, heterogeneous, edge_dir
             )
@@ -448,6 +472,8 @@ class NativeNeighborRpcParityTest(TestCase):
             self.assertEqual(fallback_result["native_flags"], [False, False, False])
             self.assertGreater(fallback_result["python_neighbor_requests"], 0)
             self.assertEqual(fallback_result["native_neighbor_requests"], 0)
+            self.assertEqual(fallback_result["local_native_lookups"], 0)
+            self.assertGreater(fallback_result["glt_local_one_hops"], 0)
             self._assert_same_samples(
                 python_path[rank], fallback_result, rank, True, "out"
             )
@@ -458,7 +484,7 @@ class NativeLookupTest(TestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        import gigl_core.rpc_neighbor_lookup as native
+        import gigl_core.neighbor_lookup as native
 
         self.native = native
 
@@ -531,7 +557,7 @@ class RegisterPartitionCsrTest(TestCase):
         )
 
     def tearDown(self) -> None:
-        import gigl_core.rpc_neighbor_lookup as native
+        import gigl_core.neighbor_lookup as native
 
         native.unregister_csr(7)
         super().tearDown()
@@ -573,13 +599,13 @@ class RegisterPartitionCsrTest(TestCase):
 class FlagTest(TestCase):
     def test_on_unless_set_to_off(self) -> None:
         for value, expected in (("", True), ("on", True), ("OFF", False)):
-            with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_RPC_ENV: value}):
-                self.assertEqual(resolve_native_neighbor_rpc(), expected)
+            with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_LOOKUP_ENV: value}):
+                self.assertEqual(resolve_native_neighbor_lookup(), expected)
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertTrue(resolve_native_neighbor_rpc())
-        with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_RPC_ENV: "1"}):
+            self.assertTrue(resolve_native_neighbor_lookup())
+        with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_LOOKUP_ENV: "1"}):
             with self.assertRaises(ValueError):
-                resolve_native_neighbor_rpc()
+                resolve_native_neighbor_lookup()
 
     def test_edge_type_keys(self) -> None:
         self.assertEqual(edge_type_key(None), "")
