@@ -96,7 +96,9 @@ class CompactTopologyTest(TestCase):
         coo = torch.tensor([[0.0, 2.0, 2.0], [1.0, 0.0, 1.0]])
         lean = CompactTopology(coo, layout="CSR", compressed_id_offset=0)
         reference = Topology(edge_index=coo, layout="CSR")
-        torch.testing.assert_close(lean.indptr, reference.indptr, rtol=0, atol=0)
+        torch.testing.assert_close(
+            lean.indptr, reference.indptr.to(lean.indptr.dtype), rtol=0, atol=0
+        )
         torch.testing.assert_close(lean.indices, reference.indices, rtol=0, atol=0)
 
     def test_an_edge_type_with_no_local_edges_builds_and_samples_nothing(self) -> None:
@@ -751,7 +753,10 @@ class SamplingParityTest(TestCase):
         reference.lazy_init()
 
         torch.testing.assert_close(
-            lean.topo.indptr, reference.topo.indptr, rtol=0, atol=0
+            lean.topo.indptr,
+            reference.topo.indptr.to(lean.topo.indptr.dtype),
+            rtol=0,
+            atol=0,
         )
         self.assertEqual(lean.topo.indices.dtype, dtype)
         torch.testing.assert_close(
