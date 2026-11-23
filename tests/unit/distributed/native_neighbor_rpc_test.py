@@ -479,9 +479,7 @@ class NativeLookupTest(TestCase):
         self.native.register_csr(
             7, edge_type_key(_ABC), indptr, indices, edge_ids, 10, True
         )
-        output = lookup_neighbors(
-            7, _ABC, torch.tensor([12, 9, 10, 11, 13, 12]), 1000, True
-        )
+        output = lookup_neighbors(7, _ABC, torch.tensor([12, 9, 10, 11, 13, 12]), 1000)
         self.assertEqual(output.nbr_num.tolist(), [3, 0, 2, 0, 0, 3])
         self.assertEqual(output.nbr.tolist(), [1, 2, 3, 7, 8, 1, 2, 3])
         self.assertEqual(output.edge.tolist(), [10, 20, 30, 70, 80, 10, 20, 30])
@@ -491,29 +489,31 @@ class NativeLookupTest(TestCase):
         self.native.register_csr(
             7, "", torch.tensor([0, 1]), torch.tensor([4]), None, 0, False
         )
-        output = lookup_neighbors(7, None, torch.tensor([0]), -1, False)
+        output = lookup_neighbors(7, None, torch.tensor([0]), -1)
         self.assertIsNone(output.edge)
 
     def test_a_non_empty_sample_with_edges_needs_edge_ids(self) -> None:
         self.native.register_csr(
             7, "", torch.tensor([0, 1, 1]), torch.tensor([4]), None, 0, True
         )
-        output = lookup_neighbors(7, None, torch.tensor([1]), -1, True)
+        output = lookup_neighbors(7, None, torch.tensor([1]), -1)
         self.assertEqual(output.nbr_num.tolist(), [0])
+        self.assertEqual(output.edge.shape, (0,))
+        self.assertEqual(output.edge.dtype, torch.int64)
         with self.assertRaises(RuntimeError):
-            lookup_neighbors(7, None, torch.tensor([0]), -1, True)
+            lookup_neighbors(7, None, torch.tensor([0]), -1)
 
     def test_long_rows_are_sampled_with_replacement_from_the_row(self) -> None:
         self.native.register_csr(
             7, "", torch.tensor([0, 6]), torch.arange(100, 106), None, 0, False
         )
-        output = lookup_neighbors(7, None, torch.tensor([0, 0]), 4, False)
+        output = lookup_neighbors(7, None, torch.tensor([0, 0]), 4)
         self.assertEqual(output.nbr_num.tolist(), [4, 4])
         self.assertTrue(all(100 <= value < 106 for value in output.nbr.tolist()))
 
     def test_unregistered_sampler_raises(self) -> None:
         with self.assertRaises(RuntimeError):
-            lookup_neighbors(7, None, torch.tensor([0]), 1, False)
+            lookup_neighbors(7, None, torch.tensor([0]), 1)
 
     def test_an_indptr_that_overruns_indices_is_rejected(self) -> None:
         with self.assertRaises(RuntimeError):

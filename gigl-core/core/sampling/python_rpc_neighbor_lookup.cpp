@@ -20,7 +20,7 @@ namespace py = pybind11;
 // FRAGMENT so that other gigl-core extension modules can add operators to the `gigl_core` namespace (only one
 // TORCH_LIBRARY per namespace may exist in a process).
 TORCH_LIBRARY_FRAGMENT(gigl_core, m) {
-    m.def("rpc_lookup_neighbors(int sampler_id, str edge_type, Tensor ids, int req_num) -> (Tensor, Tensor, Tensor)",
+    m.def("rpc_lookup_neighbors(int sampler_id, str edge_type, Tensor ids, int req_num) -> (Tensor, Tensor, Tensor?)",
           [](int64_t samplerId, const std::string& edgeType, const torch::Tensor& ids, int64_t reqNum) {
               return gigl::lookupNeighbors(samplerId, edgeType, ids, reqNum);
           });

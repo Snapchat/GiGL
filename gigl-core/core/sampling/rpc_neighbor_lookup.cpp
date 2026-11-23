@@ -216,10 +216,10 @@ void setRandomSeed(uint32_t seed) {
     randomSeed().store(static_cast<int64_t>(seed));
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> lookupNeighbors(int64_t samplerId,
-                                                                        const std::string& edgeType,
-                                                                        const torch::Tensor& ids,
-                                                                        int64_t reqNum) {
+std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNeighbors(int64_t samplerId,
+                                                                                       const std::string& edgeType,
+                                                                                       const torch::Tensor& ids,
+                                                                                       int64_t reqNum) {
     // The registry lock is held only to copy the shared_ptr, so a replaced registration cannot
     // free tensors under an in-flight lookup.
     const auto csr = findCsr(samplerId, edgeType);
@@ -256,13 +256,17 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> lookupNeighbors(int64_t 
     }
 
     torch::Tensor neighbors = torch::empty({total}, longOptions);
-    torch::Tensor edgeIdsOut = torch::empty({0}, longOptions);
+    // None when the registration does not want edge ids; otherwise empty until a non-empty sample fills it.
+    std::optional<torch::Tensor> edgeIdsOut;
+    if (csr->withEdge) {
+        edgeIdsOut = torch::empty({0}, longOptions);
+    }
     int64_t* edgeOutPtr = nullptr;
     if (csr->withEdge && total > 0) {
         // GLT's SampleWithEdge raises the same way for a non-empty sample without edge ids.
         TORCH_CHECK(csr->edgeIds.has_value(), "lookupNeighbors: edge ids were requested but the graph has none");
         edgeIdsOut = torch::empty({total}, longOptions);
-        edgeOutPtr = edgeIdsOut.data_ptr<int64_t>();
+        edgeOutPtr = edgeIdsOut->data_ptr<int64_t>();
     }
     if (total > 0) {
         // Single-threaded on purpose. Parallelism already comes from serving many requests at once on the RPC

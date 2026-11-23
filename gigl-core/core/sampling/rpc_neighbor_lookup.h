@@ -49,13 +49,14 @@ void setRandomSeed(uint32_t seed);
 // Samples up to reqNum neighbors of each global id in `ids` (int64, CPU, 1-D).
 //
 // Returns (neighbors, counts, edgeIds): int64 flat neighbor ids, int64 per-id counts and int64
-// edge ids (empty when the registration has withEdge false). An id outside the partition's rows
+// edge ids (std::nullopt, which TorchScript returns as None, when the registration has withEdge
+// false; an empty tensor when it has withEdge true and the sample is empty). An id outside the partition's rows
 // has no neighbors. A row with at most reqNum neighbors is copied in stored order, exactly as
 // GLT does. A row with more is sampled uniformly with replacement, as GLT does, from this
 // thread's own generator, so those draws differ from GLT's.
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> lookupNeighbors(int64_t samplerId,
-                                                                        const std::string& edgeType,
-                                                                        const torch::Tensor& ids,
-                                                                        int64_t reqNum);
+std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNeighbors(int64_t samplerId,
+                                                                                       const std::string& edgeType,
+                                                                                       const torch::Tensor& ids,
+                                                                                       int64_t reqNum);
 
 } // namespace gigl

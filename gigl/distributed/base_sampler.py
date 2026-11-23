@@ -64,7 +64,6 @@ from gigl.distributed.utils.fused_feature import (
 from gigl.distributed.utils.native_neighbor_rpc import (
     register_partition_csr,
     send_native_neighbor_request,
-    to_neighbor_output,
 )
 from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
@@ -1041,9 +1040,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         ] = await wrap_torch_future(torch.futures.collect_all(futs))
         for i, res_fut in enumerate(res_fut_list):
             reply = res_fut.wait()
-            # GiGL: a native reply is a tuple of tensors; GLT's callee returns a ``NeighborOutput``.
+            # GiGL: a native reply is the tuple of ``NeighborOutput``'s fields; GLT's callee returns a
+            # ``NeighborOutput``.
             if self._native_neighbor_rpc:
-                reply = to_neighbor_output(reply, self.with_edge)
+                reply = NeighborOutput(*reply)
             partition_results.append(
                 PartialNeighborOutput(
                     index=remote_orders_list[i], output=reply.to(device)

@@ -16,8 +16,8 @@ How a sampler uses it:
    callee id, which is the same on every rank (``register_partition_csr``). Registration keeps references to the
    dataset's tensors; nothing is copied.
 2. All ranks then agree, with one ``all_gather``, to use the native path only if every rank could register.
-3. Remote requests become ``send_native_neighbor_request`` calls; the reply is converted back to the
-   ``NeighborOutput`` GLT's callee returns (``to_neighbor_output``).
+3. Remote requests become ``send_native_neighbor_request`` calls; the reply is a tuple of ``NeighborOutput``'s fields,
+   in order, so the caller rebuilds the ``NeighborOutput`` GLT's callee returns with ``NeighborOutput(*reply)``.
 
 Sampled neighbors are identical to GLT's whenever a neighbor list is no longer than the requested fan-out. A longer
 list is sampled uniformly with replacement on both paths, but from different random generators.
@@ -45,7 +45,7 @@ _HOMOGENEOUS_EDGE_TYPE_KEY: Final[str] = ""
 _rpc_lookup_neighbors = cast(
     Callable[
         [int, str, torch.Tensor, int],
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]],
     ],
     torch.ops.gigl_core.rpc_lookup_neighbors,
 )
@@ -80,7 +80,7 @@ def lookup_neighbors_remote(
     edge_type: str,
     ids: torch.Tensor,
     req_num: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """The function the server runs for a native neighbor request; compiled by ``load_native_neighbor_rpc``.
 
     Args:
@@ -90,7 +90,8 @@ def lookup_neighbors_remote(
         req_num (int): Requested neighbors per node; negative means all.
 
     Returns:
-        tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Flat neighbor ids, per-id neighbor counts and edge ids.
+        tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]: Flat neighbor ids, per-id neighbor counts and edge
+        ids, or ``None`` for edge ids when the CSR was registered with ``with_edge=False``.
     """
     return _rpc_lookup_neighbors(sampler_id, edge_type, ids, req_num)
 
@@ -139,7 +140,7 @@ def register_partition_csr(
     Args:
         sampler_id (int): The sampler's RPC sampling callee id, identical on every rank.
         local_graph (Union[Graph, dict[EdgeType, Graph]]): The partition's graph, or one graph per edge type.
-        with_edge (bool): Whether replies carry edge ids.
+        with_edge (bool): Whether replies carry edge ids; if not, they carry ``None``.
         with_weight (bool): Whether the sampler samples by edge weight, which the C++ lookup does not do.
         device (torch.device): The sampler's device; the lookup runs on the CPU only.
         seed (Optional[int]): The sampler's random seed, or ``None``. Seeds the lookup's sub-sampling as GLT's sampler seeds its own.
@@ -211,7 +212,8 @@ def send_native_neighbor_request(
         req_num (int): Requested neighbors per node.
 
     Returns:
-        torch.futures.Future: A future of ``(neighbors, counts, edge_ids)``; convert it with ``to_neighbor_output``.
+        torch.futures.Future: A future of ``(neighbors, counts, edge_ids or None)``; the caller wraps the result in
+        ``NeighborOutput``.
     """
     return rpc.rpc_async(
         worker_name,
@@ -225,7 +227,6 @@ def lookup_neighbors(
     etype: Optional[EdgeType],
     ids: torch.Tensor,
     req_num: int,
-    with_edge: bool,
 ) -> NeighborOutput:
     """Looks up neighbors in this process's registered CSR, with the lookup a native request runs on the server.
 
@@ -241,32 +242,15 @@ def lookup_neighbors(
         etype (Optional[EdgeType]): The edge type to sample along, or ``None`` on a homogeneous graph.
         ids (torch.Tensor): Global ids of the nodes to sample from, int64 on the CPU.
         req_num (int): Requested neighbors per node.
-        with_edge (bool): Whether to return edge ids; if not, ``edge`` is ``None``.
 
     Returns:
-        NeighborOutput: The flat neighbor ids, the neighbor count per id and, when ``with_edge``, the edge ids.
+        NeighborOutput: The flat neighbor ids, the neighbor count per id and the edge ids,
+        or ``None`` for ``edge`` when the CSR was registered with ``with_edge=False``.
 
     Raises:
         RuntimeError: If no CSR is registered for ``sampler_id`` and ``etype``, if ``ids`` is not a 1-D int64 CPU
             tensor, or if the registration wants edge ids but the graph has none.
     """
-    reply = _rpc_lookup_neighbors(sampler_id, edge_type_key(etype), ids, req_num)
-    return to_neighbor_output(reply, with_edge)
-
-
-def to_neighbor_output(
-    reply: tuple[torch.Tensor, torch.Tensor, torch.Tensor], with_edge: bool
-) -> NeighborOutput:
-    """Converts a native reply into the ``NeighborOutput`` GLT's ``RpcSamplingCallee`` returns.
-
-    Args:
-        reply (tuple[torch.Tensor, torch.Tensor, torch.Tensor]): The ``(neighbors, counts, edge_ids)`` of a reply.
-        with_edge (bool): Whether the sampler wants edge ids; if not, they are dropped.
-
-    Returns:
-        NeighborOutput: The neighbors, counts and, when ``with_edge``, edge ids.
-    """
-    neighbors, counts, edge_ids = reply
-    if with_edge:
-        return NeighborOutput(neighbors, counts, edge_ids)
-    return NeighborOutput(neighbors, counts, None)
+    return NeighborOutput(
+        *_rpc_lookup_neighbors(sampler_id, edge_type_key(etype), ids, req_num)
+    )
