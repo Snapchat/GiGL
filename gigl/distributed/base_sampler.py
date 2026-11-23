@@ -3,7 +3,7 @@ import queue
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Iterator, Literal, Optional, Union
+from typing import Dict, Final, Iterator, Literal, Optional, Union
 
 import torch
 from graphlearn_torch.channel import ChannelBase, SampleMessage
@@ -23,6 +23,7 @@ from graphlearn_torch.distributed.event_loop import (
 )
 from graphlearn_torch.distributed.rpc import (
     RpcDataPartitionRouter,
+    all_gather,
     rpc_register,
     rpc_request_async,
     rpc_sync_data_partitions,
@@ -45,6 +46,10 @@ from graphlearn_torch.utils import (
 from jaxtyping import Int64, Integer
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import (
+    TORCHSCRIPT_NEIGHBOR_RPC_ENV,
+    resolve_torchscript_neighbor_rpc,
+)
 from gigl.distributed.sampler import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
     NEGATIVE_LABEL_METADATA_KEY,
@@ -60,6 +65,11 @@ from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
+)
+from gigl.distributed.utils.script_neighbor_rpc import (
+    register_partition_csr,
+    send_script_neighbor_request,
+    to_neighbor_output,
 )
 from gigl.utils.csr import (
     CompactTopology,
@@ -236,6 +246,9 @@ class _GlobalIdNeighborSampler(NeighborSampler):
                 "Subgraph extraction is not supported on a range-partitioned compact topology"
             )
         super().lazy_init_subgraph_op()
+
+
+_SCRIPT_NEIGHBOR_RPC_GATHER_TAG: Final[str] = "gigl_script_neighbor_rpc"
 
 
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
@@ -465,6 +478,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # rpc register
         rpc_sample_callee = RpcSamplingCallee(self.sampler, self.device)
         self.rpc_sample_callee_id = rpc_register(rpc_sample_callee)
+        # GiGL: serve remote one-hop requests by TorchScript RPC unless turned off or unsupported.
+        self._script_neighbor_rpc = False
+        if resolve_torchscript_neighbor_rpc():
+            self._script_neighbor_rpc = self._agree_on_script_neighbor_rpc()
         rpc_subgraph_callee = RpcSubGraphCallee(self.sampler, self.device)
         self.rpc_subgraph_callee_id = rpc_register(rpc_subgraph_callee)
 
@@ -884,6 +901,43 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if p_ids.shape[0] > 0:
                 yield pidx, p_ids, torch.masked_select(orders, p_mask)
 
+    def _agree_on_script_neighbor_rpc(self) -> bool:
+        """Registers this partition's CSR for TorchScript neighbor requests and agrees with every rank to use them.
+
+        The agreement is one ``all_gather`` over the sampling RPC group, so it also orders every rank's registration
+        before any rank's first request.
+
+        Returns:
+            bool: Whether every rank registered its CSR. When ``False``, every rank uses GLT's Python callee.
+
+        Raises:
+            RuntimeError: If a process in the group has ``GIGL_TORCHSCRIPT_NEIGHBOR_RPC`` set differently.
+        """
+        registered = register_partition_csr(
+            self.rpc_sample_callee_id,
+            self.dist_graph.local_graph,
+            with_edge=self.with_edge,
+            with_weight=self.with_weight,
+            device=self.device,
+            seed=self.seed,
+        )
+        # Tagged, so a process with the flag off (whose next collective is ``rpc_register``) fails loudly here.
+        gathered = all_gather((_SCRIPT_NEIGHBOR_RPC_GATHER_TAG, registered))
+        for worker_name, value in gathered.items():
+            if not (
+                isinstance(value, tuple) and value[0] == _SCRIPT_NEIGHBOR_RPC_GATHER_TAG
+            ):
+                raise RuntimeError(
+                    f"{TORCHSCRIPT_NEIGHBOR_RPC_ENV} must be set identically on every process; {worker_name} sent "
+                    f"{value!r} to the TorchScript neighbor RPC agreement"
+                )
+        agreed = all(value[1] for value in gathered.values())
+        if not agreed:
+            logger.info(
+                f"TorchScript neighbor RPC off for sampler {self.rpc_sample_callee_id}: a rank cannot serve it"
+            )
+        return agreed
+
     async def _sample_one_hop(
         self,
         srcs: Int64[torch.Tensor, "num_srcs"],
@@ -948,13 +1002,25 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             else:
                 remote_orders_list.append(p_orders)
                 to_worker = self.rpc_router.get_to_worker(pidx)
-                futs.append(
-                    rpc_request_async(
-                        to_worker,
-                        self.rpc_sample_callee_id,
-                        args=(p_ids.cpu(), num_nbr, etype),
+                # GiGL: a TorchScript request is served without the interpreter lock.
+                if self._script_neighbor_rpc:
+                    futs.append(
+                        send_script_neighbor_request(
+                            to_worker,
+                            self.rpc_sample_callee_id,
+                            etype,
+                            p_ids.cpu(),
+                            num_nbr,
+                        )
                     )
-                )
+                else:
+                    futs.append(
+                        rpc_request_async(
+                            to_worker,
+                            self.rpc_sample_callee_id,
+                            args=(p_ids.cpu(), num_nbr, etype),
+                        )
+                    )
         if len(remote_orders_list) == 0:
             if len(partition_results) > 0:
                 return partition_results[0].output
@@ -964,9 +1030,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             torch.futures.Future[NeighborOutput]
         ] = await wrap_torch_future(torch.futures.collect_all(futs))
         for i, res_fut in enumerate(res_fut_list):
+            reply = res_fut.wait()
+            # GiGL: a TorchScript reply is a tuple of tensors; GLT's callee returns a ``NeighborOutput``.
+            if self._script_neighbor_rpc:
+                reply = to_neighbor_output(reply, self.with_edge)
             partition_results.append(
                 PartialNeighborOutput(
-                    index=remote_orders_list[i], output=res_fut.wait().to(device)
+                    index=remote_orders_list[i], output=reply.to(device)
                 )
             )
         return self._stitch_sample_results(srcs, partition_results)
