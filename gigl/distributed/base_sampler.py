@@ -47,8 +47,8 @@ from jaxtyping import Int64, Integer
 
 from gigl.common.logger import Logger
 from gigl.distributed.constants import (
-    TORCHSCRIPT_NEIGHBOR_RPC_ENV,
-    resolve_torchscript_neighbor_rpc,
+    NATIVE_NEIGHBOR_RPC_ENV,
+    resolve_native_neighbor_rpc,
 )
 from gigl.distributed.sampler import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
@@ -61,15 +61,15 @@ from gigl.distributed.utils.fused_feature import (
     FusedDistFeature,
     build_fused_dist_feature,
 )
+from gigl.distributed.utils.native_neighbor_rpc import (
+    register_partition_csr,
+    send_native_neighbor_request,
+    to_neighbor_output,
+)
 from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
-)
-from gigl.distributed.utils.script_neighbor_rpc import (
-    register_partition_csr,
-    send_script_neighbor_request,
-    to_neighbor_output,
 )
 from gigl.utils.csr import (
     CompactTopology,
@@ -248,7 +248,7 @@ class _GlobalIdNeighborSampler(NeighborSampler):
         super().lazy_init_subgraph_op()
 
 
-_SCRIPT_NEIGHBOR_RPC_GATHER_TAG: Final[str] = "gigl_script_neighbor_rpc"
+_NATIVE_NEIGHBOR_RPC_GATHER_TAG: Final[str] = "gigl_native_neighbor_rpc"
 
 
 class BaseDistNeighborSampler(GLTDistNeighborSampler):
@@ -478,10 +478,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         # rpc register
         rpc_sample_callee = RpcSamplingCallee(self.sampler, self.device)
         self.rpc_sample_callee_id = rpc_register(rpc_sample_callee)
-        # GiGL: serve remote one-hop requests by TorchScript RPC unless turned off or unsupported.
-        self._script_neighbor_rpc = False
-        if resolve_torchscript_neighbor_rpc():
-            self._script_neighbor_rpc = self._agree_on_script_neighbor_rpc()
+        # GiGL: serve remote one-hop requests by native neighbor RPC unless turned off or unsupported.
+        self._native_neighbor_rpc = False
+        if resolve_native_neighbor_rpc():
+            self._native_neighbor_rpc = self._agree_on_native_neighbor_rpc()
         rpc_subgraph_callee = RpcSubGraphCallee(self.sampler, self.device)
         self.rpc_subgraph_callee_id = rpc_register(rpc_subgraph_callee)
 
@@ -901,17 +901,27 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if p_ids.shape[0] > 0:
                 yield pidx, p_ids, torch.masked_select(orders, p_mask)
 
-    def _agree_on_script_neighbor_rpc(self) -> bool:
-        """Registers this partition's CSR for TorchScript neighbor requests and agrees with every rank to use them.
+    def _agree_on_native_neighbor_rpc(self) -> bool:
+        """Registers this partition's CSR for native neighbor requests and agrees with every rank to use them.
 
         The agreement is one ``all_gather`` over the sampling RPC group, so it also orders every rank's registration
         before any rank's first request.
+
+        This runs once per sampler, from ``__init__``, right after ``rpc_register`` of the sampling callee.
+        In colocated mode that is once per sampling worker process per loader.
+        In graph-store mode it is once per registered channel, because each ``REGISTER_INPUT`` builds a new sampler in
+        the long-lived worker process (the ``create_dist_sampler`` call in ``_handle_command``,
+        ``gigl/distributed/graph_store/shared_dist_sampling_producer.py:716``).
+
+        It is a collective: every process in the sampling RPC group must call it in the same order, like
+        ``rpc_register``.
+        It is never on the per-batch path.
 
         Returns:
             bool: Whether every rank registered its CSR. When ``False``, every rank uses GLT's Python callee.
 
         Raises:
-            RuntimeError: If a process in the group has ``GIGL_TORCHSCRIPT_NEIGHBOR_RPC`` set differently.
+            RuntimeError: If a process in the group has ``GIGL_NATIVE_NEIGHBOR_RPC`` set differently.
         """
         registered = register_partition_csr(
             self.rpc_sample_callee_id,
@@ -922,19 +932,19 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             seed=self.seed,
         )
         # Tagged, so a process with the flag off (whose next collective is ``rpc_register``) fails loudly here.
-        gathered = all_gather((_SCRIPT_NEIGHBOR_RPC_GATHER_TAG, registered))
+        gathered = all_gather((_NATIVE_NEIGHBOR_RPC_GATHER_TAG, registered))
         for worker_name, value in gathered.items():
             if not (
-                isinstance(value, tuple) and value[0] == _SCRIPT_NEIGHBOR_RPC_GATHER_TAG
+                isinstance(value, tuple) and value[0] == _NATIVE_NEIGHBOR_RPC_GATHER_TAG
             ):
                 raise RuntimeError(
-                    f"{TORCHSCRIPT_NEIGHBOR_RPC_ENV} must be set identically on every process; {worker_name} sent "
-                    f"{value!r} to the TorchScript neighbor RPC agreement"
+                    f"{NATIVE_NEIGHBOR_RPC_ENV} must be set identically on every process; {worker_name} sent "
+                    f"{value!r} to the native neighbor RPC agreement"
                 )
         agreed = all(value[1] for value in gathered.values())
         if not agreed:
             logger.info(
-                f"TorchScript neighbor RPC off for sampler {self.rpc_sample_callee_id}: a rank cannot serve it"
+                f"native neighbor RPC off for sampler {self.rpc_sample_callee_id}: a rank cannot serve it"
             )
         return agreed
 
@@ -1002,10 +1012,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             else:
                 remote_orders_list.append(p_orders)
                 to_worker = self.rpc_router.get_to_worker(pidx)
-                # GiGL: a TorchScript request is served without the interpreter lock.
-                if self._script_neighbor_rpc:
+                # GiGL: a native request is served without the interpreter lock.
+                if self._native_neighbor_rpc:
                     futs.append(
-                        send_script_neighbor_request(
+                        send_native_neighbor_request(
                             to_worker,
                             self.rpc_sample_callee_id,
                             etype,
@@ -1031,8 +1041,8 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         ] = await wrap_torch_future(torch.futures.collect_all(futs))
         for i, res_fut in enumerate(res_fut_list):
             reply = res_fut.wait()
-            # GiGL: a TorchScript reply is a tuple of tensors; GLT's callee returns a ``NeighborOutput``.
-            if self._script_neighbor_rpc:
+            # GiGL: a native reply is a tuple of tensors; GLT's callee returns a ``NeighborOutput``.
+            if self._native_neighbor_rpc:
                 reply = to_neighbor_output(reply, self.with_edge)
             partition_results.append(
                 PartialNeighborOutput(

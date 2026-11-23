@@ -1,3 +1,29 @@
+// Serves one-hop neighbor lookups for remote sampling requests. This is a copy of the logic GLT and GiGL run
+// in Python and C++ for the same request, not a call into it:
+//
+// - GLT's CPURandomSampler::Sample / SampleWithEdge (a req_num < 0 means int32 max):
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L24-L73
+// - FillNbrsNum (count = min(req_num, degree); 0 for rows at or past the row count):
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L75-L92
+// - UniformSample (copy when degree <= req_num, else uniform with replacement):
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L137-L176
+// - RpcSamplingCallee.call, the Python callee this path replaces:
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/distributed/dist_neighbor_sampler.py#L58-L77
+// - NeighborSampler.sample_one_hop (shape of an empty output):
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/python/sampler/neighbor_sampler.py#L146-L167
+// - GiGL's patch gigl/scripts/patches/0001-glt-csr-col-count-and-int32-indices.patch rewrites those samplers as
+//   templates over int32/int64 column ids, makes SampleWithEdge reject a non-empty sample without edge ids, and
+//   reads the seed once per thread.
+// - GiGL's global-to-local id translation: to_local_compressed_ids in gigl/utils/csr.py and
+//   _GlobalIdNeighborSampler.sample_one_hop in gigl/distributed/base_sampler.py.
+//
+// The GLT links are pinned to the commit in GLT_COMMIT (gigl/scripts/glt_wheel_cache.py); update them when the pin
+// moves.
+//
+// Why a copy and not a call: GLT's installed wheel is one pybind module (py_graphlearn_torch*.so) with no headers
+// or linkable C++ library, so gigl-core cannot call CPURandomSampler. And the TorchScript RPC needs a registered
+// torch operator, which GLT's sampler is not.
+
 #include "rpc_neighbor_lookup.h"
 
 #include <algorithm>
@@ -22,6 +48,16 @@ std::shared_mutex& registryMutex() {
     return mutex;
 }
 
+// std::map rather than a flat hash map such as the ska::flat_hash_map in ppr_forward_push.h: the map holds one
+// entry per (sampler, edge type) in the process, tens of entries, and is read once per RPC request, not once per
+// node. A request takes about 12-26 us at 256 ids and 0.4-12 ms at 4,096-65,536 ids, so the lookup is noise.
+// std::map also needs no hash for the (int64, string) key.
+//
+// The mutex is there because registerCsr can run while lookups for other samplers run on RPC threads: in
+// graph-store mode every new channel builds a sampler, and so registers, inside a long-lived worker that is
+// already serving, and std::map is not safe for a read during a write. It is a shared_mutex taken in shared mode
+// by lookups, so readers do not block each other; it costs one atomic update per request and is held only to copy
+// the shared_ptr (see findCsr).
 std::map<CsrKey, std::shared_ptr<const RegisteredCsr>>& registry() {
     static std::map<CsrKey, std::shared_ptr<const RegisteredCsr>> csrByKey;
     return csrByKey;
@@ -53,6 +89,14 @@ uint32_t threadSeed() {
 
 // Uniform with replacement, as GLT's CPURandomSampler::UniformSample, but from this thread's own
 // generator (GLT's generator is not reachable from here).
+//
+// The seed follows GLT's RandomSeedManager:
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/include/common.h#L36-L63
+// and the engine in UniformSample:
+//   https://github.com/alibaba/graphlearn-for-pytorch/blob/88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9/graphlearn_torch/csrc/cpu/random_sampler.cc#L143-L146
+// GiGL's patch seeds that engine once per thread, as this thread_local does.
+// This file draws from uniform_int_distribution<int64_t> where GLT uses uniform_int_distribution<int>, so the
+// draws differ from GLT's even from the same seed.
 std::mt19937& threadEngine() {
     thread_local std::mt19937 engine(threadSeed());
     return engine;
@@ -221,8 +265,18 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> lookupNeighbors(int64_t 
         edgeOutPtr = edgeIdsOut.data_ptr<int64_t>();
     }
     if (total > 0) {
-        // Single-threaded on purpose: many RPC threads run lookups at once, and fanning each one
-        // out into the intra-op pool would oversubscribe the cores.
+        // Single-threaded on purpose. Parallelism already comes from serving many requests at once on the RPC
+        // thread pool (up to 16 threads per sampling worker: shared_dist_sampling_producer.py sets
+        // num_rpc_threads = min(num_partitions, 16)). A request is one partition's share of one hop's frontier,
+        // usually hundreds to a few thousand ids, so a per-request thread fan-out would cost more in wake-up than
+        // it saves and would oversubscribe the cores. GLT's own at::parallel_for here also runs serially, because
+        // GLT is not built with OpenMP (see the patch).
+        //
+        // A version written with torch ops (index, where, clamp, cumsum, repeat_interleave, gather) was measured
+        // on a 1M-row, ~50M-edge CSR. On one thread it is 10-28x slower at 256 ids, and about 2x slower
+        // (sub-sampled) to 7x slower (copy) at 4,096-65,536 ids. With 16 intra-op threads it wins only at 65,536
+        // ids with sub-sampling (0.7x the time), by using cores the other RPC threads need. This loop does one
+        // pass with no temporaries, and its row reads are data-dependent gathers, which SIMD does not help.
         if (csr->indices.scalar_type() == torch::kInt32) {
             gatherRows<int32_t>(
                 *csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);

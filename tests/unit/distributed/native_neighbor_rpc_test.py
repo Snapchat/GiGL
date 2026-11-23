@@ -1,7 +1,7 @@
-"""The TorchScript neighbor RPC must sample exactly what GLT's Python callee samples.
+"""The native neighbor RPC must sample exactly what GLT's Python callee samples.
 
 The multi-process tests build one three-partition graph with node features, homogeneous or heterogeneous, sample it
-from every rank with ``GIGL_TORCHSCRIPT_NEIGHBOR_RPC`` off and then on, and compare one-hop neighbors, k-hop samples,
+from every rank with ``GIGL_NATIVE_NEIGHBOR_RPC`` off and then on, and compare one-hop neighbors, k-hop samples,
 PPR tokens and scores, and the collated message with features, exactly.
 """
 
@@ -26,16 +26,17 @@ from parameterized import param, parameterized
 import gigl.distributed.base_sampler as base_sampler_module
 from gigl.distributed.base_sampler import BaseDistNeighborSampler
 from gigl.distributed.constants import (
-    TORCHSCRIPT_NEIGHBOR_RPC_ENV,
-    resolve_torchscript_neighbor_rpc,
+    NATIVE_NEIGHBOR_RPC_ENV,
+    resolve_native_neighbor_rpc,
 )
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_neighbor_sampler import DistNeighborSampler
 from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
-from gigl.distributed.utils.script_neighbor_rpc import (
+from gigl.distributed.utils.native_neighbor_rpc import (
     edge_type_key,
+    lookup_neighbors,
     register_partition_csr,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -45,6 +46,7 @@ from tests.test_assets.test_case import TestCase
 _USER = NodeType("user")
 _FOLLOWS = EdgeType(_USER, Relation("follows"), _USER)
 _LIKES = EdgeType(_USER, Relation("likes"), _USER)
+_ABC = EdgeType(NodeType("a"), Relation("b"), NodeType("c"))
 _PARTITION_RANGES = [(0, 37), (37, 101), (101, 150)]
 _NUM_NODES = 150
 _NUM_PARTITIONS = 3
@@ -163,8 +165,8 @@ def _sample_on_partition(
     unsupported_rank: Optional[int],
     output: dict,
 ) -> None:
-    """Samples every node from this rank with the TorchScript neighbor RPC on or off and records the results."""
-    os.environ[TORCHSCRIPT_NEIGHBOR_RPC_ENV] = flag_value
+    """Samples every node from this rank with the native neighbor RPC on or off and records the results."""
+    os.environ[NATIVE_NEIGHBOR_RPC_ENV] = flag_value
     torch.distributed.init_process_group(
         "gloo",
         init_method=f"tcp://127.0.0.1:{process_group_port}",
@@ -179,14 +181,19 @@ def _sample_on_partition(
     if heterogeneous:
         input_type = _USER
 
-    # A rank that cannot serve the TorchScript path, as a weighted or GPU sampler cannot.
+    # A rank that cannot serve the native path, as a weighted or GPU sampler cannot.
     register_patch = mock.patch.object(
         base_sampler_module, "register_partition_csr", return_value=False
     )
     if rank == unsupported_rank:
         register_patch.start()
+    # Production samplers run on the CPU; this keeps the test independent of the machine's GPU.
     one_hop_sampler = BaseDistNeighborSampler(
-        data=dataset, num_neighbors=[-1], with_edge=with_edge, concurrency=1
+        data=dataset,
+        num_neighbors=[-1],
+        with_edge=with_edge,
+        concurrency=1,
+        device=torch.device("cpu"),
     )
     k_hop_sampler = DistNeighborSampler(
         data=dataset,
@@ -194,6 +201,7 @@ def _sample_on_partition(
         with_edge=with_edge,
         collect_features=True,
         concurrency=1,
+        device=torch.device("cpu"),
     )
     ppr_sampler = DistPPRNeighborSampler(
         data=dataset,
@@ -201,6 +209,7 @@ def _sample_on_partition(
         with_edge=with_edge,
         collect_features=True,
         concurrency=1,
+        device=torch.device("cpu"),
         degree_tensors=degrees,
         max_ppr_nodes=12,
         num_neighbors_per_hop=_LARGE_FANOUT,
@@ -214,24 +223,24 @@ def _sample_on_partition(
 
     sampling_callee_ids = {sampler.rpc_sample_callee_id for sampler in samplers}
     python_requests: list[int] = []
-    script_requests: list[int] = []
+    native_requests: list[int] = []
     original_python_request = base_sampler_module.rpc_request_async
-    original_script_request = base_sampler_module.send_script_neighbor_request
+    original_native_request = base_sampler_module.send_native_neighbor_request
 
     def spy_python_request(worker_name, callee_id, args=None, kwargs=None):
         python_requests.append(callee_id)
         return original_python_request(worker_name, callee_id, args=args, kwargs=kwargs)
 
-    def spy_script_request(worker_name, sampler_id, etype, ids, req_num):
-        script_requests.append(sampler_id)
-        return original_script_request(worker_name, sampler_id, etype, ids, req_num)
+    def spy_native_request(worker_name, sampler_id, etype, ids, req_num):
+        native_requests.append(sampler_id)
+        return original_native_request(worker_name, sampler_id, etype, ids, req_num)
 
     seeds = torch.arange(_NUM_NODES)
     result: dict[str, Any] = {}
     with (
         mock.patch.object(base_sampler_module, "rpc_request_async", spy_python_request),
         mock.patch.object(
-            base_sampler_module, "send_script_neighbor_request", spy_script_request
+            base_sampler_module, "send_native_neighbor_request", spy_native_request
         ),
     ):
         for edge_type in _edge_types(heterogeneous):
@@ -260,11 +269,11 @@ def _sample_on_partition(
             result["indices_dtypes"].append(str(graph.topo.indices.dtype))
     elif dataset.graph is not None:
         result["indices_dtypes"].append(str(dataset.graph.topo.indices.dtype))
-    result["script_flags"] = [sampler._script_neighbor_rpc for sampler in samplers]
+    result["native_flags"] = [sampler._native_neighbor_rpc for sampler in samplers]
     result["python_neighbor_requests"] = sum(
         1 for callee_id in python_requests if callee_id in sampling_callee_ids
     )
-    result["script_neighbor_requests"] = len(script_requests)
+    result["native_neighbor_requests"] = len(native_requests)
     output[rank] = result
     barrier()
     for sampler in samplers:
@@ -313,11 +322,11 @@ def _neighbor_sets(
     return neighbors
 
 
-class ScriptNeighborRpcParityTest(TestCase):
+class NativeNeighborRpcParityTest(TestCase):
     def _assert_same_samples(
         self,
         python_result: dict[str, Any],
-        script_result: dict[str, Any],
+        native_result: dict[str, Any],
         rank: int,
         heterogeneous: bool,
         edge_dir: Literal["in", "out"],
@@ -325,17 +334,17 @@ class ScriptNeighborRpcParityTest(TestCase):
         for result_key, expected in python_result.items():
             if result_key.startswith(("routed", "khop", "ppr")):
                 self.assertEqual(
-                    script_result[result_key], expected, f"rank {rank} {result_key}"
+                    native_result[result_key], expected, f"rank {rank} {result_key}"
                 )
         # Sub-sampled lists draw differently, but keep counts and draw from the row.
         for edge_type in _edge_types(heterogeneous):
             key = f"subsampled/{edge_type}"
             self.assertEqual(
-                script_result[key]["nbr_num"], python_result[key]["nbr_num"]
+                native_result[key]["nbr_num"], python_result[key]["nbr_num"]
             )
             neighbor_sets = _neighbor_sets(edge_type, edge_dir)
-            _, counts = script_result[key]["nbr_num"]
-            _, neighbors = script_result[key]["nbr"]
+            _, counts = native_result[key]["nbr_num"]
+            _, neighbors = native_result[key]["nbr"]
             position = 0
             for node, count in enumerate(counts):
                 self.assertEqual(count, min(_SMALL_FANOUT, len(neighbor_sets[node])))
@@ -382,7 +391,7 @@ class ScriptNeighborRpcParityTest(TestCase):
             ),
         ]
     )
-    def test_script_path_samples_exactly_as_the_python_path(
+    def test_native_path_samples_exactly_as_the_python_path(
         self,
         _name: str,
         edge_dir: Literal["in", "out"],
@@ -394,21 +403,21 @@ class ScriptNeighborRpcParityTest(TestCase):
             edge_dir, range_partitioned, heterogeneous, with_edge, flag_value="off"
         )
         # Unset is on.
-        script_path = _run(
+        native_path = _run(
             edge_dir, range_partitioned, heterogeneous, with_edge, flag_value=""
         )
         for rank in range(_NUM_PARTITIONS):
             python_result = python_path[rank]
-            script_result = script_path[rank]
+            native_result = native_path[rank]
             # Which path served the requests.
-            self.assertEqual(python_result["script_flags"], [False, False, False])
-            self.assertEqual(script_result["script_flags"], [True, True, True])
+            self.assertEqual(python_result["native_flags"], [False, False, False])
+            self.assertEqual(native_result["native_flags"], [True, True, True])
             self.assertGreater(python_result["python_neighbor_requests"], 0)
-            self.assertEqual(python_result["script_neighbor_requests"], 0)
-            self.assertEqual(script_result["python_neighbor_requests"], 0)
-            self.assertGreater(script_result["script_neighbor_requests"], 0)
+            self.assertEqual(python_result["native_neighbor_requests"], 0)
+            self.assertEqual(native_result["python_neighbor_requests"], 0)
+            self.assertGreater(native_result["native_neighbor_requests"], 0)
             self._assert_same_samples(
-                python_result, script_result, rank, heterogeneous, edge_dir
+                python_result, native_result, rank, heterogeneous, edge_dir
             )
         # The graph gives the samplers real work: remote neighbors and some sub-sampled lists.
         first_edge_type = _edge_types(heterogeneous)[0]
@@ -436,9 +445,9 @@ class ScriptNeighborRpcParityTest(TestCase):
         )
         for rank in range(_NUM_PARTITIONS):
             fallback_result = fallback_path[rank]
-            self.assertEqual(fallback_result["script_flags"], [False, False, False])
+            self.assertEqual(fallback_result["native_flags"], [False, False, False])
             self.assertGreater(fallback_result["python_neighbor_requests"], 0)
-            self.assertEqual(fallback_result["script_neighbor_requests"], 0)
+            self.assertEqual(fallback_result["native_neighbor_requests"], 0)
             self._assert_same_samples(
                 python_path[rank], fallback_result, rank, True, "out"
             )
@@ -467,44 +476,44 @@ class NativeLookupTest(TestCase):
         indptr = torch.tensor([0, 2, 2, 5])
         indices = torch.tensor([7, 8, 1, 2, 3], dtype=dtype)
         edge_ids = torch.tensor([70, 80, 10, 20, 30])
-        self.native.register_csr(7, "a|b|c", indptr, indices, edge_ids, 10, True)
-        neighbors, counts, out_edge_ids = self.native.lookup_neighbors(
-            7, "a|b|c", torch.tensor([12, 9, 10, 11, 13, 12]), 1000
+        self.native.register_csr(
+            7, edge_type_key(_ABC), indptr, indices, edge_ids, 10, True
         )
-        self.assertEqual(counts.tolist(), [3, 0, 2, 0, 0, 3])
-        self.assertEqual(neighbors.tolist(), [1, 2, 3, 7, 8, 1, 2, 3])
-        self.assertEqual(out_edge_ids.tolist(), [10, 20, 30, 70, 80, 10, 20, 30])
-        self.assertEqual(neighbors.dtype, torch.int64)
+        output = lookup_neighbors(
+            7, _ABC, torch.tensor([12, 9, 10, 11, 13, 12]), 1000, True
+        )
+        self.assertEqual(output.nbr_num.tolist(), [3, 0, 2, 0, 0, 3])
+        self.assertEqual(output.nbr.tolist(), [1, 2, 3, 7, 8, 1, 2, 3])
+        self.assertEqual(output.edge.tolist(), [10, 20, 30, 70, 80, 10, 20, 30])
+        self.assertEqual(output.nbr.dtype, torch.int64)
 
-    def test_without_edge_ids_replies_with_an_empty_edge_tensor(self) -> None:
+    def test_without_edge_ids_replies_without_edges(self) -> None:
         self.native.register_csr(
             7, "", torch.tensor([0, 1]), torch.tensor([4]), None, 0, False
         )
-        _, _, out_edge_ids = self.native.lookup_neighbors(7, "", torch.tensor([0]), -1)
-        self.assertEqual(out_edge_ids.numel(), 0)
+        output = lookup_neighbors(7, None, torch.tensor([0]), -1, False)
+        self.assertIsNone(output.edge)
 
     def test_a_non_empty_sample_with_edges_needs_edge_ids(self) -> None:
         self.native.register_csr(
             7, "", torch.tensor([0, 1, 1]), torch.tensor([4]), None, 0, True
         )
-        _, counts, _ = self.native.lookup_neighbors(7, "", torch.tensor([1]), -1)
-        self.assertEqual(counts.tolist(), [0])
+        output = lookup_neighbors(7, None, torch.tensor([1]), -1, True)
+        self.assertEqual(output.nbr_num.tolist(), [0])
         with self.assertRaises(RuntimeError):
-            self.native.lookup_neighbors(7, "", torch.tensor([0]), -1)
+            lookup_neighbors(7, None, torch.tensor([0]), -1, True)
 
     def test_long_rows_are_sampled_with_replacement_from_the_row(self) -> None:
         self.native.register_csr(
             7, "", torch.tensor([0, 6]), torch.arange(100, 106), None, 0, False
         )
-        neighbors, counts, _ = self.native.lookup_neighbors(
-            7, "", torch.tensor([0, 0]), 4
-        )
-        self.assertEqual(counts.tolist(), [4, 4])
-        self.assertTrue(all(100 <= value < 106 for value in neighbors.tolist()))
+        output = lookup_neighbors(7, None, torch.tensor([0, 0]), 4, False)
+        self.assertEqual(output.nbr_num.tolist(), [4, 4])
+        self.assertTrue(all(100 <= value < 106 for value in output.nbr.tolist()))
 
     def test_unregistered_sampler_raises(self) -> None:
         with self.assertRaises(RuntimeError):
-            self.native.lookup_neighbors(7, "", torch.tensor([0]), 1)
+            lookup_neighbors(7, None, torch.tensor([0]), 1, False)
 
     def test_an_indptr_that_overruns_indices_is_rejected(self) -> None:
         with self.assertRaises(RuntimeError):
@@ -564,17 +573,17 @@ class RegisterPartitionCsrTest(TestCase):
 class FlagTest(TestCase):
     def test_on_unless_set_to_off(self) -> None:
         for value, expected in (("", True), ("on", True), ("OFF", False)):
-            with mock.patch.dict(os.environ, {TORCHSCRIPT_NEIGHBOR_RPC_ENV: value}):
-                self.assertEqual(resolve_torchscript_neighbor_rpc(), expected)
+            with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_RPC_ENV: value}):
+                self.assertEqual(resolve_native_neighbor_rpc(), expected)
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertTrue(resolve_torchscript_neighbor_rpc())
-        with mock.patch.dict(os.environ, {TORCHSCRIPT_NEIGHBOR_RPC_ENV: "1"}):
+            self.assertTrue(resolve_native_neighbor_rpc())
+        with mock.patch.dict(os.environ, {NATIVE_NEIGHBOR_RPC_ENV: "1"}):
             with self.assertRaises(ValueError):
-                resolve_torchscript_neighbor_rpc()
+                resolve_native_neighbor_rpc()
 
     def test_edge_type_keys(self) -> None:
         self.assertEqual(edge_type_key(None), "")
-        self.assertEqual(edge_type_key(_FOLLOWS), "user|follows|user")
+        self.assertEqual(edge_type_key(_FOLLOWS), "user-follows-user")
 
 
 if __name__ == "__main__":

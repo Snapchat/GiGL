@@ -103,6 +103,22 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return parsed
 
 
+def _on_off_from_env(env_name: str) -> bool:
+    """Read an on/off switch from the environment.
+
+    Unset, empty or ``on`` (case-insensitive) is ``True``; ``off`` is ``False``.
+
+    Raises:
+        ValueError: If the value is anything else.
+    """
+    raw_value = os.environ.get(env_name, "").lower()
+    if raw_value in ("", "on"):
+        return True
+    if raw_value == "off":
+        return False
+    raise ValueError(f"{env_name}={raw_value!r} is not one of ['on', 'off']")
+
+
 def sampling_rpc_init_timeout_seconds() -> int:
     """Tolerance for GLT's cross-rank sampling-worker RPC gather, in seconds.
 
@@ -142,21 +158,14 @@ def resolve_rank_local_csr_rows() -> bool:
     Raises:
         ValueError: If the value is not ``on`` or ``off``.
     """
-    raw_value = os.environ.get(RANK_LOCAL_CSR_ROWS_ENV, "").lower()
-    if raw_value in ("", "on"):
-        return True
-    if raw_value == "off":
-        return False
-    raise ValueError(
-        f"{RANK_LOCAL_CSR_ROWS_ENV}={raw_value!r} is not one of ['on', 'off']"
-    )
+    return _on_off_from_env(RANK_LOCAL_CSR_ROWS_ENV)
 
 
-# Whether remote one-hop neighbor requests are served by a TorchScript RPC that calls a C++ lookup
-# over the partition's CSR (see ``gigl/distributed/utils/script_neighbor_rpc.py``), so the serving
-# process does not take the Python interpreter lock per request.
+# Whether remote one-hop neighbor requests are served by a native lookup: a TorchScript RPC function that
+# calls a C++ operator over the partition's CSR (see ``gigl/distributed/utils/native_neighbor_rpc.py``),
+# so the serving process does not take the Python interpreter lock per request.
 # Allowed values (case-insensitive): "on" or "off". Unset or empty means "on".
-#   on:  Samplers send neighbor requests as TorchScript RPCs. A sampler that cannot serve them (a
+#   on:  Samplers send native neighbor requests. A sampler that cannot serve them (a
 #        non-CPU sampler device or graph, weighted sampling, or a CSR layout the lookup does not
 #        support) makes every rank fall back to "off" automatically.
 #   off: GLT's Python RPC callee serves the requests.
@@ -165,22 +174,15 @@ def resolve_rank_local_csr_rows() -> bool:
 # different random generators.
 # Read when each sampler is constructed. Must be identical on every process of a job that
 # exchanges sampling RPCs (all ranks and all sampling workers).
-TORCHSCRIPT_NEIGHBOR_RPC_ENV: Final[str] = "GIGL_TORCHSCRIPT_NEIGHBOR_RPC"
+NATIVE_NEIGHBOR_RPC_ENV: Final[str] = "GIGL_NATIVE_NEIGHBOR_RPC"
 
 
-def resolve_torchscript_neighbor_rpc() -> bool:
-    """Whether samplers serve neighbor requests by TorchScript RPC, from ``GIGL_TORCHSCRIPT_NEIGHBOR_RPC``.
+def resolve_native_neighbor_rpc() -> bool:
+    """Whether samplers serve neighbor requests by native neighbor RPC, from ``GIGL_NATIVE_NEIGHBOR_RPC``.
 
-    See the comment above ``TORCHSCRIPT_NEIGHBOR_RPC_ENV`` for what each value does.
+    See the comment above ``NATIVE_NEIGHBOR_RPC_ENV`` for what each value does.
 
     Raises:
         ValueError: If the value is not ``on`` or ``off``.
     """
-    raw_value = os.environ.get(TORCHSCRIPT_NEIGHBOR_RPC_ENV, "").lower()
-    if raw_value in ("", "on"):
-        return True
-    if raw_value == "off":
-        return False
-    raise ValueError(
-        f"{TORCHSCRIPT_NEIGHBOR_RPC_ENV}={raw_value!r} is not one of ['on', 'off']"
-    )
+    return _on_off_from_env(NATIVE_NEIGHBOR_RPC_ENV)
