@@ -72,6 +72,7 @@ class ImagePreset:
     require_nvidia_driver_path: bool = False
     require_cuda_build: bool = False
     boot_env: bool = False
+    require_jemalloc: bool = False
 
 
 # What each GiGL image kind must provide, for the base and builder images, which all keep
@@ -80,11 +81,12 @@ class ImagePreset:
 IMAGE_VENV_PREFIX = "/gigl_deps/.venv"
 IMAGE_MIN_GLIBC = "2.39"
 IMAGE_TYPE_PRESETS: dict[str, ImagePreset] = {
-    "cpu": ImagePreset(imports=["torch", "graphlearn_torch"]),
+    "cpu": ImagePreset(imports=["torch", "graphlearn_torch"], require_jemalloc=True),
     "cuda": ImagePreset(
         imports=["torch", "graphlearn_torch"],
         require_nvidia_driver_path=True,
         require_cuda_build=True,
+        require_jemalloc=True,
     ),
     # The Dataflow base skips the GLT post-install, so graphlearn_torch is not imported.
     "dataflow": ImagePreset(imports=["torch", "apache_beam"], boot_env=True),
@@ -313,6 +315,28 @@ def check_nvidia_driver_path() -> None:
     print(f"OK  LD_LIBRARY_PATH contains {NVIDIA_DRIVER_LIB_DIRS}")
 
 
+def check_jemalloc_loaded(maps_path: str = "/proc/self/maps") -> None:
+    """Asserts jemalloc is mapped into the running process.
+
+    The loader only warns when an ``LD_PRELOAD`` entry does not exist, so a wrong path
+    leaves the process on glibc malloc and is otherwise silent.
+
+    Args:
+        maps_path (str): The process memory map to read.
+
+    Raises:
+        AssertionError: When no mapping comes from a ``libjemalloc`` library.
+    """
+    with open(maps_path) as maps_file:
+        maps = maps_file.read()
+    if "libjemalloc" not in maps:
+        raise AssertionError(
+            f"jemalloc: expected a libjemalloc mapping in {maps_path}, got none "
+            f"(LD_PRELOAD={os.environ.get('LD_PRELOAD')!r})"
+        )
+    print("OK  jemalloc is loaded")
+
+
 def check_boot_env() -> None:
     """Asserts the Beam boot harness is told to use the image's own environment.
 
@@ -453,6 +477,8 @@ def main() -> None:
         check_cuda()
     if preset and preset.boot_env:
         check_boot_env()
+    if preset and preset.require_jemalloc:
+        check_jemalloc_loaded()
 
     print("All checks passed.")
 

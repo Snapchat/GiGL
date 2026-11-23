@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     cmake \
     iputils-ping \
+    libjemalloc2 \
     curl \
     unzip \
     && apt-get clean \
@@ -62,6 +63,13 @@ ENV VIRTUAL_ENV="${UV_PROJECT_ENVIRONMENT}"
 ENV PATH="${UV_PROJECT_ENVIRONMENT}/bin:${PATH}"
 # We also need to make UV detectable by the system
 ENV PATH="/root/.local/bin:${PATH}"
+
+# Under glibc malloc the heaps of the multi-threaded GLT sampler worker processes fragment and
+# grow for as long as training runs; jemalloc returns their freed memory to the OS.
+# Set after the venv build so the compilers above run on glibc malloc.
+# To use glibc malloc instead, start the container with `LD_PRELOAD=` (empty).
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV MALLOC_CONF=background_thread:true
 
 WORKDIR /
 
