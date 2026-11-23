@@ -6,22 +6,47 @@ worker serves them one at a time, and slower while its own sampling holds the lo
 a TorchScript RPC function that calls ``torch.ops.gigl_core.lookup_neighbors``, a C++ lookup over the partition's
 CSR (``gigl-core/core/sampling/neighbor_lookup.cpp``). The serving side runs C++ on the RPC thread with no Python
 and no interpreter lock; TorchScript is only the transport.
-The same operator serves the local partition: ``lookup_neighbors`` calls it from Python, and a torch operator call
+The same operator serves the local partition: ``lookup_local`` calls it from Python, and a torch operator call
 releases the interpreter lock while it runs. With the flag on, local and remote nodes go through the same kernel, so
 one hop uses one kernel and one random stream.
 
 On by default; ``GIGL_NATIVE_NEIGHBOR_LOOKUP=off`` (``NATIVE_NEIGHBOR_LOOKUP_ENV``) turns it off, identically on
 every process.
 
-How a sampler uses it:
+How the pieces fit together
+---------------------------
 
-1. After registering its sampling callee, each sampler registers the CSR of every edge type of its partition under its
-   callee id, which is the same on every rank (``register_partition_csr``). Registration keeps references to the
-   dataset's tensors; nothing is copied.
-2. All ranks then agree, with one ``all_gather``, to use the native path only if every rank could register.
-3. Local nodes call ``lookup_neighbors``, which returns the ``NeighborOutput`` GLT's sampler returns.
-4. Remote requests become ``send_native_neighbor_request`` calls; the reply is a tuple of ``NeighborOutput``'s fields,
-   in order, so the caller rebuilds the ``NeighborOutput`` GLT's callee returns with ``NeighborOutput(*reply)``.
+Registering a partition and reading it live in different files, joined by the sampler's RPC sampling callee id and an
+edge-type key::
+
+    Setup, once per sampler
+      BaseDistNeighborSampler.__init__            gigl/distributed/base_sampler.py
+        -> rpc_register(callee)                   returns the callee id, identical on every rank
+        -> _agree_on_native_neighbor_lookup       base_sampler.py (a collective)
+             -> register_partition_csr            this module; compiles _serve_remote_lookup in this process
+                  -> registerCsr (C++)            neighbor_lookup.{h,cpp}: process-global registry
+                                                  keyed by (callee id, edge-type key)
+             -> all_gather                        every rank agrees to use the native path, or all fall back
+
+    Local read (nodes this rank owns)
+      _sample_one_hop -> lookup_local -> torch.ops.gigl_core.lookup_neighbors   python_neighbor_lookup.cpp
+        -> registry lookup by (callee id, edge-type key) -> kernel              neighbor_lookup.{h,cpp}
+
+    Remote read (nodes a peer owns)
+      _sample_one_hop -> lookup_remote -> torch RPC ---------------------> peer's RPC thread
+        -> TorchScript _serve_remote_lookup   compiled in that process by its own registration; found by qualified name
+        -> torch.ops.gigl_core.lookup_neighbors -> registry -> kernel     no Python, no interpreter lock
+      reply tuple <- torch RPC <------------------------------------------ back on the caller:
+        NeighborOutput(*reply) on the caller's event-loop thread, after ``collect_all``
+
+The registry is keyed by the callee id because the serving process has no other handle to the sampler: the request
+names the sampler only by that id, and ``rpc_register`` guarantees the id is the same on every rank. The files are
+``gigl/distributed/base_sampler.py`` (the caller and the agreement), this module (the Python API),
+``gigl-core/core/sampling/python_neighbor_lookup.cpp`` (the torch operator and the pybind functions) and
+``gigl-core/core/sampling/neighbor_lookup.{h,cpp}`` (the registry and the kernel).
+
+Registration keeps references to the dataset's tensors; nothing is copied. Entries are removed only if registration
+fails, so they live as long as the process.
 
 Sampled neighbors are identical to GLT's whenever a neighbor list is no longer than the requested fan-out. A longer
 list is sampled uniformly with replacement on both paths, but from different random generators.
@@ -42,30 +67,32 @@ from gigl.utils.csr import get_compressed_id_offset
 
 logger = Logger()
 
-_HOMOGENEOUS_EDGE_TYPE_KEY: Final[str] = ""
+# The registry key of a homogeneous graph. It cannot collide with a heterogeneous key, because those are GiGL
+# ``EdgeType`` reprs (``"src-relation-dst"``), which always contain ``-``.
+_HOMOGENEOUS_EDGE_TYPE_KEY: Final[str] = "homogeneous_edge"
+
+# The fields of ``NeighborOutput``, in order: flat neighbor ids, per-id neighbor counts and edge ids (or ``None``).
+NativeLookupReply = tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
 
 # Registered by importing ``gigl_core.neighbor_lookup``. The cast gives the operator its schema's types; TorchScript
 # resolves this global to the operator itself.
 _lookup_neighbors_op = cast(
-    Callable[
-        [int, str, torch.Tensor, int],
-        tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]],
-    ],
+    Callable[[int, str, torch.Tensor, int], NativeLookupReply],
     torch.ops.gigl_core.lookup_neighbors,
 )
 
 _compiled_lookup_function: Optional[torch.jit.ScriptFunction] = None
 
 
-def edge_type_key(etype: Optional[EdgeType]) -> str:
-    """The registry key of an edge type: ``""`` for a homogeneous graph, else ``"src-relation-dst"``.
+def _edge_type_key(etype: Optional[EdgeType]) -> str:
+    """The registry key of an edge type: ``"homogeneous_edge"`` for a homogeneous graph, else ``"src-relation-dst"``.
 
     The key is GiGL's ``EdgeType`` repr. GLT may pass a plain tuple, so it is converted first.
 
     Example:
-        >>> edge_type_key(None)
-        ''
-        >>> edge_type_key(("user", "to", "user"))
+        >>> _edge_type_key(None)
+        'homogeneous_edge'
+        >>> _edge_type_key(("user", "to", "user"))
         'user-to-user'
 
     Args:
@@ -79,17 +106,17 @@ def edge_type_key(etype: Optional[EdgeType]) -> str:
     return repr(GiglEdgeType(*etype))
 
 
-def lookup_neighbors_remote(
+def _serve_remote_lookup(
     sampler_id: int,
     edge_type: str,
     ids: torch.Tensor,
     req_num: int,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """The function the server runs for a native neighbor request; compiled by ``load_native_neighbor_rpc``.
+    """The function the server runs for a native neighbor request; compiled by ``_load_lookup_function``.
 
     Args:
         sampler_id (int): The sampler's RPC sampling callee id.
-        edge_type (str): The registry key of the edge type, from ``edge_type_key``.
+        edge_type (str): The registry key of the edge type, from ``_edge_type_key``.
         ids (torch.Tensor): Global ids of the nodes to sample from, int64 on the CPU.
         req_num (int): Requested neighbors per node; negative means all.
 
@@ -100,8 +127,8 @@ def lookup_neighbors_remote(
     return _lookup_neighbors_op(sampler_id, edge_type, ids, req_num)
 
 
-def load_native_neighbor_rpc() -> torch.jit.ScriptFunction:
-    """Compiles ``lookup_neighbors_remote`` once per process.
+def _load_lookup_function() -> torch.jit.ScriptFunction:
+    """Compiles ``_serve_remote_lookup`` once per process.
 
     Every process that serves native requests must call this before it receives one: torch RPC finds the function by
     its qualified name in the process's TorchScript compilation unit.
@@ -111,7 +138,7 @@ def load_native_neighbor_rpc() -> torch.jit.ScriptFunction:
     """
     global _compiled_lookup_function
     if _compiled_lookup_function is None:
-        _compiled_lookup_function = torch.jit.script(lookup_neighbors_remote)
+        _compiled_lookup_function = torch.jit.script(_serve_remote_lookup)
     return _compiled_lookup_function
 
 
@@ -155,7 +182,7 @@ def register_partition_csr(
     graphs: dict[str, Graph] = {}
     if isinstance(local_graph, dict):
         for etype, graph in local_graph.items():
-            graphs[edge_type_key(etype)] = graph
+            graphs[_edge_type_key(etype)] = graph
     else:
         graphs[_HOMOGENEOUS_EDGE_TYPE_KEY] = local_graph
     reason: Optional[str] = None
@@ -175,7 +202,7 @@ def register_partition_csr(
         )
         return False
     try:
-        load_native_neighbor_rpc()
+        _load_lookup_function()
         if seed is not None:
             native_lookup.set_random_seed(seed)
         for key, graph in graphs.items():
@@ -199,14 +226,18 @@ def register_partition_csr(
     return True
 
 
-def send_native_neighbor_request(
+def lookup_remote(
     worker_name: str,
     sampler_id: int,
     etype: Optional[EdgeType],
     ids: torch.Tensor,
     req_num: int,
-) -> torch.futures.Future:
-    """Sends one native neighbor request to ``worker_name``, as a TorchScript RPC function.
+) -> torch.futures.Future[NativeLookupReply]:
+    """Asks ``worker_name``'s process to look up neighbors in its partition, and returns a future of the reply.
+
+    For nodes this process owns, see ``lookup_local``, which returns the neighbors directly.
+
+    The request is a TorchScript RPC function, so the server needs no Python to answer it.
 
     Args:
         worker_name (str): The RPC worker that owns ``ids``.
@@ -216,25 +247,31 @@ def send_native_neighbor_request(
         req_num (int): Requested neighbors per node.
 
     Returns:
-        torch.futures.Future: A future of ``(neighbors, counts, edge_ids or None)``; the caller wraps the result in
-        ``NeighborOutput``.
+        torch.futures.Future[NativeLookupReply]: A future of ``(neighbors, counts, edge_ids or None)``.
+        The reply is a tuple, which the caller wraps with ``NeighborOutput(*reply)`` on its own event loop, not in a
+        Python callback on the future: a callback would take the interpreter lock on an RPC thread, which also serves
+        peers.
     """
-    return rpc.rpc_async(
+    future = rpc.rpc_async(
         worker_name,
-        load_native_neighbor_rpc(),
-        args=(sampler_id, edge_type_key(etype), ids, req_num),
+        _load_lookup_function(),
+        args=(sampler_id, _edge_type_key(etype), ids, req_num),
     )
+    return cast(torch.futures.Future[NativeLookupReply], future)
 
 
-def lookup_neighbors(
+def lookup_local(
     sampler_id: int,
     etype: Optional[EdgeType],
     ids: torch.Tensor,
     req_num: int,
 ) -> NeighborOutput:
-    """Looks up neighbors in this process's registered CSR, with the lookup a native request runs on the server.
+    """Looks up neighbors in this process's partition now, and returns them.
 
-    Samplers call this for local nodes. A torch operator call releases the interpreter lock while it runs.
+    For nodes another process owns, see ``lookup_remote``, which returns a future instead.
+
+    Samplers call this for local nodes, with the lookup a native request runs on the server.
+    A torch operator call releases the interpreter lock while it runs.
 
     A negative ``req_num``, or one above the int32 maximum, means all neighbors.
     An id outside the partition's rows has 0 neighbors.
@@ -256,5 +293,5 @@ def lookup_neighbors(
             tensor, or if the registration wants edge ids but the graph has none.
     """
     return NeighborOutput(
-        *_lookup_neighbors_op(sampler_id, edge_type_key(etype), ids, req_num)
+        *_lookup_neighbors_op(sampler_id, _edge_type_key(etype), ids, req_num)
     )

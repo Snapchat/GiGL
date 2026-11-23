@@ -62,9 +62,10 @@ from gigl.distributed.utils.fused_feature import (
     build_fused_dist_feature,
 )
 from gigl.distributed.utils.native_neighbor_lookup import (
-    lookup_neighbors,
+    NativeLookupReply,
+    lookup_local,
+    lookup_remote,
     register_partition_csr,
-    send_native_neighbor_request,
 )
 from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
@@ -479,6 +480,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         rpc_sample_callee = RpcSamplingCallee(self.sampler, self.device)
         self.rpc_sample_callee_id = rpc_register(rpc_sample_callee)
         # GiGL: serve local and remote one-hop lookups with the native neighbor lookup unless turned off or unsupported.
+        # How registration, local reads and remote reads fit together: gigl/distributed/utils/native_neighbor_lookup.py.
         self._native_neighbor_lookup = False
         if resolve_native_neighbor_lookup():
             self._native_neighbor_lookup = self._agree_on_native_neighbor_lookup()
@@ -984,7 +986,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if srcs.numel() > 0:
                 # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
                 if self._native_neighbor_lookup:
-                    nbr_out = lookup_neighbors(
+                    nbr_out = lookup_local(
                         self.rpc_sample_callee_id, etype, srcs, num_nbr
                     )
                 else:
@@ -1010,7 +1012,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             node_pb = node_pb[src_ntype]
         partition_results: list[PartialNeighborOutput] = []
         remote_orders_list: list[Int64[torch.Tensor, "_num_selected"]] = []
-        futs: list[torch.futures.Future[NeighborOutput]] = []
+        # GLT's futures resolve to ``NeighborOutput``; native ones to the tuple of its fields.
+        futs: list[
+            Union[
+                torch.futures.Future[NeighborOutput],
+                torch.futures.Future[NativeLookupReply],
+            ]
+        ] = []
         # GiGL: one grouped routing call replaces GLT's per-partition mask loop.
         for pidx, p_ids, p_orders in self._group_hop_srcs_by_partition(
             srcs, orders, partition_ids, node_pb
@@ -1018,7 +1026,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             if pidx == self.data.partition_idx:
                 # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
                 if self._native_neighbor_lookup:
-                    p_nbr_out: NeighborOutput = lookup_neighbors(
+                    p_nbr_out: NeighborOutput = lookup_local(
                         self.rpc_sample_callee_id, etype, p_ids, num_nbr
                     )
                 else:
@@ -1030,7 +1038,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 # GiGL: a native request is served without the interpreter lock.
                 if self._native_neighbor_lookup:
                     futs.append(
-                        send_native_neighbor_request(
+                        lookup_remote(
                             to_worker,
                             self.rpc_sample_callee_id,
                             etype,
@@ -1052,7 +1060,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             return torch.tensor([], device=device, dtype=torch.int64)  # type: ignore[return-value]
         # GiGL: GLT's ``if not len(futs) == 0`` guard is dropped; it is always true here.
         res_fut_list: list[
-            torch.futures.Future[NeighborOutput]
+            Union[
+                torch.futures.Future[NeighborOutput],
+                torch.futures.Future[NativeLookupReply],
+            ]
         ] = await wrap_torch_future(torch.futures.collect_all(futs))
         for i, res_fut in enumerate(res_fut_list):
             reply = res_fut.wait()

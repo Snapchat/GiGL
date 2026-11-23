@@ -38,8 +38,8 @@ from gigl.distributed.dist_ppr_sampler import DistPPRNeighborSampler
 from gigl.distributed.utils import get_free_port
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.native_neighbor_lookup import (
-    edge_type_key,
-    lookup_neighbors,
+    _edge_type_key,
+    lookup_local,
     register_partition_csr,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
@@ -230,8 +230,8 @@ def _sample_on_partition(
     local_native_lookups: list[int] = []
     glt_local_one_hops: list[int] = []
     original_python_request = base_sampler_module.rpc_request_async
-    original_native_request = base_sampler_module.send_native_neighbor_request
-    original_local_lookup = base_sampler_module.lookup_neighbors
+    original_native_request = base_sampler_module.lookup_remote
+    original_local_lookup = base_sampler_module.lookup_local
     original_glt_one_hop = _GlobalIdNeighborSampler.sample_one_hop
 
     def spy_python_request(worker_name, callee_id, args=None, kwargs=None):
@@ -254,10 +254,8 @@ def _sample_on_partition(
     result: dict[str, Any] = {}
     with (
         mock.patch.object(base_sampler_module, "rpc_request_async", spy_python_request),
-        mock.patch.object(
-            base_sampler_module, "send_native_neighbor_request", spy_native_request
-        ),
-        mock.patch.object(base_sampler_module, "lookup_neighbors", spy_local_lookup),
+        mock.patch.object(base_sampler_module, "lookup_remote", spy_native_request),
+        mock.patch.object(base_sampler_module, "lookup_local", spy_local_lookup),
         mock.patch.object(_GlobalIdNeighborSampler, "sample_one_hop", spy_glt_one_hop),
     ):
         for edge_type in _edge_types(heterogeneous):
@@ -503,9 +501,9 @@ class NativeLookupTest(TestCase):
         indices = torch.tensor([7, 8, 1, 2, 3], dtype=dtype)
         edge_ids = torch.tensor([70, 80, 10, 20, 30])
         self.native.register_csr(
-            7, edge_type_key(_ABC), indptr, indices, edge_ids, 10, True
+            7, _edge_type_key(_ABC), indptr, indices, edge_ids, 10, True
         )
-        output = lookup_neighbors(7, _ABC, torch.tensor([12, 9, 10, 11, 13, 12]), 1000)
+        output = lookup_local(7, _ABC, torch.tensor([12, 9, 10, 11, 13, 12]), 1000)
         self.assertEqual(output.nbr_num.tolist(), [3, 0, 2, 0, 0, 3])
         self.assertEqual(output.nbr.tolist(), [1, 2, 3, 7, 8, 1, 2, 3])
         self.assertEqual(output.edge.tolist(), [10, 20, 30, 70, 80, 10, 20, 30])
@@ -513,38 +511,62 @@ class NativeLookupTest(TestCase):
 
     def test_without_edge_ids_replies_without_edges(self) -> None:
         self.native.register_csr(
-            7, "", torch.tensor([0, 1]), torch.tensor([4]), None, 0, False
+            7,
+            "homogeneous_edge",
+            torch.tensor([0, 1]),
+            torch.tensor([4]),
+            None,
+            0,
+            False,
         )
-        output = lookup_neighbors(7, None, torch.tensor([0]), -1)
+        output = lookup_local(7, None, torch.tensor([0]), -1)
         self.assertIsNone(output.edge)
 
     def test_a_non_empty_sample_with_edges_needs_edge_ids(self) -> None:
         self.native.register_csr(
-            7, "", torch.tensor([0, 1, 1]), torch.tensor([4]), None, 0, True
+            7,
+            "homogeneous_edge",
+            torch.tensor([0, 1, 1]),
+            torch.tensor([4]),
+            None,
+            0,
+            True,
         )
-        output = lookup_neighbors(7, None, torch.tensor([1]), -1)
+        output = lookup_local(7, None, torch.tensor([1]), -1)
         self.assertEqual(output.nbr_num.tolist(), [0])
         self.assertEqual(output.edge.shape, (0,))
         self.assertEqual(output.edge.dtype, torch.int64)
         with self.assertRaises(RuntimeError):
-            lookup_neighbors(7, None, torch.tensor([0]), -1)
+            lookup_local(7, None, torch.tensor([0]), -1)
 
     def test_long_rows_are_sampled_with_replacement_from_the_row(self) -> None:
         self.native.register_csr(
-            7, "", torch.tensor([0, 6]), torch.arange(100, 106), None, 0, False
+            7,
+            "homogeneous_edge",
+            torch.tensor([0, 6]),
+            torch.arange(100, 106),
+            None,
+            0,
+            False,
         )
-        output = lookup_neighbors(7, None, torch.tensor([0, 0]), 4)
+        output = lookup_local(7, None, torch.tensor([0, 0]), 4)
         self.assertEqual(output.nbr_num.tolist(), [4, 4])
         self.assertTrue(all(100 <= value < 106 for value in output.nbr.tolist()))
 
     def test_unregistered_sampler_raises(self) -> None:
         with self.assertRaises(RuntimeError):
-            lookup_neighbors(7, None, torch.tensor([0]), 1)
+            lookup_local(7, None, torch.tensor([0]), 1)
 
     def test_an_indptr_that_overruns_indices_is_rejected(self) -> None:
         with self.assertRaises(RuntimeError):
             self.native.register_csr(
-                7, "", torch.tensor([0, 3]), torch.tensor([4]), None, 0, False
+                7,
+                "homogeneous_edge",
+                torch.tensor([0, 3]),
+                torch.tensor([4]),
+                None,
+                0,
+                False,
             )
 
 
@@ -608,8 +630,8 @@ class FlagTest(TestCase):
                 resolve_native_neighbor_lookup()
 
     def test_edge_type_keys(self) -> None:
-        self.assertEqual(edge_type_key(None), "")
-        self.assertEqual(edge_type_key(_FOLLOWS), "user-follows-user")
+        self.assertEqual(_edge_type_key(None), "homogeneous_edge")
+        self.assertEqual(_edge_type_key(_FOLLOWS), "user-follows-user")
 
 
 if __name__ == "__main__":

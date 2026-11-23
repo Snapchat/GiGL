@@ -26,6 +26,8 @@
 
 #include "neighbor_lookup.h"
 
+#include <c10/util/ArrayRef.h>
+
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -102,62 +104,74 @@ std::mt19937& threadEngine() {
     return engine;
 }
 
+// Fills one row's reply at `offset`. `columns` and `edgeIds` are the row's slice of the CSR; `edgeIds` is empty when
+// the reply carries no edge ids. The row's reply is `min(reqNum, degree)` long, and `outEdgeIds` is only written when
+// `edgeIds` is not empty.
 template<typename ColT>
-void copyOrSampleRow(const ColT* colBegin,
-                     const int64_t* edgeIdBegin,
-                     int64_t degree,
+void copyOrSampleRow(c10::ArrayRef<ColT> columns,
+                     c10::ArrayRef<int64_t> edgeIds,
                      int64_t reqNum,
-                     int64_t* outNeighbors,
-                     int64_t* outEdgeIds) {
+                     at::TensorAccessor<int64_t, 1> outNeighbors,
+                     at::TensorAccessor<int64_t, 1> outEdgeIds,
+                     int64_t offset) {
+    const int64_t degree = columns.size();
+    const bool withEdgeIds = !edgeIds.empty();
+    const int64_t rowLength = std::min(reqNum, degree);
+    // The accessor's operator[] does not check bounds (and multiplies by a runtime stride), so the range is checked
+    // once per row and the row is then written through a plain pointer.
+    TORCH_CHECK(offset + rowLength <= outNeighbors.size(0), "lookupNeighbors: reply is shorter than the row");
+    int64_t* rowNeighbors = &outNeighbors[offset];
+    int64_t* rowEdgeIds = nullptr;
+    if (withEdgeIds) {
+        TORCH_CHECK(offset + rowLength <= outEdgeIds.size(0), "lookupNeighbors: edge id reply is shorter than the row");
+        rowEdgeIds = &outEdgeIds[offset];
+    }
     if (reqNum < degree) {
         std::uniform_int_distribution<int64_t> distribution(0, degree - 1);
         auto& engine = threadEngine();
         for (int64_t i = 0; i < reqNum; ++i) {
             const int64_t position = distribution(engine);
-            outNeighbors[i] = static_cast<int64_t>(colBegin[position]);
-            if (outEdgeIds != nullptr) {
-                outEdgeIds[i] = edgeIdBegin[position];
+            rowNeighbors[i] = static_cast<int64_t>(columns[position]);
+            if (withEdgeIds) {
+                rowEdgeIds[i] = edgeIds[position];
             }
         }
         return;
     }
-    for (int64_t i = 0; i < degree; ++i) {
-        outNeighbors[i] = static_cast<int64_t>(colBegin[i]);
-    }
-    if (outEdgeIds != nullptr) {
-        std::copy(edgeIdBegin, edgeIdBegin + degree, outEdgeIds);
+    std::copy(columns.begin(), columns.end(), rowNeighbors);
+    if (withEdgeIds) {
+        std::copy(edgeIds.begin(), edgeIds.end(), rowEdgeIds);
     }
 }
 
+// `outEdgeIds` is only written when `writeEdgeIds`; otherwise it may be over an empty tensor.
 template<typename ColT>
 void gatherRows(const RegisteredCsr& csr,
-                const int64_t* localRows,
-                const int64_t* counts,
-                int64_t batchSize,
+                const std::vector<int64_t>& localRows,
+                c10::ArrayRef<int64_t> counts,
                 int64_t reqNum,
-                int64_t* outNeighbors,
-                int64_t* outEdgeIds) {
-    const int64_t* rowPtr = csr.indptr.data_ptr<int64_t>();
-    const ColT* colIdx = csr.indices.data_ptr<ColT>();
-    const int64_t* edgeIds = nullptr;
-    if (outEdgeIds != nullptr && csr.edgeIds.has_value()) {
-        edgeIds = csr.edgeIds.value().data_ptr<int64_t>();
+                at::TensorAccessor<int64_t, 1> outNeighbors,
+                bool writeEdgeIds,
+                at::TensorAccessor<int64_t, 1> outEdgeIds) {
+    const c10::ArrayRef<int64_t> rowPtr(csr.indptr.data_ptr<int64_t>(), csr.indptr.numel());
+    const c10::ArrayRef<ColT> colIdx(csr.indices.data_ptr<ColT>(), csr.indices.numel());
+    c10::ArrayRef<int64_t> edgeIds;
+    if (writeEdgeIds) {
+        edgeIds = c10::ArrayRef<int64_t>(csr.edgeIds.value().data_ptr<int64_t>(), csr.edgeIds.value().numel());
     }
     int64_t offset = 0;
-    for (int64_t i = 0; i < batchSize; ++i) {
+    for (size_t i = 0; i < counts.size(); ++i) {
         if (counts[i] == 0) {
             continue;
         }
         const int64_t row = localRows[i];
         const int64_t start = rowPtr[row];
         const int64_t degree = rowPtr[row + 1] - start;
-        int64_t* edgeOut = nullptr;
-        const int64_t* edgeBegin = nullptr;
-        if (outEdgeIds != nullptr) {
-            edgeOut = outEdgeIds + offset;
-            edgeBegin = edgeIds + start;
+        c10::ArrayRef<int64_t> rowEdgeIds;
+        if (writeEdgeIds) {
+            rowEdgeIds = edgeIds.slice(start, degree);
         }
-        copyOrSampleRow<ColT>(colIdx + start, edgeBegin, degree, reqNum, outNeighbors + offset, edgeOut);
+        copyOrSampleRow<ColT>(colIdx.slice(start, degree), rowEdgeIds, reqNum, outNeighbors, outEdgeIds, offset);
         offset += counts[i];
     }
 }
@@ -239,25 +253,25 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
         reqNum = std::numeric_limits<int32_t>::max();
     }
     const torch::Tensor contiguousIds = ids.contiguous();
-    const auto* idPtr = contiguousIds.data_ptr<int64_t>();
+    const c10::ArrayRef<int64_t> idView(contiguousIds.data_ptr<int64_t>(), contiguousIds.numel());
     const int64_t batchSize = contiguousIds.size(0);
     const int64_t rowCount = csr.indptr.size(0) - 1;
-    const auto* rowPtr = csr.indptr.data_ptr<int64_t>();
+    const c10::ArrayRef<int64_t> rowPtr(csr.indptr.data_ptr<int64_t>(), csr.indptr.numel());
     const auto longOptions = torch::TensorOptions().dtype(torch::kInt64);
 
     torch::Tensor counts = torch::empty({batchSize}, longOptions);
-    auto* countPtr = counts.data_ptr<int64_t>();
+    auto countOut = counts.accessor<int64_t, 1>();
     std::vector<int64_t> localRows(batchSize);
     int64_t total = 0;
     for (int64_t i = 0; i < batchSize; ++i) {
         // gigl.utils.csr.to_local_compressed_ids: ids outside [offset, offset + rowCount) have no row.
-        const int64_t row = idPtr[i] - csr.compressedIdOffset;
+        const int64_t row = idView[i] - csr.compressedIdOffset;
         int64_t count = 0;
         if (row >= 0 && row < rowCount) {
             count = std::min(reqNum, rowPtr[row + 1] - rowPtr[row]);
         }
         localRows[i] = row;
-        countPtr[i] = count;
+        countOut[i] = count;
         total += count;
     }
 
@@ -267,12 +281,12 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
     if (csr.withEdge) {
         edgeIdsOut = torch::empty({0}, longOptions);
     }
-    int64_t* edgeOutPtr = nullptr;
+    bool writeEdgeIds = false;
     if (csr.withEdge && total > 0) {
         // GLT's SampleWithEdge raises the same way for a non-empty sample without edge ids.
         TORCH_CHECK(csr.edgeIds.has_value(), "lookupNeighbors: edge ids were requested but the graph has none");
         edgeIdsOut = torch::empty({total}, longOptions);
-        edgeOutPtr = edgeIdsOut->data_ptr<int64_t>();
+        writeEdgeIds = true;
     }
     if (total > 0) {
         // Single-threaded on purpose. Parallelism already comes from serving many requests at once on the RPC
@@ -287,12 +301,15 @@ std::tuple<torch::Tensor, torch::Tensor, std::optional<torch::Tensor>> lookupNei
         // (sub-sampled) to 7x slower (copy) at 4,096-65,536 ids. With 16 intra-op threads it wins only at 65,536
         // ids with sub-sampling (0.7x the time), by using cores the other RPC threads need. This loop does one
         // pass with no temporaries, and its row reads are data-dependent gathers, which SIMD does not help.
+        auto neighborsOut = neighbors.accessor<int64_t, 1>();
+        // Without edge ids to write, this is an empty tensor that gatherRows never touches.
+        const torch::Tensor edgeIdsTensor = edgeIdsOut.value_or(torch::empty({0}, longOptions));
+        auto edgeIdsAccessor = edgeIdsTensor.accessor<int64_t, 1>();
+        const c10::ArrayRef<int64_t> countView(counts.data_ptr<int64_t>(), counts.numel());
         if (csr.indices.scalar_type() == torch::kInt32) {
-            gatherRows<int32_t>(
-                csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
+            gatherRows<int32_t>(csr, localRows, countView, reqNum, neighborsOut, writeEdgeIds, edgeIdsAccessor);
         } else {
-            gatherRows<int64_t>(
-                csr, localRows.data(), countPtr, batchSize, reqNum, neighbors.data_ptr<int64_t>(), edgeOutPtr);
+            gatherRows<int64_t>(csr, localRows, countView, reqNum, neighborsOut, writeEdgeIds, edgeIdsAccessor);
         }
     }
     return std::make_tuple(neighbors, counts, edgeIdsOut);

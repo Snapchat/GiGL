@@ -8,6 +8,8 @@
 // Each sampler registers the CSR topology of its partition once, keyed by the sampler's RPC
 // callee id (identical on every rank) and the edge type. Lookups take global ids and return
 // what GLT's CPURandomSampler::Sample / SampleWithEdge return for the same rows.
+//
+// How registration, local reads and remote reads fit together: gigl/distributed/utils/native_neighbor_lookup.py.
 
 #pragma once
 
