@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Sum degree tensors across edge types in place, one fixed-size int64 slice at a time, and pad the degree all-reduce
+  input in int32 rather than int64, so each rank no longer builds full-size int64 copies of the degrees on the host.
+  Degrees above the int32 max still saturate instead of wrapping by @mkolodner-sc
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,

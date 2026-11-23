@@ -53,6 +53,20 @@ logger = Logger()
 
 _INT32_MAX: Final[int] = torch.iinfo(torch.int32).max
 
+# All-reduce the degree tensor one slice at a time. The full padded int64
+# tensor for a large graph is several GiB; materializing it (plus the collective
+# buffer) on the process-group device OOMs small GPUs. Since the result is
+# CPU-bound anyway, only one slice is moved to the device per collective. A
+# chunked element-wise SUM is bit-identical to a whole-tensor SUM (every rank
+# pads to the same size and uses identical slice bounds). This runs once at
+# loader setup, so it adds no per-batch throughput cost.
+_DEGREE_ALLREDUCE_CHUNK: Final[int] = 64_000_000
+
+# Host-side slice size for summing degrees across edge types. Every rank on a
+# machine runs this at once, so the int64 temporaries (about four per slice)
+# are kept small.
+_DEGREE_ACCUMULATE_CHUNK: Final[int] = 16_000_000
+
 
 def compute_and_broadcast_degree_tensor(
     graph: Union[Graph, dict[EdgeType, Graph]],
@@ -125,11 +139,9 @@ def compute_and_broadcast_degree_tensor(
             degrees = _compute_degrees_from_topology(topo)
 
         if anchor_type in local_dict:
-            existing = local_dict[anchor_type]
-            max_len = max(len(existing), len(degrees))
-            summed = _pad_to_size(existing, max_len).to(torch.int64)
-            summed[: len(degrees)] += degrees.to(torch.int64)
-            local_dict[anchor_type] = _clamp_to_int32(summed)
+            local_dict[anchor_type] = _accumulate_degrees_in_place(
+                local_dict[anchor_type], degrees
+            )
         else:
             local_dict[anchor_type] = degrees
 
@@ -147,6 +159,39 @@ def compute_and_broadcast_degree_tensor(
             )
 
     return result
+
+
+def _accumulate_degrees_in_place(
+    existing: torch.Tensor,
+    degrees: torch.Tensor,
+    chunk_size: int = _DEGREE_ACCUMULATE_CHUNK,
+) -> torch.Tensor:
+    """Add ``degrees`` into int32 ``existing`` slice by slice, saturating at int32 max.
+
+    Only ``chunk_size``-sized int64 slices are live at a time, so summing a very
+    large node type across edge types needs no full-size int64 temporaries.
+
+    Args:
+        existing: int32 running totals. Modified in place unless it is shorter
+            than ``degrees``, in which case a zero-padded copy is modified.
+        degrees: Degrees to add, indexed from node 0. May be shorter or longer
+            than ``existing``.
+        chunk_size: Number of nodes widened to int64 at a time.
+
+    Returns:
+        torch.Tensor: int32 totals with ``max(len(existing), len(degrees))`` entries.
+    """
+    if len(degrees) > len(existing):
+        existing = _pad_to_size(existing, len(degrees))
+    for start in range(0, len(degrees), chunk_size):
+        end = min(start + chunk_size, len(degrees))
+        segment = existing[start:end]
+        segment.copy_(
+            _clamp_to_int32(
+                segment.to(torch.int64) + degrees[start:end].to(torch.int64)
+            )
+        )
+    return existing
 
 
 def _pad_to_size(tensor: torch.Tensor, target_size: int) -> torch.Tensor:
@@ -172,7 +217,11 @@ def _compute_degrees_from_topology(topo: Topology) -> torch.Tensor:
     A topology with a row offset stores no rows below it, so those ids get degree 0.
     """
     indptr = topo.indptr
-    local_degrees = _clamp_to_int32(indptr[1:] - indptr[:-1])
+    local_degrees = indptr[1:] - indptr[:-1]
+    if local_degrees.dtype != torch.int32:
+        # int32 indptr differences already fit in int32. Wider ones are clamped in
+        # place so no second full-size int64 copy is made before the narrowing cast.
+        local_degrees = local_degrees.clamp_(max=_INT32_MAX).to(torch.int32)
     compressed_id_offset = get_compressed_id_offset(topo)
     if not compressed_id_offset:
         return local_degrees
@@ -201,34 +250,31 @@ def _get_degree_reduce_context() -> tuple[int, torch.device]:
     return local_world_size, device
 
 
-# All-reduce the degree tensor one slice at a time. The full padded int64
-# tensor for a large graph is several GiB; materializing it (plus the collective
-# buffer) on the process-group device OOMs small GPUs. Since the result is
-# CPU-bound anyway, only one slice is moved to the device per collective. A
-# chunked element-wise SUM is bit-identical to a whole-tensor SUM (every rank
-# pads to the same size and uses identical slice bounds). This runs once at
-# loader setup, so it adds no per-batch throughput cost.
-_DEGREE_ALLREDUCE_CHUNK = 64_000_000
-
-
 def _all_reduce_single_degree_tensor(
     tensor: torch.Tensor,
     local_world_size: int,
     device: torch.device,
+    chunk_size: int = _DEGREE_ALLREDUCE_CHUNK,
 ) -> torch.Tensor:
     """All-reduce a single tensor with size sync and over-counting correction.
 
-    The reduction is chunked so only one ``_DEGREE_ALLREDUCE_CHUNK``-sized slice
-    is resident on ``device`` at a time, keeping the (potentially multi-GiB)
-    degree tensor off the GPU except for the slice currently being reduced.
+    The reduction is chunked so only one ``chunk_size`` slice is resident on
+    ``device`` at a time, keeping the (potentially multi-GiB) degree tensor off
+    the GPU except for the slice currently being reduced.
+
+    The result is written into an int32 buffer on the host. When ``tensor`` is
+    already int32 and needs no padding, that buffer is ``tensor`` itself, so its
+    contents are overwritten with the reduced degrees.
     """
     # Synchronize max size across all ranks.
     local_size = torch.tensor([tensor.size(0)], dtype=torch.long, device=device)
     torch.distributed.all_reduce(local_size, op=torch.distributed.ReduceOp.MAX)
     max_size = int(local_size.item())
 
-    # Pad and widen on CPU; keep the full tensor off the process-group device.
-    padded = _pad_to_size(tensor, max_size).to(torch.int64)
+    # Pad on CPU in int32. Each slice is widened to int64 only while it is being
+    # reduced, so the host never holds a full int64 copy of the tensor, which
+    # would be multiplied by every rank on the machine.
+    padded = _pad_to_size(tensor, max_size).to(torch.int32)
     # Reduce the degree tensor one contiguous slice at a time. Every rank agreed
     # on max_size above, so all ranks iterate identical [start, end) bounds and
     # issue the same number of all_reduce calls -- the collective stays in
@@ -237,15 +283,19 @@ def _all_reduce_single_degree_tensor(
     # so peak device memory is a single chunk rather than the whole (multi-GiB)
     # tensor. Summing per-slice is exact: each element belongs to exactly one
     # slice and is reduced across all ranks there.
-    for start in range(0, max_size, _DEGREE_ALLREDUCE_CHUNK):
-        end = min(start + _DEGREE_ALLREDUCE_CHUNK, max_size)
-        chunk = padded[start:end].to(device)  # CPU -> device: just this slice
+    for start in range(0, max_size, chunk_size):
+        end = min(start + chunk_size, max_size)
+        # int64 on the device: the pre-correction sum counts each machine's
+        # degrees local_world_size times and can exceed int32.
+        chunk = padded[start:end].to(device=device, dtype=torch.int64)
         torch.distributed.all_reduce(chunk, op=torch.distributed.ReduceOp.SUM)
-        padded[start:end] = chunk.cpu()  # summed slice back to CPU, in place
+        # Correct for over-counting, then clamp before casting so high-degree
+        # nodes saturate instead of wrapping. Written back into the int32 slice.
+        padded[start:end] = _clamp_to_int32(
+            torch.div(chunk, local_world_size, rounding_mode="floor")
+        ).cpu()
 
-    # Correct for over-counting. Clamp before casting so high-degree nodes
-    # saturate instead of wrapping. Result stays on CPU.
-    return _clamp_to_int32(padded // local_world_size)
+    return padded
 
 
 @overload
