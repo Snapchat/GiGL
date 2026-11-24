@@ -129,34 +129,30 @@ class DistDatasetTestCase(TestCase):
                 edge_features = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: edge_features}
                 graph = {DEFAULT_HOMOGENEOUS_EDGE_TYPE: graph}
 
-            # id2index is a tensor that is used to get the map the global node/edge ids to the local indices in the feature tensors.
-            # As a result, we ensure that all global ids are indexable in the id2index tensor and that all local indices are indexable from the id2index tensor.
+            # id2index is an OffsetId2Index that maps a global node/edge id to a local row by subtracting the start of this
+            # partition's id range. We ensure that every global id on this partition maps to a valid row of the feature tensor,
+            # and that every row of the feature tensor is reached by at least one global id.
 
             # Validating Node Correctness
             for node_type in node_features:
                 # We use lazy_init_with_ipc_handle() to populate the feature_tensor and id2index fields
                 node_features[node_type].lazy_init_with_ipc_handle()
-                # The max node id + 1 should be equal to the shape of the id2index tensor. We add one since ids are 0-indexed.
-                self.assertEqual(
-                    torch.max(node_ids[node_type]).item() + 1,
-                    node_features[node_type].id2index.size(0),
-                )
-                # We ensure that each local index in node_features is indexable from id2index
-                for local_index in range(node_features[node_type].size(0)):
-                    self.assertTrue(local_index in node_features[node_type].id2index)
+                local_indices = node_features[node_type].id2index[node_ids[node_type]]
+                num_rows = node_features[node_type].size(0)
+                self.assertGreaterEqual(local_indices.min().item(), 0)
+                self.assertLess(local_indices.max().item(), num_rows)
+                self.assertEqual(local_indices.unique().numel(), num_rows)
 
             # Validating Edge Correctness
             for edge_type in edge_features:
-                # We use lazy_init_with_ipc_handle() to populate the feature_tensor and id2index fields
                 edge_features[edge_type].lazy_init_with_ipc_handle()
-                # The max edge id + 1 should be equal to the shape of the id2index tensor. We add one since ids are 0-indexed.
-                self.assertEqual(
-                    torch.max(graph[edge_type].topo.edge_ids).item() + 1,
-                    edge_features[edge_type].id2index.size(0),
-                )
-                # We ensure that each local index in edge_features is indexable from id2index
-                for local_index in range(edge_features[edge_type].size(0)):
-                    self.assertTrue(local_index in edge_features[edge_type].id2index)
+                local_indices = edge_features[edge_type].id2index[
+                    graph[edge_type].topo.edge_ids
+                ]
+                num_rows = edge_features[edge_type].size(0)
+                self.assertGreaterEqual(local_indices.min().item(), 0)
+                self.assertLess(local_indices.max().item(), num_rows)
+                self.assertEqual(local_indices.unique().numel(), num_rows)
 
     @parameterized.expand(
         [
