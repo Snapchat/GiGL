@@ -1370,11 +1370,6 @@ class DistPartitioner:
             self._edge_weights is not None and edge_type in self._edge_weights
         )
 
-        if not has_edge_feats:
-            logger.info(
-                f"No edge features detected for edge type {edge_type}, will only partition edge indices for this edge type."
-            )
-
         edge_feat: Optional[torch.Tensor] = None
         edge_feat_dim: Optional[int] = None
         edge_weights_tensor: Optional[torch.Tensor] = None
