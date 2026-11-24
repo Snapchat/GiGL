@@ -31,7 +31,6 @@ from gigl.distributed.constants import DEFAULT_MASTER_DATA_BUILDING_PORT
 from gigl.distributed.dist_context import DistributedContext
 from gigl.distributed.dist_dataset import DistDataset
 from gigl.distributed.dist_partitioner import DistPartitioner
-from gigl.distributed.dist_range_partitioner import DistRangePartitioner
 from gigl.distributed.utils import (
     get_free_ports_from_master_node,
     get_internal_ip_from_master_node,
@@ -78,7 +77,7 @@ def _load_and_build_partitioned_dataset(
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         edge_dir (Literal["in", "out"]): Edge direction of the provided graph
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class, which does range-based partitioning.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
@@ -302,7 +301,7 @@ def _build_dataset_process(
         sample_edge_direction (Literal["in", "out"]): Whether edges in the graph are directed inward or outward
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class, which does range-based partitioning.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets. If not provided (None), no splitting will be performed.
@@ -405,7 +404,7 @@ def build_dataset(
             listed as a possible string to satisfy type check, but in practice must be a Literal["in", "out"].
         should_load_tensors_in_parallel (bool): Whether tensors should be loaded from serialized information in parallel or in sequence across the [node, edge, pos_label, neg_label] entity types.
         partitioner_class (Optional[Type[DistPartitioner]]): Partitioner class to partition the graph inputs. If provided, this must be a
-            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class.
+            DistPartitioner or subclass of it. If not provided, will initialize use the DistPartitioner class, which does range-based partitioning.
         node_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized node data is read.
         edge_tf_dataset_options (TFDatasetOptions): Options provided to a tf.data.Dataset to tune how serialized edge data is read.
         splitter (Optional[Union[NodeSplitter, NodeAnchorLinkSplitter]]): Optional splitter to use for splitting the graph data into train, val, and test sets.
@@ -565,7 +564,6 @@ def build_dataset_from_task_config_uri(
 
     The current parsable arguments are here are
     - sample_edge_direction (Literal["in", "out"]): Direction of the graph
-    - should_use_range_partitioning (bool): Whether we should be using range-based partitioning
     - should_load_tensors_in_parallel (bool): Whether TFRecord loading should happen in parallel across entities
         Must be None if supervised edge labels are provided in advance.
         Slotted for refactor once this functionality is available in the transductive `splitter` directly.
@@ -658,10 +656,6 @@ def build_dataset_from_task_config_uri(
         f"Provided edge direction from args must be one of `in` or `out`, got {sample_edge_direction}"
     )
 
-    should_use_range_partitioning = str_to_bool(
-        args.get("should_use_range_partitioning", "True")
-    )
-
     should_load_tensors_in_parallel = str_to_bool(
         args.get("should_load_tensors_in_parallel", "True")
     )
@@ -669,9 +663,6 @@ def build_dataset_from_task_config_uri(
 
     logger.info(
         f"Inferred 'sample_edge_direction' argument as : {sample_edge_direction} from argument path {args_path}. To override, please provide 'sample_edge_direction' flag."
-    )
-    logger.info(
-        f"Inferred 'should_use_range_partitioning' argument as : {should_use_range_partitioning} from argument path {args_path}. To override, please provide 'should_use_range_partitioning' flag."
     )
     logger.info(
         f"Inferred 'should_load_tensors_in_parallel' argument as : {should_load_tensors_in_parallel} from argument path {args_path}. To override, please provide 'should_load_tensors_in_parallel' flag."
@@ -690,20 +681,11 @@ def build_dataset_from_task_config_uri(
         tfrecord_uri_pattern=_tfrecord_uri_pattern,
     )
 
-    # Need to do this "backwards" so the parent class can be defined first.
-    # Otherwise, the type checker complains that:
-    # "expression has type "type[DistPartitioner]", variable has type "type[DistRangePartitioner]"
-    if not should_use_range_partitioning:
-        partitioner_class = DistPartitioner
-    else:
-        partitioner_class = DistRangePartitioner
-
     dataset = build_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         distributed_context=distributed_context,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
-        partitioner_class=partitioner_class,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
         retain_edge_ids=retain_edge_ids,

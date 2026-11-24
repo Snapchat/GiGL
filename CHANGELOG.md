@@ -193,10 +193,10 @@ Some highlights:
   atomic bitmap instead of two serial passes, because the extension is built without OpenMP and ATen's `parallel_for`
   would run serially. The count is the same and stays eager. GLT must be rebuilt (base images) to pick it up by
   @kmontemayor2-sc
-- The partitioners write each machine's node features and labels into a tensor allocated once, on disk when
-  `GIGL_TENSOR_SPILL_DIR` is set, instead of joining the received chunks with `torch.cat`. Range partitioning fills it
-  in node id order rather than sorting a joined copy; with spilling on, its peak anonymous memory drops from ~2x the
-  features to ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/825
+- `DistPartitioner` writes each machine's node features and labels into a tensor allocated once, on disk when
+  `GIGL_TENSOR_SPILL_DIR` is set, instead of joining the received chunks with `torch.cat`. It fills the tensor in node
+  id order rather than sorting a joined copy; with spilling on, its peak anonymous memory drops from ~2x the features to
+  ~1.2x and the features stay on disk by @dsaini2 in https://github.com/Snapchat/GiGL/pull/825
 
 ### Fixed
 
@@ -223,6 +223,10 @@ Some highlights:
 
 ### Removed
 
+- Remove `DistRangePartitioner`; `DistPartitioner` is now range-based, so the `partitioner_class` default of
+  `build_dataset` changes from a tensor-partition-book partitioner to a range-based one. Remove the
+  `should_use_range_partitioning` task-config argument, which is now ignored if set by @kmontemayor2-sc in
+  https://github.com/Snapchat/GiGL/pull/912
 - Remove all-to-all feature collection from the samplers; GiGL never enabled it, and the sampler no longer receives
   `use_all2all`; the sampling producers raise `ValueError` if `use_all2all` is set by @kmontemayor2-sc
 - Remove `GraphBackend`, `GnnModel`, and `GraphBuilderFactory`; instantiate `PygGraphBuilder()` directly, remove the

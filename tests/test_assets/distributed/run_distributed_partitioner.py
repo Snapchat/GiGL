@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Type, Union, cast
+from typing import Optional, Union, cast
 
 import torch
 from graphlearn_torch.distributed import init_rpc, init_worker_group
@@ -39,7 +39,6 @@ def run_distributed_partitioner(
     master_addr: str,
     master_port: int,
     input_data_strategy: InputDataStrategy,
-    partitioner_class: Type[DistPartitioner],
     rank_to_edge_weights: Optional[
         dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]
     ] = None,
@@ -55,7 +54,6 @@ def run_distributed_partitioner(
         master_addr (str): Master address for initializing rpc for partitioning
         master_port (int): Master port for initializing rpc for partitioning
         input_data_strategy (InputDataStrategy): Strategy for registering inputs to the partitioner
-        partitioner_class (Type[DistPartitioner]): The class to use for partitioning
         rank_to_edge_weights (Optional[dict[int, Union[torch.Tensor, dict[EdgeType, torch.Tensor]]]]): Optional mapping of rank to 1D edge weight tensor (or dict per EdgeType for heterogeneous). Only supported with REGISTER_ALL_ENTITIES_SEPARATELY strategy.
     """
 
@@ -105,7 +103,7 @@ def run_distributed_partitioner(
         InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES,
         InputDataStrategy.REGISTER_EDGE_QUANTIZED_FEATURES_WITHOUT_EDGE_FEATURES,
     ):
-        dist_partitioner = partitioner_class(
+        dist_partitioner = DistPartitioner(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
         )
         dist_partitioner.register_node_ids(node_ids=node_ids)
@@ -150,7 +148,7 @@ def run_distributed_partitioner(
         InputDataStrategy.REGISTER_ALL_ENTITIES_SEPARATELY,
         InputDataStrategy.REGISTER_EDGE_WEIGHTS_WITHOUT_EDGE_FEATURES,
     ):
-        dist_partitioner = partitioner_class(
+        dist_partitioner = DistPartitioner(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
         )
         # We call del to mimic the real use case for handling these input tensors
@@ -221,7 +219,7 @@ def run_distributed_partitioner(
             partitioned_negative_labels=output_negative_labels,
         )
     elif input_data_strategy == InputDataStrategy.REGISTER_MINIMAL_ENTITIES_SEPARATELY:
-        dist_partitioner = partitioner_class(
+        dist_partitioner = DistPartitioner(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
         )
         # We call del to mimic the real use case for handling these input tensors
@@ -253,7 +251,7 @@ def run_distributed_partitioner(
         )
 
     else:
-        dist_partitioner = partitioner_class(
+        dist_partitioner = DistPartitioner(
             should_assign_edges_by_src_node=should_assign_edges_by_src_node,
             node_ids=node_ids,
             node_features=node_features,

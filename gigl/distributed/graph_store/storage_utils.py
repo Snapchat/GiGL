@@ -5,7 +5,7 @@ entry points) can combine with their own orchestration logic:
 
 * :func:`build_storage_dataset` — loads a task config, converts metadata,
   and builds a :class:`~gigl.distributed.dist_dataset.DistDataset` using
-  :class:`~gigl.distributed.dist_range_partitioner.DistRangePartitioner`.
+  :class:`~gigl.distributed.dist_partitioner.DistPartitioner`.
 
 * :func:`run_storage_server` — initialises a GLT server, sets up a
   ``torch.distributed`` process group for the storage cluster, and blocks
@@ -21,7 +21,7 @@ from gigl.common import Uri
 from gigl.common.logger import Logger
 from gigl.distributed.dataset_factory import build_dataset
 from gigl.distributed.dist_dataset import DistDataset
-from gigl.distributed.dist_range_partitioner import DistRangePartitioner
+from gigl.distributed.dist_partitioner import DistPartitioner
 from gigl.distributed.graph_store.dist_server import (
     init_server,
     wait_and_shutdown_server,
@@ -55,7 +55,7 @@ def build_storage_dataset(
     Loads the GBML config from *task_config_uri*, translates the protobuf
     metadata into :class:`SerializedGraphMetadata`, and delegates to
     :func:`~gigl.distributed.dataset_factory.build_dataset` with
-    :class:`~gigl.distributed.dist_range_partitioner.DistRangePartitioner`.
+    :class:`~gigl.distributed.dist_partitioner.DistPartitioner`.
 
     This should be called **once per storage node** (machine).  A
     ``torch.distributed`` process group must already be initialised among
@@ -99,7 +99,7 @@ def build_storage_dataset(
         serialized_graph_metadata=serialized_graph_metadata,
         sample_edge_direction=sample_edge_direction,
         should_load_tensors_in_parallel=should_load_tensors_in_parallel,
-        partitioner_class=DistRangePartitioner,
+        partitioner_class=DistPartitioner,
         splitter=splitter,
         _ssl_positive_label_percentage=ssl_positive_label_percentage,
     )

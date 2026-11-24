@@ -13,8 +13,6 @@ from gigl.common.data.load_torch_tensors import (
     SerializedTFRecordInfo,
 )
 from gigl.distributed import (
-    DistPartitioner,
-    DistRangePartitioner,
     DistributedContext,
     build_dataset,
 )
@@ -99,42 +97,14 @@ class DistributedDatasetTestCase(TestCase):
     @parameterized.expand(
         [
             param(
-                "Test building homogeneous Dataset for tensor-based partitioning",
-                partitioner_class=DistPartitioner,
+                "Test building homogeneous Dataset",
                 mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=torch.Tensor,
                 expected_node_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
                 expected_edge_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
             ),
             param(
-                "Test building homogeneous Dataset for range-based partitioning",
-                partitioner_class=DistRangePartitioner,
-                mocked_dataset_info=TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-                expected_node_id_type=torch.Tensor,
-                expected_node_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
-                expected_edge_feature_info=FeatureInfo(dim=2, dtype=torch.float32),
-            ),
-            param(
-                "Test building heterogeneous dataset for tensor-based partitioning",
-                partitioner_class=DistPartitioner,
-                mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
-                expected_node_id_type=dict,
-                expected_node_feature_info={
-                    NodeType("user"): FeatureInfo(dim=2, dtype=torch.float32),
-                    NodeType("story"): FeatureInfo(dim=2, dtype=torch.float32),
-                },
-                expected_edge_feature_info={
-                    EdgeType(
-                        NodeType("user"), Relation("to"), NodeType("story")
-                    ): FeatureInfo(dim=2, dtype=torch.float32),
-                    EdgeType(
-                        NodeType("story"), Relation("to"), NodeType("user")
-                    ): FeatureInfo(dim=2, dtype=torch.float32),
-                },
-            ),
-            param(
-                "Test building heterogeneous dataset for range-based partitioning",
-                partitioner_class=DistRangePartitioner,
+                "Test building heterogeneous dataset",
                 mocked_dataset_info=HETEROGENEOUS_TOY_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO,
                 expected_node_id_type=dict,
                 expected_node_feature_info={
@@ -155,7 +125,6 @@ class DistributedDatasetTestCase(TestCase):
     def test_build_dataset(
         self,
         _,
-        partitioner_class: Type[DistPartitioner],
         mocked_dataset_info: MockedDatasetInfo,
         expected_node_id_type: Type,
         expected_node_feature_info: Union[FeatureInfo, dict[NodeType, FeatureInfo]],
@@ -167,7 +136,6 @@ class DistributedDatasetTestCase(TestCase):
             world_size=self._world_size,
             mocked_dataset_info=mocked_dataset_info,
             should_load_tensors_in_parallel=True,
-            partitioner_class=partitioner_class,
             _port=port,
         )
 
@@ -697,7 +665,6 @@ class DistributedDatasetTestCase(TestCase):
             world_size=self._world_size,
             mocked_dataset_info=CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO,
             should_load_tensors_in_parallel=True,
-            partitioner_class=DistRangePartitioner,
             splitter=splitter,
             _port=port,
         )
