@@ -128,6 +128,8 @@ def create_dist_sampler(
             num_neighbors_per_hop=sampler_options.num_neighbors_per_hop,
             typed_channel_ratios=sampler_options.typed_channel_ratios,
             include_sampled_edges=sampler_options.include_sampled_edges,
+            merge_edge_type_rpcs=sampler_options.merge_edge_type_rpcs,
+            merge_edge_type_rpc_max_bytes=sampler_options.merge_edge_type_rpc_max_bytes,
             degree_tensors=degree_tensors,
         )
     else:

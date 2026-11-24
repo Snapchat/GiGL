@@ -30,7 +30,7 @@ from graphlearn_torch.sampler import (
     SamplingConfig,
     SamplingType,
 )
-from graphlearn_torch.utils import reverse_edge_type
+from graphlearn_torch.utils import parse_size, reverse_edge_type
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.typing import EdgeType
 from typing_extensions import Self
@@ -561,6 +561,8 @@ class BaseDistLoader(DistLoader):
                 worker_options.channel_capacity, worker_options.channel_size
             )
 
+        # Lets the sampler reject a batch larger than the buffer before GLT's queue wedges on it.
+        channel.max_message_bytes = parse_size(worker_options.channel_size)
         if worker_options.pin_memory:
             channel.pin_memory()
         return channel

@@ -25,7 +25,10 @@ from graphlearn_torch.typing import EdgeType, NodeType
 from graphlearn_torch.utils import merge_dict, reverse_edge_type
 from jaxtyping import Int32
 
-from gigl.distributed.base_sampler import BaseDistNeighborSampler
+from gigl.distributed.base_sampler import (
+    DEFAULT_MERGED_RPC_MAX_BYTES,
+    BaseDistNeighborSampler,
+)
 from gigl.distributed.utils.dist_typed_sampler import (
     TypedPPRChannelKey,
     TypedPPRChannelTraversalMaps,
@@ -234,6 +237,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             original graph edges alongside virtual PPR edges. The sampler emits
             original edges from adjacency rows fetched while running PPR and whose
             source and destination are both in the final PPR-selected node set.
+        merge_edge_type_rpcs: Send one RPC per remote partition per fetch round, carrying
+            every edge type's frontier, instead of one RPC per (edge type, remote partition).
+            Output-identical; see ``PPRSamplerOptions.merge_edge_type_rpcs``.
+        merge_edge_type_rpc_max_bytes: Byte budget of one merged request or response; larger
+            requests are split. See ``PPRSamplerOptions.merge_edge_type_rpc_max_bytes``.
     """
 
     def __init__(
@@ -251,6 +259,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         max_fetch_iterations: Optional[int] = None,
         typed_channel_ratios: Optional[dict[TypedPPRChannelKey, float]] = None,
         include_sampled_edges: bool = False,
+        merge_edge_type_rpcs: bool = False,
+        merge_edge_type_rpc_max_bytes: int = DEFAULT_MERGED_RPC_MAX_BYTES,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -265,6 +275,8 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         self._num_neighbors_per_hop = num_neighbors_per_hop
         self._max_fetch_iterations = max_fetch_iterations
         self._include_sampled_edges = include_sampled_edges
+        self._merge_edge_type_rpcs = merge_edge_type_rpcs
+        self._merge_edge_type_rpc_max_bytes = merge_edge_type_rpc_max_bytes
 
         # Build mapping from node type to edge types that can be traversed from that node type.
         self._node_type_to_edge_types: dict[NodeType, list[EdgeType]] = defaultdict(
@@ -411,6 +423,50 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
 
+    def _rpc_edge_type(self, edge_type: EdgeType) -> Optional[EdgeType]:
+        """The edge type to pass to ``_sample_one_hop`` for a PPR edge type.
+
+        ``_sample_one_hop`` expects None only for true homogeneous graphs. Labeled homogeneous ABLP graphs are
+        hetero-backed because label edges are represented as separate edge types, so they still need the
+        explicit default edge type.
+        """
+        return (
+            None
+            if self._is_homogeneous and edge_type == _PPR_HOMOGENEOUS_EDGE_TYPE
+            else edge_type
+        )
+
+    async def _batch_fetch_neighbors_merged(
+        self,
+        nodes_by_edge_type_id: dict[int, torch.Tensor],
+    ) -> dict[int, NeighborFetchTensors]:
+        """``_batch_fetch_neighbors`` with one RPC per remote partition covering every edge type."""
+        rpc_edge_types = {
+            edge_type_id: self._rpc_edge_type(self._etype_id_to_etype[edge_type_id])
+            for edge_type_id in nodes_by_edge_type_id
+        }
+        outputs = await self._sample_one_hop_multi_etype(
+            {
+                rpc_edge_types[edge_type_id]: nodes
+                for edge_type_id, nodes in nodes_by_edge_type_id.items()
+            },
+            self._num_neighbors_per_hop,
+            self._merge_edge_type_rpc_max_bytes,
+        )
+        return {
+            edge_type_id: NeighborFetchTensors(
+                node_ids=nodes,
+                flat_neighbor_ids=outputs[rpc_edge_types[edge_type_id]].nbr,
+                counts=outputs[rpc_edge_types[edge_type_id]].nbr_num,
+                edge_ids=(
+                    outputs[rpc_edge_types[edge_type_id]].edge
+                    if self._include_sampled_edges
+                    else None
+                ),
+            )
+            for edge_type_id, nodes in nodes_by_edge_type_id.items()
+        }
+
     async def _batch_fetch_neighbors(
         self,
         nodes_by_edge_type_id: dict[int, torch.Tensor],
@@ -443,19 +499,12 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 5: (tensor([7]), tensor([0, 3]), tensor([2]), None),
             }
         """
+        if self._merge_edge_type_rpcs:
+            return await self._batch_fetch_neighbors_merged(nodes_by_edge_type_id)
         edge_type_ids: list[int] = []
         sample_tasks = []
         for edge_type_id in nodes_by_edge_type_id:
-            edge_type = self._etype_id_to_etype[edge_type_id]
-            # _sample_one_hop expects None only for true homogeneous graphs.
-            # Labeled homogeneous ABLP graphs are hetero-backed because label
-            # edges are represented as separate edge types, so they still need
-            # the explicit default edge type here.
-            rpc_edge_type = (
-                None
-                if self._is_homogeneous and edge_type == _PPR_HOMOGENEOUS_EDGE_TYPE
-                else edge_type
-            )
+            rpc_edge_type = self._rpc_edge_type(self._etype_id_to_etype[edge_type_id])
             edge_type_ids.append(edge_type_id)
             # drain_queue materializes CPU frontier tensors; _sample_one_hop can
             # consume them directly, so avoid a sampler-device round trip here.

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Add `PPRSamplerOptions.merge_edge_type_rpcs`, which sends one RPC per remote partition per PPR fetch round, carrying
+  every edge type's frontier, instead of one RPC per edge type and partition. Neighbors, counts and edge ids are
+  unchanged. A partition's request is split across several RPCs when its estimated request or response would exceed
+  `merge_edge_type_rpc_max_bytes` (512 MiB by default). With the native neighbor lookup on, a merged request is a
+  TorchScript RPC that runs the C++ lookup once per edge type, so it composes with `GIGL_NATIVE_NEIGHBOR_LOOKUP`; it
+  falls back to a Python callee when that lookup is off or unsupported. Every rank must use the same setting by
+  @mkolodner-sc
+
 ### Changed
 
 - Serve one-hop neighbor lookups, for local and remote nodes, with a native lookup: a C++ operator over the partition's
@@ -14,6 +24,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   releases the lock while it runs. Sampled neighbors match GLT's. On by default; set `GIGL_NATIVE_NEIGHBOR_LOOKUP=off`
   on every process to use GLT's sampler and Python callee. Samplers fall back to the Python callee automatically when
   any rank cannot serve it (a non-CPU sampler device or graph, or weighted sampling)
+
+### Fixed
+
+- A sampled batch that cannot be sent to the sampling channel now fails the loader with an error instead of leaving it
+  waiting forever. GLT's shared-memory queue throws `message is too large!` for a batch at least as large as the channel
+  buffer while holding its allocation lock, so every later send on that channel blocks too. The sampler now rejects such
+  a batch before sending it, and a failing `send` is reported to the loader like any other sampling failure by
+  @mkolodner-sc
 
 ## [0.4.0] - Nov 19, 2026
 

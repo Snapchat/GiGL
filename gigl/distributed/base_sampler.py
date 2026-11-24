@@ -3,7 +3,7 @@ import queue
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, Final, Iterator, Literal, Optional, Union
+from typing import Dict, Final, Iterator, Literal, Optional, Union, cast
 
 import torch
 from graphlearn_torch.channel import ChannelBase, SampleMessage
@@ -22,6 +22,7 @@ from graphlearn_torch.distributed.event_loop import (
     wrap_torch_future,
 )
 from graphlearn_torch.distributed.rpc import (
+    RpcCalleeBase,
     RpcDataPartitionRouter,
     all_gather,
     rpc_register,
@@ -65,12 +66,14 @@ from gigl.distributed.utils.native_neighbor_lookup import (
     NativeLookupReply,
     lookup_local,
     lookup_remote,
+    lookup_remote_multi,
     register_partition_csr,
 )
 from gigl.distributed.utils.partition_routing import group_by_partition
 from gigl.distributed.utils.sampling_errors import (
     SAMPLING_ERROR_KEY,
     encode_sampling_error,
+    raise_if_message_exceeds_channel,
 )
 from gigl.utils.csr import (
     CompactTopology,
@@ -173,6 +176,103 @@ def _is_range_partitioned_compact(data: DistDataset) -> bool:
     )
     compact = any(isinstance(graph.topo, CompactTopology) for graph in graphs)
     return range_partitioned and compact
+
+
+# Bytes of tensor data one merged request or its response may carry before it is split into several RPCs.
+# GLT's RPC layer (torch RPC over TensorPipe) sets no message-size limit of its own, so this is a conservative
+# budget, not a transport limit: it keeps a single request, and the response tensors the server must build and
+# the client must hold, well below 2 GiB. See ``PPRSamplerOptions.merge_edge_type_rpc_max_bytes``.
+DEFAULT_MERGED_RPC_MAX_BYTES = 512 * 1024 * 1024
+
+_BYTES_PER_ID = 8  # Node ids, neighbor ids, edge ids and counts are all int64.
+
+
+class _RpcMultiEdgeTypeSamplingCallee(RpcCalleeBase):
+    """Serves one hop for several edge types in a single RPC.
+
+    ``call(ids_per_etype, num_nbr, etypes)`` runs, for each ``(ids, etype)`` pair and in order, exactly
+    the ``sample_one_hop`` call that GLT's :class:`RpcSamplingCallee` runs for a single edge type, and
+    returns the CPU ``NeighborOutput`` of each in the same order.
+    """
+
+    def __init__(
+        self, sampler: NeighborSampler, device: torch.device, with_edge: bool
+    ) -> None:
+        super().__init__()
+        self.sampler = sampler
+        self.device = device
+        self.with_edge = with_edge
+
+    def call(
+        self,
+        ids_per_etype: list[torch.Tensor],
+        num_nbr: int,
+        etypes: list[Optional[EdgeType]],
+    ) -> list[NeighborOutput]:
+        ensure_device(self.device)
+        outputs: list[NeighborOutput] = []
+        for ids, etype in zip(ids_per_etype, etypes, strict=True):
+            output = self.sampler.sample_one_hop(ids, num_nbr, etype)
+            if output is None:
+                # Same empty result GLT's RpcSamplingCallee returns.
+                cpu = torch.device("cpu")
+                output = NeighborOutput(
+                    torch.tensor([], dtype=torch.int64, device=cpu),
+                    torch.zeros_like(ids, dtype=torch.int64, device=cpu),
+                    torch.tensor([], dtype=torch.int64, device=cpu)
+                    if self.with_edge
+                    else None,
+                )
+            else:
+                output = output.to(torch.device("cpu"))
+            outputs.append(output)
+        return outputs
+
+
+def _split_requests_by_byte_budget(
+    request_ids: list[torch.Tensor],
+    num_nbr: int,
+    with_edge: bool,
+    max_bytes: int,
+) -> list[list[int]]:
+    """Groups consecutive requests so each group's estimated request or response stays within ``max_bytes``.
+
+    The request is estimated as the ids sent. The response is bounded by ``num_nbr`` neighbors (and edge ids
+    when ``with_edge``) per id, plus one count per id. A request that alone exceeds the budget gets its own
+    group, which is what the unmerged path would send. A negative ``num_nbr`` means "all neighbors", which
+    has no bound, so every request becomes its own group.
+
+    Args:
+        request_ids: The ids of each request, in send order.
+        num_nbr: Requested neighbors per id.
+        with_edge: Whether the response also carries edge ids.
+        max_bytes: Byte budget of one group's request and of one group's response.
+
+    Returns:
+        Groups of indices into ``request_ids``; concatenated they are ``0..len(request_ids) - 1`` in order.
+    """
+    if num_nbr < 0:
+        return [[index] for index in range(len(request_ids))]
+    response_ids_per_id = 1 + num_nbr * (2 if with_edge else 1)
+    groups: list[list[int]] = []
+    request_bytes = 0
+    response_bytes = 0
+    for index, ids in enumerate(request_ids):
+        next_request_bytes = ids.numel() * _BYTES_PER_ID
+        next_response_bytes = next_request_bytes * response_ids_per_id
+        if groups and (
+            request_bytes + next_request_bytes > max_bytes
+            or response_bytes + next_response_bytes > max_bytes
+        ):
+            groups.append([])
+            request_bytes = 0
+            response_bytes = 0
+        if not groups:
+            groups.append([])
+        groups[-1].append(index)
+        request_bytes += next_request_bytes
+        response_bytes += next_response_bytes
+    return groups
 
 
 class _GlobalIdNeighborSampler(NeighborSampler):
@@ -486,6 +586,10 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             self._native_neighbor_lookup = self._agree_on_native_neighbor_lookup()
         rpc_subgraph_callee = RpcSubGraphCallee(self.sampler, self.device)
         self.rpc_subgraph_callee_id = rpc_register(rpc_subgraph_callee)
+        # Registered after the GLT callees, on every rank in the same order, whether or not it is used.
+        self.rpc_multi_etype_callee_id = rpc_register(
+            _RpcMultiEdgeTypeSamplingCallee(self.sampler, self.device, self.with_edge)
+        )
 
         if self.dist_graph.data_cls == "hetero":
             self.num_neighbors = self.sampler.num_neighbors
@@ -617,7 +721,7 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
         Copied from ``graphlearn_torch.distributed.DistNeighborSampler._send_adapter``
         (GLT 0.2.4) with the single change of ``_colloate_fn`` → ``_collate_fn``.
 
-        Additionally, any exception raised while sampling or collating is caught
+        Additionally, any exception raised while sampling, collating or sending is caught
         and surfaced instead of swallowed. GLT's ``ConcurrentEventLoop`` logs a
         failed coroutine as a one-line ``str(e)`` and drops the batch, so the
         channel never receives a message and the loader hangs forever. Here we
@@ -632,6 +736,13 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
             sampler_output = await async_func(*args, **kwargs)
             # GiGL: GLT calls the misspelled _colloate_fn here.
             res = await self._collate_fn(sampler_output)
+            if self.channel is None:
+                return res
+            # GiGL: ``send`` is inside the try. A failing ``send`` used to escape to GLT's event loop, which only
+            # logs it, so the consumer waited on a batch that never came.
+            raise_if_message_exceeds_channel(res, self.channel)
+            self.channel.send(res)
+            return None
         except Exception:
             logger.exception(
                 "Sampling coroutine failed; forwarding error to the loader."
@@ -652,10 +763,6 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                     )
                 return None
             raise  # channel-less mode: propagates via run_task / torch RPC
-        if self.channel is None:
-            return res
-        self.channel.send(res)
-        return None
 
     async def _collate_fn(
         self,
@@ -1077,6 +1184,169 @@ class BaseDistNeighborSampler(GLTDistNeighborSampler):
                 )
             )
         return self._stitch_sample_results(srcs, partition_results)
+
+    async def _sample_one_hop_multi_etype(
+        self,
+        srcs_by_etype: dict[Optional[EdgeType], Int64[torch.Tensor, "num_srcs"]],
+        num_nbr: int,
+        max_rpc_bytes: int = DEFAULT_MERGED_RPC_MAX_BYTES,
+    ) -> dict[Optional[EdgeType], NeighborOutput]:
+        """Samples one hop for several edge types with one RPC per remote partition.
+
+        Equivalent to running ``_sample_one_hop(srcs, num_nbr, etype)`` for every entry: routing, the local
+        call, the per-edge-type server calls and the stitching are the same, and each edge type's partial
+        results are stitched in the same order (own partition first, then remote partitions in routing order).
+        Only the transport differs: a remote partition gets one request holding the ids of every edge type
+        that routes to it, instead of one request per edge type. When the estimated request or response of
+        that request would exceed ``max_rpc_bytes``, the partition's edge types are split, in order, into
+        several requests (see ``_split_requests_by_byte_budget``).
+
+        With the native neighbor lookup on, local nodes use ``lookup_local`` and a remote request is the TorchScript
+        function behind ``lookup_remote_multi``, as in ``_sample_one_hop``. Otherwise local nodes use
+        ``self.sampler.sample_one_hop`` and a remote request is the Python callee ``_RpcMultiEdgeTypeSamplingCallee``.
+
+        Args:
+            srcs_by_etype: Source node ids per edge type.
+            num_nbr: Requested neighbors per source node.
+            max_rpc_bytes: Byte budget of one request and of one response.
+
+        Returns:
+            The ``NeighborOutput`` of each edge type, keyed like ``srcs_by_etype``.
+        """
+        if self.data.graph_caching or len(srcs_by_etype) <= 1:
+            etypes = list(srcs_by_etype)
+            outputs = await asyncio.gather(
+                *[
+                    self._sample_one_hop(srcs_by_etype[etype], num_nbr, etype)
+                    for etype in etypes
+                ]
+            )
+            return dict(zip(etypes, outputs))
+
+        device: torch.device = self.device
+        node_pb_all = self.dist_graph.node_pb
+        srcs_by_etype_on_device: dict[Optional[EdgeType], torch.Tensor] = {}
+        local_results: dict[Optional[EdgeType], list[PartialNeighborOutput]] = {}
+        # Per edge type, the remote (partition, orders) pairs in routing order.
+        remote_routes: dict[Optional[EdgeType], list[tuple[int, torch.Tensor]]] = {}
+        # Per remote partition, the (edge type, ids) requests in edge type order.
+        requests_by_partition: dict[
+            int, list[tuple[Optional[EdgeType], torch.Tensor]]
+        ] = {}
+        for etype, raw_srcs in srcs_by_etype.items():
+            srcs = raw_srcs.to(device)
+            srcs_by_etype_on_device[etype] = srcs
+            local_results[etype] = []
+            remote_routes[etype] = []
+            src_ntype: Optional[NodeType] = None
+            if etype is not None:
+                if self.edge_dir == "out":
+                    src_ntype = etype[0]
+                elif self.edge_dir == "in":
+                    src_ntype = etype[-1]
+            orders = torch.arange(srcs.size(0), dtype=torch.long, device=device)
+            partition_ids = self.dist_graph.get_node_partitions(srcs, src_ntype).to(
+                device
+            )
+            node_pb = (
+                node_pb_all[src_ntype] if isinstance(node_pb_all, dict) else node_pb_all
+            )
+            for pidx, p_ids, p_orders in self._group_hop_srcs_by_partition(
+                srcs, orders, partition_ids, node_pb
+            ):
+                if pidx == self.data.partition_idx:
+                    # GiGL: with the native lookup on, local nodes use the same C++ kernel as remote ones.
+                    if self._native_neighbor_lookup:
+                        local_output = lookup_local(
+                            self.rpc_sample_callee_id, etype, p_ids, num_nbr
+                        )
+                    else:
+                        local_output = self.sampler.sample_one_hop(
+                            p_ids, num_nbr, etype
+                        )
+                    local_results[etype].append(
+                        PartialNeighborOutput(p_orders, local_output)
+                    )
+                else:
+                    remote_routes[etype].append((pidx, p_orders))
+                    requests_by_partition.setdefault(pidx, []).append(
+                        (etype, p_ids.cpu())
+                    )
+
+        remote_outputs: dict[tuple[int, Optional[EdgeType]], NeighborOutput] = {}
+        # One RPC per (partition, group); each entry keeps the requests it carries.
+        rpc_requests: list[
+            tuple[int, list[tuple[Optional[EdgeType], torch.Tensor]]]
+        ] = []
+        for pidx, requests in requests_by_partition.items():
+            for group in _split_requests_by_byte_budget(
+                [ids for _, ids in requests], num_nbr, self.with_edge, max_rpc_bytes
+            ):
+                rpc_requests.append((pidx, [requests[index] for index in group]))
+        if rpc_requests:
+            # GLT's callee replies with ``NeighborOutput``s; the native lookup with the tuples of their fields.
+            futs: list[
+                Union[
+                    torch.futures.Future[list[NeighborOutput]],
+                    torch.futures.Future[list[NativeLookupReply]],
+                ]
+            ] = []
+            for pidx, requests in rpc_requests:
+                to_worker = self.rpc_router.get_to_worker(pidx)
+                etypes = [etype for etype, _ in requests]
+                ids_per_etype = [ids for _, ids in requests]
+                # GiGL: a native request is served without the interpreter lock, one lookup per edge type.
+                if self._native_neighbor_lookup:
+                    futs.append(
+                        lookup_remote_multi(
+                            to_worker,
+                            self.rpc_sample_callee_id,
+                            etypes,
+                            ids_per_etype,
+                            num_nbr,
+                        )
+                    )
+                else:
+                    futs.append(
+                        rpc_request_async(
+                            to_worker,
+                            self.rpc_multi_etype_callee_id,
+                            args=(ids_per_etype, num_nbr, etypes),
+                        )
+                    )
+            res_fut_list = await wrap_torch_future(torch.futures.collect_all(futs))
+            for (pidx, requests), res_fut in zip(rpc_requests, res_fut_list):
+                # ``wait`` re-raises a failed remote call, so a failure surfaces here instead of hanging.
+                replies = res_fut.wait()
+                for (etype, _), reply in zip(requests, replies, strict=True):
+                    # GiGL: a native reply is the tuple of ``NeighborOutput``'s fields.
+                    if self._native_neighbor_lookup:
+                        remote_outputs[(pidx, etype)] = NeighborOutput(*reply)
+                    else:
+                        remote_outputs[(pidx, etype)] = reply
+
+        results: dict[Optional[EdgeType], NeighborOutput] = {}
+        for etype, srcs in srcs_by_etype_on_device.items():
+            partition_results = list(local_results[etype])
+            if not remote_routes[etype]:
+                # As in _sample_one_hop: only the own partition (or nothing) owns the sources.
+                results[etype] = (
+                    partition_results[0].output
+                    if partition_results
+                    else cast(
+                        NeighborOutput,
+                        torch.tensor([], device=device, dtype=torch.int64),
+                    )
+                )
+                continue
+            for pidx, p_orders in remote_routes[etype]:
+                partition_results.append(
+                    PartialNeighborOutput(
+                        index=p_orders, output=remote_outputs[(pidx, etype)].to(device)
+                    )
+                )
+            results[etype] = self._stitch_sample_results(srcs, partition_results)
+        return results
 
     async def _sample_from_nodes(
         self,

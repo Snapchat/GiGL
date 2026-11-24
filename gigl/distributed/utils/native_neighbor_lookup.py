@@ -9,6 +9,8 @@ and no interpreter lock; TorchScript is only the transport.
 The same operator serves the local partition: ``lookup_local`` calls it from Python, and a torch operator call
 releases the interpreter lock while it runs. With the flag on, local and remote nodes go through the same kernel, so
 one hop uses one kernel and one random stream.
+A hop over several edge types that sends one request per remote partition (``_sample_one_hop_multi_etype``) uses
+``lookup_remote_multi`` instead: its TorchScript function runs the same lookup for each edge type inside one RPC.
 
 On by default; ``GIGL_NATIVE_NEIGHBOR_LOOKUP=off`` (``NATIVE_NEIGHBOR_LOOKUP_ENV``) turns it off, identically on
 every process.
@@ -82,6 +84,7 @@ _lookup_neighbors_op = cast(
 )
 
 _compiled_lookup_function: Optional[torch.jit.ScriptFunction] = None
+_compiled_multi_lookup_function: Optional[torch.jit.ScriptFunction] = None
 
 
 def _edge_type_key(etype: Optional[EdgeType]) -> str:
@@ -127,6 +130,37 @@ def _serve_remote_lookup(
     return _lookup_neighbors_op(sampler_id, edge_type, ids, req_num)
 
 
+def _serve_remote_multi_lookup(
+    sampler_id: int,
+    edge_types: list[str],
+    ids_per_edge_type: list[torch.Tensor],
+    req_num: int,
+) -> list[tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]:
+    """The function the server runs for a merged native request; compiled by ``_load_multi_lookup_function``.
+
+    Runs ``_serve_remote_lookup`` for each edge type, in order, inside one RPC.
+
+    Args:
+        sampler_id (int): The sampler's RPC sampling callee id.
+        edge_types (list[str]): The registry key of each edge type, from ``_edge_type_key``.
+        ids_per_edge_type (list[torch.Tensor]): Global ids of the nodes to sample from for each edge type, int64 on the
+            CPU, in the order of ``edge_types``.
+        req_num (int): Requested neighbors per node; negative means all.
+
+    Returns:
+        list[tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]]: One reply per edge type, in request order, each
+        as ``_serve_remote_lookup`` returns it.
+    """
+    replies: list[tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]] = []
+    for index in range(len(ids_per_edge_type)):
+        replies.append(
+            _lookup_neighbors_op(
+                sampler_id, edge_types[index], ids_per_edge_type[index], req_num
+            )
+        )
+    return replies
+
+
 def _load_lookup_function() -> torch.jit.ScriptFunction:
     """Compiles ``_serve_remote_lookup`` once per process.
 
@@ -140,6 +174,21 @@ def _load_lookup_function() -> torch.jit.ScriptFunction:
     if _compiled_lookup_function is None:
         _compiled_lookup_function = torch.jit.script(_serve_remote_lookup)
     return _compiled_lookup_function
+
+
+def _load_multi_lookup_function() -> torch.jit.ScriptFunction:
+    """Compiles ``_serve_remote_multi_lookup`` once per process.
+
+    Every process that serves merged native requests must call this before it receives one, for the reason given in
+    ``_load_lookup_function``.
+
+    Returns:
+        torch.jit.ScriptFunction: The compiled function.
+    """
+    global _compiled_multi_lookup_function
+    if _compiled_multi_lookup_function is None:
+        _compiled_multi_lookup_function = torch.jit.script(_serve_remote_multi_lookup)
+    return _compiled_multi_lookup_function
 
 
 def _unsupported_reason(graph: Graph) -> Optional[str]:
@@ -203,6 +252,7 @@ def register_partition_csr(
         return False
     try:
         _load_lookup_function()
+        _load_multi_lookup_function()
         if seed is not None:
             native_lookup.set_random_seed(seed)
         for key, graph in graphs.items():
@@ -258,6 +308,46 @@ def lookup_remote(
         args=(sampler_id, _edge_type_key(etype), ids, req_num),
     )
     return cast(torch.futures.Future[NativeLookupReply], future)
+
+
+def lookup_remote_multi(
+    worker_name: str,
+    sampler_id: int,
+    etypes: list[Optional[EdgeType]],
+    ids_per_edge_type: list[torch.Tensor],
+    req_num: int,
+) -> torch.futures.Future[list[NativeLookupReply]]:
+    """Asks ``worker_name``'s process to look up neighbors for several edge types in one RPC, and returns a future.
+
+    Equivalent to one ``lookup_remote`` call per edge type, sent together: the server runs the same lookup for each edge
+    type, in order, and replies with one tuple per edge type. Like ``lookup_remote``, the request is a TorchScript RPC
+    function, so the server needs no Python to answer it, and the caller wraps each reply with ``NeighborOutput(*reply)``
+    on its own event loop.
+
+    Args:
+        worker_name (str): The RPC worker that owns ``ids_per_edge_type``.
+        sampler_id (int): The sampler's RPC sampling callee id.
+        etypes (list[Optional[EdgeType]]): The edge type of each entry of ``ids_per_edge_type``; ``None`` on a
+            homogeneous graph.
+        ids_per_edge_type (list[torch.Tensor]): Global ids of the nodes to sample from for each edge type, int64 on the
+            CPU.
+        req_num (int): Requested neighbors per node.
+
+    Returns:
+        torch.futures.Future[list[NativeLookupReply]]: A future of one ``(neighbors, counts, edge_ids or None)`` per
+        edge type, in the order of ``etypes``.
+    """
+    future = rpc.rpc_async(
+        worker_name,
+        _load_multi_lookup_function(),
+        args=(
+            sampler_id,
+            [_edge_type_key(etype) for etype in etypes],
+            ids_per_edge_type,
+            req_num,
+        ),
+    )
+    return cast(torch.futures.Future[list[NativeLookupReply]], future)
 
 
 def lookup_local(
