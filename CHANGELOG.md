@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Add `PPRSamplerOptions.global_top_k_cap` (default `False`). `max_ppr_nodes` bounds the rows emitted per (seed, node
+  type), so a seed can emit several times that many across node types. With the cap on, each seed keeps only its
+  `max_ppr_nodes + 1` highest-scoring rows (ties kept) before nodes are induced, original edges are extracted and
+  features are fetched. Output is identical for a consumer that reads at most `max_ppr_nodes` rows per seed, such as the
+  graph transformer with `max_seq_len <= max_ppr_nodes`. Do not enable it for a consumer that reads more rows than that
+  by @mkolodner-sc
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,

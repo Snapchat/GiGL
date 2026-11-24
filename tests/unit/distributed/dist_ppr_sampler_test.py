@@ -28,7 +28,7 @@ reversal is needed since both follow the original edge direction.
 
 import heapq
 from collections import defaultdict
-from typing import Literal
+from typing import Literal, Optional
 
 import networkx as nx
 import torch
@@ -40,8 +40,14 @@ from parameterized import param, parameterized
 from torch_geometric.data import Data, HeteroData
 
 from gigl.distributed.dist_ablp_neighborloader import DistABLPLoader
+from gigl.distributed.dist_ppr_sampler import (
+    PPRResult,
+    cap_ppr_result_to_top_k,
+    cap_rows_to_per_seed_top_k,
+)
 from gigl.distributed.distributed_neighborloader import DistNeighborLoader
 from gigl.distributed.sampler_options import PPRSamplerOptions
+from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.types.graph import (
     DEFAULT_HOMOGENEOUS_EDGE_TYPE,
     DEFAULT_HOMOGENEOUS_NODE_TYPE,
@@ -993,6 +999,222 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Global top-K cap: three node types so a seed emits rows of several types.
+# ---------------------------------------------------------------------------
+_TAG = NodeType("tag")
+_STORY_TO_TAG = EdgeType(STORY, Relation("to"), _TAG)
+_TAG_TO_STORY = EdgeType(_TAG, Relation("to"), STORY)
+_CAP_NUM_USERS = 8
+_CAP_NUM_STORIES = 8
+_CAP_NUM_TAGS = 6
+_CAP_MAX_PPR_NODES = 2
+_CAP_NODE_TYPES = [USER, STORY, _TAG]
+_CAP_FEATURE_DIM = 3
+_CAP_NODE_TYPE_OFFSET = {USER: 0, STORY: 100, _TAG: 200}
+
+
+def _build_cap_test_dataset():
+    """Builds a seeded random user-story-tag graph with node features that encode node identity."""
+    generator = torch.Generator().manual_seed(7)
+
+    def random_bipartite_edges(
+        num_sources: int, num_destinations: int, out_degree: int
+    ) -> torch.Tensor:
+        sources = torch.arange(num_sources).repeat_interleave(out_degree)
+        destinations = torch.cat(
+            [
+                torch.randperm(num_destinations, generator=generator)[:out_degree]
+                for _ in range(num_sources)
+            ]
+        )
+        return torch.stack([sources, destinations])
+
+    user_to_story = random_bipartite_edges(_CAP_NUM_USERS, _CAP_NUM_STORIES, 3)
+    story_to_tag = random_bipartite_edges(_CAP_NUM_STORIES, _CAP_NUM_TAGS, 2)
+    edge_indices = {
+        USER_TO_STORY: user_to_story,
+        STORY_TO_USER: user_to_story.flip(0),
+        _STORY_TO_TAG: story_to_tag,
+        _TAG_TO_STORY: story_to_tag.flip(0),
+    }
+    num_nodes = {USER: _CAP_NUM_USERS, STORY: _CAP_NUM_STORIES, _TAG: _CAP_NUM_TAGS}
+    node_features = {
+        node_type: (
+            _CAP_NODE_TYPE_OFFSET[node_type] + torch.arange(count, dtype=torch.float32)
+        ).unsqueeze(1)
+        * torch.arange(1, _CAP_FEATURE_DIM + 1, dtype=torch.float32)
+        for node_type, count in num_nodes.items()
+    }
+    return create_heterogeneous_dataset(
+        edge_indices=edge_indices, node_features=node_features, edge_dir="out"
+    )
+
+
+def _read_consumer_view(
+    datum: HeteroData,
+    seed_global_id: int,
+    num_tokens: int,
+    drop_seed: bool,
+) -> tuple[dict, int]:
+    """Reads a batch the way the graph transformer does: the top rows per seed by score.
+
+    Rows of every ``(USER, "ppr", node_type)`` edge type are ranked by ``float32`` score, with ties broken
+    by node type and global id. The consumer keeps the first ``num_tokens`` of them, after dropping the
+    seed itself when ``drop_seed`` is set.
+
+    Returns:
+        A tuple of:
+
+        - the consumer view: the ``tokens`` as an ordered list of ``(node_type, global_id)``, the PPR
+          ``attributes`` and node ``features`` of each token, and the original ``edges`` among tokens
+          and the seed.
+        - the total number of PPR rows in the batch.
+    """
+    rows: list[tuple[float, str, int, tuple[float, ...]]] = []
+    for node_type in _CAP_NODE_TYPES:
+        ppr_edge_type = (USER, "ppr", node_type)
+        if ppr_edge_type not in datum.edge_types:
+            continue
+        edge_index = datum[ppr_edge_type].edge_index
+        edge_attr = datum[ppr_edge_type].edge_attr
+        if edge_index.size(1) == 0:
+            # A node type without any sampled node has no ``node`` attribute at all.
+            continue
+        global_ids = datum[node_type].node[edge_index[1]]
+        for global_id, attributes in zip(global_ids.tolist(), edge_attr):
+            rows.append(
+                (
+                    float(attributes[0].float()),
+                    str(node_type),
+                    global_id,
+                    tuple(attributes.tolist()),
+                )
+            )
+    num_rows = len(rows)
+    if drop_seed:
+        rows = [row for row in rows if (row[1], row[2]) != (str(USER), seed_global_id)]
+    rows.sort(key=lambda row: (-row[0], row[1], row[2]))
+    rows = rows[:num_tokens]
+
+    tokens = [(row[1], row[2]) for row in rows]
+    attributes_by_token = {(row[1], row[2]): row[3] for row in rows}
+    node_ids = {
+        node_type: datum[node_type].node
+        for node_type in datum.node_types
+        if "node" in datum[node_type]
+    }
+    features_by_token = {}
+    for node_type_name, global_id in tokens:
+        local_index = node_ids[node_type_name].tolist().index(global_id)
+        features_by_token[(node_type_name, global_id)] = tuple(
+            datum[node_type_name].x[local_index].tolist()
+        )
+    kept_nodes = set(tokens) | {(str(USER), seed_global_id)}
+    edges = set()
+    for edge_type in datum.edge_types:
+        if edge_type[1] == "ppr" or "edge_index" not in datum[edge_type]:
+            continue
+        source_type, _, destination_type = edge_type
+        source_ids = node_ids[source_type][datum[edge_type].edge_index[0]].tolist()
+        destination_ids = node_ids[destination_type][
+            datum[edge_type].edge_index[1]
+        ].tolist()
+        for source_id, destination_id in zip(source_ids, destination_ids):
+            if (source_type, source_id) in kept_nodes and (
+                destination_type,
+                destination_id,
+            ) in kept_nodes:
+                edges.add((edge_type, source_id, destination_id))
+    consumer_view = {
+        "tokens": tokens,
+        "attributes": attributes_by_token,
+        "features": features_by_token,
+        "edges": edges,
+    }
+    return consumer_view, num_rows
+
+
+def _collect_consumer_views(
+    dataset,
+    sampler_options: PPRSamplerOptions,
+    num_tokens: int,
+    drop_seed: bool,
+) -> dict[int, tuple[dict, int]]:
+    """Samples every user as its own batch and returns each seed's consumer view and PPR row count."""
+    loader = DistNeighborLoader(
+        dataset=dataset,
+        input_nodes=(USER, torch.arange(_CAP_NUM_USERS)),
+        num_neighbors=[],
+        sampler_options=sampler_options,
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+    views: dict[int, tuple[dict, int]] = {}
+    for datum in loader:
+        assert isinstance(datum, HeteroData)
+        seed_global_id = int(datum[USER].batch[0])
+        views[seed_global_id] = _read_consumer_view(
+            datum, seed_global_id, num_tokens, drop_seed
+        )
+    return views
+
+
+def _run_ppr_global_top_k_cap_consumer_check(
+    _: int,
+    typed_channel_ratios: Optional[dict],
+    consumer_tokens: int,
+    drop_seed: bool,
+    expect_identical: bool,
+) -> None:
+    """Compares the capped and uncapped samplers through a top-``consumer_tokens`` consumer.
+
+    When ``expect_identical`` is set, every seed's tokens, PPR attributes, node features and original
+    edges must match. Otherwise the consumer reads past the cap and at least one seed must differ.
+    """
+    create_test_process_group()
+    dataset = _build_cap_test_dataset()
+
+    def sampler_options(global_top_k_cap: bool) -> PPRSamplerOptions:
+        return PPRSamplerOptions(
+            alpha=_TEST_ALPHA,
+            eps=_TEST_EPS,
+            max_ppr_nodes=_CAP_MAX_PPR_NODES,
+            typed_channel_ratios=typed_channel_ratios,
+            include_sampled_edges=True,
+            global_top_k_cap=global_top_k_cap,
+        )
+
+    uncapped = _collect_consumer_views(
+        dataset, sampler_options(False), consumer_tokens, drop_seed
+    )
+    capped = _collect_consumer_views(
+        dataset, sampler_options(True), consumer_tokens, drop_seed
+    )
+
+    assert uncapped.keys() == capped.keys() == set(range(_CAP_NUM_USERS))
+    # The cap only drops rows, and never more than the ``max_ppr_nodes + 1`` rows it promises to keep.
+    for seed_global_id in uncapped:
+        num_uncapped_rows = uncapped[seed_global_id][1]
+        num_capped_rows = capped[seed_global_id][1]
+        assert num_capped_rows <= num_uncapped_rows
+        assert num_capped_rows >= min(num_uncapped_rows, _CAP_MAX_PPR_NODES + 1)
+    # Guard against a vacuous comparison: the cap must actually drop rows here.
+    assert any(capped[seed][1] < uncapped[seed][1] for seed in uncapped)
+
+    mismatched_seeds = [
+        seed for seed in uncapped if uncapped[seed][0] != capped[seed][0]
+    ]
+    if expect_identical:
+        assert not mismatched_seeds, (
+            f"Capped output differs for seeds {mismatched_seeds}"
+        )
+    else:
+        assert mismatched_seeds, "Expected a consumer reading past the cap to differ"
+
+    shutdown_rpc()
+
+
+# ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
 class DistPPRSamplerTest(TestCase):
@@ -1065,6 +1287,210 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_homogeneous_ablp(self) -> None:
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
         mp.spawn(fn=_run_ppr_labeled_homogeneous_ablp_loader_check, args=())
+
+    @parameterized.expand(
+        [
+            param("untyped_ppr", None, _CAP_MAX_PPR_NODES, False),
+            param("untyped_ppr_with_the_seed_dropped", None, _CAP_MAX_PPR_NODES, True),
+            param(
+                "typed_ppr_channels",
+                {
+                    (USER_TO_STORY, STORY_TO_USER): 0.5,
+                    (USER_TO_STORY, STORY_TO_USER, _STORY_TO_TAG, _TAG_TO_STORY): 0.5,
+                },
+                _CAP_MAX_PPR_NODES,
+                False,
+            ),
+        ]
+    )
+    def test_a_consumer_of_the_top_max_ppr_nodes_rows_sees_the_same_output_with_the_cap(
+        self,
+        _,
+        typed_channel_ratios: Optional[dict],
+        consumer_tokens: int,
+        drop_seed: bool,
+    ) -> None:
+        """A consumer reading the top ``max_ppr_nodes`` rows per seed sees the same output with the cap."""
+        mp.spawn(
+            fn=_run_ppr_global_top_k_cap_consumer_check,
+            args=(typed_channel_ratios, consumer_tokens, drop_seed, True),
+        )
+
+    def test_a_consumer_reading_past_max_ppr_nodes_rows_sees_different_output_with_the_cap(
+        self,
+    ) -> None:
+        """Documents why the cap is unsafe for a consumer reading more than ``max_ppr_nodes`` rows."""
+        mp.spawn(
+            fn=_run_ppr_global_top_k_cap_consumer_check,
+            args=(None, 3 * _CAP_MAX_PPR_NODES, False, False),
+        )
+
+
+def _by_node_type(tensors) -> dict[NodeType, torch.Tensor]:
+    """Narrows a ``PPRResult`` field to its node-type-keyed form."""
+    assert isinstance(tensors, dict)
+    return tensors
+
+
+class PerSeedTopKCapTest(TestCase):
+    """Capping keeps each seed's top rows across node types, and every row tied at the cutoff."""
+
+    @parameterized.expand(
+        [
+            param(
+                "a_seed_with_fewer_rows_than_top_k_keeps_them_all",
+                [0.4, 0.9],
+                [2],
+                3,
+                [True, True],
+            ),
+            param(
+                "a_seed_with_exactly_top_k_rows_keeps_them_all",
+                [0.4, 0.9, 0.1],
+                [3],
+                3,
+                [True, True, True],
+            ),
+            param(
+                "the_lowest_rows_of_a_longer_seed_are_dropped",
+                [0.1, 0.9, 0.5, 0.7],
+                [4],
+                2,
+                [False, True, False, True],
+            ),
+            param(
+                "every_row_tied_at_the_cutoff_is_kept",
+                [0.9, 0.5, 0.5, 0.5, 0.1],
+                [5],
+                2,
+                [True, True, True, True, False],
+            ),
+            param(
+                "a_tie_inside_top_k_does_not_widen_the_cap",
+                [0.5, 0.5, 0.1],
+                [3],
+                2,
+                [True, True, False],
+            ),
+            param("a_top_k_of_zero_keeps_nothing", [0.5, 0.9], [2], 0, [False, False]),
+        ]
+    )
+    def test_a_seed_keeps_its_top_k_rows_and_every_row_tied_at_the_cutoff(
+        self,
+        _,
+        scores: list[float],
+        valid_counts: list[int],
+        top_k: int,
+        expected_keep: list[bool],
+    ) -> None:
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: torch.tensor(scores)}, {USER: torch.tensor(valid_counts)}, top_k
+        )
+        self.assertEqual(keep[USER].tolist(), expected_keep)
+
+    def test_each_seed_is_capped_across_all_of_its_node_types(self) -> None:
+        # Seed 0 owns rows {0.2, 0.8} of "user" and {0.9} of "story": its top 2 are 0.9 and 0.8.
+        # Seed 1 owns one row and seed 2 owns two rows, so neither is over the cap.
+        scores = {
+            USER: torch.tensor([0.2, 0.8, 0.6]),
+            STORY: torch.tensor([0.9, 0.3, 0.4]),
+        }
+        valid_counts = {USER: torch.tensor([2, 1, 0]), STORY: torch.tensor([1, 0, 2])}
+        keep = cap_rows_to_per_seed_top_k(scores, valid_counts, top_k=2)
+        self.assertEqual(keep[USER].tolist(), [False, True, True])
+        self.assertEqual(keep[STORY].tolist(), [True, True, True])
+
+    def test_seed_without_rows_does_not_shift_other_seeds(self) -> None:
+        scores = {USER: torch.tensor([0.9, 0.1, 0.5, 0.4])}
+        valid_counts = {USER: torch.tensor([0, 2, 0, 2])}
+        keep = cap_rows_to_per_seed_top_k(scores, valid_counts, top_k=1)
+        self.assertEqual(keep[USER].tolist(), [True, False, True, False])
+
+    def test_surviving_rows_keep_their_relative_order(self) -> None:
+        node_ids = torch.tensor([10, 11, 12, 13, 14, 15])
+        scores = torch.tensor([0.1, 0.9, 0.3, 0.8, 0.7, 0.2])
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: scores}, {USER: torch.tensor([3, 3])}, top_k=2
+        )
+        self.assertEqual(node_ids[keep[USER]].tolist(), [11, 12, 13, 14])
+
+    def test_no_node_types_or_no_rows_gives_empty_masks(self) -> None:
+        self.assertEqual(cap_rows_to_per_seed_top_k({}, {}, top_k=3), {})
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: torch.empty(0), STORY: torch.empty(0)},
+            {USER: torch.tensor([0, 0]), STORY: torch.tensor([0, 0])},
+            top_k=3,
+        )
+        self.assertEqual(keep[USER].shape, (0,))
+        self.assertEqual(keep[STORY].shape, (0,))
+
+    def test_float64_scores_that_tie_at_float32_precision_are_all_kept(self) -> None:
+        # float64 scores that differ by less than float32 resolution tie once ranked at float32.
+        near_tied = torch.tensor([1.0, 1.0 + 1e-12, 0.5], dtype=torch.float64)
+        self.assertGreater(near_tied[1], near_tied[0])
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: near_tied}, {USER: torch.tensor([3])}, top_k=1
+        )
+        self.assertEqual(keep[USER].tolist(), [True, True, False])
+
+        # The same scores, far enough apart for float32, are not tied.
+        distinct = torch.tensor([1.0, 1.0 + 1e-6, 0.5], dtype=torch.float64)
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: distinct}, {USER: torch.tensor([3])}, top_k=1
+        )
+        self.assertEqual(keep[USER].tolist(), [False, True, False])
+
+        # float32 input is ranked as-is.
+        keep = cap_rows_to_per_seed_top_k(
+            {USER: distinct.float()}, {USER: torch.tensor([3])}, top_k=1
+        )
+        self.assertEqual(keep[USER].tolist(), [False, True, False])
+
+    def test_capping_a_ppr_result_drops_the_rows_from_every_field(self) -> None:
+        ppr_result = PPRResult(
+            node_ids={
+                USER: torch.tensor([10, 11, 12, 20]),
+                STORY: torch.tensor([30, 31]),
+            },
+            # Column 0 is the score; column 1 is a payload equal to the row's node id that must follow it.
+            weights={
+                USER: torch.tensor([[0.9, 10], [0.5, 11], [0.4, 12], [0.8, 20]]),
+                STORY: torch.tensor([[0.7, 30], [0.6, 31]]),
+            },
+            valid_counts={USER: torch.tensor([3, 1]), STORY: torch.tensor([1, 1])},
+            is_expanded={USER: torch.tensor([1, 0, 1, 1]), STORY: torch.tensor([0, 1])},
+            cache_state=None,
+        )
+        capped = cap_ppr_result_to_top_k(ppr_result, top_k=3)
+        # Seed 0 keeps its 0.9, 0.7 and 0.5 rows; seed 1 has two rows and keeps both.
+        self.assertEqual(_by_node_type(capped.node_ids)[USER].tolist(), [10, 11, 20])
+        self.assertEqual(_by_node_type(capped.node_ids)[STORY].tolist(), [30, 31])
+        self.assertEqual(_by_node_type(capped.valid_counts)[USER].tolist(), [2, 1])
+        self.assertEqual(_by_node_type(capped.valid_counts)[STORY].tolist(), [1, 1])
+        self.assertEqual(_by_node_type(capped.valid_counts)[USER].dtype, torch.int64)
+        self.assertEqual(_by_node_type(capped.is_expanded)[USER].tolist(), [1, 0, 1])
+        self.assertEqual(_by_node_type(capped.is_expanded)[STORY].tolist(), [0, 1])
+        self.assertEqual(
+            _by_node_type(capped.weights)[USER][:, 1].tolist(), [10, 11, 20]
+        )
+        self.assertEqual(_by_node_type(capped.weights)[STORY][:, 1].tolist(), [30, 31])
+
+    def test_capping_a_typed_ppr_result_ranks_on_its_best_score_column(
+        self,
+    ) -> None:
+        # Typed PPR rows carry extra per-channel columns; only column 0 (the best score) ranks them.
+        ppr_result = PPRResult(
+            node_ids={USER: torch.tensor([1, 2, 3])},
+            weights={
+                USER: torch.tensor([[0.1, 0.9, 0.9], [0.8, 0.0, 0.0], [0.5, 0.1, 0.1]])
+            },
+            valid_counts={USER: torch.tensor([3])},
+            is_expanded={USER: torch.tensor([1, 1, 1])},
+            cache_state=None,
+        )
+        capped = cap_ppr_result_to_top_k(ppr_result, top_k=2)
+        self.assertEqual(_by_node_type(capped.node_ids)[USER].tolist(), [2, 3])
+        self.assertEqual(_by_node_type(capped.valid_counts)[USER].tolist(), [2])
 
 
 if __name__ == "__main__":
