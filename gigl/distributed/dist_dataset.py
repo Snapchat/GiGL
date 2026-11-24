@@ -4,7 +4,7 @@ import gc
 import time
 from collections.abc import Mapping, MutableMapping
 from multiprocessing.reduction import ForkingPickler
-from typing import Literal, Optional, Tuple, TypeVar, Union, overload
+from typing import Literal, Optional, TypeVar, Union, overload
 
 import graphlearn_torch as glt
 import torch
@@ -14,6 +14,7 @@ from graphlearn_torch.typing import TensorDataType
 from graphlearn_torch.utils import id2idx
 
 from gigl.common.logger import Logger
+from gigl.distributed.constants import resolve_rank_local_csr_rows
 from gigl.distributed.utils.degree import compute_and_broadcast_degree_tensor
 from gigl.distributed.utils.partition_book import get_ids_on_rank, get_total_ids
 from gigl.src.common.types.graph_data import (  # TODO (mkolodner-sc): Change to use torch_geometric.typing
@@ -571,8 +572,8 @@ class DistDataset(glt.distributed.DistDataset):
         node_ids_on_machine: Union[torch.Tensor, dict[NodeType, torch.Tensor]],
         splits: Optional[
             Union[
-                Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-                Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+                Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
             ]
         ],
     ) -> None:
@@ -583,7 +584,7 @@ class DistDataset(glt.distributed.DistDataset):
 
         Args:
             node_ids_on_machine(Union[torch.Tensor, dict[NodeType, torch.Tensor]]): The node ids on the current machine
-            splits(Optional[Union[Tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
+            splits(Optional[Union[tuple[torch.Tensor, torch.Tensor, torch.Tensor], Mapping[NodeType, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]]]): The splits to use for data splitting.
         """
 
         # If the nodes are split, then we set the total number of nodes in each split here.
@@ -833,7 +834,8 @@ class DistDataset(glt.distributed.DistDataset):
         Args:
             edge_index: Per-edge-type ``[2, num_edges]`` COO tensors, int32 or int64. Consumed
                 destructively: entries are removed as they are converted, and under range
-                partitioning their compressed ids are shifted in place.
+                partitioning their compressed ids are shifted in place unless
+                ``GIGL_RANK_LOCAL_CSR_ROWS=off``.
             node_partition_book: Node partition book(s), used to size each ``indptr``.
             retain_edge_ids: Whether the memory-lean build stores implicit edge IDs.
 
@@ -847,6 +849,8 @@ class DistDataset(glt.distributed.DistDataset):
         )
         self._directed = True
         graph: dict[EdgeType, Graph] = {}
+
+        rank_local_rows = resolve_rank_local_csr_rows()
 
         for edge_type in sorted(
             edge_index.keys(), key=lambda et: edge_index[et].size(1), reverse=True
@@ -877,8 +881,14 @@ class DistDataset(glt.distributed.DistDataset):
             # [compressed_id_offset, num_rows). Shifting them down to start at 0 leaves indptr without the
             # empty rows below the range, which on the last rank is nearly one row per node in
             # the graph. The COO is released after the build, so it is shifted in place.
+            # With GIGL_RANK_LOCAL_CSR_ROWS=off there is no shift: indptr keeps a row for every id below
+            # the range end, so callers that sample with global ids (e.g. GLT's own samplers) find them.
             compressed_id_offset = 0
-            if isinstance(book, RangePartitionBook) and self._rank > 0:
+            if (
+                isinstance(book, RangePartitionBook)
+                and self._rank > 0
+                and rank_local_rows
+            ):
                 compressed_id_offset = int(book.partition_bounds[self._rank - 1])
                 compressed_dimension = 0 if target_layout == "CSR" else 1
                 coo[compressed_dimension] -= compressed_id_offset
@@ -1267,7 +1277,7 @@ class DistDataset(glt.distributed.DistDataset):
 
     def share_ipc(
         self,
-    ) -> Tuple[
+    ) -> tuple[
         int,
         int,
         Literal["in", "out"],
@@ -1525,21 +1535,21 @@ def _build_feature_info(
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: None,
-) -> Tuple[None, None]: ...
+) -> tuple[None, None]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: PartitionBook,
     partitioned_data: FeaturePartitionData,
-) -> Tuple[torch.Tensor, TensorDataType]: ...
+) -> tuple[torch.Tensor, TensorDataType]: ...
 
 
 @overload
 def _prepare_feature_data(
     partition_book: dict[_EntityType, PartitionBook],
     partitioned_data: dict[_EntityType, FeaturePartitionData],
-) -> Tuple[
+) -> tuple[
     dict[_EntityType, torch.Tensor],
     dict[_EntityType, TensorDataType],
 ]: ...
@@ -1553,7 +1563,7 @@ def _prepare_feature_data(
             dict[_EntityType, FeaturePartitionData],
         ]
     ],
-) -> Tuple[
+) -> tuple[
     Optional[
         Union[
             torch.Tensor,
@@ -1578,7 +1588,7 @@ def _prepare_feature_data(
         partition_book (Union[PartitionBook, dict[_EntityType, PartitionBook]]): The partition book for the data type
         partitioned_data (Optional[Union[FeaturePartitionData, dict[_EntityType, FeaturePartitionData]]]): The partitioned data containing features/labels
     Returns:
-        Tuple[
+        tuple[
             Optional[Union[torch.Tensor, dict[_EntityType, torch.Tensor]]]:
                 Partitioned features or labels
             Optional[Union[TensorDataType, dict[_EntityType, TensorDataType]]]:
@@ -1647,7 +1657,7 @@ def _prepare_feature_data(
 
 
 def _rebuild_distributed_dataset(
-    ipc_handle: Tuple[
+    ipc_handle: tuple[
         int,  # Rank on current machine
         int,  # World size across machines
         Literal["in", "out"],  # Edge Direction

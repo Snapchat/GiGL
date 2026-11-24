@@ -1,18 +1,18 @@
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Union
 
 import torch
 from torch import Tensor
 from torch_geometric.data import HeteroData
 
 # Type alias for edge types in PyG HeteroData
-EdgeType = Tuple[str, str, str]
+EdgeType = tuple[str, str, str]
 
 
 def add_node_attr(
     data: HeteroData,
     values: Union[Tensor, Dict[str, Tensor]],
     attr_name: Optional[str] = None,
-    node_type_to_idx: Optional[Dict[str, Tuple[int, int]]] = None,
+    node_type_to_idx: Optional[Dict[str, tuple[int, int]]] = None,
 ) -> HeteroData:
     """Helper function to add node attributes to a HeteroData object.
 
@@ -89,7 +89,7 @@ def add_edge_attr(
     data: HeteroData,
     values: Union[Tensor, Dict[EdgeType, Tensor]],
     attr_name: Optional[str] = None,
-    edge_type_to_idx: Optional[Dict[EdgeType, Tuple[int, int]]] = None,
+    edge_type_to_idx: Optional[Dict[EdgeType, tuple[int, int]]] = None,
 ) -> HeteroData:
     """Helper function to add edge attributes to a HeteroData object.
 

@@ -1,7 +1,6 @@
 import json
 import tempfile
 from functools import partial
-from typing import Tuple
 
 import tensorflow as tf
 from google.cloud import bigquery
@@ -49,7 +48,7 @@ logger = Logger()
 
 def _initialize_inferencer_with_gbml_config_pb(
     gbml_config_pb: gbml_config_pb2.GbmlConfig,
-) -> Tuple[BaseInferencer, GbmlConfigPbWrapper]:
+) -> tuple[BaseInferencer, GbmlConfigPbWrapper]:
     inferencer_cls = import_obj(gbml_config_pb.inferencer_config.inferencer_cls_path)
     kwargs = dict(gbml_config_pb.inferencer_config.inferencer_args)
     inferencer = inferencer_cls(**kwargs)

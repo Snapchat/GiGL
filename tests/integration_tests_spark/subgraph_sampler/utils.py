@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import tensorflow as tf
 
@@ -75,7 +75,7 @@ class ExpectedGraphFromPreprocessor:
 
 def read_output_nablp_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Tuple[
+) -> tuple[
     dict[NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]],
     list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
 ]:
@@ -115,7 +115,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
 
 def read_output_node_based_task_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Tuple[
+) -> tuple[
     list[training_samples_schema_pb2.RootedNodeNeighborhood],
     list[training_samples_schema_pb2.RootedNodeNeighborhood],
 ]:

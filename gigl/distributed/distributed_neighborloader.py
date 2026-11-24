@@ -1,7 +1,7 @@
 import sys
 from collections import abc
 from itertools import count
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import torch
 from graphlearn_torch.channel import SampleMessage
@@ -68,9 +68,9 @@ class DistNeighborLoader(BaseDistLoader):
         input_nodes: Optional[
             Union[
                 Int64[torch.Tensor, "nodes"],
-                Tuple[NodeType, Int64[torch.Tensor, "nodes"]],
+                tuple[NodeType, Int64[torch.Tensor, "nodes"]],
                 abc.Mapping[int, Int64[torch.Tensor, "nodes"]],
-                Tuple[NodeType, abc.Mapping[int, Int64[torch.Tensor, "nodes"]]],
+                tuple[NodeType, abc.Mapping[int, Int64[torch.Tensor, "nodes"]]],
             ]
         ] = None,
         num_workers: int = 1,
@@ -105,7 +105,7 @@ class DistNeighborLoader(BaseDistLoader):
         Args:
             dataset (DistDataset | RemoteDistDataset): The dataset to sample from.
             If this is a `RemoteDistDataset`, then we assumed to be in "Graph Store" mode.
-            num_neighbors (list[int] or dict[Tuple[str, str, str], list[int]]):
+            num_neighbors (list[int] or dict[tuple[str, str, str], list[int]]):
                 The number of neighbors to sample for each node in each iteration.
                 If an entry is set to `-1`, all neighbors will be included.
                 In heterogeneous graphs, may also take in a dictionary denoting
@@ -114,7 +114,7 @@ class DistNeighborLoader(BaseDistLoader):
             context (deprecated - will be removed soon) (DistributedContext): Distributed context information of the current process.
             local_process_rank (deprecated - will be removed soon) (int): Required if context provided. The local rank of the current process within a node.
             local_process_world_size (deprecated - will be removed soon)(int): Required if context provided. The total number of processes within a node.
-            input_nodes (Tensor | Tuple[NodeType, Tensor] | dict[int, Tensor] | Tuple[NodeType, dict[int, Tensor]]):
+            input_nodes (Tensor | tuple[NodeType, Tensor] | dict[int, Tensor] | tuple[NodeType, dict[int, Tensor]]):
                 The nodes to start sampling from.
                 It is of type `torch.LongTensor` for homogeneous graphs.
                 If set to `None` for homogeneous settings, all nodes will be considered.
@@ -426,9 +426,9 @@ class DistNeighborLoader(BaseDistLoader):
         input_nodes: Optional[
             Union[
                 torch.Tensor,
-                Tuple[NodeType, torch.Tensor],
+                tuple[NodeType, torch.Tensor],
                 abc.Mapping[int, torch.Tensor],
-                Tuple[NodeType, abc.Mapping[int, torch.Tensor]],
+                tuple[NodeType, abc.Mapping[int, torch.Tensor]],
             ]
         ],
         dataset: DistDataset,

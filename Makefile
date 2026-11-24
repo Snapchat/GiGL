@@ -77,7 +77,7 @@ SKIP_SCALA?=0
 # if developing, you need to install dev deps instead
 install_dev_deps: check_if_valid_env
 	gcloud auth configure-docker us-central1-docker.pkg.dev
-	bash ./gigl-core/requirements/install_cpp_deps.sh
+	bash ./gigl-core/requirements/install_cpp_deps.sh --dev
 	bash ./requirements/install_py_deps.sh --dev
 	@if [ "$(SKIP_SCALA)" = "1" ]; then echo "SKIP_SCALA=1: skipping Scala deps"; else bash ./requirements/install_scala_deps.sh; fi
 	uv pip install -e .

@@ -2,7 +2,7 @@ import concurrent.futures
 import sys
 import traceback
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Sequence
 
 import google.cloud.bigquery as bigquery
 
@@ -110,7 +110,7 @@ class Enumerator:
         bq_source_table_name: str,
         bq_source_table_node_id_col_name: str,
         node_type: NodeType,
-    ) -> Tuple[str, int]:
+    ) -> tuple[str, int]:
         num_nodes_in_source_table = self.__bq_utils.count_number_of_rows_in_bq_table(
             bq_table=bq_source_table_name, labels=get_resource_labels()
         )
@@ -304,7 +304,7 @@ class Enumerator:
         bq_source_table_dst_node_id_col_name: str,
         bq_enumerated_src_node_id_map_table_name: str,
         bq_enumerated_dst_node_id_map_table_name: str,
-    ) -> Tuple[str, int]:
+    ) -> tuple[str, int]:
         dst_enumerated_edge_features_table_name: str = (
             get_enumerated_edge_features_bq_table_name(
                 applied_task_identifier=self.__applied_task_identifier,
@@ -443,7 +443,7 @@ class Enumerator:
         node_data_references: Sequence[NodeDataReference],
         edge_data_references: Sequence[EdgeDataReference],
         gcp_project: str,
-    ) -> Tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
+    ) -> tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
         self.__bq_utils = BqUtils(project=gcp_project)
         self.__applied_task_identifier = applied_task_identifier
 
@@ -481,7 +481,7 @@ class Enumerator:
         node_data_references: Sequence[NodeDataReference],
         edge_data_references: Sequence[EdgeDataReference],
         gcp_project: str,
-    ) -> Tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
+    ) -> tuple[list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]]:
         try:
             return self.__run(
                 applied_task_identifier=applied_task_identifier,

@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import apache_beam as beam
 import tensorflow as tf
@@ -46,7 +46,7 @@ class UnenumerateAssets(beam.PTransform):
                 "Only embedding or prediction outputs are supported"
             )
 
-    def expand(self, pcolls: Tuple[PCollection, PCollection]) -> PCollection:
+    def expand(self, pcolls: tuple[PCollection, PCollection]) -> PCollection:
         """
         Performs unenumeration on two PCollections through a join between the two collections.
         The first PCollection should contain the DEFAULT_NODE_ID_FIELD and either DEFAULT_PREDICTION_FIELD or DEFAULT_EMBEDDING_FIELD columns.
