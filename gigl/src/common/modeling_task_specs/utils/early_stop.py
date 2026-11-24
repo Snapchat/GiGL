@@ -1,5 +1,5 @@
 import io
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -40,7 +40,7 @@ class EarlyStopper:
         else:
             return value < self._prev_best
 
-    def step(self, value: float) -> Tuple[bool, bool]:
+    def step(self, value: float) -> tuple[bool, bool]:
         """
         Steps through the early stopper provided some criterion. Returns whether the provided criterion improved over the previous best criterion and
         whether we should early stop.

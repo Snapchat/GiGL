@@ -5,7 +5,7 @@ import sys
 import threading
 from collections import defaultdict
 from itertools import chain, repeat
-from typing import Callable, Iterable, NamedTuple, Optional, Tuple, Union
+from typing import Callable, Iterable, NamedTuple, Optional, Union
 
 import tensorflow as tf
 import tensorflow_data_validation as tfdv
@@ -19,6 +19,7 @@ import gigl.src.common.constants.local_fs as local_fs_constants
 import gigl.src.data_preprocessor.lib.transform.utils as transform_utils
 from gigl.analytics.graph_validation import BQGraphValidator
 from gigl.common import Uri, UriFactory
+from gigl.common.data.parquet_manifest import write_manifest
 from gigl.common.logger import Logger
 from gigl.common.metrics.decorators import flushes_metrics, profileit
 from gigl.common.utils import os_utils
@@ -62,7 +63,9 @@ from gigl.src.data_preprocessor.lib.transform.transformed_features_info import (
     TransformedFeaturesInfo,
 )
 from gigl.src.data_preprocessor.lib.types import (
+    DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
     DEFAULT_TF_INT_DTYPE,
+    DataPreprocessorOutputFormat,
     EdgeDataPreprocessingSpec,
     EdgeOutputIdentifier,
     FeatureSpecDict,
@@ -164,6 +167,12 @@ class DataPreprocessor:
         )
         self.__data_preprocessor_config = self.__import_data_preprocessor_config()
         self.__custom_worker_image_uri = custom_worker_image_uri
+        self.__output_format = DataPreprocessorOutputFormat(
+            self.gbml_config_pb_wrapper.gbml_config_pb.feature_flags.get(
+                DATA_PREPROCESSOR_OUTPUT_FORMAT_FLAG,
+                DataPreprocessorOutputFormat.PARQUET.value,
+            )
+        )
         self.__prepare_staging_paths()
 
     def __prepare_staging_paths(self) -> None:
@@ -267,6 +276,7 @@ class DataPreprocessor:
             entity_type=entity_type,
             custom_identifier=custom_identifier,
             feature_quantization_enabled=feature_quantization_enabled,
+            output_format=self.__output_format,
         )
 
         def __get_feature_preprocessing_job_msgs(
@@ -290,20 +300,39 @@ class DataPreprocessor:
                 ),
                 custom_worker_image_uri=self.custom_worker_image_uri,
             )
+            logger.info(
+                __get_feature_preprocessing_job_msgs(
+                    is_start=True,
+                )
+            )
             feature_transform_pipeline_result = p.run()
+            if not isinstance(
+                feature_transform_pipeline_result, DataflowPipelineResult
+            ):
+                # A pipeline that does not run on Dataflow executes in this process.
+                # DirectRunner can delegate to Beam's PrismRunner, whose run() returns
+                # while the pipeline is still executing. TFT's object tracker is
+                # process-global and both pipeline construction and execution enter
+                # it, so overlapping TFT pipelines trip its `_OBJECT_TRACKER is None`
+                # assertion. Local pipelines therefore finish before the lock is
+                # released; Dataflow jobs run remotely and are waited on below, outside
+                # the lock.
+                feature_transform_pipeline_result.wait_until_finish()
             logger.debug(f"[{feature_type}:{entity_type}] releasing lock.")
 
-        logger.info(
-            __get_feature_preprocessing_job_msgs(
-                is_start=True,
-            )
-        )
         feature_transform_pipeline_result.wait_until_finish()
         logger.info(
             __get_feature_preprocessing_job_msgs(
                 is_start=False,
             )
         )
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            write_manifest(
+                transformed_features_info.transformed_features_parquet_prefix
+            )
 
         def __get_feature_dimension_for_single_data_reference(
             schema_path: Uri, feature_outputs: list[str]
@@ -403,13 +432,13 @@ class DataPreprocessor:
             logger.info(f"Launching {num_dataflow_jobs} dataflow jobs in parallel.")
             futures: dict[
                 concurrent.futures.Future[TransformedFeaturesInfo],
-                Tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
+                tuple[Union[NodeDataReference, EdgeDataReference], FeatureTypes],
             ] = dict()
 
             data_ref_and_prep_specs: Iterable[
                 Union[
-                    Tuple[NodeDataReference, NodeDataPreprocessingSpec],
-                    Tuple[EdgeDataReference, EdgeDataPreprocessingSpec],
+                    tuple[NodeDataReference, NodeDataPreprocessingSpec],
+                    tuple[EdgeDataReference, EdgeDataPreprocessingSpec],
                 ]
             ] = chain(
                 node_ref_to_preprocessing_spec.items(),
@@ -466,7 +495,6 @@ class DataPreprocessor:
         enumerated_edge_metadata: EnumeratorEdgeTypeMetadata,
     ) -> preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo:
         output = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
-            tfrecord_uri_prefix=transformed_features_info.transformed_features_file_prefix.uri,
             schema_uri=transformed_features_info.transformed_features_schema_path.uri,
             feature_keys=transformed_features_info.features_outputs,
             label_keys=transformed_features_info.label_outputs,
@@ -474,6 +502,17 @@ class DataPreprocessor:
             feature_dim=transformed_features_info.feature_dim_output,
             transform_fn_assets_uri=transformed_features_info.transformed_features_transform_fn_assets_path.uri,
         )
+        if (
+            transformed_features_info.output_format
+            == DataPreprocessorOutputFormat.PARQUET
+        ):
+            output.parquet_uri_prefix = (
+                transformed_features_info.transformed_features_parquet_prefix.uri
+            )
+        else:
+            output.tfrecord_uri_prefix = (
+                transformed_features_info.transformed_features_file_prefix.uri
+            )
         if transformed_features_info.feature_quantization_enabled:
             quantization_metadata = _load_feature_quantization_metadata_pb(
                 metadata_path=transformed_features_info.feature_quantization_metadata_path.uri,
@@ -499,7 +538,7 @@ class DataPreprocessor:
 
         # Populate all node data.
         logger.info("Populating preprocessed metadata with node data.")
-        node_info: Tuple[NodeDataReference, TransformedFeaturesInfo]
+        node_info: tuple[NodeDataReference, TransformedFeaturesInfo]
         for node_info in preprocessed_metadata_references.node_data.items():
             node_data_ref: NodeDataReference
             node_transformed_features_info: TransformedFeaturesInfo
@@ -525,7 +564,6 @@ class DataPreprocessor:
             feature_dim_output = node_transformed_features_info.feature_dim_output
 
             node_metadata_output_pb = preprocessed_metadata_pb2.PreprocessedMetadata.NodeMetadataOutput(
-                tfrecord_uri_prefix=node_transformed_features_info.transformed_features_file_prefix.uri,
                 schema_uri=node_transformed_features_info.transformed_features_schema_path.uri,
                 node_id_key=str(node_identifier_output),
                 feature_keys=features_outputs,
@@ -535,6 +573,15 @@ class DataPreprocessor:
                 feature_dim=feature_dim_output,
                 transform_fn_assets_uri=node_transformed_features_info.transformed_features_transform_fn_assets_path.uri,
             )
+            if (
+                node_transformed_features_info.output_format
+                == DataPreprocessorOutputFormat.PARQUET
+            ):
+                node_metadata_output_pb.parquet_uri_prefix = node_transformed_features_info.transformed_features_parquet_prefix.uri
+            else:
+                node_metadata_output_pb.tfrecord_uri_prefix = (
+                    node_transformed_features_info.transformed_features_file_prefix.uri
+                )
             if node_transformed_features_info.feature_quantization_enabled:
                 quantized_feature_metadata_pb = _load_feature_quantization_metadata_pb(
                     metadata_path=node_transformed_features_info.feature_quantization_metadata_path.uri,
@@ -565,7 +612,7 @@ class DataPreprocessor:
         preprocessed_metadata_references_map: dict[
             EdgeType, dict[EdgeUsageType, TransformedFeaturesInfo]
         ] = defaultdict(dict)
-        edge_info: Tuple[EdgeDataReference, TransformedFeaturesInfo]
+        edge_info: tuple[EdgeDataReference, TransformedFeaturesInfo]
         for edge_info in preprocessed_metadata_references.edge_data.items():
             edge_data_ref: EdgeDataReference
             edge_transformed_features_info: TransformedFeaturesInfo
@@ -707,7 +754,7 @@ class DataPreprocessor:
         ],
         enumerator_node_type_metadata: list[EnumeratorNodeTypeMetadata],
         enumerator_edge_type_metadata: list[EnumeratorEdgeTypeMetadata],
-    ) -> Tuple[
+    ) -> tuple[
         dict[NodeDataReference, NodeDataPreprocessingSpec],
         dict[EdgeDataReference, EdgeDataPreprocessingSpec],
     ]:
@@ -883,7 +930,7 @@ class DataPreprocessor:
 
         # Enumerate all graph data.
         enumerator = Enumerator()
-        enumerator_results: Tuple[
+        enumerator_results: tuple[
             list[EnumeratorNodeTypeMetadata], list[EnumeratorEdgeTypeMetadata]
         ] = enumerator.run(
             applied_task_identifier=self.applied_task_identifier,

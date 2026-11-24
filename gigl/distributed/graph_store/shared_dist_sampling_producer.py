@@ -66,7 +66,6 @@ Worker event-loop internals::
     └─────────────────────────────────────────────────┘
 """
 
-import datetime
 import queue
 import threading
 import time
@@ -84,7 +83,6 @@ from graphlearn_torch.distributed import (
     DistDataset,
     RemoteDistSamplingWorkerOptions,
     get_context,
-    init_rpc,
     init_worker_group,
     shutdown_rpc,
 )
@@ -104,6 +102,11 @@ from gigl.distributed.utils.dist_sampler import (
     SamplerInput,
     SamplerRuntime,
     create_dist_sampler,
+    join_workers_with_shared_deadline,
+)
+from gigl.distributed.utils.rpc_init import (
+    init_rpc_from_env,
+    sampling_rpc_channels_from_env,
 )
 
 logger = Logger()
@@ -790,14 +793,9 @@ def _shared_sampling_worker_loop(
             group_name="_sampling_worker_subprocess",
         )
         if worker_options.use_all2all:
-            torch.distributed.init_process_group(
-                backend="gloo",
-                timeout=datetime.timedelta(seconds=worker_options.rpc_timeout),
-                rank=worker_options.worker_ranks[rank],
-                world_size=worker_options.worker_world_size,
-                init_method="tcp://{}:{}".format(
-                    worker_options.master_addr, worker_options.master_port
-                ),
+            raise ValueError(
+                "All-to-all feature collection (use_all2all=True) is not supported; "
+                "features are fetched through the fused feature store."
             )
 
         if worker_options.num_rpc_threads is None:
@@ -809,7 +807,7 @@ def _shared_sampling_worker_loop(
         _set_worker_signal_handlers()
         torch.set_num_threads(num_rpc_threads + 1)
 
-        init_rpc(
+        init_rpc_from_env(
             master_addr=worker_options.master_addr,
             master_port=worker_options.master_port,
             num_rpc_threads=num_rpc_threads,
@@ -933,7 +931,11 @@ class SharedDistSamplingBackend:
 
         Raises:
             RuntimeError: If no GLT server context is active.
+            ValueError: If ``GIGL_SAMPLING_RPC_CHANNELS`` is set to an invalid value.
         """
+        # Fail here on a bad channel value; a worker that raises before the barrier would leave
+        # this method waiting on it.
+        sampling_rpc_channels_from_env()
         with self._lock:
             if self._initialized:
                 return
@@ -1279,8 +1281,8 @@ class SharedDistSamplingBackend:
         Cleanup sequence:
 
         1. Send ``STOP`` to every worker's task queue.
-        2. Join each worker with a timeout of
-           ``MP_STATUS_CHECK_INTERVAL`` seconds.
+        2. Join the workers against one shared deadline of
+           ``MP_STATUS_CHECK_INTERVAL`` seconds in total.
         3. Close all task queues and the event queue.
         4. Terminate any workers still alive after the join timeout.
 
@@ -1297,8 +1299,9 @@ class SharedDistSamplingBackend:
                         SharedMpCommand.STOP,
                         None,
                     )
-                for worker in self._workers:
-                    worker.join(timeout=MP_STATUS_CHECK_INTERVAL)
+                join_workers_with_shared_deadline(
+                    self._workers, MP_STATUS_CHECK_INTERVAL
+                )
                 for queue_ in self._task_queues:
                     queue_.cancel_join_thread()
                     queue_.close()

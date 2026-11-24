@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import tensorflow as tf
 
@@ -35,7 +35,7 @@ from gigl.src.common.types.pb_wrappers.graph_data_types_utils import (
     get_dehydrated_node_pb_wrappers_from_edge_wrapper,
 )
 from gigl.src.common.types.task_metadata import TaskMetadataType
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.training.v1.lib.data_loaders.tf_records_iterable_dataset import (
     get_np_iterator_from_tfrecords,
 )
@@ -75,7 +75,7 @@ class ExpectedGraphFromPreprocessor:
 
 def read_output_nablp_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Tuple[
+) -> tuple[
     dict[NodeType, list[training_samples_schema_pb2.RootedNodeNeighborhood]],
     list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
 ]:
@@ -115,7 +115,7 @@ def read_output_nablp_samples_from_subgraph_sampler(
 
 def read_output_node_based_task_samples_from_subgraph_sampler(
     gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-) -> Tuple[
+) -> tuple[
     list[training_samples_schema_pb2.RootedNodeNeighborhood],
     list[training_samples_schema_pb2.RootedNodeNeighborhood],
 ]:
@@ -583,7 +583,7 @@ def compile_and_run_sgs_pipeline_locally(
             --jars {SPARK_35_TFRECORD_JAR_LOCAL_PATH} \\
             {_PATH_TO_SGS_SCALA_SPARK_35_ROOT}/{_SGS_SCALA_PROJECT_NAME}/target/scala-2.12/subgraph_sampler-assembly-1.0.jar\\
             {frozen_gbml_config_uri.uri} \\
-            sgs_integration_test_{current_formatted_datetime()} \\
+            {new_test_run_id("sgs_integration_test")} \\
             {resource_config_uri.uri}""",
         ]
 
@@ -596,7 +596,7 @@ def compile_and_run_sgs_pipeline_locally(
             --jars {SPARK_31_TFRECORD_JAR_LOCAL_PATH} \\
             {_PATH_TO_SGS_SCALA_ROOT}/{_SGS_SCALA_PROJECT_NAME}/target/scala-2.12/subgraph_sampler-assembly-1.0.jar \\
             {frozen_gbml_config_uri.uri} \\
-            sgs_integration_test_{current_formatted_datetime()} \\
+            {new_test_run_id("sgs_integration_test")} \\
             {resource_config_uri.uri}""",
         ]
 

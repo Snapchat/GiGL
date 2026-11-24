@@ -3,7 +3,6 @@ import os
 import socket
 import tempfile
 import traceback
-import unittest
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
 from itertools import zip_longest
@@ -1020,8 +1019,6 @@ class GraphStoreIntegrationTest(TestCase):
             ),
         )
 
-    # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_graph_store_heterogeneous(self):
         # Simulating two server machine, two compute machines.
         # Each machine has one process.

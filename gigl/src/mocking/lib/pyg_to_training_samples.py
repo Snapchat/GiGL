@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch_geometric.transforms as T
@@ -275,7 +275,7 @@ def build_node_anchor_link_prediction_samples_from_pyg_heterodata(
     sample_edge_type: EdgeType,
     graph_metadata_pb_wrapper: GraphMetadataPbWrapper,
     mocked_dataset_info: MockedDatasetInfo,
-) -> Tuple[
+) -> tuple[
     list[training_samples_schema_pb2.NodeAnchorBasedLinkPredictionSample],
     list[training_samples_schema_pb2.RootedNodeNeighborhood],
     list[training_samples_schema_pb2.RootedNodeNeighborhood],

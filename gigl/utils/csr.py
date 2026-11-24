@@ -26,8 +26,14 @@ from typing import Literal, Optional
 
 import torch
 from graphlearn_torch.data import Topology
+from jaxtyping import Int64
 
 from gigl.common.logger import Logger
+from gigl.utils.csr_parallel import (
+    parallel_degrees,
+    parallel_scatter,
+    parallel_sort_within_rows,
+)
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 
 logger = Logger()
@@ -246,7 +252,7 @@ def build_csr_from_coo(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     sort_block_edges: int = DEFAULT_SORT_BLOCK_EDGES,
     band_bytes: int = DEFAULT_BAND_BYTES,
-    retain_edge_ids: bool = True,
+    retain_edge_ids: bool = False,
 ) -> CsrBuildResult:
     """Convert a COO edge index to CSR with bounded chunk and sort temporaries.
 
@@ -269,9 +275,9 @@ def build_csr_from_coo(
             columns ascending as ``coo_to_csr`` does.
         band_bytes (int): Destination window for the scatter, used only when ``indices`` could
             not be placed in memory.
-        retain_edge_ids (bool): Retain original COO positions in CSR order by default.
-            The int64 IDs cost 8 bytes per edge. Set to ``False`` when callers do not
-            sample edge IDs.
+        retain_edge_ids (bool): Whether to return original COO positions in CSR order
+            (default ``False``). The int64 IDs cost 8 bytes per edge; pass ``True`` only
+            when callers sample edge IDs.
 
     Returns:
         CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
@@ -315,7 +321,7 @@ def build_csr_from_coo(
             edge_ids=edge_ids,
         )
     indptr[0] = 0
-    torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr[1:])
+    torch.cumsum(parallel_degrees(row, num_rows), dim=0, out=indptr[1:])
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
@@ -327,17 +333,21 @@ def build_csr_from_coo(
     scatter_band_bytes = None
     if is_disk_backed(indices) or (edge_ids is not None and is_disk_backed(edge_ids)):
         scatter_band_bytes = band_bytes
-    _scatter_in_bands(
-        row=row,
-        col=col,
-        indptr=indptr,
-        indices=indices,
-        chunk_size=chunk_size,
-        band_bytes=scatter_band_bytes,
-        edge_ids=edge_ids,
-    )
-    gc.collect()
-    _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
+    if scatter_band_bytes is None:
+        parallel_scatter(row, col, indptr, indices, edge_ids)
+        parallel_sort_within_rows(indptr, indices, edge_ids)
+    else:
+        _scatter_in_bands(
+            row=row,
+            col=col,
+            indptr=indptr,
+            indices=indices,
+            chunk_size=chunk_size,
+            band_bytes=scatter_band_bytes,
+            edge_ids=edge_ids,
+        )
+        gc.collect()
+        _sort_within_rows(indptr, indices, sort_block_edges, edge_ids)
 
     logger.info(
         f"Built CSR for {num_edges:,} edges over {num_rows:,} rows "
@@ -361,9 +371,14 @@ class CompactTopology(Topology):
         layout (Literal["CSR", "CSC"]): The layout GLT samples from.
         num_rows (Optional[int]): Size of the compressed dimension. Defaults to the largest
             compressed id + 1, as GLT's ``Topology`` does.
-        retain_edge_ids (bool): Retain COO-position IDs for edge sampling by default,
-            at a cost of 8 bytes per edge. Use ``False`` only when callers sample
-            without edge IDs.
+        retain_edge_ids (bool): Whether to keep COO-position IDs for edge sampling
+            (default ``False``), at a cost of 8 bytes per edge. Pass ``True`` only when
+            callers sample with edge IDs.
+        compressed_id_offset (int): The global id that compressed id 0 of ``edge_index`` stands for.
+            A rank that owns the id range ``[compressed_id_offset, compressed_id_offset + num_rows)`` passes ids
+            relative to its range start, so ``indptr`` has no rows for the ids below it.
+            GLT's samplers index ``indptr`` directly, so seeds must be translated with
+            :func:`to_local_compressed_ids` first. ``to_coo`` adds the offset back.
     """
 
     def __init__(
@@ -372,7 +387,8 @@ class CompactTopology(Topology):
         layout: Literal["CSR", "CSC"],
         num_rows: Optional[int] = None,
         *,
-        retain_edge_ids: bool = True,
+        retain_edge_ids: bool = False,
+        compressed_id_offset: int,
     ) -> None:
         # GLT's Topology casts any input to int64; integer inputs keep their width here.
         if edge_index.is_floating_point():
@@ -383,6 +399,7 @@ class CompactTopology(Topology):
         else:
             compressed, other = 1, 0
         self._layout = layout
+        self.compressed_id_offset = compressed_id_offset
         csr = build_csr_from_coo(
             row=edge_index[compressed],
             col=edge_index[other],
@@ -395,3 +412,63 @@ class CompactTopology(Topology):
             csr.edge_ids,
         )
         self._edge_weights = None
+
+    def to_coo(
+        self,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]
+    ]:
+        """Convert to COO with global compressed ids.
+
+        Returns:
+            Row ids, column ids, edge ids and edge weights, as GLT's ``Topology.to_coo``.
+        """
+        row, col, edge_ids, edge_weights = super().to_coo()
+        # CSC stores destinations in ``indptr``, which ``to_coo`` returns as ``col``.
+        if self.compressed_id_offset:
+            if self._layout == "CSR":
+                row = row + self.compressed_id_offset
+            else:
+                col = col + self.compressed_id_offset
+        return row, col, edge_ids, edge_weights
+
+
+def get_compressed_id_offset(topology: Topology) -> int:
+    """Return the global id that row 0 of ``topology.indptr`` holds.
+
+    It is 0 for every topology except a :class:`CompactTopology` built with a ``compressed_id_offset``.
+
+    Args:
+        topology: A GLT topology.
+
+    Returns:
+        int: The row offset.
+    """
+    if isinstance(topology, CompactTopology):
+        return topology.compressed_id_offset
+    return 0
+
+
+def to_local_compressed_ids(
+    ids: Int64[torch.Tensor, "ids"], compressed_id_offset: int, num_rows: int
+) -> Int64[torch.Tensor, "ids"]:
+    """Translate global compressed ids to rows of a topology that starts at ``compressed_id_offset``.
+
+    Ids outside ``[compressed_id_offset, compressed_id_offset + num_rows)`` map to ``num_rows``.
+    GLT's samplers return no neighbors for a row at or past the row count, so these ids sample
+    nothing, as they do on the empty rows of an ``indptr`` that starts at id 0.
+
+    Example:
+        >>> to_local_compressed_ids(torch.tensor([3, 5, 9, 12]), compressed_id_offset=5, num_rows=5)
+        tensor([5, 0, 4, 5])
+
+    Args:
+        ids: Global compressed ids.
+        compressed_id_offset: The global id of row 0.
+        num_rows: The number of stored rows.
+
+    Returns:
+        torch.Tensor: Local row ids.
+    """
+    local = ids - compressed_id_offset
+    return torch.where((local >= 0) & (local < num_rows), local, num_rows)

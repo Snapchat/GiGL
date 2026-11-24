@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import torch
@@ -27,6 +27,11 @@ logger = Logger()
 
 _HOMOGENEOUS_TOY_GRAPH_CONFIG = str(
     GIGL_ROOT_DIR / "examples/toy_visual_example/graph_config.yaml"
+)
+# The user-defined-edges toy dataset hardcodes positive/negative edges over node ids 0-26,
+# so it needs this 27-node graph, not the 14-node notebook graph above.
+_HOMOGENEOUS_TOY_GRAPH_27_NODES_CONFIG = str(
+    GIGL_ROOT_DIR / "gigl/src/mocking/mocking_assets/toy_graph_data.yaml"
 )
 _BIPARTITE_TOY_GRAPH_CONFIG = (
     GIGL_ROOT_DIR / "gigl/src/mocking/mocking_assets/bipartite_toy_graph_data.yaml"
@@ -60,7 +65,7 @@ class DatasetAssetMockingSuite:
     @staticmethod
     def _get_pyg_cora_dataset(
         store_at: str = "/tmp/Cora",
-    ) -> Tuple[CoraFromGCS, NodeType, EdgeType]:
+    ) -> tuple[CoraFromGCS, NodeType, EdgeType]:
         """Cora graph is the graph in the first index in the returned dataset
         i.e. the Planetoid object is subscriptable, data = dataset[0]
         Train and tests masks are defined by `train_mask` and `test_mask`` properties on data.
@@ -76,7 +81,7 @@ class DatasetAssetMockingSuite:
     @staticmethod
     def _get_pyg_dblp_dataset(
         store_at: str = "/tmp/DBLP",
-    ) -> Tuple[DBLPFromGCS, dict[str, NodeType], dict[str, EdgeType]]:
+    ) -> tuple[DBLPFromGCS, dict[str, NodeType], dict[str, EdgeType]]:
         """DBLP graph is the graph in the first index in the returned dataset.
         https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.datasets.DBLP.html
         Detailed description of the dataset:
@@ -476,7 +481,7 @@ class DatasetAssetMockingSuite:
         self,
     ) -> MockedDatasetInfo:
         toy_data = self._create_custom_toy_graph(
-            graph_config=_HOMOGENEOUS_TOY_GRAPH_CONFIG
+            graph_config=_HOMOGENEOUS_TOY_GRAPH_27_NODES_CONFIG
         )
 
         pos_edge_index = torch.tensor(

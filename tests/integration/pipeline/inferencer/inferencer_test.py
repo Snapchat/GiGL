@@ -12,7 +12,7 @@ from gigl.src.common.types.graph_data import NodeType
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.inference.v1.gnn_inferencer import InferencerV1
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
@@ -199,7 +199,7 @@ class InferencerTest(TestCase):
                 node_type_to_inferencer_output_info_map[node_type].embeddings_path
             )
             if should_assert_embeddings:
-                self.assertEquals(
+                self.assertEqual(
                     self.__bq_utils.count_number_of_rows_in_bq_table(
                         bq_table=node_type_to_inferencer_output_info_map[
                             node_type
@@ -210,7 +210,7 @@ class InferencerTest(TestCase):
                     f"Found unexpected number of rows for node type {node_type} in embedding table.",
                 )
             if should_assert_predictions:
-                self.assertEquals(
+                self.assertEqual(
                     self.__bq_utils.count_number_of_rows_in_bq_table(
                         bq_table=node_type_to_inferencer_output_info_map[
                             node_type
@@ -227,7 +227,7 @@ class InferencerTest(TestCase):
 
     def test_supervised_node_classification_inference(self):
         applied_task_id = AppliedTaskIdentifier(
-            f"inferencer_v2_test_supervised_node_classification_{(current_formatted_datetime())}"
+            new_test_run_id("inferencer_v2_test_supervised_node_classification")
         )
         mocked_dataset = CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO
         self.__validate_inferencer_for_mocked_dataset(
@@ -236,7 +236,9 @@ class InferencerTest(TestCase):
 
     def test_homogeneous_node_anchor_based_link_prediction_inference(self):
         applied_task_id = AppliedTaskIdentifier(
-            f"inferencer_test_homogeneous_node_anchor_based_link_prediction_{(current_formatted_datetime())}"
+            new_test_run_id(
+                "inferencer_test_homogeneous_node_anchor_based_link_prediction"
+            )
         )
         mocked_dataset = CORA_NODE_ANCHOR_MOCKED_DATASET_INFO
         self.__validate_inferencer_for_mocked_dataset(
@@ -245,7 +247,9 @@ class InferencerTest(TestCase):
 
     def test_heterogeneous_node_anchor_based_link_prediction_inference(self):
         applied_task_id = AppliedTaskIdentifier(
-            f"inferencer_test_heterogeneous_node_anchor_based_link_prediction_{(current_formatted_datetime())}"
+            new_test_run_id(
+                "inferencer_test_heterogeneous_node_anchor_based_link_prediction"
+            )
         )
         mocked_dataset = DBLP_GRAPH_NODE_ANCHOR_MOCKED_DATASET_INFO
         self.__validate_inferencer_for_mocked_dataset(

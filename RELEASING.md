@@ -5,7 +5,7 @@
 GiGL is distributed as two wheels that are always installed together:
 
 - **`gigl`** — pure Python (same wheel for CPU and CUDA users)
-- **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant
+- **`gigl-core`** — compiled C++/CUDA extensions, ABI-bound to the torch variant and the Python minor
 
 Both wheels are always versioned and released together. `bump_version.py` updates both versions and keeps the
 `gigl-core` pin in `pyproject.toml` in sync automatically.
@@ -23,24 +23,46 @@ PR. Trigger it manually:
 2. Select **Create Release** from the left sidebar.
 3. Click **Run workflow**, choose the bump type (`major`, `minor`, or `patch`), and click **Run workflow**.
 
+The dispatch form also has an optional `version_override` field. When set (for example `0.3.3`), the workflow releases
+that exact version instead of applying the bump type. Use it when a version number was consumed by a failed release (for
+example, images were already pushed under that tag) and cannot be reused.
+
 The workflow will:
 
-- Bump the version in `pyproject.toml` (both `gigl` and `gigl-core`) and commit it to a new `release/vX.Y.Z` branch.
+- Bump the version in `pyproject.toml` (both `gigl` and `gigl-core`) and commit it, with the re-locked `uv.lock` and
+  `gigl-core/uv.lock`, to a new `release/vX.Y.Z` branch.
 - Release the GiGL KFP pipeline from that branch.
 - Create and push a version tag `vX.Y.Z`.
 - Open a PR to merge `release/vX.Y.Z` back to `main`.
 
 ### Step 2 — Release GiGL (`release.yml`)
 
-This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it from the release branch created in Step
-1:
+This workflow builds and publishes the `gigl` and `gigl-core` wheels. Trigger it from the tag created in Step 1:
 
 1. Go to the **Actions** tab.
 2. Select **Release GiGL** from the left sidebar.
-3. Click **Run workflow**, select the `release/vX.Y.Z` branch from the branch dropdown, and click **Run workflow**.
+3. Click **Run workflow**, select the `vX.Y.Z` tag from the **Tags** tab of the ref dropdown, and click **Run
+   workflow**. The workflow fails on any other ref, including the `release/vX.Y.Z` branch.
 
-The workflow runs two jobs in parallel — one on a CPU runner, one on a GPU runner — and publishes both wheels to both
-variant registries.
+The workflow runs:
+
+- One `gigl-core` build job per torch variant (`cpu`, `cu128`) and supported Python minor; the minors come from
+  `SUPPORTED_PYTHON_VERSIONS` in `gigl/dep_vars.env`. The `cpu` jobs run on a CPU runner and the `cu128` jobs on a GPU
+  runner; each checks its wheel (`.github/scripts/check_gigl_core_wheel.py`) and imports it in a clean venv of its
+  minor.
+- One `gigl` build job. The pure-Python wheel serves every minor and both registries.
+- Two publish jobs, one per variant registry, behind the `release` environment. They start only once every build job has
+  passed, and each publishes one `gigl-core` wheel per supported minor and the `gigl` wheel.
+
+If a publish job fails partway, use **Re-run failed jobs** on the same run. The re-run uploads this run's wheels and
+skips the files the registry already has. A fresh dispatch rebuilds every wheel instead. The builds set
+`SOURCE_DATE_EPOCH` so that a rebuild matches the uploaded file and is skipped, but that is best-effort: a rebuilt file
+that differs from the one already in the registry fails the publish rather than replacing it.
+
+The build jobs, including the `cu128` jobs on the self-hosted GPU pool, run before the `release` environment's approval;
+only the publish jobs wait for it. The build jobs hold no cloud credentials. Who can start a release is bounded by
+repository write access and the protection on `v*` tags. `workflow_dispatch` runs the workflow file from the chosen ref,
+so an approval gate on the build jobs would not stop someone who can push a tag.
 
 ### Step 3 — Merge the PR
 
@@ -65,14 +87,27 @@ docker buildx imagetools inspect multiarch/qemu-user-static:latest
 Nightly builds are triggered automatically by `nightly_release_&_test.yml`, which calls `create_release.yml` with
 `bump_type=nightly`. The **Release GiGL** wheel-publish step is not part of the nightly flow.
 
+## Release identity and permissions
+
+Jobs that publish release artifacts (`release_gigl_kfp_pipeline` in `create_release.yml`, and all of `release.yml`) run
+in the `release` GitHub environment under a dedicated release identity. Every other job, including the base image and
+integration test builds, runs under the PR/test identity, which cannot push to the release registries (`public-gigl`,
+`gigl`, `gigl-cu128`) or to the release paths in `gs://public-gigl`.
+
+Dispatch `create_release.yml` from `main`. The `release` environment admits only `main` and `release/v*` branches, so a
+dispatch from another branch fails at the environment check.
+
+When you add a new publish target (a registry, a bucket path), grant it to the release identity only, and run the
+publishing step in a job that declares `environment: release`. Do not widen the PR/test identity.
+
 ## What gets published
 
 Each release run publishes to two self-contained registries:
 
-| Registry                     | Packages                                             |
-| ---------------------------- | ---------------------------------------------------- |
-| `gcp-release-registry-cpu`   | `gigl` (pure Python) + `gigl-core` (CPU wheel)       |
-| `gcp-release-registry-cu128` | `gigl` (pure Python) + `gigl-core` (CUDA 12.8 wheel) |
+| Registry                     | Packages                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `gcp-release-registry-cpu`   | `gigl` (pure Python) + `gigl-core` (CPU wheels, one per Python minor)       |
+| `gcp-release-registry-cu128` | `gigl` (pure Python) + `gigl-core` (CUDA 12.8 wheels, one per Python minor) |
 
 Users install from exactly one registry based on their variant — see
 [installation docs](docs/user_guide/getting_started/installation.md).

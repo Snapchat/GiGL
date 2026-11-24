@@ -1,4 +1,3 @@
-import unittest
 from collections import defaultdict
 from typing import Literal, Optional, Union, cast
 
@@ -740,9 +739,11 @@ class DistABLPLoaderTest(TestCase):
         edge_index.update(labeled_edges)
 
         partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            node_partition_book=to_heterogeneous_node(
+                torch.zeros(18, dtype=torch.int64)
+            ),
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -777,19 +778,17 @@ class DistABLPLoaderTest(TestCase):
             ),
         )
 
-    def test_homogeneous_ablp_materializes_quantized_features(self) -> None:
+    def test_homogeneous_ablp_materializes_packed_features(self) -> None:
         """Scalar metadata supports quantized homogeneous ABLP batches."""
         loaded_graph_tensors = LoadedGraphTensors(
             node_ids=torch.arange(3),
             node_features=torch.tensor([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]),
             # High-order 2-bit codes unpack to [0, 3], [2, 1], and [1, 2].
-            node_quantized_features=torch.tensor(
-                [[48], [144], [96]], dtype=torch.uint8
-            ),
+            node_packed_features=torch.tensor([[48], [144], [96]], dtype=torch.uint8),
             node_labels=None,
             edge_index=torch.tensor([[0, 1], [1, 0]]),
             edge_features=None,
-            edge_quantized_features=torch.tensor([[48], [144]], dtype=torch.uint8),
+            edge_packed_features=torch.tensor([[48], [144]], dtype=torch.uint8),
             positive_label=torch.tensor([[0], [1]]),
             negative_label=torch.tensor([[0], [2]]),
         )
@@ -805,21 +804,25 @@ class DistABLPLoaderTest(TestCase):
 
         assert isinstance(loaded_graph_tensors.edge_index, dict)
         assert isinstance(loaded_graph_tensors.node_features, dict)
-        assert isinstance(loaded_graph_tensors.node_quantized_features, dict)
-        assert isinstance(loaded_graph_tensors.edge_quantized_features, dict)
+        assert isinstance(loaded_graph_tensors.node_packed_features, dict)
+        assert isinstance(loaded_graph_tensors.edge_packed_features, dict)
         edge_index = cast(dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_index)
         node_features = cast(
             dict[NodeType, torch.Tensor], loaded_graph_tensors.node_features
         )
-        node_quantized_features = cast(
-            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_quantized_features
+        node_packed_features = cast(
+            dict[NodeType, torch.Tensor], loaded_graph_tensors.node_packed_features
         )
-        edge_quantized_features = cast(
-            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_quantized_features
+        edge_packed_features = cast(
+            dict[EdgeType, torch.Tensor], loaded_graph_tensors.edge_packed_features
         )
         partition_output = PartitionOutput(
-            node_partition_book={DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3)},
-            edge_partition_book={edge_type: torch.zeros(3) for edge_type in edge_index},
+            node_partition_book={
+                DEFAULT_HOMOGENEOUS_NODE_TYPE: torch.zeros(3, dtype=torch.int64)
+            },
+            edge_partition_book={
+                edge_type: torch.zeros(3, dtype=torch.int64) for edge_type in edge_index
+            },
             partitioned_edge_index={
                 edge_type: GraphPartitionData(
                     edge_tensor, torch.arange(edge_tensor.size(1))
@@ -832,15 +835,15 @@ class DistABLPLoaderTest(TestCase):
                     ids=torch.arange(3),
                 )
             },
-            partitioned_node_quantized_features={
+            partitioned_node_packed_features={
                 DEFAULT_HOMOGENEOUS_NODE_TYPE: FeaturePartitionData(
-                    feats=node_quantized_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
+                    feats=node_packed_features[DEFAULT_HOMOGENEOUS_NODE_TYPE],
                     ids=torch.arange(3),
                 )
             },
-            partitioned_edge_quantized_features={
+            partitioned_edge_packed_features={
                 DEFAULT_HOMOGENEOUS_EDGE_TYPE: FeaturePartitionData(
-                    feats=edge_quantized_features[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
+                    feats=edge_packed_features[DEFAULT_HOMOGENEOUS_EDGE_TYPE],
                     ids=torch.arange(2),
                 )
             },
@@ -925,9 +928,11 @@ class DistABLPLoaderTest(TestCase):
         }
         edge_index.update(labeled_edges)
         partition_output = PartitionOutput(
-            node_partition_book=to_heterogeneous_node(torch.zeros(18)),
+            node_partition_book=to_heterogeneous_node(
+                torch.zeros(18, dtype=torch.int64)
+            ),
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -1029,11 +1034,13 @@ class DistABLPLoaderTest(TestCase):
             nodes[edge_type[2]].append(edge_idx[1])
         partition_output = PartitionOutput(
             node_partition_book={
-                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                node_type: torch.zeros(
+                    int(torch.cat(node_ids).max().item() + 1), dtype=torch.int64
+                )
                 for node_type, node_ids in nodes.items()
             },
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={
@@ -1125,8 +1132,6 @@ class DistABLPLoaderTest(TestCase):
             ),
         )
 
-    # TODO: (mkolodner-sc) - Figure out why this test is failing on Google Cloud Build
-    @unittest.skip("Failing on Google Cloud Build - skiping for now")
     def test_dblp_supervised(self):
         create_test_process_group()
         dblp_supervised_info = get_mocked_dataset_artifact_metadata()[
@@ -1442,11 +1447,13 @@ class DistABLPLoaderTest(TestCase):
             nodes[edge_type[2]].append(edge_idx[1])
         partition_output = PartitionOutput(
             node_partition_book={
-                node_type: torch.zeros(int(torch.cat(node_ids).max().item() + 1))
+                node_type: torch.zeros(
+                    int(torch.cat(node_ids).max().item() + 1), dtype=torch.int64
+                )
                 for node_type, node_ids in nodes.items()
             },
             edge_partition_book={
-                e_type: torch.zeros(int(e_idx.max().item() + 1))
+                e_type: torch.zeros(int(e_idx.max().item() + 1), dtype=torch.int64)
                 for e_type, e_idx in edge_index.items()
             },
             partitioned_edge_index={

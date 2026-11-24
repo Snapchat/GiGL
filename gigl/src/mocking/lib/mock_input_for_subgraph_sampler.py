@@ -2,11 +2,20 @@ import tempfile
 from dataclasses import dataclass
 from typing import Optional
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import tensorflow as tf
 import torch
 from tensorflow_transform.tf_metadata import schema_utils
 
-from gigl.common import GcsUri, LocalUri, UriFactory
+from gigl.common import GcsUri, LocalUri, Uri, UriFactory
+from gigl.common.data.parquet_format import (
+    EDGE_DST_COLUMN,
+    EDGE_SRC_COLUMN,
+    FEATURES_COLUMN,
+    NODE_ID_COLUMN,
+)
+from gigl.common.data.parquet_manifest import filesystem_and_path, write_manifest
 from gigl.common.logger import Logger
 from gigl.common.utils.proto_utils import ProtoUtils
 from gigl.src.common.types.graph_data import (
@@ -21,8 +30,10 @@ from gigl.src.data_preprocessor.lib.transform.tf_value_encoder import TFValueEnc
 from gigl.src.data_preprocessor.lib.types import FeatureSpecDict, InstanceDict
 from gigl.src.mocking.lib.constants import (
     get_example_task_edge_features_gcs_dir,
+    get_example_task_edge_features_parquet_gcs_dir,
     get_example_task_edge_features_schema_gcs_path,
     get_example_task_node_features_gcs_dir,
+    get_example_task_node_features_parquet_gcs_dir,
     get_example_task_node_features_schema_gcs_path,
 )
 from gigl.src.mocking.lib.feature_handling import get_feature_field_name
@@ -35,6 +46,7 @@ logger = Logger()
 @dataclass
 class _PreprocessMetadata:
     features_uri: GcsUri
+    parquet_uri: GcsUri
     schema_uri: GcsUri
     feature_cols: list[str]
 
@@ -76,7 +88,77 @@ class _InstanceDictToTFExample:
         return serialized_proto
 
 
-def _generate_preprocessed_node_tfrecord_data(
+# All mocked datasets are small, so each entity gets one Parquet file.
+_PARQUET_FILE_NAME = "part-00000-of-00001.parquet"
+
+
+def _write_parquet_table(table: pa.Table, uri_prefix: Uri) -> None:
+    """Writes ``table`` as one Parquet file under ``uri_prefix``, with the row-count manifest next to it."""
+    filesystem, path = filesystem_and_path(uri_prefix)
+    filesystem.create_dir(path, recursive=True)
+    pq.write_table(
+        table, f"{path.rstrip('/')}/{_PARQUET_FILE_NAME}", filesystem=filesystem
+    )
+    write_manifest(uri_prefix)
+
+
+def _features_to_arrow(features: torch.Tensor) -> pa.FixedSizeListArray:
+    """Converts a ``[num_rows, feature_dim]`` tensor into the ``features`` column of the Parquet layout."""
+    values = features.to(torch.float32).numpy()
+    return pa.FixedSizeListArray.from_arrays(
+        pa.array(values.reshape(-1)), values.shape[1]
+    )
+
+
+def _write_node_parquet(
+    uri_prefix: Uri,
+    node_features: torch.Tensor,
+    node_labels: Optional[torch.Tensor],
+    label_column: str,
+) -> None:
+    """Writes the nodes ``0 .. len(node_features) - 1`` in the Parquet layout that the data preprocessor writes.
+
+    Args:
+        uri_prefix (Uri): The directory to write to.
+        node_features (torch.Tensor): The ``[num_nodes, feature_dim]`` features. Row ``i`` belongs to node ``i``.
+        node_labels (Optional[torch.Tensor]): The ``[num_nodes]`` labels, if the nodes have labels.
+        label_column (str): The name of the label column.
+    """
+    num_nodes = node_features.shape[0]
+    columns: dict[str, pa.Array] = {
+        NODE_ID_COLUMN: pa.array(torch.arange(num_nodes, dtype=torch.int64).numpy()),
+        FEATURES_COLUMN: _features_to_arrow(node_features),
+    }
+    if node_labels is not None:
+        columns[label_column] = pa.array(
+            node_labels.reshape(-1).to(torch.float32).numpy()
+        )
+    _write_parquet_table(table=pa.table(columns), uri_prefix=uri_prefix)
+
+
+def _write_edge_parquet(
+    uri_prefix: Uri,
+    edge_index: torch.Tensor,
+    edge_features: Optional[torch.Tensor],
+) -> None:
+    """Writes edges in the Parquet layout that the data preprocessor writes.
+
+    Args:
+        uri_prefix (Uri): The directory to write to.
+        edge_index (torch.Tensor): The ``[2, num_edges]`` source and destination node ids.
+        edge_features (Optional[torch.Tensor]): The ``[num_edges, feature_dim]`` features, if the edges have features.
+    """
+    edge_index = edge_index.to(torch.int64)
+    columns: dict[str, pa.Array] = {
+        EDGE_SRC_COLUMN: pa.array(edge_index[0].numpy()),
+        EDGE_DST_COLUMN: pa.array(edge_index[1].numpy()),
+    }
+    if edge_features is not None:
+        columns[FEATURES_COLUMN] = _features_to_arrow(edge_features)
+    _write_parquet_table(table=pa.table(columns), uri_prefix=uri_prefix)
+
+
+def _generate_preprocessed_node_data(
     data: MockedDatasetInfo,
     version: str,
     node_type: NodeType,
@@ -137,6 +219,19 @@ def _generate_preprocessed_node_tfrecord_data(
         f"Wrote preprocessed node TFRecords for type {node_type} to prefix {features_path.uri}"
     )
 
+    parquet_path = get_example_task_node_features_parquet_gcs_dir(
+        task_name=data.name, version=version, node_type=node_type
+    )
+    _write_node_parquet(
+        uri_prefix=parquet_path,
+        node_features=node_features,
+        node_labels=node_labels,
+        label_column=data.node_label_column_name,
+    )
+    logger.info(
+        f"Wrote preprocessed node Parquet for type {node_type} to prefix {parquet_path.uri}"
+    )
+
     # Write schema to GCS.
     node_schema_uri = get_example_task_node_features_schema_gcs_path(
         task_name=data.name, version=version, node_type=node_type
@@ -155,6 +250,7 @@ def _generate_preprocessed_node_tfrecord_data(
     )
     return _NodePreprocessMetadata(
         features_uri=features_path,
+        parquet_uri=parquet_path,
         schema_uri=node_schema_uri,
         feature_cols=feature_names,
         id_col=data.node_id_column_name,
@@ -162,7 +258,7 @@ def _generate_preprocessed_node_tfrecord_data(
     )
 
 
-def _generate_preprocessed_edge_tfrecord_data(
+def _generate_preprocessed_edge_data(
     data: MockedDatasetInfo,
     version: str,
     edge_type: EdgeType,
@@ -220,6 +316,19 @@ def _generate_preprocessed_edge_tfrecord_data(
         f"Wrote preprocessed edge TFRecords for type {edge_type} to prefix {features_path.uri}"
     )
 
+    parquet_path = get_example_task_edge_features_parquet_gcs_dir(
+        task_name=data.name,
+        version=version,
+        edge_type=edge_type,
+        edge_usage_type=edge_usage_type,
+    )
+    _write_edge_parquet(
+        uri_prefix=parquet_path, edge_index=edge_index, edge_features=edge_features
+    )
+    logger.info(
+        f"Wrote preprocessed edge Parquet for type {edge_type} to prefix {parquet_path.uri}"
+    )
+
     # Write schema to GCS.
     edge_schema_uri = get_example_task_edge_features_schema_gcs_path(
         task_name=data.name,
@@ -242,6 +351,7 @@ def _generate_preprocessed_edge_tfrecord_data(
 
     return _EdgePreprocessMetadata(
         features_uri=features_path,
+        parquet_uri=parquet_path,
         schema_uri=edge_schema_uri,
         feature_cols=feature_names,
         src_id_col=data.edge_src_column_name,
@@ -249,7 +359,7 @@ def _generate_preprocessed_edge_tfrecord_data(
     )
 
 
-def generate_preprocessed_tfrecord_data(
+def generate_preprocessed_data(
     mocked_dataset_info: MockedDatasetInfo,
     version: str,
     gbml_config_pb: gbml_config_pb2.GbmlConfig,
@@ -280,7 +390,7 @@ def generate_preprocessed_tfrecord_data(
             else None
         )
 
-        node_preprocess_metadata = _generate_preprocessed_node_tfrecord_data(
+        node_preprocess_metadata = _generate_preprocessed_node_data(
             data=mocked_dataset_info,
             version=version,
             node_type=node_type,
@@ -297,6 +407,7 @@ def generate_preprocessed_tfrecord_data(
                 if node_preprocess_metadata.label_col is not None
                 else None,
                 tfrecord_uri_prefix=node_preprocess_metadata.features_uri.uri,
+                parquet_uri_prefix=node_preprocess_metadata.parquet_uri.uri,
                 schema_uri=node_preprocess_metadata.schema_uri.uri,
                 feature_dim=num_features,
             )
@@ -322,7 +433,7 @@ def generate_preprocessed_tfrecord_data(
         )
         edge_index = edge_index_by_edge_type[edge_type]
 
-        edge_preprocess_metadata = _generate_preprocessed_edge_tfrecord_data(
+        edge_preprocess_metadata = _generate_preprocessed_edge_data(
             data=mocked_dataset_info,
             version=version,
             edge_type=edge_type,
@@ -335,6 +446,7 @@ def generate_preprocessed_tfrecord_data(
             preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
                 feature_keys=edge_preprocess_metadata.feature_cols,
                 tfrecord_uri_prefix=edge_preprocess_metadata.features_uri.uri,
+                parquet_uri_prefix=edge_preprocess_metadata.parquet_uri.uri,
                 schema_uri=edge_preprocess_metadata.schema_uri.uri,
                 feature_dim=num_features,
             )
@@ -359,21 +471,20 @@ def generate_preprocessed_tfrecord_data(
                     and edge_type in mocked_dataset_info.user_defined_edge_feats
                     else None
                 )
-                user_def_edge_preprocess_metadata = (
-                    _generate_preprocessed_edge_tfrecord_data(
-                        data=mocked_dataset_info,
-                        version=version,
-                        edge_type=edge_type,
-                        edge_index=user_def_edge_index,
-                        num_edge_features=num_edge_feats,
-                        edge_features=user_defined_edge_feats,
-                        edge_usage_type=user_def_label,
-                    )
+                user_def_edge_preprocess_metadata = _generate_preprocessed_edge_data(
+                    data=mocked_dataset_info,
+                    version=version,
+                    edge_type=edge_type,
+                    edge_index=user_def_edge_index,
+                    num_edge_features=num_edge_feats,
+                    edge_features=user_defined_edge_feats,
+                    edge_usage_type=user_def_label,
                 )
 
                 user_def_edge_metadata_info_pb = preprocessed_metadata_pb2.PreprocessedMetadata.EdgeMetadataInfo(
                     feature_keys=user_def_edge_preprocess_metadata.feature_cols,
                     tfrecord_uri_prefix=user_def_edge_preprocess_metadata.features_uri.uri,
+                    parquet_uri_prefix=user_def_edge_preprocess_metadata.parquet_uri.uri,
                     schema_uri=user_def_edge_preprocess_metadata.schema_uri.uri,
                     feature_dim=num_edge_feats,
                 )

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from typing import Set, Tuple, Type, TypeVar, cast
+from typing import Set, Type, TypeVar, cast
 
 import numpy as np
 
@@ -21,7 +21,7 @@ from gigl.src.common.types.pb_wrappers.gbml_config import GbmlConfigPbWrapper
 from gigl.src.common.types.pb_wrappers.task_metadata import TaskMetadataPbWrapper
 from gigl.src.common.types.task_metadata import TaskMetadataType
 from gigl.src.common.utils.file_loader import FileLoader
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.mocking.lib.mocked_dataset_resources import MockedDatasetInfo
 from gigl.src.mocking.lib.versioning import get_mocked_dataset_artifact_metadata
 from gigl.src.mocking.mocking_assets.mocked_datasets_for_pipeline_tests import (
@@ -36,11 +36,11 @@ from snapchat.research.gbml import (
     gbml_config_pb2,
     training_samples_schema_pb2,
 )
-from tests.integration.pipeline.split_generator.lib import (
+from tests.integration_tests_spark.split_generator.lib import (
     node_anchor_based_link_prediction,
     supervised_node_classification,
 )
-from tests.integration.pipeline.utils import (
+from tests.integration_tests_spark.utils import (
     get_gcs_assets_dir_from_frozen_gbml_config_uri,
 )
 from tests.test_assets.test_case import TestCase
@@ -355,7 +355,7 @@ class SplitGeneratorPipelineTest(TestCase):
                 --master local \\
                 --jars {SPARK_35_TFRECORD_JAR_LOCAL_PATH} \\
                 {_PATH_TO_SPLIT_GEN_SCALA_ROOT}/{_SPLIT_GEN_SCALA_PROJECT_NAME}/target/scala-2.12/split_generator-assembly-1.0.jar \\
-                splitgen_integration_test_{current_formatted_datetime()} \\
+                {new_test_run_id("splitgen_integration_test")} \\
                 {frozen_gbml_config_uri.uri} \\
                 {resource_config_uri.uri}""",
         ]
@@ -393,7 +393,7 @@ class SplitGeneratorPipelineTest(TestCase):
         self,
         node_classification_dataset_metadata_pb: dataset_metadata_pb2.SupervisedNodeClassificationDataset,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-    ) -> Tuple[
+    ) -> tuple[
         supervised_node_classification.NodeClassificationSplitData,
         supervised_node_classification.NodeClassificationSplitData,
         supervised_node_classification.NodeClassificationSplitData,
@@ -449,7 +449,7 @@ class SplitGeneratorPipelineTest(TestCase):
         self,
         node_anchor_dataset_metadata_pb: dataset_metadata_pb2.NodeAnchorBasedLinkPredictionDataset,
         gbml_config_pb_wrapper: GbmlConfigPbWrapper,
-    ) -> Tuple[
+    ) -> tuple[
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,
         node_anchor_based_link_prediction.NodeAnchorBasedLinkPredictionSplitData,
@@ -626,7 +626,7 @@ class SplitGeneratorPipelineTest(TestCase):
             == supervised_node_classification.NodeClassificationSettingType.INDUCTIVE
         ):
             # All edge sets across train/val/test splits must be disjoint.
-            self.assertEquals(
+            self.assertEqual(
                 train_graph.num_edges + val_graph.num_edges + test_graph.num_edges,
                 composed_graph.num_edges,
             )

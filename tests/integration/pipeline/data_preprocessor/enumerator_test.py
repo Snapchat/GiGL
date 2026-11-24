@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union
+from typing import Any, Union
 
 import google.cloud.bigquery as bigquery
 import pandas as pd
@@ -7,11 +7,10 @@ import gigl.src.data_preprocessor.lib.enumerate.queries as enumeration_queries
 from gigl.common.beam.sharded_read import BigQueryShardedReadConfig
 from gigl.common.logger import Logger
 from gigl.env.pipelines_config import get_resource_config
-from gigl.src.common.constants.time import NODASH_DATETIME_FORMAT
 from gigl.src.common.types import AppliedTaskIdentifier
 from gigl.src.common.types.graph_data import EdgeType, EdgeUsageType, NodeType, Relation
 from gigl.src.common.utils.bq import BqUtils
-from gigl.src.common.utils.time import current_formatted_datetime
+from gigl.src.common.utils.time import new_test_run_id
 from gigl.src.data_preprocessor.lib.enumerate.utils import (
     Enumerator,
     EnumeratorEdgeTypeMetadata,
@@ -143,8 +142,7 @@ class EnumeratorTest(TestCase):
     def setUp(self) -> None:
         self.__client = bigquery.Client()
         self.__bq_utils = BqUtils()
-        current_timestamp = current_formatted_datetime(fmt=NODASH_DATETIME_FORMAT)
-        self.__applied_task_identifier = f"enumerator_test_{current_timestamp}"
+        self.__applied_task_identifier = new_test_run_id("enumerator_test")
 
         project = get_resource_config().project
         temp_bq_dataset = get_resource_config().temp_assets_bq_dataset_name
@@ -343,7 +341,7 @@ class EnumeratorTest(TestCase):
         self,
         int_to_orig_node_id_map: dict[int, str],
         map_enum_edge_type_metadata: dict[
-            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
+            tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ],
     ):
         main_enumerated_edge_type_metadata = map_enum_edge_type_metadata[
@@ -505,7 +503,7 @@ class EnumeratorTest(TestCase):
         }
 
         map_enum_edge_type_metadata: dict[
-            Tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
+            tuple[EdgeType, EdgeUsageType], EnumeratorEdgeTypeMetadata
         ] = {
             (
                 edge_type_metadata.enumerated_edge_data_reference.edge_type,

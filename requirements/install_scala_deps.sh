@@ -98,6 +98,17 @@ if [ "$DOWNLOAD_ONLY" = true ]; then
 fi
 
 # Now proceed with installations and setup
+
+# `cs setup` downloads about 300 files from Maven Central, and repo1.maven.org rate limits shared CI runner
+# IPs with HTTP 429. Route those downloads through Google's Maven Central mirror instead.
+# COURSIER_REPOSITORIES does not help here: the Coursier app descriptors name Maven Central explicitly.
+COURSIER_MIRROR_CONFIG_LOCAL_PATH="$TOOLS_COURSIER_DIR/mirror.properties"
+cat > "$COURSIER_MIRROR_CONFIG_LOCAL_PATH" <<'MIRROR_CONFIG'
+central.from=https://repo1.maven.org/maven2
+central.to=https://maven-central.storage-download.googleapis.com/maven2
+MIRROR_CONFIG
+export COURSIER_MIRRORS="$PWD/$COURSIER_MIRROR_CONFIG_LOCAL_PATH"
+
 if is_running_on_mac;
 then
     echo "Setting up Scala Deps for Mac environment"

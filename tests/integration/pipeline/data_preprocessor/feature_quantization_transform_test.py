@@ -15,7 +15,8 @@ from tensorflow_transform.tf_metadata.dataset_metadata import DatasetMetadata
 from torch_geometric.data import Data
 
 from gigl.common.beam.better_tfrecordio import BetterWriteToTFRecord
-from gigl.common.data.dataloaders import TFDatasetOptions, TFRecordDataLoader
+from gigl.common.data.loader_types import TFDatasetOptions
+from gigl.common.data.tf_record_loader import TFRecordDataLoader
 from gigl.distributed.utils.neighborloader import (
     EDGE_PACKED_FEATURES_METADATA_KEY,
     materialize_quantized_edge_features,
@@ -109,9 +110,11 @@ class FeatureQuantizationTransformTest(TestCase):
             )
 
             preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
-            preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
-                0
-            ].node_id_key = "node_id"
+            node_metadata = (
+                preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[0]
+            )
+            node_metadata.node_id_key = "node_id"
+            node_metadata.tfrecord_uri_prefix = temp_dir
             edge_metadata = (
                 preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[0]
             )
@@ -153,15 +156,15 @@ class FeatureQuantizationTransformTest(TestCase):
             )
 
             assert loaded.features is not None
-            assert loaded.quantized_features is not None
+            assert loaded.packed_features is not None
             self.assert_tensor_equality(loaded.ids, torch.tensor([[0, 1], [1, 0]]))
             self.assert_tensor_equality(loaded.features, torch.tensor([[10.0], [20.0]]))
             self.assert_tensor_equality(
-                loaded.quantized_features, torch.tensor([[0], [192]], dtype=torch.uint8)
+                loaded.packed_features, torch.tensor([[0], [192]], dtype=torch.uint8)
             )
             materialized, remaining_metadata = materialize_quantized_edge_features(
                 data=Data(edge_index=loaded.ids, edge_attr=loaded.features),
-                metadata={EDGE_PACKED_FEATURES_METADATA_KEY: loaded.quantized_features},
+                metadata={EDGE_PACKED_FEATURES_METADATA_KEY: loaded.packed_features},
                 edge_quantization_metadata=serialized_metadata.edge_quantization_metadata,
             )
             self.assert_tensor_equality(

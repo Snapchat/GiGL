@@ -5,6 +5,8 @@ description: |
   Only commits changes to files that have been modified or deleted, without adding new files.
   If a new branch is specified, the action will create a new branch and push the changes to it.
   Otherwise, the action will push the changes to the current branch.
+  Use only in jobs that run trusted code and check out with persisted credentials. It does not
+  guard against hooks or processes left by PR-authored code that ran earlier in the job.
 
 
 inputs:

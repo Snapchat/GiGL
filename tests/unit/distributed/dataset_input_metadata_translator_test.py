@@ -3,7 +3,7 @@ from typing import Optional, Union, cast
 
 from parameterized import param, parameterized
 
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.distributed.utils.serialized_graph_metadata_translator import (
     convert_pb_to_serialized_graph_metadata,
 )
@@ -128,6 +128,65 @@ class TranslatorTestCase(TestCase):
         self.assertEqual(node_entity_info.packed_feature_key, "packed_features")
         self.assertEqual(node_entity_info.packed_feature_dim, 1)
 
+    def test_translates_parquet_uri_prefix(self) -> None:
+        mocked_dataset_artifact_metadata = self._name_to_mocked_dataset_map[
+            CORA_NODE_CLASSIFICATION_MOCKED_DATASET_INFO.name
+        ]
+        gbml_config_pb_wrapper = (
+            GbmlConfigPbWrapper.get_gbml_config_pb_wrapper_from_uri(
+                gbml_config_uri=mocked_dataset_artifact_metadata.frozen_gbml_config_uri
+            )
+        )
+        preprocessed_metadata_pb = preprocessed_metadata_pb2.PreprocessedMetadata()
+        preprocessed_metadata_pb.CopyFrom(
+            gbml_config_pb_wrapper.preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb
+        )
+        condensed_node_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_node_type
+        node_metadata = (
+            preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
+                condensed_node_type
+            ]
+        )
+        # The preprocessor leaves tfrecord_uri_prefix empty when it writes Parquet.
+        node_metadata.tfrecord_uri_prefix = ""
+        node_metadata.parquet_uri_prefix = "gs://example-bucket/nodes/"
+
+        serialized_metadata = convert_pb_to_serialized_graph_metadata(
+            preprocessed_metadata_pb_wrapper=PreprocessedMetadataPbWrapper(
+                preprocessed_metadata_pb
+            ),
+            graph_metadata_pb_wrapper=gbml_config_pb_wrapper.graph_metadata_pb_wrapper,
+        )
+
+        node_entity_info = serialized_metadata.node_entity_info
+        assert isinstance(node_entity_info, SerializedTFRecordInfo)
+        self.assertIsNone(node_entity_info.tfrecord_uri_prefix)
+        assert node_entity_info.parquet_uri_prefix is not None
+        self.assertEqual(
+            node_entity_info.parquet_uri_prefix.uri, "gs://example-bucket/nodes/"
+        )
+        self.assertEqual(
+            node_entity_info.data_uri_prefix.uri, "gs://example-bucket/nodes/"
+        )
+        # The node override must not change the edge prefixes.
+        condensed_edge_type = gbml_config_pb_wrapper.graph_metadata_pb_wrapper.homogeneous_condensed_edge_type
+        main_edge_info = (
+            preprocessed_metadata_pb.condensed_edge_type_to_preprocessed_metadata[
+                condensed_edge_type
+            ].main_edge_info
+        )
+        edge_entity_info = serialized_metadata.edge_entity_info
+        assert isinstance(edge_entity_info, SerializedTFRecordInfo)
+        assert edge_entity_info.parquet_uri_prefix is not None
+        self.assertEqual(
+            edge_entity_info.parquet_uri_prefix.uri, main_edge_info.parquet_uri_prefix
+        )
+        assert edge_entity_info.tfrecord_uri_prefix is not None
+        self.assertEqual(
+            edge_entity_info.tfrecord_uri_prefix.uri,
+            main_edge_info.tfrecord_uri_prefix,
+        )
+
     @parameterized.expand(
         [
             param(
@@ -215,6 +274,7 @@ class TranslatorTestCase(TestCase):
                     condensed_node_type
                 ],
             )
+            assert seralized_node_info.tfrecord_uri_prefix is not None
             self.assertEqual(
                 seralized_node_info.tfrecord_uri_prefix.uri,
                 preprocessed_metadata_pb_wrapper.preprocessed_metadata_pb.condensed_node_type_to_preprocessed_metadata[
@@ -296,6 +356,7 @@ class TranslatorTestCase(TestCase):
                 ],
             )
 
+            assert seralized_edge_info.tfrecord_uri_prefix is not None
             self.assertEqual(
                 seralized_edge_info.tfrecord_uri_prefix.uri,
                 edge_info.main_edge_info.tfrecord_uri_prefix,
@@ -381,6 +442,7 @@ class TranslatorTestCase(TestCase):
                         ],
                     )
 
+                    assert seralized_positive_label_info.tfrecord_uri_prefix is not None
                     self.assertEqual(
                         seralized_positive_label_info.tfrecord_uri_prefix.uri,
                         edge_info.positive_edge_info.tfrecord_uri_prefix,
@@ -470,6 +532,9 @@ class TranslatorTestCase(TestCase):
                         ],
                     )
 
+                    assert (
+                        serialized_negative_label_info.tfrecord_uri_prefix is not None
+                    )
                     self.assertEqual(
                         serialized_negative_label_info.tfrecord_uri_prefix.uri,
                         edge_info.negative_edge_info.tfrecord_uri_prefix,

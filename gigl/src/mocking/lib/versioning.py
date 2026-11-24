@@ -81,9 +81,8 @@ def update_mocked_dataset_artifact_metadata(
         task_name: metadata.json_serializable
         for task_name, metadata in current_artifact_metadata.items()
     }
-    json.dump(
-        obj=serializable_current_artifact_metadata,
-        fp=open(MOCKED_DATASET_ARTIFACT_METADATA_LOCAL_PATH.uri, "w"),
-        indent=4,
-    )
+    with open(MOCKED_DATASET_ARTIFACT_METADATA_LOCAL_PATH.uri, "w") as f:
+        json.dump(obj=serializable_current_artifact_metadata, fp=f, indent=4)
+        # The end-of-file-fixer pre-commit hook requires a final newline.
+        f.write("\n")
     logger.info("Updated artifact metadata tracker file.")

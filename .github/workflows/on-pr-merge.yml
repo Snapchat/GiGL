@@ -14,6 +14,8 @@ permissions:
   # Needed for commenting on PRs
   pull-requests: 'write'
   issues: 'write'
+  # Needed for cancelling the run when a job fails
+  actions: 'write'
 
 jobs:
   ci-unit-test-python:
@@ -22,7 +24,7 @@ jobs:
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -42,6 +44,20 @@ jobs:
         cmd: "make unit_test_py"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
   ci-unit-test-scala:
     # Because of limitation discussed https://github.com/orgs/community/discussions/46757#discussioncomment-4912738
@@ -49,7 +65,7 @@ jobs:
     # Once before it gets into the merge queue and once when it is in the merge queue.
     # Our tests take a long time to run, so this is not ideal.
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -69,10 +85,24 @@ jobs:
         cmd: "make unit_test_scala"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
   ci-unit-test-cpp:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,10 +114,16 @@ jobs:
       run: bash requirements/install_py_deps.sh --skip-glt-post-install
     - name: Run C++ Unit Tests
       run: make unit_test_cpp
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"
 
   ci-integration-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -104,10 +140,52 @@ jobs:
         cmd: "make integration_test INTEGRATION_TEST_CPU_IMAGE_TAG=${{ github.run_id }}.${{ github.run_attempt }}"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
+
+  # Optional: this job is not in the required status checks of the `main` ruleset, so a failure does not block the merge.
+  ci-integration-tests-spark:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup development environment
+      uses: ./.github/actions/setup-python-tools
+      with:
+          setup_gcloud: "true"
+          gcp_project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.workload_identity_provider }}
+          gcp_service_account_email: ${{ secrets.gcp_service_account_email }}
+    - name: Run Spark Integration Tests
+      uses: ./.github/actions/run-cloud-run-command-on-active-checkout
+      with:
+        cmd: "make integration_tests_spark"
+        service_account:  ${{ secrets.gcp_service_account_email }}
+        project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
   ci-integration-e2e-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -120,9 +198,25 @@ jobs:
     - name: Run E2E Tests
       uses: ./.github/actions/run-cloud-run-command-on-active-checkout
       with:
-        cmd: "make run_all_e2e_tests"
+        # The merge queue fails fast: the first failed pipeline cancels the rest to free capacity.
+        # GITHUB_RUN_ID labels the pipeline runs so the cancel step below can find them.
+        cmd: "make run_all_e2e_tests GITHUB_RUN_ID=${{ github.run_id }} E2E_FAIL_FAST=1"
         service_account:  ${{ secrets.gcp_service_account_email }}
         project:  ${{ vars.GCP_PROJECT_ID }}
+        github_run_id: ${{ github.run_id }}
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"
+    - name: Cancel GCP resources from this run
+      if: cancelled()
+      uses: ./.github/actions/cancel-ci-gcp-resources
+      with:
+        project: ${{ vars.GCP_PROJECT_ID }}
+        region: us-central1
+        github_run_id: ${{ github.run_id }}
 
 # TODO(kmonte): Re-enable this once the tests are fixed.
   # ci-integration-example-notebooks-test:
@@ -146,7 +240,7 @@ jobs:
 
   ci-lint-test:
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup development environment
@@ -169,3 +263,9 @@ jobs:
         # It is setup in the setup-python-tools action.
         source ~/.profile
         make lint_test
+    - name: Cancel the merge queue run on failure
+      if: failure()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: gh run cancel "${GITHUB_RUN_ID}"

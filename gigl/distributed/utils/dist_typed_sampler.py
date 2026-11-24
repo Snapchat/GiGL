@@ -112,6 +112,14 @@ def parse_typed_channel_ratio_groups(
             f"got {ratio_sum} from ratios {typed_channel_ratio_list}."
         )
 
+    # The per-node expanded flag packs one bit per channel into a signed int64
+    # (gigl_core) and a torch.long tensor (transform); bit 63 would overflow.
+    if len(typed_channel_groups) > 63:
+        raise ValueError(
+            "typed_channel_ratios supports at most 63 channels (one bit each in "
+            f"the pushed-channel mask), got {len(typed_channel_groups)}."
+        )
+
     return typed_channel_groups, typed_channel_ratio_list
 
 

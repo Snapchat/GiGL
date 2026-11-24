@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import NamedTuple, Optional, Tuple
+from typing import NamedTuple, Optional
 
 import torch
 
@@ -121,7 +121,7 @@ class TrainingSamplesProtosTranslator:
             #              this or filter those out in Split Generator.
 
             for pos_edge_pb in sample.pos_edges:
-                pos_edge: Tuple[Edge, Optional[torch.Tensor]] = (
+                pos_edge: tuple[Edge, Optional[torch.Tensor]] = (
                     GbmlProtosTranslator.edge_from_EdgePb(
                         graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
                         edge_pb=pos_edge_pb,
@@ -144,7 +144,7 @@ class TrainingSamplesProtosTranslator:
                     ].append(pos_edge[1])  # ty: ignore[invalid-argument-type] TODO(ty-torch-tensor-specialization): fix ty Tensor vs FloatTensor/LongTensor specialization.
 
             for hard_neg_edge_pb in sample.hard_neg_edges:
-                hard_neg_edge: Tuple[Edge, Optional[torch.Tensor]] = (
+                hard_neg_edge: tuple[Edge, Optional[torch.Tensor]] = (
                     GbmlProtosTranslator.edge_from_EdgePb(
                         graph_metadata_pb_wrapper=graph_metadata_pb_wrapper,
                         edge_pb=hard_neg_edge_pb,

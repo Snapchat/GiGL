@@ -1,8 +1,8 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 from gigl.common import UriFactory
-from gigl.common.data.dataloaders import SerializedTFRecordInfo
 from gigl.common.data.load_torch_tensors import SerializedGraphMetadata
+from gigl.common.data.loader_types import SerializedTFRecordInfo
 from gigl.common.utils.tensorflow_schema import feature_spec_to_feature_index_map
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.src.common.types.pb_wrappers.graph_metadata import GraphMetadataPbWrapper
@@ -19,7 +19,7 @@ def _build_serialized_tfrecord_entity_info(
         PreprocessedMetadata.NodeMetadataOutput, PreprocessedMetadata.EdgeMetadataInfo
     ],
     feature_spec_dict: FeatureSpecDict,
-    entity_key: Union[str, Tuple[str, str]],
+    entity_key: Union[str, tuple[str, str]],
     tfrecord_uri_pattern: str,
     quantization_metadata: Optional[FeatureQuantizationMetadata] = None,
 ) -> SerializedTFRecordInfo:
@@ -30,7 +30,7 @@ def _build_serialized_tfrecord_entity_info(
             PreprocessedMetadata.NodeMetadataOutput, PreprocessedMetadata.EdgeMetadataInfo
         ]): Preprocessed metadata pb for either NodeMetadataOutput or EdgeMetadataInfo
         feature_spec_dict (FeatureSpecDict): Feature spec to register to SerializedTFRecordInfo
-        entity_key (Union[str, Tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or Tuple[str, str] if Edge entity
+        entity_key (Union[str, tuple[str, str]]): Entity key to register to SerializedTFRecordInfo, is a str if Node entity or tuple[str, str] if Edge entity
         tfrecord_uri_pattern (str): Regex pattern for loading serialized tf records
         quantization_metadata (Optional[FeatureQuantizationMetadata]): Quantization
             metadata for a node or main-edge entity when its features are quantized.
@@ -72,10 +72,21 @@ def _build_serialized_tfrecord_entity_info(
         key: spec for key, spec in feature_spec_dict.items() if key in serialized_keys
     }
 
-    return SerializedTFRecordInfo(
-        tfrecord_uri_prefix=UriFactory.create_uri(
+    # The preprocessor sets only the prefix of the format it wrote; the other one is empty.
+    tfrecord_uri_prefix = None
+    if preprocessed_metadata.tfrecord_uri_prefix:
+        tfrecord_uri_prefix = UriFactory.create_uri(
             preprocessed_metadata.tfrecord_uri_prefix
-        ),
+        )
+    parquet_uri_prefix = None
+    if preprocessed_metadata.parquet_uri_prefix:
+        parquet_uri_prefix = UriFactory.create_uri(
+            preprocessed_metadata.parquet_uri_prefix
+        )
+
+    return SerializedTFRecordInfo(
+        tfrecord_uri_prefix=tfrecord_uri_prefix,
+        parquet_uri_prefix=parquet_uri_prefix,
         feature_keys=feature_keys_to_load,
         feature_spec=feature_spec_dict,
         feature_dim=feature_dim,
