@@ -52,19 +52,19 @@ def _empty_rows(num_rows: int, sample: torch.Tensor) -> torch.Tensor:
 def _copy_chunks_into(
     chunks: list[tuple[torch.Tensor, ...]], destinations: dict[int, torch.Tensor]
 ) -> None:
-    """Copies each chunk's fields into ``destinations`` (keyed by field), in chunk order, and empties ``chunks``.
+    """Copies each chunk's tensors into ``destinations`` (keyed by tuple position), in chunk order, and empties ``chunks``.
 
     ``chunks`` is mutated on purpose: each chunk is released as soon as it is copied, so the
     destinations never coexist in RAM with every chunk the way ``torch.cat``'s results do.
     """
-    first_field = next(iter(destinations))
+    first_position = next(iter(destinations))
     chunks.reverse()
     offset = 0
     while chunks:
         chunk = chunks.pop()
-        chunk_rows = chunk[first_field].shape[0]
-        for field, destination in destinations.items():
-            destination[offset : offset + chunk_rows] = chunk[field]
+        chunk_rows = chunk[first_position].shape[0]
+        for position, destination in destinations.items():
+            destination[offset : offset + chunk_rows] = chunk[position]
         offset += chunk_rows
         del chunk
 
@@ -802,26 +802,49 @@ class DistPartitioner:
     def _assemble_node_chunks(
         self,
         chunks: list[tuple[torch.Tensor, ...]],
-        fields: list[int],
-        node_id_field: int,
+        tuple_positions: list[int],
+        node_id_position: int,
     ) -> dict[int, torch.Tensor]:
-        """Join ``fields`` of the received chunks sorted by node id, emptying ``chunks``.
+        """Join ``tuple_positions`` of the received chunks sorted by node id, emptying ``chunks``.
 
-        ``node_id_field`` is the position of the node ids within each chunk tuple, and must be in ``fields``.
+        Each chunk is a tuple of tensors that all have one row per node, for example
+        ``(node_features, node_labels, node_ids)``.
+        ``tuple_positions`` lists which tensors of that tuple to join, by index into the tuple.
+        ``node_id_position`` is the index of the node ids in the tuple, and must be in ``tuple_positions``.
+
+        Example:
+            >>> # Two chunks of ``(node_features, node_ids)``.
+            >>> chunks = [
+            ...     (torch.tensor([[1.0], [3.0]]), torch.tensor([1, 3])),
+            ...     (torch.tensor([[0.0], [2.0]]), torch.tensor([0, 2])),
+            ... ]
+            >>> assembled = partitioner._assemble_node_chunks(
+            ...     chunks, tuple_positions=[0, 1], node_id_position=1
+            ... )
+            >>> assembled[1]  # Node ids, sorted.
+            tensor([0, 1, 2, 3])
+            >>> assembled[0].squeeze(1)  # Features, in the same row order.
+            tensor([0., 1., 2., 3.])
+
         The range-based ``id2index`` maps node id to row by offset, so rows must be sorted by id.
         If every destination is in RAM, the chunks are joined and then gathered by id.
-        Otherwise each destination is filled one block of rows at a time, so a spilled field
+        Otherwise each destination is filled one block of rows at a time, so a spilled tensor
         never needs a second full copy in RAM.
 
+        Args:
+            chunks: The received chunks. Emptied by this call.
+            tuple_positions: Indices into each chunk tuple of the tensors to join.
+            node_id_position: Index of the node ids in each chunk tuple.
+
         Returns:
-            The sorted tensor for each field in ``fields``, keyed by field.
+            The joined tensor for each index in ``tuple_positions``, keyed by that index. Rows are sorted by node id.
         """
-        chunk_node_ids = [chunk[node_id_field] for chunk in chunks]
+        chunk_node_ids = [chunk[node_id_position] for chunk in chunks]
         chunk_row_counts = [node_ids.shape[0] for node_ids in chunk_node_ids]
         num_rows = sum(chunk_row_counts)
         destinations: dict[int, torch.Tensor] = {}
-        for field in fields:
-            destinations[field] = _empty_rows(num_rows, chunks[0][field])
+        for position in tuple_positions:
+            destinations[position] = _empty_rows(num_rows, chunks[0][position])
         if not any(is_disk_backed(tensor) for tensor in destinations.values()):
             # The block fill below handles any mix of disk and RAM destinations. This path is only for
             # the all-RAM case, where freeing each chunk as it is copied peaks lower. The destinations
@@ -829,10 +852,10 @@ class DistPartitioner:
             # chunk_node_ids must go first, or it would keep every chunk's ids alive.
             del chunk_node_ids
             _copy_chunks_into(chunks, destinations)
-            order = torch.argsort(destinations[node_id_field])
-            # Gather one field at a time so each joined tensor is freed once its sorted copy exists.
-            for field in fields:
-                destinations[field] = destinations[field][order]
+            order = torch.argsort(destinations[node_id_position])
+            # Gather one tensor at a time so each joined tensor is freed once its sorted copy exists.
+            for position in tuple_positions:
+                destinations[position] = destinations[position][order]
             return destinations
         chunk_starts = torch.tensor([0] + chunk_row_counts).cumsum(0)
         order = torch.argsort(torch.cat(chunk_node_ids))
@@ -846,7 +869,7 @@ class DistPartitioner:
         for block_start in range(0, num_rows, block_rows):
             # Rows of the concatenated chunks, in the order they belong in this block.
             positions = order[block_start : block_start + block_rows]
-            # Locate the chunk holding each row once per block, so the per-field work below is
+            # Locate the chunk holding each row once per block, so the per-tensor work below is
             # one gather per chunk rather than per row.
             chunk_of_position = (
                 torch.searchsorted(chunk_starts, positions, right=True) - 1
@@ -856,7 +879,7 @@ class DistPartitioner:
             block_rows_by_chunk = by_chunk.split(counts)
             row_in_chunk = (positions - chunk_starts[chunk_of_position])[by_chunk]
             source_rows_by_chunk = row_in_chunk.split(counts)
-            # Only the chunks that contribute rows to this block, shared by every field.
+            # Only the chunks that contribute rows to this block, shared by every tensor.
             contributions: list[tuple[int, torch.Tensor, torch.Tensor]] = []
             for chunk_index, count in enumerate(counts):
                 if count > 0:
@@ -867,7 +890,7 @@ class DistPartitioner:
                             source_rows_by_chunk[chunk_index],
                         )
                     )
-            for field, destination in destinations.items():
+            for position, destination in destinations.items():
                 # Gather into RAM first: random writes to a disk-backed destination are slow, a
                 # single sequential copy of the finished block is not.
                 staging = torch.empty(
@@ -875,7 +898,7 @@ class DistPartitioner:
                     dtype=destination.dtype,
                 )
                 for chunk_index, rows_in_block, source_rows in contributions:
-                    staging[rows_in_block] = chunks[chunk_index][field][source_rows]
+                    staging[rows_in_block] = chunks[chunk_index][position][source_rows]
                 destination[block_start : block_start + positions.numel()] = staging
         chunks.clear()
         return destinations
@@ -1209,7 +1232,7 @@ class DistPartitioner:
         if len(partitioned_results) > 0:
             # Partitioned node ids are stored at the last index in each tuple of the partitioned results.
             node_id_ind = len(partitioned_results[0]) - 1
-            fields: list[int] = []
+            tuple_positions: list[int] = []
             for ind in (
                 node_feature_ind,
                 node_packed_feature_ind,
@@ -1217,10 +1240,10 @@ class DistPartitioner:
                 node_id_ind,
             ):
                 if ind is not None:
-                    fields.append(ind)
+                    tuple_positions.append(ind)
             # Rows come back sorted by node id, which the range-based id2idx requires.
             assembled = self._assemble_node_chunks(
-                partitioned_results, fields, node_id_ind
+                partitioned_results, tuple_positions, node_id_ind
             )
             partitioned_ids = assembled[node_id_ind]
             if partitioned_ids.numel() != torch.unique(partitioned_ids).numel():

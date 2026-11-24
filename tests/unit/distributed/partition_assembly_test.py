@@ -82,7 +82,7 @@ class PartitionAssemblyTest(TestCase):
             ),
         ):
             assembled = DistPartitioner()._assemble_node_chunks(
-                chunks, [0, 1, 2], node_id_field=2
+                chunks, [0, 1, 2], node_id_position=2
             )
         features, labels, ids = assembled[0], assembled[1], assembled[2]
 
@@ -104,7 +104,7 @@ class PartitionAssemblyTest(TestCase):
             assembled = DistPartitioner()._assemble_node_chunks(
                 _received_chunks(num_nodes=1000, num_chunks=7, seed=2),
                 [0, 2],
-                node_id_field=2,
+                node_id_position=2,
             )
 
         for result in [*copied.values(), *assembled.values()]:
@@ -118,7 +118,7 @@ class PartitionAssemblyTest(TestCase):
 
         with self._spill_env(True, min_bytes=10000):
             assembled = DistPartitioner()._assemble_node_chunks(
-                chunks, [1, 0, 2], node_id_field=2
+                chunks, [1, 0, 2], node_id_position=2
             )
         labels, features, ids = assembled[1], assembled[0], assembled[2]
 
