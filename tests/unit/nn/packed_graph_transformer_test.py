@@ -2501,6 +2501,7 @@ def _reference_padded_outputs(
     layer: GraphTransformerEncoderLayer,
     sequences: list[torch.Tensor],
     edges: list[tuple[int, int, int, int]],
+    track_grad: bool = False,
 ) -> torch.Tensor:
     """The padded layer's output rows of all real tokens."""
     max_length = max(sequence.size(0) for sequence in sequences)
@@ -2511,7 +2512,7 @@ def _reference_padded_outputs(
         padded[index, : sequence.size(0)] = sequence
     attention_bias = torch.zeros(len(sequences), 1, 1, max_length, dtype=torch.float64)
     attention_bias.masked_fill_(~valid.view(-1, 1, 1, max_length), -1e30)
-    with torch.no_grad():
+    with torch.set_grad_enabled(track_grad):
         return layer(
             padded,
             attn_bias=attention_bias,
@@ -2525,6 +2526,7 @@ def _reference_packed_outputs(
     sequences: list[torch.Tensor],
     edges: list[tuple[int, int, int, int]],
     first_token_output: bool = False,
+    track_grad: bool = False,
 ) -> torch.Tensor:
     """``forward_packed`` on the hand-built edges, in packed token rows."""
     lengths = torch.tensor([sequence.size(0) for sequence in sequences])
@@ -2554,7 +2556,7 @@ def _reference_packed_outputs(
             segments=segments,
         )
     )
-    with torch.no_grad():
+    with torch.set_grad_enabled(track_grad):
         return layer.forward_packed(
             torch.cat(sequences), layout, first_token_output=first_token_output
         )
@@ -2630,6 +2632,80 @@ class ReferenceRelationLayerTest(TestCase):
             rtol=0,
             atol=1e-10,
         )
+
+    @parameterized.expand(
+        [
+            param("mean_messages", message_mode="edge_type_linear"),
+            param("attention_messages", message_mode="edge_type_attention"),
+            param("bilinear_attention", attention_mode="edge_type_bilinear"),
+            param("hgt_attention", attention_mode="edge_type_hgt"),
+            param(
+                "hgt_attention_and_attention_messages",
+                message_mode="edge_type_attention",
+                attention_mode="edge_type_hgt",
+            ),
+        ]
+    )
+    def test_gradients_match_edge_loop_reference(
+        self, _: str, message_mode: str = "none", attention_mode: str = "none"
+    ) -> None:
+        layer = _reference_layer(message_mode, attention_mode)
+        sequences = [sequence.requires_grad_() for sequence in _reference_inputs()]
+        parameters = list(layer.parameters())
+        generator = torch.Generator().manual_seed(2)
+        loss_weight = torch.randn(
+            sum(_REFERENCE_LENGTHS), 8, generator=generator, dtype=torch.float64
+        )
+
+        def gradients(outputs: torch.Tensor) -> list[torch.Tensor]:
+            grads = torch.autograd.grad(
+                (outputs * loss_weight).sum(),
+                [*sequences, *parameters],
+                allow_unused=True,
+            )
+            return [
+                torch.zeros_like(tensor) if grad is None else grad
+                for grad, tensor in zip(grads, [*sequences, *parameters])
+            ]
+
+        expected = gradients(
+            _reference_layer_outputs(layer, sequences, _REFERENCE_EDGES)
+        )
+        actual_by_path = {
+            "padded": gradients(
+                _reference_padded_outputs(
+                    layer, sequences, _REFERENCE_EDGES, track_grad=True
+                )
+            ),
+            "packed": gradients(
+                _reference_packed_outputs(
+                    layer, sequences, _REFERENCE_EDGES, track_grad=True
+                )
+            ),
+        }
+        for path, actual in actual_by_path.items():
+            for index, (grad, reference_grad) in enumerate(zip(actual, expected)):
+                torch.testing.assert_close(
+                    grad,
+                    reference_grad,
+                    rtol=0,
+                    atol=1e-10,
+                    msg=lambda message, path=path, index=index: (
+                        f"{path} gradient {index}: {message}"
+                    ),
+                )
+        # The relation parameters get a real gradient; a zero reference would
+        # pass vacuously.
+        relation_grad_norms = [
+            grad.abs().max()
+            for (name, _parameter), grad in zip(
+                layer.named_parameters(), expected[len(sequences) :]
+            )
+            if "relation" in name
+        ]
+        self.assertTrue(relation_grad_norms)
+        for norm in relation_grad_norms:
+            self.assertGreater(norm, 1e-6)
 
 
 class ReferencePairwiseBiasTest(TestCase):
@@ -2734,7 +2810,26 @@ class ReferencePprSequenceTest(TestCase):
     # The anchor has every bit set; a padded cell is 0.
     _EXPANDED_GRID = [[-1, 1, 0, 1], [-1, 1, 0, 0], [-1, 0, 0, 0]]
 
-    def _data(self) -> HeteroData:
+    # Original (non-PPR) edges as (source, target, edge type index into
+    # _USER_EDGE_TYPES), for the relation filter test. See
+    # test_relation_edges_keep_only_edges_into_expanded_owners.
+    _ORIGINAL_EDGES = [
+        (3, 0, 0),
+        (0, 3, 0),
+        (4, 7, 0),
+        (7, 4, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (7, 4, 1),
+        (5, 0, 1),
+        (0, 5, 1),
+        (0, 3, 1),
+    ]
+    # With typed PPR, the per-edge flags of PPR edges 0 (to node 4), 2 (to node
+    # 3) and 4 (to node 0 of anchor 1) become channel bitmasks.
+    _TYPED_EXPANDED = [2, 0, 1, 0, 3, 0, 0]
+
+    def _data(self, original_edges: bool = False, typed: bool = False) -> HeteroData:
         data = HeteroData()
         data[_USER].x = torch.randn(8, 8)
         data[_USER].batch_size = 3
@@ -2747,6 +2842,17 @@ class ReferencePprSequenceTest(TestCase):
         data[_PPR.tuple_repr()].ppr_is_expanded = torch.tensor(
             [edge[3] for edge in self._EDGES]
         )
+        if typed:
+            data[_PPR.tuple_repr()].ppr_is_expanded = torch.tensor(self._TYPED_EXPANDED)
+            # Friends edges may be fetched by channel 0, engage edges by channel 1.
+            data.ppr_relation_channel_masks = {
+                _USER_EDGE_TYPES[0].tuple_repr(): 0b01,
+                _USER_EDGE_TYPES[1].tuple_repr(): 0b10,
+            }
+        if original_edges:
+            for index, edge_type in enumerate(_USER_EDGE_TYPES[:2]):
+                pairs = [edge[:2] for edge in self._ORIGINAL_EDGES if edge[2] == index]
+                data[edge_type.tuple_repr()].edge_index = torch.tensor(pairs).T
         return data
 
     def test_grids_match_the_hand_built_sequences(self) -> None:
@@ -2813,6 +2919,126 @@ class ReferencePprSequenceTest(TestCase):
             rtol=0,
             atol=1e-6,
         )
+
+    @parameterized.expand(
+        [
+            param(
+                "untyped",
+                typed=False,
+                expected_edges={
+                    ("ppr", 0, 3, 0),
+                    ("ppr", 0, 4, 0),
+                    ("ppr", 1, 0, 1),
+                    ("is_friends_with", 0, 0, 3),
+                    ("is_friends_with", 0, 3, 0),
+                    ("is_friends_with", 0, 4, 7),
+                    ("is_friends_with", 1, 0, 1),
+                    ("is_friends_with", 1, 1, 0),
+                    ("bidi_engage", 0, 4, 7),
+                    ("bidi_engage", 0, 3, 0),
+                    ("bidi_engage", 1, 0, 5),
+                },
+            ),
+            param(
+                "typed",
+                typed=True,
+                expected_edges={
+                    ("ppr", 0, 3, 0),
+                    ("ppr", 0, 4, 0),
+                    ("ppr", 1, 0, 1),
+                    ("is_friends_with", 0, 0, 3),
+                    ("is_friends_with", 0, 3, 0),
+                    ("is_friends_with", 1, 0, 1),
+                    ("is_friends_with", 1, 1, 0),
+                    ("bidi_engage", 0, 4, 7),
+                    ("bidi_engage", 1, 0, 5),
+                },
+            ),
+        ]
+    )
+    def test_relation_edges_keep_only_edges_into_expanded_owners(
+        self, _: str, typed: bool, expected_edges: set[tuple[str, int, int, int]]
+    ) -> None:
+        """Checks which relation edges survive the expansion filter, by anchor.
+
+        An edge survives only when the anchor expanded its target, the query
+        token that owns the fetched edge. An edge whose source is expanded but
+        whose target is not is dropped. For typed PPR the target must also have
+        been pushed in a channel the edge type allows. Anchors are passed as
+        [2, 1, 0] so the packed layout reorders them as [2, 1, 0] (longest
+        first) and the mask must be permuted along.
+
+        Sequences, as node (expansion bitmask) in anchor order. -1 is the anchor,
+        which has every bit set. Untyped, then typed:
+            anchor 0: 0(-1) 3(1) 7(0) 4(1)      typed: 0(-1) 3(1) 7(0) 4(2)
+            anchor 1: 1(-1) 0(1) 5(0)           typed: 1(-1) 0(3) 5(0)
+            anchor 2: 2(-1)
+        Typed channel masks: is_friends_with 0b01, bidi_engage 0b10, ppr any.
+
+        Expected, as (relation, anchor, target, source), by edge (source->target):
+            ppr 0->3, 0->4 (anchor 0) and 1->0 (anchor 1): the target is
+                expanded, so they survive. ppr 0->7 and 1->5 have unexpanded
+                targets, and ppr 0->5 matches anchor 1's tokens 0 and 5 with
+                target 5 unexpanded: dropped.
+            friends 3->0: target is the anchor, kept (anchor 0).
+            friends 0->3: target 3 has bit 0, kept (anchor 0).
+            friends 4->7: source 4 is expanded but target 7 is not: dropped.
+            friends 7->4: target 4 kept untyped. Typed, 4 has only channel 1,
+                which friends may not use: dropped.
+            friends 1->0: kept (anchor 1, target 0 has bit 0 in both cases).
+            friends 0->1: target 1 is anchor 1, kept.
+            engage 7->4: kept untyped; typed 4 has channel 1, kept (anchor 0).
+            engage 5->0: kept (anchor 1; target 0 has bit 0 untyped, and
+                channels 0 and 1 typed, which includes engage's channel 1).
+            engage 0->5: source expanded, target 5 not: dropped.
+            engage 0->3: kept untyped. Typed, 3 has only channel 0: dropped.
+        Edges whose endpoints are not both in an anchor's sequence, like
+        3->0 in anchor 1, never match there.
+        """
+        data = self._data(original_edges=True, typed=typed)
+        encoder = _ppr_encoder(
+            data,
+            max_seq_len=self._MAX_SEQ_LEN,
+            edge_type_to_feat_dim_map={
+                _PPR: 0,
+                _USER_EDGE_TYPES[0]: 0,
+                _USER_EDGE_TYPES[1]: 0,
+            },
+            relation_message_mode="edge_type_linear",
+        )
+        anchor_node_ids = torch.tensor([2, 1, 0])
+        with torch.no_grad():
+            _, layouts = _run_packed_capturing_layouts(
+                encoder, data, anchor_node_ids=anchor_node_ids
+            )
+        layout = layouts[0]
+        relation_edges = layout.relation_edges
+        assert relation_edges is not None and layout.sequence_order is not None
+        # Longest sequence first: anchors 0, 1, 2.
+        self.assertEqual(layout.sequence_order.tolist(), [2, 1, 0])
+        actual_edges: set[tuple[str, int, int, int]] = set()
+        for target_row, source_row, relation in zip(
+            relation_edges.target.tolist(),
+            relation_edges.source.tolist(),
+            relation_edges.relation.tolist(),
+        ):
+            packed_sequence = int(
+                torch.searchsorted(layout.cu_seqlens, target_row, right=True) - 1
+            )
+            anchor = int(anchor_node_ids[layout.sequence_order[packed_sequence]])
+            relation_name = encoder._relation_attention_edge_types[
+                relation
+            ].tuple_repr()[1]
+            actual_edges.add(
+                (
+                    relation_name,
+                    anchor,
+                    int(layout.node_index[target_row]),
+                    int(layout.node_index[source_row]),
+                )
+            )
+        self.assertEqual(relation_edges.target.numel(), len(expected_edges))
+        self.assertEqual(actual_edges, expected_edges)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
