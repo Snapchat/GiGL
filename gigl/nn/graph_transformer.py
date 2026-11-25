@@ -601,7 +601,10 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         The tokens of each sequence sit back to back in ``x``. Each token attends
         only to tokens of its own sequence. Requires ``relation_attention_mode``
-        to be ``"none"``, and attention dropout to be off in training.
+        to be ``"none"``.
+
+        In training, attention dropout runs SDPA per length bucket, not the varlen
+        kernel.
 
         Args:
             x: ``(tokens, model_dim)`` packed token states.
@@ -618,8 +621,7 @@ class GraphTransformerEncoderLayer(nn.Module):
 
         Raises:
             ValueError: If ``relation_attention_mode`` is not ``"none"``, if
-                ``layout.relation_edges`` is missing with a relation message mode,
-                or in training with attention dropout.
+                ``layout.relation_edges`` is missing with a relation message mode.
         """
         if self._relation_attention_mode != "none":
             raise ValueError(
@@ -628,11 +630,6 @@ class GraphTransformerEncoderLayer(nn.Module):
         relation_edges = layout.relation_edges
         if self._relation_message_mode != "none" and relation_edges is None:
             raise ValueError("layout.relation_edges is required for relation messages.")
-        if self.training and self._attention_dropout_rate > 0:
-            raise ValueError(
-                "Packed attention does not support attention dropout in training; "
-                "set attention_dropout_rate=0 or use forward."
-            )
         x_norm = self._attention_norm(x)
         key = self._key_projection(x_norm).view(-1, self._num_heads, self._head_dim)
         value = self._value_projection(x_norm).view(-1, self._num_heads, self._head_dim)
@@ -646,6 +643,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         query = self._query_projection(query_input).view(
             -1, self._num_heads, self._head_dim
         )
+        if self.training:
+            dropout_p = self._attention_dropout_rate
+        else:
+            dropout_p = 0.0
         attention_output = packed_attention(
             query,
             key,
@@ -653,6 +654,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             layout,
             query_is_first_token=first_token_output,
             bias=bias,
+            dropout_p=dropout_p,
         ).reshape(-1, self._num_heads * self._head_dim)
         x = residual + self._dropout(self._output_projection(attention_output))
         if relation_edges is not None:
@@ -1408,7 +1410,9 @@ class GraphTransformerEncoder(nn.Module):
           - no pairwise attention biases
           - no ``ppr_weight`` or ``ppr_relation_features``
           - ``hop_distance <= 4``
-          - ``attention_dropout_rate == 0``
+
+        With ``attention_dropout_rate > 0``, training attention runs SDPA per length
+        bucket on the GPU, and eval attention runs the varlen kernel.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
@@ -1799,11 +1803,6 @@ class GraphTransformerEncoder(nn.Module):
         # every batch would exceed it.
         if self._hop_distance > 4:
             unsupported_reasons.append("hop_distance is above 4")
-        # The varlen kernel's dropout has not been tested against the padded
-        # path's per-head, per-sequence masks. Reporting dropout as unsupported
-        # keeps training and eval on the same path.
-        if self._attention_dropout_rate > 0:
-            unsupported_reasons.append("attention_dropout_rate is above 0")
         return unsupported_reasons
 
     def _use_packed_backend(self, device: torch.device) -> bool:
@@ -1916,7 +1915,7 @@ class GraphTransformerEncoder(nn.Module):
             else:
                 num_anchor_nodes = projected_x_dict[anchor_node_type].size(0)
 
-        if num_anchor_nodes > 0 and self._use_packed_backend(device):
+        if self._use_packed_backend(device):
             packed_embeddings = self._encode_packed(
                 projected_x_dict=projected_x_dict,
                 edge_index_dict=edge_index_dict,
@@ -2165,13 +2164,24 @@ class GraphTransformerEncoder(nn.Module):
         tokens instead, and ``_packed_neighbor_readout`` adds each anchor's
         attention-weighted neighbors to it.
 
+        With no anchors, returns an empty ``[0, out_dim]`` tensor before building a
+        layout.
+
+        The layout sorts the sequences by length, so the anchors are permuted to
+        match and ``_packed_readout`` restores the caller's order.
+
         Returns:
-            ``[num_anchor_nodes, out_dim]`` embeddings after the final norm, the readout
-            and the output projection, or None if the batch's k-hop candidate set is
-            too large to lay out. The caller then runs the padded path.
+            ``[num_anchor_nodes, out_dim]`` embeddings in anchor order after the final
+            norm, the readout and the output projection, or None if the batch's k-hop
+            candidate set is too large to lay out. The caller then runs the padded
+            path.
         """
-        node_type_offsets = get_node_type_offsets(projected_x_dict)
         node_features = concat_tensors(list(projected_x_dict.values()), dim=0)
+        if num_anchor_nodes == 0:
+            return self._project_output(
+                node_features.new_empty(0, node_features.size(-1))
+            )
+        node_type_offsets = get_node_type_offsets(projected_x_dict)
         edge_index = to_homogeneous_edge_index(
             edge_index_dict=edge_index_dict,
             node_type_offsets=node_type_offsets,
@@ -2191,6 +2201,8 @@ class GraphTransformerEncoder(nn.Module):
         )
         if layout is None:
             return None
+        if layout.sequence_order is not None:
+            anchor_node_index = anchor_node_index[layout.sequence_order]
         x = self._packed_token_inputs(
             node_features[layout.node_index], layout, anchor_node_index, data
         )
@@ -2233,6 +2245,7 @@ class GraphTransformerEncoder(nn.Module):
                 max_seq_len=self._max_seq_len,
                 sampling_direction=self._sampling_direction,
                 ordering=ordering,
+                sort_by_length=True,
             )
         except KhopLayoutTooLargeError as error:
             self._record_packed_fallback(error)
@@ -2433,12 +2446,14 @@ class GraphTransformerEncoder(nn.Module):
             layout: Layout of the sequences in ``x``.
 
         Returns:
-            One embedding per sequence.
+            One embedding per sequence, in the caller's anchor order.
         """
         x = self._final_norm(x)
-        if self._readout_mode == "anchor_only":
+        if self._readout_mode != "anchor_only":
+            x = self._packed_neighbor_readout(x, layout)
+        if layout.sequence_order is None:
             return x
-        return self._packed_neighbor_readout(x, layout)
+        return x.new_empty(x.shape).index_copy(0, layout.sequence_order, x)
 
     def _packed_neighbor_readout(
         self,

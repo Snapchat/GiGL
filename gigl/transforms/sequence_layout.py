@@ -8,12 +8,16 @@ on real tokens only. ``PackedRelationEdges`` holds the relation edges between
 packed tokens.
 """
 
-from typing import NamedTuple, Optional
+from typing import Final, NamedTuple, Optional
 
 import torch
 import torch.nn.functional as F
 from jaxtyping import Int, Int32, Int64
 from torch import Tensor
+
+# Sequence lengths that ``pack_sequences`` sorts into buckets, each capped at
+# ``max_seq_len``. ``max_seq_len`` is always a bucket length too.
+PACKED_BUCKET_LENGTHS: Final[tuple[int, ...]] = (32, 64, 128, 256)
 
 
 class RelationSegment(NamedTuple):
@@ -47,6 +51,21 @@ class PackedRelationEdges(NamedTuple):
     anchor_edges: Optional["PackedRelationEdges"] = None
 
 
+class PackedBucket(NamedTuple):
+    """A run of packed sequences that share an upper bound on their length.
+
+    Packed sequences ``[first_sequence, end_sequence)`` are packed tokens
+    ``[first_token, end_token)``, and each is at most ``bucket_len`` long. All
+    fields are host ints.
+    """
+
+    first_sequence: int
+    end_sequence: int
+    first_token: int
+    end_token: int
+    bucket_len: int
+
+
 class PackedLayout(NamedTuple):
     """Where each sequence lives in the packed token buffer, and what each token is.
 
@@ -70,6 +89,20 @@ class PackedLayout(NamedTuple):
             ``[num_tokens, ...]``.
         relation_edges: Relation edges in token coordinates, when the builder
             makes them.
+        sequence_order: ``[num_sequences]`` long row of the caller's input
+            (``lengths`` and the grids) of each packed sequence. None when the
+            layout is not sorted.
+        buckets: The ``PackedBucket`` runs, longest ``bucket_len`` first,
+            covering all sequences and tokens, each holding at least two
+            sequences. The lengths are a subset of the bucket lengths of
+            ``pack_sequences``. None means one bucket of ``max_seq_len``
+            covering everything, which is what an unsorted layout has.
+
+    Every per-sequence quantity (``cu_seqlens``, ``sequence_id``, the rows of the
+    grids ``flat_index`` refers to) is in packed order. ``flat_index`` indexes the
+    ``[num_sequences, max_seq_len]`` grid whose rows are already in packed order,
+    so ``grid[sequence_order].flatten(0, 1)[flat_index]`` gathers a grid in the
+    caller's order. Only ``sequence_order`` maps back to the caller's order.
     """
 
     cu_seqlens: Int32[Tensor, "num_sequences_plus_one"]
@@ -80,6 +113,8 @@ class PackedLayout(NamedTuple):
     node_index: Int64[Tensor, "num_tokens"]
     token_attrs: dict[str, Tensor]
     relation_edges: Optional[PackedRelationEdges] = None
+    sequence_order: Optional[Int64[Tensor, "num_sequences"]] = None
+    buckets: Optional[tuple[PackedBucket, ...]] = None
 
 
 class SelectedSequences(NamedTuple):
@@ -107,17 +142,35 @@ def pack_sequences(
     max_seq_len: int,
     node_grid: Optional[Int64[Tensor, "num_sequences max_seq_len"]] = None,
     attr_grids: Optional[dict[str, Tensor]] = None,
+    sort_by_length: bool = False,
 ) -> PackedLayout:
     """Computes what is needed to drop the padding from a padded grid of sequences.
 
     Sequence ``i`` is valid in its first ``lengths[i]`` positions. Any
     ``[num_sequences, max_seq_len]`` per-position tensor gathers into packed
     order with ``grid.flatten()[flat_index]``, and ``cu_seqlens`` marks where
-    each packed sequence starts. This costs one host read, of the total token
-    count; it is why the packed buffer holds exactly the real tokens.
+    each packed sequence starts. This costs exactly one host read, which returns
+    the total token count and, when sorted, the bucket bounds; it is why the
+    packed buffer holds exactly the real tokens.
 
     A length above ``max_seq_len`` is clamped to it, because the grid has no
     positions beyond that. Checking for it would cost another host read.
+
+    With ``sort_by_length`` the sequences are packed longest first, ties in the
+    caller's order, and ``sequence_order`` maps each packed sequence back to its
+    row of the input. The grids are permuted the same way before packing. The
+    sorted sequences are also split into buckets by length: the lengths in
+    ``PACKED_BUCKET_LENGTHS`` capped at ``max_seq_len``, plus ``max_seq_len``.
+    The lengths depend on ``max_seq_len`` only, never on the data. A sequence
+    goes to the smallest bucket length that holds it. Empty buckets are dropped.
+    A bucket with one sequence is merged into the next longer non-empty bucket
+    (or, if it is the longest, absorbs the next shorter one) and keeps the longer
+    length, until every bucket holds at least two sequences or one bucket is
+    left. A single bucket of ``max_seq_len`` is ``buckets`` None, and so are fewer
+    than two sequences. A single shorter bucket is kept, so the per-pair bias is
+    sized by it rather than by ``max_seq_len``. Dropping and merging keep
+    ``torch.compile`` from specializing on bucket sizes 0 and 1, and the possible
+    structures are bounded by the subsets of the bucket lengths.
 
     Example:
         >>> packed = pack_sequences(torch.tensor([2, 1, 3]), max_seq_len=3)
@@ -126,6 +179,19 @@ def pack_sequences(
         >>> packed.cu_seqlens.tolist()
         [0, 2, 3, 6]
 
+        Sorted, the longest sequence comes first. Here ``max_seq_len`` is 3, so
+        there is only one bucket length and ``buckets`` is None::
+
+            >>> packed = pack_sequences(
+            ...     torch.tensor([1, 3, 2]), 3, sort_by_length=True
+            ... )
+            >>> packed.sequence_order.tolist()
+            [1, 2, 0]
+            >>> packed.cu_seqlens.tolist()
+            [0, 3, 5, 6]
+            >>> packed.buckets is None
+            True
+
     Args:
         lengths: ``[num_sequences]`` number of valid positions of each sequence.
         max_seq_len: Width of the padded grid.
@@ -133,14 +199,88 @@ def pack_sequences(
             None, ``node_index`` is the flat index.
         attr_grids: ``[num_sequences, max_seq_len, ...]`` grids to gather into
             ``token_attrs``, by name.
+        sort_by_length: Whether to pack the sequences longest first and plan
+            buckets.
 
     Returns:
         The packed layout, without relation edges.
     """
     lengths = lengths.clamp(max=max_seq_len)
-    valid = torch.arange(max_seq_len, device=lengths.device) < lengths.unsqueeze(1)
+    sequence_order: Optional[Tensor] = None
+    if sort_by_length:
+        sequence_order = torch.sort(lengths, descending=True, stable=True).indices
+        lengths = lengths[sequence_order]
+        if node_grid is not None:
+            node_grid = node_grid[sequence_order]
+        if attr_grids is not None:
+            attr_grids = {
+                name: grid[sequence_order] for name, grid in attr_grids.items()
+            }
+    device = lengths.device
+    num_sequences = lengths.numel()
     cu_seqlens = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, 0)])
-    flat_index = valid.flatten().nonzero().squeeze(1)
+
+    bucket_lens = sorted(
+        {min(bound, max_seq_len) for bound in PACKED_BUCKET_LENGTHS} | {max_seq_len},
+        reverse=True,
+    )
+    num_boundaries = len(bucket_lens) - 1
+    if sort_by_length and num_boundaries > 0:
+        # Sequences longer than the next smaller bucket length are in the buckets
+        # above it, so these are the sequence bounds between buckets.
+        # The bounds are compared as Python ints, so no host-to-device copy (which
+        # synchronizes) is needed.
+        boundaries = torch.stack([(lengths > bound).sum() for bound in bucket_lens[1:]])
+        host_values = torch.cat(
+            [boundaries, cu_seqlens[boundaries], cu_seqlens[-1:]]
+        ).tolist()
+    else:
+        host_values = [int(cu_seqlens[-1])]
+    num_tokens = host_values[-1]
+
+    sequence_id = torch.repeat_interleave(
+        torch.arange(num_sequences, device=device), lengths, output_size=num_tokens
+    )
+    position = torch.arange(num_tokens, device=device) - cu_seqlens[:-1][sequence_id]
+    flat_index = sequence_id * max_seq_len + position
+
+    buckets: Optional[tuple[PackedBucket, ...]] = None
+    if sort_by_length and num_boundaries > 0 and num_sequences >= 2:
+        sequence_bounds = [0] + host_values[:num_boundaries] + [num_sequences]
+        token_bounds = (
+            [0] + host_values[num_boundaries : 2 * num_boundaries] + [num_tokens]
+        )
+        # Each run is [first_sequence, end_sequence, first_token, end_token,
+        # bucket_len]. Empty buckets are dropped.
+        runs: list[list[int]] = []
+        for i in range(len(bucket_lens)):
+            if sequence_bounds[i + 1] > sequence_bounds[i]:
+                runs.append(
+                    [
+                        sequence_bounds[i],
+                        sequence_bounds[i + 1],
+                        token_bounds[i],
+                        token_bounds[i + 1],
+                        bucket_lens[i],
+                    ]
+                )
+        # A one-sequence bucket joins its next longer neighbor, or absorbs the
+        # next shorter one if it is the longest. The merged run keeps the longer
+        # bucket length, which holds every sequence in it.
+        while len(runs) > 1:
+            small = next((i for i, run in enumerate(runs) if run[1] - run[0] < 2), None)
+            if small is None:
+                break
+            if small > 0:
+                runs[small - 1][1] = runs[small][1]
+                runs[small - 1][3] = runs[small][3]
+            else:
+                runs[0][1] = runs[1][1]
+                runs[0][3] = runs[1][3]
+            del runs[small if small > 0 else 1]
+        if len(runs) > 1 or runs[0][4] < max_seq_len:
+            buckets = tuple(PackedBucket(*run) for run in runs)
+
     if node_grid is None:
         node_index = flat_index
     else:
@@ -153,10 +293,12 @@ def pack_sequences(
         cu_seqlens=cu_seqlens.to(torch.int32),
         max_seq_len=max_seq_len,
         flat_index=flat_index,
-        sequence_id=flat_index // max_seq_len,
-        position=flat_index % max_seq_len,
+        sequence_id=sequence_id,
+        position=position,
         node_index=node_index,
         token_attrs=token_attrs,
+        sequence_order=sequence_order,
+        buckets=buckets,
     )
 
 

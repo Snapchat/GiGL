@@ -18,9 +18,9 @@ Why this exists:
     ``cu_seqlens``; ``_varlen_attention`` explains why the public options do not
     fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
     own backward kernel supplies the gradients.
-  - On CPU the same inputs go through SDPA on a padded grid. That is the
-    reference the CUDA path is tested against, and it lets the packed backend run
-    anywhere.
+  - On CPU the same inputs go through SDPA on padded grids, one per length
+    bucket of the layout. That is the reference the CUDA path is tested against,
+    and it lets the packed backend run anywhere.
   - Packing needs one host read (the total token count, in ``pack_sequences``)
     so the buffer holds exactly the real tokens. Everything else has fixed
     shapes and no syncs, so the layers can be compiled with ``torch.compile``.
@@ -39,21 +39,27 @@ Data flow of a packed forward::
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, layout, ...)
         |        CUDA: aten memory-efficient attention with cu_seqlens
-        |        CPU:  SDPA on a padded grid (reference)
+        |        CUDA, per-pair bias on every token or dropout:
+        |             SDPA per length bucket
+        |        CPU:  SDPA per length bucket (reference)
         |    output linear + residual -> FFN + residual
         v
     anchor readout: rows cu_seqlens[:-1], the first token of every sequence
 
 Constraints:
-  - The varlen kernel is CUDA only; other devices use the padded SDPA path.
+  - The varlen kernel is CUDA only; other devices use SDPA per length bucket.
   - ``head_dim`` need not be a multiple of 8. The aligned kernels need it, so
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
   - A ``PackedAttentionBias`` is part of the call. The CPU path applies it. On
     CUDA a ``per_key`` bias runs on the kernel by folding it into q and k as an
-    extra head-dim column; a ``per_pair`` bias raises ``NotImplementedError``.
-  - Attention dropout is not supported; the kernel's varlen dropout has not been
-    tested against the padded path.
+    extra head-dim column. A ``per_pair`` bias on every token runs SDPA per
+    bucket. With ``query_is_first_token``, row 0 of each sequence's ``per_pair``
+    block is a per-key bias, so it runs on the kernel too.
+  - Attention dropout always runs SDPA per bucket, never the varlen kernel: in
+    torch 2.8 the kernel's varlen dropout uses different masks in the forward
+    and the backward pass when ``cu_seqlens`` is given, so its gradients are
+    wrong.
   - ``cu_seqlens`` is int32, so the token count must fit in int32.
 
 Example:
@@ -104,11 +110,10 @@ from typing import Callable, NamedTuple, Optional, cast
 
 import torch
 import torch.nn.functional as F
-from jaxtyping import Bool, Float, Int32
+from jaxtyping import Float, Int32, Int64
 from torch import Tensor
-from torch_geometric.utils import to_dense_batch
 
-from gigl.transforms.sequence_layout import PackedLayout
+from gigl.transforms.sequence_layout import PackedBucket, PackedLayout
 
 # The kernel returns its philox seed and offset on the CPU when dropout is off,
 # but its meta registration returns them as CUDA tensors. ``torch.compile`` then
@@ -412,49 +417,254 @@ class PackedAttentionBias(NamedTuple):
         per_key: One bias per key token and head. Every query in a sequence sees
             the same value for a given key.
         per_pair: One bias per sequence, head, query position and key position,
-            on the padded ``[max_seq_len, max_seq_len]`` grid.
+            as one flat tensor in packed sequence order. It is the concatenation,
+            over ``layout_buckets(layout)`` in order, of the row-major
+            ``[bucket_sequences, num_heads, bucket_len, bucket_len]`` block of
+            each bucket, where ``bucket_sequences = end_sequence -
+            first_sequence``. Without buckets it is one
+            ``[num_sequences, num_heads, max_seq_len, max_seq_len]`` block. The
+            cell of packed sequence ``s``, head ``h``, query position ``q`` and
+            key position ``k`` is at
+            ``sequence_offset[s] + (h * L + q) * L + k``, where ``L`` is the
+            bucket length of ``s`` and ``sequence_offset`` comes from
+            ``per_pair_sequence_offsets``; ``per_pair_linear_index`` computes it.
+            Cells beyond a sequence's length are ignored: padded keys are masked
+            and padded query rows are dropped.
     """
 
     per_key: Optional[Float[Tensor, "num_tokens num_heads"]] = None
-    per_pair: Optional[
-        Float[Tensor, "num_sequences num_heads max_seq_len max_seq_len"]
-    ] = None
+    per_pair: Optional[Float[Tensor, "num_pair_cells"]] = None
+
+
+def layout_buckets(layout: PackedLayout) -> tuple[PackedBucket, ...]:
+    """Returns the buckets of ``layout``, or the one bucket that covers everything.
+
+    Reads shapes only, never the device.
+
+    Args:
+        layout: Layout from ``pack_sequences``.
+
+    Returns:
+        ``layout.buckets``, or one bucket of ``max_seq_len`` over all sequences and
+        tokens when it is None.
+    """
+    if layout.buckets is not None:
+        return layout.buckets
+    return (
+        PackedBucket(
+            0,
+            layout.cu_seqlens.numel() - 1,
+            0,
+            layout.flat_index.numel(),
+            layout.max_seq_len,
+        ),
+    )
+
+
+def per_pair_bias_num_cells(layout: PackedLayout, num_heads: int) -> int:
+    """Returns the length of the flat ``PackedAttentionBias.per_pair`` for ``layout``.
+
+    Args:
+        layout: Layout from ``pack_sequences``.
+        num_heads: Number of attention heads.
+
+    Returns:
+        The sum over buckets of ``bucket_sequences * num_heads * bucket_len ** 2``.
+    """
+    return sum(
+        (bucket.end_sequence - bucket.first_sequence) * num_heads * bucket.bucket_len**2
+        for bucket in layout_buckets(layout)
+    )
+
+
+def per_pair_bias_views(
+    per_pair: Float[Tensor, "num_pair_cells"], layout: PackedLayout, num_heads: int
+) -> list[Tensor]:
+    """Splits a flat per-pair bias into one 4-D view per bucket.
+
+    The views share memory with ``per_pair``; nothing is copied.
+
+    Args:
+        per_pair: Flat bias, laid out as described in ``PackedAttentionBias``.
+        layout: Layout from ``pack_sequences``.
+        num_heads: Number of attention heads.
+
+    Returns:
+        For each bucket, its ``[bucket_sequences, num_heads, bucket_len,
+        bucket_len]`` block, in bucket order.
+
+    Raises:
+        ValueError: If ``per_pair`` does not have ``per_pair_bias_num_cells``
+            elements.
+    """
+    expected_cells = per_pair_bias_num_cells(layout, num_heads)
+    if per_pair.numel() != expected_cells:
+        raise ValueError(
+            f"per_pair has {per_pair.numel()} cells but the layout needs "
+            f"{expected_cells} for {num_heads} heads."
+        )
+    views: list[Tensor] = []
+    first_cell = 0
+    for bucket in layout_buckets(layout):
+        shape = (
+            bucket.end_sequence - bucket.first_sequence,
+            num_heads,
+            bucket.bucket_len,
+            bucket.bucket_len,
+        )
+        num_cells = shape[0] * shape[1] * shape[2] * shape[3]
+        views.append(per_pair[first_cell : first_cell + num_cells].view(shape))
+        first_cell += num_cells
+    return views
+
+
+def per_pair_sequence_offsets(
+    layout: PackedLayout, num_heads: int
+) -> tuple[Int64[Tensor, "num_sequences"], Int64[Tensor, "num_sequences"]]:
+    """Returns where each packed sequence's block starts in the flat per-pair bias.
+
+    Reads shapes only, never the device.
+
+    Args:
+        layout: Layout from ``pack_sequences``.
+        num_heads: Number of attention heads.
+
+    Returns:
+        ``(sequence_offset, sequence_bucket_len)``, both int64 on the layout's
+        device. ``sequence_bucket_len[s]`` is the bucket length of packed
+        sequence ``s``. ``sequence_offset[s]`` is the first cell of its
+        ``[num_heads, bucket_len, bucket_len]`` block.
+    """
+    device = layout.cu_seqlens.device
+    sequence_bucket_len = torch.cat(
+        [
+            torch.full(
+                (bucket.end_sequence - bucket.first_sequence,),
+                bucket.bucket_len,
+                dtype=torch.long,
+                device=device,
+            )
+            for bucket in layout_buckets(layout)
+        ]
+    )
+    block_cells = num_heads * sequence_bucket_len**2
+    sequence_offset = torch.cumsum(block_cells, 0) - block_cells
+    return sequence_offset, sequence_bucket_len
+
+
+def per_pair_linear_index(
+    sequence_offset: Int64[Tensor, "num_sequences"],
+    sequence_bucket_len: Int64[Tensor, "num_sequences"],
+    sequence: Tensor,
+    head: Tensor | int,
+    query_position: Tensor | int,
+    key_position: Tensor | int,
+) -> Tensor:
+    """Returns the cells of a flat per-pair bias for the given pairs.
+
+    Computes ``sequence_offset[sequence] + (head * L + query_position) * L +
+    key_position`` with ``L = sequence_bucket_len[sequence]``. The arguments
+    broadcast against each other.
+
+    Args:
+        sequence_offset: First cell of each packed sequence's block, from
+            ``per_pair_sequence_offsets``.
+        sequence_bucket_len: Bucket length of each packed sequence, from
+            ``per_pair_sequence_offsets``.
+        sequence: Packed sequence of each pair.
+        head: Head of each pair.
+        query_position: Position of the query within its sequence.
+        key_position: Position of the key within its sequence.
+
+    Returns:
+        Long indices into the flat per-pair bias.
+    """
+    bucket_len = sequence_bucket_len[sequence]
+    return (
+        sequence_offset[sequence]
+        + (head * bucket_len + query_position) * bucket_len
+        + key_position
+    )
+
+
+def _first_row_per_key_bias(
+    per_pair: Float[Tensor, "num_pair_cells"], layout: PackedLayout, num_heads: int
+) -> Float[Tensor, "num_tokens num_heads"]:
+    """Gathers query row 0 of every sequence's per-pair block as a per-key bias.
+
+    A first-token query only reads row 0 of its sequence's block, and every key
+    sees it as one value per head, which is a per-key bias.
+
+    Args:
+        per_pair: Flat per-pair bias, laid out as described in
+            ``PackedAttentionBias``.
+        layout: Layout from ``pack_sequences``.
+        num_heads: Number of attention heads.
+
+    Returns:
+        For each token ``t``, ``per_pair`` at (its sequence, every head, query
+        position 0, its position).
+    """
+    sequence_offset, sequence_bucket_len = per_pair_sequence_offsets(layout, num_heads)
+    cells = per_pair_linear_index(
+        sequence_offset,
+        sequence_bucket_len,
+        layout.sequence_id.unsqueeze(1),
+        torch.arange(num_heads, device=per_pair.device).unsqueeze(0),
+        0,
+        layout.position.unsqueeze(1),
+    )
+    return per_pair[cells]
+
+
+def _bucket_cell_index(layout: PackedLayout, bucket: PackedBucket) -> Tensor:
+    """Returns each bucket token's cell in the bucket's flattened ``[sequences * bucket_len]`` grid."""
+    token_range = slice(bucket.first_token, bucket.end_token)
+    return (
+        layout.sequence_id[token_range] - bucket.first_sequence
+    ) * bucket.bucket_len + layout.position[token_range]
 
 
 def _dense_attention_bias(
     layout: PackedLayout,
+    bucket: PackedBucket,
     bias: Optional[PackedAttentionBias],
-    valid: Bool[Tensor, "num_sequences max_seq_len"],
+    per_pair_block: Optional[Tensor],
     dtype: torch.dtype,
 ) -> Tensor:
-    """Builds the additive score bias on the padded grid.
+    """Builds the additive score bias on one bucket's padded grid.
 
     Starts from the padding mask, ``finfo.min / 2`` on invalid keys, shaped
-    ``[num_sequences, 1, 1, max_seq_len]``. Adds ``bias.per_key`` scattered onto
-    the grid as ``[num_sequences, num_heads, 1, max_seq_len]`` and
-    ``bias.per_pair`` as ``[num_sequences, num_heads, max_seq_len, max_seq_len]``,
-    each only when present. The result broadcasts against the scores; a dense
-    grid is only built when ``per_pair`` is present.
+    ``[bucket_sequences, 1, 1, bucket_len]``. Adds the bucket's tokens of
+    ``bias.per_key`` scattered onto the grid as ``[bucket_sequences, num_heads,
+    1, bucket_len]`` and ``per_pair_block`` (the bucket's view of
+    ``bias.per_pair``), each only when present. The result broadcasts against
+    the scores; a dense grid is only built when ``per_pair_block`` is present.
     """
+    num_sequences = bucket.end_sequence - bucket.first_sequence
+    lengths = (
+        layout.cu_seqlens[bucket.first_sequence + 1 : bucket.end_sequence + 1]
+        - layout.cu_seqlens[bucket.first_sequence : bucket.end_sequence]
+    )
+    positions = torch.arange(bucket.bucket_len, device=lengths.device)
+    valid = positions < lengths.unsqueeze(1)
     attn_bias = torch.zeros(valid.shape, dtype=dtype, device=valid.device)
     attn_bias = attn_bias.masked_fill(~valid, torch.finfo(dtype).min / 2.0)
-    attn_bias = attn_bias.view(valid.size(0), 1, 1, valid.size(1))
-    if bias is None:
-        return attn_bias
-    if bias.per_key is not None:
-        num_sequences, max_seq_len = valid.shape
-        num_heads = bias.per_key.size(1)
+    attn_bias = attn_bias.view(num_sequences, 1, 1, bucket.bucket_len)
+    if bias is not None and bias.per_key is not None:
+        per_key = bias.per_key[bucket.first_token : bucket.end_token]
+        num_heads = per_key.size(1)
         per_key_grid = torch.zeros(
-            num_sequences * max_seq_len,
+            num_sequences * bucket.bucket_len,
             num_heads,
             dtype=dtype,
             device=valid.device,
-        ).index_copy(0, layout.flat_index, bias.per_key.to(dtype))
+        ).index_copy(0, _bucket_cell_index(layout, bucket), per_key.to(dtype))
         attn_bias = attn_bias + per_key_grid.view(
-            num_sequences, max_seq_len, num_heads
+            num_sequences, bucket.bucket_len, num_heads
         ).permute(0, 2, 1).unsqueeze(2)
-    if bias.per_pair is not None:
-        attn_bias = attn_bias + bias.per_pair.to(dtype)
+    if per_pair_block is not None:
+        attn_bias = attn_bias + per_pair_block.to(dtype)
     return attn_bias
 
 
@@ -465,56 +675,80 @@ def _padded_packed_attention(
     layout: PackedLayout,
     query_is_first_token: bool,
     bias: Optional[PackedAttentionBias] = None,
+    dropout_p: float = 0.0,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
-    """Runs packed attention on any device by padding, as the CPU path and the test reference.
+    """Runs packed attention on any device with SDPA per length bucket.
 
-    Unpacks the tokens to ``[num_sequences, max_seq_len]``, masks padded keys
-    with the same additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``,
-    adds ``bias`` when given, and unpacks the outputs. ``_varlen_attention`` is
-    checked against this.
+    This is the CPU path and the reference the CUDA path is tested against. It
+    also runs on CUDA for a per-pair bias on every token and for dropout.
+
+    For each bucket of ``layout_buckets(layout)``, unpacks the bucket's tokens to
+    a ``[bucket_sequences, bucket_len]`` grid, masks padded keys with the same
+    additive ``finfo.min / 2`` bias as ``GraphTransformerEncoder``, adds ``bias``
+    when given, runs ``F.scaled_dot_product_attention`` and unpacks the outputs.
+    The grids are per bucket so the padding work of a sequence is bounded by its
+    bucket length, not by ``max_seq_len`` for every sequence. The bucket outputs
+    are concatenated in bucket order, which is packed order. Without buckets
+    there is one grid of ``max_seq_len``.
+
+    Applies attention dropout with probability ``dropout_p`` to the weights.
+    ``_varlen_attention`` is checked against this. The function reads sizes from
+    the host bucket tuples and tensor shapes only, never from the device.
 
     Args:
         query: Packed queries, or one query per sequence when
             ``query_is_first_token``.
+        key: Packed keys.
+        value: Packed values.
         layout: Layout from ``pack_sequences``.
         query_is_first_token: ``query`` holds one query per sequence, the
-            sequence's first token.
+            sequence's first token. Each such query is one row of its grid, and
+            reads row 0 of its ``per_pair`` block.
         bias: Optional additive score bias.
+        dropout_p: Probability of dropping an attention weight.
 
     Returns:
         Attention output shaped like ``query``.
     """
-    first_token = layout.cu_seqlens[:-1].long()
-    lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
-    num_sequences = lengths.numel()
-    token_sequence = torch.repeat_interleave(
-        torch.arange(num_sequences, device=lengths.device),
-        lengths,
-        output_size=key.size(0),
-    )
-    if query_is_first_token:
-        # Run full attention with each sequence's query in its first row, then
-        # keep those rows.
-        query = torch.zeros_like(key).index_copy(0, first_token, query)
-    qkv_grid, mask = to_dense_batch(
-        torch.cat([query, key, value], dim=1),
-        token_sequence,
-        batch_size=num_sequences,
-        max_num_nodes=layout.max_seq_len,
-    )
-    query_grid, key_grid, value_grid = (
-        grid.transpose(1, 2) for grid in qkv_grid.chunk(3, dim=2)
-    )
-    output = F.scaled_dot_product_attention(
-        query_grid,
-        key_grid,
-        value_grid,
-        attn_mask=_dense_attention_bias(layout, bias, mask, query.dtype),
-    )
-    output = output.transpose(1, 2)[mask]
-    if query_is_first_token:
-        return output[first_token]
-    return output
+    num_heads = query.size(1)
+    per_pair_blocks: list[Optional[Tensor]] = [None] * len(layout_buckets(layout))
+    if bias is not None and bias.per_pair is not None:
+        per_pair_blocks = list(per_pair_bias_views(bias.per_pair, layout, num_heads))
+    outputs: list[Tensor] = []
+    for bucket, per_pair_block in zip(layout_buckets(layout), per_pair_blocks):
+        num_sequences = bucket.end_sequence - bucket.first_sequence
+        grid_cells = num_sequences * bucket.bucket_len
+        token_range = slice(bucket.first_token, bucket.end_token)
+        cell_index = _bucket_cell_index(layout, bucket)
+
+        def to_grid(tokens: Tensor, token_cells: Tensor) -> Tensor:
+            grid = tokens.new_zeros(grid_cells, *tokens.shape[1:])
+            grid = grid.index_copy(0, token_cells, tokens)
+            return grid.view(num_sequences, bucket.bucket_len, *tokens.shape[1:])
+
+        key_grid = to_grid(key[token_range], cell_index).transpose(1, 2)
+        value_grid = to_grid(value[token_range], cell_index).transpose(1, 2)
+        if query_is_first_token:
+            query_grid = query[bucket.first_sequence : bucket.end_sequence].unsqueeze(2)
+            if per_pair_block is not None:
+                per_pair_block = per_pair_block[:, :, :1, :]
+        else:
+            query_grid = to_grid(query[token_range], cell_index).transpose(1, 2)
+        output = F.scaled_dot_product_attention(
+            query_grid,
+            key_grid,
+            value_grid,
+            attn_mask=_dense_attention_bias(
+                layout, bucket, bias, per_pair_block, query.dtype
+            ),
+            dropout_p=dropout_p,
+        )
+        if query_is_first_token:
+            outputs.append(output.squeeze(2))
+        else:
+            output = output.transpose(1, 2).flatten(0, 1)
+            outputs.append(output.index_select(0, cell_index))
+    return torch.cat(outputs)
 
 
 def packed_attention(
@@ -524,30 +758,47 @@ def packed_attention(
     layout: PackedLayout,
     query_is_first_token: bool,
     bias: Optional[PackedAttentionBias] = None,
+    dropout_p: float = 0.0,
 ) -> Float[Tensor, "num_queries num_heads head_dim"]:
     """Attention within each packed sequence; the entry point of this module.
 
-    Uses the CUDA varlen kernel on GPU and padded SDPA elsewhere. With
+    Uses the CUDA varlen kernel on GPU and SDPA per length bucket elsewhere. With
     ``query_is_first_token``, only each sequence's first token is queried, which
     is all the anchor readout of the last layer needs. An empty
     ``PackedAttentionBias`` behaves like ``bias=None``.
 
-    On CUDA, ``per_key`` runs on the varlen kernel through ``_fold_per_key_bias``;
-    a ``per_pair`` bias raises ``NotImplementedError``.
+    The route is chosen in this order:
+
+    1. Not CUDA, or ``dropout_p > 0``: SDPA per bucket
+       (``_padded_packed_attention``). Dropout never uses the varlen kernel,
+       whose dropout is wrong in the backward pass in torch 2.8.
+    2. A ``per_pair`` bias with ``query_is_first_token``: row 0 of each
+       sequence's block becomes a per-key bias (``_first_row_per_key_bias``)
+       and the call continues on the varlen kernel, with or without gradient.
+    3. A ``per_pair`` bias on every token, with or without gradient: SDPA per
+       bucket.
+    4. Otherwise the varlen kernel, with a ``per_key`` bias folded into q and k
+       by ``_fold_per_key_bias``.
 
     Every sequence must contain at least one token (``lengths >= 1``). An empty
     sequence gives wrong output on the padded path and is not supported.
 
     Args and returns are as in ``_padded_packed_attention``.
     """
-    if not query.is_cuda:
+    if not query.is_cuda or dropout_p > 0:
         return _padded_packed_attention(
-            query, key, value, layout, query_is_first_token, bias
+            query, key, value, layout, query_is_first_token, bias, dropout_p
         )
     if bias is not None and bias.per_pair is not None:
-        raise NotImplementedError(
-            "A per_pair bias is not supported on the CUDA varlen path."
-        )
+        # The one place to route a per-pair bias, with or without gradient.
+        if not query_is_first_token:
+            return _padded_packed_attention(
+                query, key, value, layout, query_is_first_token, bias
+            )
+        per_key = _first_row_per_key_bias(bias.per_pair, layout, query.size(1))
+        if bias.per_key is not None:
+            per_key = bias.per_key + per_key
+        bias = PackedAttentionBias(per_key=per_key)
     head_dim = query.size(-1)
     if bias is not None and bias.per_key is not None:
         query, key = _fold_per_key_bias(query, key, bias.per_key)
