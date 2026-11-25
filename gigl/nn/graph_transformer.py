@@ -2395,7 +2395,11 @@ class GraphTransformerEncoder(nn.Module):
                     .flatten(),
                 )
             blocks.append(block)
-        per_pair = torch.cat(blocks)
+        if len(blocks) == 1:
+            # Every block is already flat; skip the copy torch.cat would make.
+            per_pair = blocks[0]
+        else:
+            per_pair = torch.cat(blocks)
         expected_cells = per_pair_bias_num_cells(layout, self._num_heads)
         if per_pair.numel() != expected_cells:
             raise ValueError(
