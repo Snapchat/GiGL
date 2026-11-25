@@ -2,7 +2,7 @@
 Tests for heterodata_to_graph_transformer_input transform.
 """
 
-from typing import Literal, cast
+from typing import Literal, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -13,6 +13,7 @@ from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.graph_transformer import (
     _build_sequence_layout_from_ppr_edges,
     _get_k_hop_neighbors_sparse,
+    build_ppr_sequence_grids,
     heterodata_to_graph_transformer_input,
     tensors_to_graph_transformer_input,
 )
@@ -1546,6 +1547,33 @@ class TestPprRelationExpandedSourceFilter(TestCase):
         coords = self._coords(with_expanded_flag=True)
         self.assertIn((0, 1, 2, 0), coords)  # owner n expanded by A -> kept
         self.assertNotIn((0, 2, 1, 0), coords)  # owner P not expanded by A -> dropped
+
+    def test_expanded_token_mask_built_only_when_requested(self) -> None:
+        data, _ = self._build(with_expanded_flag=True)
+        ppr_edge_type = ("user", "ppr", "user")
+
+        def build(return_expanded_token_mask: bool) -> Optional[torch.Tensor]:
+            return build_ppr_sequence_grids(
+                edge_index_dict={ppr_edge_type: data[ppr_edge_type].edge_index},
+                edge_attr_dict={ppr_edge_type: data[ppr_edge_type].edge_attr},
+                ppr_is_expanded_dict={
+                    ppr_edge_type: data[ppr_edge_type].ppr_is_expanded
+                },
+                node_type_offsets={NodeType("user"): 0},
+                anchor_indices=torch.tensor([0]),
+                num_nodes=3,
+                max_seq_len=4,
+                include_anchor_first=True,
+                device=torch.device("cpu"),
+                return_edge_weights=False,
+                return_relation_features=False,
+                return_expanded_token_mask=return_expanded_token_mask,
+            ).expanded_token_mask
+
+        self.assertIsNone(build(False))
+        # Anchor has every bit set, n was expanded, P was not, padding is 0.
+        expected = torch.tensor([[-1, 1, 0, 0]])
+        torch.testing.assert_close(build(True), expected)
 
     def test_typed_channel_mask_drops_edge_type_not_fetched(self) -> None:
         # Typed PPR: the owner's ppr_is_expanded is a per-node *channel* bitmask.

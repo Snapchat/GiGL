@@ -2369,6 +2369,7 @@ class GraphTransformerEncoder(nn.Module):
             device=anchor_indices.device,
             return_edge_weights=PPR_WEIGHT_FEATURE_NAME in token_attr_names,
             return_relation_features=PPR_RELATION_FEATURES_NAME in token_attr_names,
+            return_expanded_token_mask=bool(self._relation_attention_edge_types),
         )
         attr_grids: dict[str, Tensor] = {}
         if grids.ppr_weight is not None:
