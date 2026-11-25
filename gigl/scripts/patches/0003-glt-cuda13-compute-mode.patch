@@ -1,0 +1,22 @@
+Read the device compute mode through cudaDeviceGetAttribute.
+
+CUDA 13 removes the deprecated cudaDeviceProp::computeMode field, so UnifiedTensor::Initp2p does not
+compile against a CUDA 13 toolkit. cudaDevAttrComputeMode exists in CUDA 12 and 13, so the same code
+builds with both.
+
+diff --git a/graphlearn_torch/csrc/cuda/unified_tensor.cu b/graphlearn_torch/csrc/cuda/unified_tensor.cu
+index f3d78ad..6e7b60a 100644
+--- a/graphlearn_torch/csrc/cuda/unified_tensor.cu
++++ b/graphlearn_torch/csrc/cuda/unified_tensor.cu
+@@ -242,7 +242,10 @@ void UnifiedTensor::Initp2p(const std::vector<int32_t>& devices){
+       printf("Device %d does not support unified addressing!\n", i);
+       continue;
+     }
+-    if (prop.computeMode != cudaComputeModeDefault) {
++    // cudaDeviceProp::computeMode is removed in CUDA 13; query the attribute instead.
++    int compute_mode = 0;
++    cudaDeviceGetAttribute(&compute_mode, cudaDevAttrComputeMode, src);
++    if (compute_mode != cudaComputeModeDefault) {
+       printf("Device %d is in an unsupported compute mode for this sample\n",i);
+       continue;
+     }

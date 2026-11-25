@@ -39,16 +39,16 @@ def compute_cache_key(
 
     Example:
         >>> compute_cache_key(
-        ...     GLT_COMMIT, [b"patch"], b"#!/bin/bash", "cpu", "2.8.0", "cp311", "linux-x86_64"
+        ...     GLT_COMMIT, [b"patch"], b"#!/bin/bash", "cpu", "2.12.1", "cp311", "linux-x86_64"
         ... )
-        'glt-88ff111a-p2e56eb6940b0-cpu-torch2.8.0-cp311-linux-x86_64'
+        'glt-88ff111a-p2e56eb6940b0-cpu-torch2.12.1-cp311-linux-x86_64'
 
     Args:
         commit: Pinned upstream GLT commit sha; its first 8 characters are used.
         patch_contents: Contents of the local patches, hashed in the order given.
         build_script: Contents of ``install_glt.sh``.
         variant: Build variant, e.g. ``cpu`` or ``cuda7.5``.
-        torch_version: Torch version the wheel links against, e.g. ``2.8.0+cu128``.
+        torch_version: Torch version the wheel links against, e.g. ``2.12.1+cu130``.
         python_tag: Python ABI tag, e.g. ``cp311``.
         platform_tag: Platform the wheel is built for, ``sysconfig.get_platform()``, e.g. ``linux-x86_64``.
 

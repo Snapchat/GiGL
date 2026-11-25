@@ -19,8 +19,9 @@ class Param:
 GCP_DL_IMAGES_REPO = "projects/deeplearning-platform-release/global/images"
 # Ubuntu 24.04 (glibc 2.39): tensorflow-data-validation 1.21 in uv.lock ships Linux wheels only for glibc 2.39+, so
 # install_py_deps.sh fails on Ubuntu 22.04 (glibc 2.35).
-# CUDA 12.9: no supported Ubuntu 24.04 image ships CUDA 12.8. GiGL's cu128 torch runs on driver 580, and the gigl-core
-# and GLT CUDA builds compile with this nvcc, since torch's extension build only rejects a CUDA major-version mismatch.
+# CUDA 12.9 with driver 580: the driver runs GiGL's cu130 torch. No Deep Learning VM image ships a CUDA 13 toolkit yet
+# (checked 2026-11-23), but torch's extension build rejects an nvcc whose CUDA major version differs from torch's. To
+# build the gigl-core and GLT CUDA extensions on this VM, install a CUDA 13 toolkit first.
 # Supported and available until August 4, 2028: https://cloud.google.com/deep-learning-vm/docs/images
 DEFAULT_GCP_DL_IMAGE = "common-cu129-ubuntu-2404-nvidia-580-v20261111"
 DEFAULT_GCP_DL_IMAGE_SUPPORT_END_DATE = datetime.datetime(2028, 8, 4)

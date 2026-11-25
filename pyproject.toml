@@ -19,7 +19,7 @@ dependencies = [
   "argo-workflows",
   "chardet",
   # gigl-core hosts all C++ / CUDA / pybind11 extensions. Separate wheel per torch
-  # variant (cpu/cu128). Version must match gigl exactly.
+  # variant (cpu/cu130). Version must match gigl exactly.
   "gigl-core==0.4.0",
   "google-cloud-aiplatform",
   "google-cloud-build",
@@ -76,41 +76,37 @@ transform = [
   "tensorflow-transform==1.21.0",
   "tfx-bsl==1.21.0",
 ]
-pyg27-torch28-cpu = [
-  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility
+pyg28-torch212-cpu = [
+  "fbgemm-gpu~=1.7.0; sys_platform != 'darwin'", # Compatiblity table: https://docs.pytorch.org/FBGEMM/general/Releases.html#fbgemm-releases-compatibility
   "pyg_lib",
-  "torch==2.8",
-  # Oct 24, 25 - 2.7 is latest version and torch ver support is inconsistant accross minor version changes
-  "torch_cluster",
-  "torch_geometric==2.7",
+  "torch==2.12.1",
+  # PyG 2.8 supports torch 2.9-2.12 only; see https://github.com/pyg-team/pytorch_geometric/releases/tag/2.8.0
+  "torch_geometric==2.8.1",
   "torch_scatter",
   "torch_sparse",
-  "torch_spline_conv",
-  # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
-  "torchrec~=1.3.0 ; sys_platform != 'darwin'",
+  # Must move in lockstep with fbgemm-gpu~=1.7.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
+  "torchrec~=1.7.0 ; sys_platform != 'darwin'",
 ]
-pyg27-torch28-cu128 = [
-  "fbgemm-gpu~=1.3.0; sys_platform != 'darwin'",
+pyg28-torch212-cu130 = [
+  "fbgemm-gpu~=1.7.0; sys_platform != 'darwin'",
   "pyg_lib; sys_platform != 'darwin'",
-  "torch==2.8 ; sys_platform != 'darwin'",
-  "torch_cluster; sys_platform != 'darwin'",
-  "torch_geometric==2.7 ; sys_platform != 'darwin'",
+  "torch==2.12.1 ; sys_platform != 'darwin'",
+  "torch_geometric==2.8.1 ; sys_platform != 'darwin'",
   "torch_scatter; sys_platform != 'darwin'",
   "torch_sparse; sys_platform != 'darwin'",
-  "torch_spline_conv; sys_platform != 'darwin'",
-  # Must move in lockstep with fbgemm-gpu~=1.3.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
-  "torchrec~=1.3.0 ; sys_platform != 'darwin'",
+  # Must move in lockstep with fbgemm-gpu~=1.7.0 above; see https://meta-pytorch.org/torchrec/setup-torchrec.html#version-compatability
+  "torchrec~=1.7.0 ; sys_platform != 'darwin'",
 ]
 experimental = []
 
 # Declares what deps are conflicting so they are not resolved together.
-# In the case below, we cannot have both pyg27-torch28-cpu and pyg27-torch28-cu128
+# In the case below, we cannot have both pyg28-torch212-cpu and pyg28-torch212-cu130
 # installed at the same time (one is cuda and one is cpu and pull from seperate indexes).
 # Thus, they are treated as conflicting and `uv.lock` will be generated in a way that
 # transitive dependencies between them are resolved separately.
 [tool.uv]
 conflicts = [
-  [{ extra = "pyg27-torch28-cpu" }, { extra = "pyg27-torch28-cu128" }],
+  [{ extra = "pyg28-torch212-cpu" }, { extra = "pyg28-torch212-cu130" }],
 ]
 required-environments = [
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -196,14 +192,14 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [[tool.uv.index]]
-name = "torch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "torch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 # =============================== PyG Indexes ==================================
 [[tool.uv.index]]
-name = "pyg-torch28-cpu"
-url = "https://data.pyg.org/whl/torch-2.8.0+cpu.html"
+name = "pyg-torch212-cpu"
+url = "https://data.pyg.org/whl/torch-2.12.0+cpu.html"
 explicit = true
 # By default, [[tool.uv.index]] entries are assumed to be PyPI-style registries
 # that implement the PEP 503. However, pyg is hosted in a "flat" index, which is
@@ -211,8 +207,8 @@ explicit = true
 format = "flat"
 
 [[tool.uv.index]]
-name = "pyg-torch28-cu128"
-url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
+name = "pyg-torch212-cu130"
+url = "https://data.pyg.org/whl/torch-2.12.0+cu130.html"
 explicit = true
 format = "flat"
 
@@ -223,7 +219,7 @@ format = "flat"
 # ambiguity and are essential once any extension contains CUDA kernels.
 #
 # The CPU registry reuses the original `gigl` repo for backwards compatibility.
-# The CUDA registry is a new `gigl-cu128` repo that must be created in GCP project
+# The CUDA registry is a new `gigl-cu130` repo that must be created in GCP project
 # `external-snap-ci-github-gigl` before the release workflow will succeed.
 [[tool.uv.index]]
 name = "gcp-release-registry-cpu"
@@ -232,48 +228,40 @@ publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/g
 explicit = true
 
 [[tool.uv.index]]
-name = "gcp-release-registry-cu128"
-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/"
-publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128"
+name = "gcp-release-registry-cu130"
+url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu130/simple/"
+publish-url = "https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu130"
 explicit = true
 
 # ========== Mapping individual packages to their appropriate index =============
 [tool.uv.sources]
 # ============= PyTorch hosted Package Index Mappings
 torch = [
-  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "torch-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "torch-cu130" },
 ]
 torchrec = [
-  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "torch-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "torch-cu130" },
 ]
 fbgemm-gpu = [
-  { extra = "pyg27-torch28-cpu", index = "torch-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "torch-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "torch-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "torch-cu130" },
 ]
 # ============= PyG hosted Package Index Mappings
 # PyG wheels are built for specific versions of torch @ a time. Thus the packages
 # are mapped to the appropriate PyG index based on the torch version.
 pyg_lib = [
-  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "pyg-torch212-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "pyg-torch212-cu130" },
 ]
 torch_scatter = [
-  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "pyg-torch212-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "pyg-torch212-cu130" },
 ]
 torch_sparse = [
-  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
-]
-torch_cluster = [
-  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
-]
-torch_spline_conv = [
-  { extra = "pyg27-torch28-cpu", index = "pyg-torch28-cpu" },
-  { extra = "pyg27-torch28-cu128", index = "pyg-torch28-cu128" },
+  { extra = "pyg28-torch212-cpu", index = "pyg-torch212-cpu" },
+  { extra = "pyg28-torch212-cu130", index = "pyg-torch212-cu130" },
 ]
 # gigl-core is a local path dependency. In dev, uv resolves it from the adjacent
 # gigl-core/ directory and builds the C++ extension via scikit-build-core.
@@ -284,7 +272,7 @@ gigl-core = { path = "gigl-core" }
 # ===================== Build/Project Configurations ===========================
 # gigl is a pure-Python package. All C++/CUDA kernels live in the gigl-core
 # wheel (see gigl-core/pyproject.toml). Release builds two variants per package:
-# cpu and cu128. gigl's build stays fast because no CMake runs here.
+# cpu and cu130. gigl's build stays fast because no CMake runs here.
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

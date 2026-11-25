@@ -6,12 +6,13 @@ These are the current environments supported by GiGL
 
 | Python      | Mac (Arm64) CPU | Linux CPU | Linux CUDA | PyTorch | PyG |
 | ----------- | --------------- | --------- | ---------- | ------- | --- |
-| 3.11 – 3.13 | Supported       | Supported | 12.8       | 2.8     | 2.7 |
+| 3.11 – 3.13 | Supported       | Supported | 13.0       | 2.12    | 2.8 |
 
 Linux development needs glibc 2.39 or later, for example Ubuntu 24.04: `install_py_deps.sh` installs
 `tensorflow-data-validation` 1.21, whose Linux wheels need glibc 2.39, so it fails on Ubuntu 22.04 (glibc 2.35). The VMs
-that `create_dev_instance.py` creates run Ubuntu 24.04 with CUDA 12.9; GiGL's cu128 torch runs there, and the CUDA
-extensions build with that `nvcc`.
+that `create_dev_instance.py` creates run Ubuntu 24.04 with CUDA 12.9 and driver 580; GiGL's cu130 torch runs there. The
+CUDA extensions need an `nvcc` with the same CUDA major version as torch, so install a CUDA 13 toolkit on the VM before
+you build them.
 
 Python 3.11 is the default, and the full CI suite runs on it. GiGL's Docker images are published for each supported
 minor; see [Docker images and Python versions](#docker-images-and-python-versions).
@@ -31,7 +32,7 @@ Each registry is self-contained — you only need one GCP extra-index URL:
 | Variant   | Registry                                                                                                                                                                      |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CPU       | [gigl (CPU registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl?project=external-snap-ci-github-gigl)              |
-| CUDA 12.8 | [gigl-cu128 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu128?project=external-snap-ci-github-gigl) |
+| CUDA 13.0 | [gigl-cu130 (CUDA registry)](https://console.cloud.google.com/artifacts/python/external-snap-ci-github-gigl/us-central1/gigl/gigl-cu130?project=external-snap-ci-github-gigl) |
 
 ## Install Prerequisites - setting up your dev machine
 
@@ -122,28 +123,28 @@ Below we provide two ways to bootstrap an environment for using and/or developin
 
 2. Install GiGL
 
-#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CUDA 12.8
+#### Install GiGL + necessary tooling for PyG 2.8 + Torch 2.12 on CUDA 13.0
 
-The `gigl-cu128` registry needs Google Cloud credentials; anonymous requests get HTTP 401. Install the Artifact Registry
+The `gigl-cu130` registry needs Google Cloud credentials; anonymous requests get HTTP 401. Install the Artifact Registry
 keyring backend into the same environment, and pip authenticates with your Application Default Credentials
 (`gcloud auth application-default login`). See
 [Artifact Registry authentication](https://cloud.google.com/artifact-registry/docs/python/authentication).
 
 ```bash
 pip install keyring keyrings.google-artifactregistry-auth
-pip install "gigl[pyg27-torch28-cu128, transform]" \
---extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu128/simple/ \
---extra-index-url=https://download.pytorch.org/whl/cu128 \
---extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cu128.html
+pip install "gigl[pyg28-torch212-cu130, transform]" \
+--extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl-cu130/simple/ \
+--extra-index-url=https://download.pytorch.org/whl/cu130 \
+--extra-index-url=https://data.pyg.org/whl/torch-2.12.0+cu130.html
 ```
 
-#### Install GiGL + necessary tooling for PyG 2.7 + Torch 2.8 on CPU
+#### Install GiGL + necessary tooling for PyG 2.8 + Torch 2.12 on CPU
 
 ```bash
-pip install "gigl[pyg27-torch28-cpu, transform]" \
+pip install "gigl[pyg28-torch212-cpu, transform]" \
 --extra-index-url=https://us-central1-python.pkg.dev/external-snap-ci-github-gigl/gigl/simple/ \
 --extra-index-url=https://download.pytorch.org/whl/cpu \
---extra-index-url=https://data.pyg.org/whl/torch-2.8.0+cpu.html
+--extra-index-url=https://data.pyg.org/whl/torch-2.12.0+cpu.html
 ```
 
 pip resolves and installs `gigl-core` automatically from the same GCP registry. No separate install step is needed.

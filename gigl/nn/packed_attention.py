@@ -14,7 +14,7 @@ Why this exists:
     ``[num_sequences, max_seq_len, dim]`` batch is spent on padding. Packed
     tokens spend it only on real ones.
   - On CUDA this calls aten's memory-efficient varlen attention kernel, wrapped
-    in a custom op. The kernel is private because torch 2.8 has no public attention API that takes
+    in a custom op. The kernel is private because torch 2.12 has no public attention API that takes
     ``cu_seqlens``; ``_varlen_attention`` explains why the public options do not
     fit. The kernel runs in fp32, which inference needs for accuracy, and aten's
     own backward kernel supplies the gradients.

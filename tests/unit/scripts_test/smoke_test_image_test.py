@@ -83,16 +83,16 @@ class SmokeTestImageTorchVariantTest(TestCase):
         )
 
     def test_matching_variants_pass(self) -> None:
-        with self._fake_torch("2.8.0+cu128", "12.8"):
-            smoke_test_image.check_torch_variant("cu128")
-        with self._fake_torch("2.8.0+cpu", None):
+        with self._fake_torch("2.12.1+cu130", "13.0"):
+            smoke_test_image.check_torch_variant("cu130")
+        with self._fake_torch("2.12.1+cpu", None):
             smoke_test_image.check_torch_variant("cpu")
 
     def test_wrong_variant_fails(self) -> None:
-        with self._fake_torch("2.8.0+cpu", None):
+        with self._fake_torch("2.12.1+cpu", None):
             with self.assertRaises(AssertionError):
-                smoke_test_image.check_torch_variant("cu128")
-        with self._fake_torch("2.8.0+cu128", "12.8"):
+                smoke_test_image.check_torch_variant("cu130")
+        with self._fake_torch("2.12.1+cu130", "13.0"):
             with self.assertRaises(AssertionError):
                 smoke_test_image.check_torch_variant("cpu")
 

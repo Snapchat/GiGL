@@ -33,7 +33,7 @@ def _key(
     commit: str = "88ff111ac0d9e45c6c9d2d18cfc5883dca07e9f9",
     patch_contents: list[bytes] = [b"a", b"b"],
     variant: str = "cuda7.5",
-    torch_version: str = "2.8.0+cu128",
+    torch_version: str = "2.12.1+cu130",
     python_tag: str = "cp311",
     build_script: bytes = b"build",
     platform_tag: str = "linux-x86_64",
@@ -56,7 +56,7 @@ class ComputeCacheKeyTest(TestCase):
         self.assertEqual(key, _key())
         self.assertRegex(
             key,
-            r"^glt-88ff111a-p[0-9a-f]{12}-cuda7\.5-torch2\.8\.0\+cu128-cp311-linux-x86_64$",
+            r"^glt-88ff111a-p[0-9a-f]{12}-cuda7\.5-torch2\.12\.1\+cu130-cp311-linux-x86_64$",
         )
 
     def test_changing_any_single_input_changes_the_key(self) -> None:

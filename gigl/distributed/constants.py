@@ -45,9 +45,9 @@ DEFAULT_SAMPLING_RPC_INIT_TIMEOUT_SECONDS: Final[int] = 600
 #
 # References:
 #   PyTorch registers these channel names. basic is at line 243, cma at line 258, and mpt_uv at
-#   lines 285-288. The comment above mpt_uv explains it: 16 UV (libuv TCP) connections, each with
+#   lines 287-290. The comment above mpt_uv explains it: 16 UV (libuv TCP) connections, each with
 #   its own thread, and each tensor split into equal chunks across them.
-#     https://github.com/pytorch/pytorch/blob/v2.8.0/torch/csrc/distributed/rpc/tensorpipe_agent.cpp#L243-L288
+#     https://github.com/pytorch/pytorch/blob/v2.12.1/torch/csrc/distributed/rpc/tensorpipe_agent.cpp#L243-L290
 #   TensorPipe overview of transports and channels:
 #     https://github.com/pytorch/tensorpipe#transports-and-channels
 #   TensorPipe channel sources (basic/, cma/, mpt/):

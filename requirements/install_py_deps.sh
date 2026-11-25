@@ -112,15 +112,15 @@ install_gigl_lib_deps() {
     if is_running_on_mac;
     then
         echo "Setting up Mac CPU environment"
-        extra_deps+=("pyg27-torch28-cpu")
+        extra_deps+=("pyg28-torch212-cpu")
     else
         if has_cuda_driver;
         then
             echo "Setting up Linux CUDA environment"
-            extra_deps+=("pyg27-torch28-cu128")
+            extra_deps+=("pyg28-torch212-cu130")
         else
             echo "Setting up Linux CPU environment"
-            extra_deps+=("pyg27-torch28-cpu")
+            extra_deps+=("pyg28-torch212-cpu")
         fi
     fi
 
