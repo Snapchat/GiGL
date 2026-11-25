@@ -39,7 +39,9 @@ Data flow of a packed forward::
         |    norm -> q / k / v linears -> [num_tokens, num_heads, head_dim]
         |    packed_attention(q, k, v, layout, ...)
         |        CUDA: aten memory-efficient attention with cu_seqlens
-        |        CUDA, per-pair bias on every token or dropout:
+        |        CUDA, per-pair bias on every token, no gradient, bucket
+        |             lengths multiples of 8: the kernel once per length bucket
+        |        CUDA, per-pair bias on every token with a gradient, or dropout:
         |             SDPA per length bucket
         |        CPU:  SDPA per length bucket (reference)
         |    output linear + residual -> FFN + residual
@@ -52,10 +54,16 @@ Constraints:
     ``packed_attention`` zero-pads q, k and v up to a multiple of 8 and rescales
     q so the kernel's scores match the unpadded head dim.
   - A ``PackedAttentionBias`` is part of the call. The CPU path applies it. On
-    CUDA a ``per_key`` bias runs on the kernel by folding it into q and k as an
-    extra head-dim column. A ``per_pair`` bias on every token runs SDPA per
-    bucket. With ``query_is_first_token``, row 0 of each sequence's ``per_pair``
-    block is a per-key bias, so it runs on the kernel too.
+    CUDA a ``per_key`` bias runs on the kernel. Without a gradient and with a
+    head dim that is a multiple of 8, it is the kernel's per-sequence bias with
+    stride 0 on the query dim. Otherwise it is folded into q and k as an extra
+    head-dim column. A ``per_pair`` bias on every token runs the kernel once per
+    bucket, with that bucket's block as the kernel bias, when no input needs a
+    gradient and every bucket length is a multiple of 8 (the kernel needs the
+    bias's non-last strides to be multiples of 8, and has no backward for a
+    bias). Otherwise it runs SDPA per bucket. With ``query_is_first_token``,
+    row 0 of each sequence's ``per_pair`` block is a per-key bias, so it runs on
+    the kernel too.
   - Attention dropout always runs SDPA per bucket, never the varlen kernel: in
     torch 2.8 the kernel's varlen dropout uses different masks in the forward
     and the backward pass when ``cu_seqlens`` is given, so its gradients are
@@ -115,6 +123,54 @@ from torch import Tensor
 
 from gigl.transforms.sequence_layout import PackedBucket, PackedLayout
 
+
+def _kernel_bias_view(
+    attn_bias: Tensor,
+    num_query_tokens: int,
+    num_key_tokens: int,
+    allow_copy: bool = True,
+) -> Tensor:
+    """Views a per-sequence bias grid as the varlen kernel's bias.
+
+    The view is ``[1, num_heads, num_query_tokens, num_key_tokens]``.
+
+    The view keeps the strides of ``attn_bias``, so the kernel reads sequence
+    ``i`` at ``i * stride(0)``. The kernel reads only the rows and columns of
+    each sequence, which are inside the grid.
+
+    The view's own extent can be larger than the grid. With one head and full
+    sequences, its last query row starts past the end of the grid. In that case
+    the grid is copied into a zero buffer that holds the whole view.
+
+    Args:
+        attn_bias: ``[num_sequences, num_heads, query_len, key_len]`` grid with a
+            last-dim stride of 1.
+        num_query_tokens: Number of packed query tokens.
+        num_key_tokens: Number of packed key tokens.
+        allow_copy: Whether the grid may be copied when the view does not fit.
+
+    Returns:
+        A ``[1, num_heads, num_query_tokens, num_key_tokens]`` strided view.
+
+    Raises:
+        RuntimeError: If the view does not fit in the grid and ``allow_copy`` is
+            False.
+    """
+    size = (1, attn_bias.size(1), num_query_tokens, num_key_tokens)
+    stride = attn_bias.stride()
+    view_extent = 1 + sum((dim - 1) * step for dim, step in zip(size, stride))
+    if view_extent > attn_bias.numel():
+        if not allow_copy:
+            raise RuntimeError(
+                f"The kernel bias view needs {view_extent} cells but the grid has "
+                f"{attn_bias.numel()}, and copying the grid is not allowed."
+            )
+        storage = attn_bias.new_zeros(view_extent)
+        storage.as_strided(attn_bias.shape, stride).copy_(attn_bias)
+        attn_bias = storage
+    return attn_bias.as_strided(size, stride)
+
+
 # The kernel returns its philox seed and offset on the CPU when dropout is off,
 # but its meta registration returns them as CUDA tensors. ``torch.compile`` then
 # treats them as CUDA buffers and can reuse their storage for another small int64
@@ -133,6 +189,7 @@ def _varlen_attention_op(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_log_sumexp: bool,
+    attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Runs the varlen kernel and returns ``(output, logsumexp)``.
 
@@ -140,7 +197,16 @@ def _varlen_attention_op(
     (output, logsumexp, philox_seed, philox_offset, max_q, max_k). The kernel takes
     ``[batch, tokens, heads, head_dim]``, and ``cu_seqlens`` splits the single
     batch row into sequences.
+
+    ``attn_bias`` is a per-sequence grid ``[num_sequences, num_heads, query_len,
+    key_len]`` whose last-dim stride is 1 and whose other strides are multiples of
+    8. The kernel indexes the bias of sequence ``i`` at ``i * stride(0)``, relative
+    to the sequence's own query and key positions, so the grid is passed as a
+    strided ``[1, num_heads, num_query_tokens, num_key_tokens]`` view. The kernel
+    has no backward for a bias with ``cu_seqlens``.
     """
+    if attn_bias is not None:
+        attn_bias = _kernel_bias_view(attn_bias, query.size(0), key.size(0))
     efficient_attention_forward = cast(
         Callable[..., tuple[Tensor, ...]],
         torch.ops.aten._efficient_attention_forward,
@@ -149,7 +215,7 @@ def _varlen_attention_op(
         query.unsqueeze(0),
         key.unsqueeze(0),
         value.unsqueeze(0),
-        None,
+        attn_bias,
         cu_seqlens_q,
         cu_seqlens_k,
         max_seqlen_q,
@@ -171,6 +237,7 @@ def _(
     max_seqlen_q: int,
     max_seqlen_k: int,
     compute_log_sumexp: bool,
+    attn_bias: Optional[Tensor],
 ) -> tuple[Tensor, Tensor]:
     # The per-key fold widens q and k but not v, so the output takes v's head dim.
     output = query.new_empty((*query.shape[:-1], value.size(-1)))
@@ -246,9 +313,23 @@ def _(
 
 
 def _setup_varlen_attention_context(ctx, inputs, output) -> None:
-    query, key, value, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, _ = (
-        inputs
-    )
+    (
+        query,
+        key,
+        value,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        _,
+        attn_bias,
+    ) = inputs
+    if attn_bias is not None and any(
+        tensor.requires_grad for tensor in (query, key, value, attn_bias)
+    ):
+        raise ValueError(
+            "The varlen kernel has no backward with a bias; use the padded path."
+        )
     ctx.save_for_backward(
         query, key, value, output[0], output[1], cu_seqlens_q, cu_seqlens_k
     )
@@ -270,7 +351,7 @@ def _varlen_attention_backward(ctx, grad_output, grad_logsumexp):
         ctx.max_seqlen_q,
         ctx.max_seqlen_k,
     )
-    return grad_query, grad_key, grad_value, None, None, None, None, None
+    return grad_query, grad_key, grad_value, None, None, None, None, None, None
 
 
 torch.library.register_autograd(
@@ -336,6 +417,13 @@ def _fold_per_key_bias(
     return query, key
 
 
+def _requires_grad(*tensors: Optional[Tensor]) -> bool:
+    """Whether autograd would record an op that takes ``tensors``."""
+    return torch.is_grad_enabled() and any(
+        tensor is not None and tensor.requires_grad for tensor in tensors
+    )
+
+
 def _varlen_attention(
     query: Float[Tensor, "num_query_tokens num_heads head_dim"],
     key: Float[Tensor, "num_key_tokens num_heads head_dim"],
@@ -344,6 +432,9 @@ def _varlen_attention(
     cu_seqlens_k: Int32[Tensor, "num_sequences_plus_one"],
     max_seqlen_q: int,
     max_seqlen_k: int,
+    attn_bias: Optional[
+        Float[Tensor, "num_sequences num_heads query_len key_len"]
+    ] = None,
 ) -> Float[Tensor, "num_query_tokens num_heads value_dim"]:
     """Runs attention on packed sequences without padding, on the CUDA varlen kernel.
 
@@ -361,6 +452,13 @@ def _varlen_attention(
     to 128). The backward is non-deterministic unless
     ``torch.use_deterministic_algorithms(True)``, and it needs
     ``max_seqlen_q <= num_query_tokens`` and ``max_seqlen_k <= num_key_tokens``.
+
+    ``attn_bias`` is a per-sequence additive score bias: sequence ``i`` reads
+    ``attn_bias[i, :, query position, key position]``. It must have the query
+    dtype, a last-dim stride of 1, and other strides that are multiples of 8. The
+    kernel has no backward for a bias with ``cu_seqlens``, so a bias is
+    inference only: with a bias, none of ``query``, ``key``, ``value`` or the bias
+    may require grad, or the call raises.
 
     This calls the private ``aten._efficient_attention_forward`` op, wrapped in
     ``gigl::varlen_attention``, because torch
@@ -391,11 +489,10 @@ def _varlen_attention(
         cu_seqlens_k: Key sequence offsets.
         max_seqlen_q: Upper bound on any query sequence length.
         max_seqlen_k: Upper bound on any key sequence length.
+        attn_bias: Optional per-sequence score bias, see above.
     """
     # The backward needs the logsumexp; skip it when nothing will differentiate.
-    needs_grad = torch.is_grad_enabled() and any(
-        tensor.requires_grad for tensor in (query, key, value)
-    )
+    needs_grad = _requires_grad(query, key, value, attn_bias)
     return _varlen_attention_op(
         query,
         key,
@@ -405,6 +502,7 @@ def _varlen_attention(
         max_seqlen_q,
         max_seqlen_k,
         needs_grad,
+        attn_bias,
     )[0]
 
 
@@ -751,6 +849,131 @@ def _padded_packed_attention(
     return torch.cat(outputs)
 
 
+def _stride_zero_key_bias(
+    per_key: Float[Tensor, "num_tokens num_heads"],
+    layout: PackedLayout,
+    dtype: torch.dtype,
+    query_is_first_token: bool,
+) -> Float[Tensor, "num_sequences num_heads query_len padded_len"]:
+    """Builds a per-key bias as the varlen kernel's per-sequence bias, with stride 0 on the query dim.
+
+    Every query row of a sequence sees the same per-key values, so one
+    ``[num_sequences, num_heads, padded_len]`` grid is expanded over the query dim
+    with stride 0, where ``padded_len`` is ``layout.max_seq_len`` rounded up to a
+    multiple of 8 (the kernel needs the other strides to be multiples of 8). This
+    keeps the head dim of q and k as it is, unlike ``_fold_per_key_bias``, which
+    widens it and moves the kernel to a slower tier.
+
+    The view the kernel takes of this bias always fits in the grid, so the grid is
+    never copied; this is checked here.
+
+    Args:
+        per_key: Per-key bias of every token.
+        layout: Layout from ``pack_sequences``.
+        dtype: Dtype of the bias, the query dtype.
+        query_is_first_token: Whether each sequence has one query, which makes the
+            query dim 1 instead of ``layout.max_seq_len``.
+
+    Returns:
+        A ``[num_sequences, num_heads, query_len, padded_len]`` strided view with
+        strides ``(num_heads * padded_len, padded_len, 0, 1)``.
+
+    Raises:
+        RuntimeError: If the kernel's view of the bias would need a copy.
+    """
+    num_sequences = layout.cu_seqlens.numel() - 1
+    num_heads = per_key.size(1)
+    padded_len = (layout.max_seq_len + 7) // 8 * 8
+    flat_index = layout.sequence_id * padded_len + layout.position
+    grid = per_key.new_zeros(num_sequences * padded_len, num_heads, dtype=dtype)
+    grid = grid.index_copy(0, flat_index, per_key.to(dtype))
+    storage = grid.view(num_sequences, padded_len, num_heads).permute(0, 2, 1)
+    storage = storage.contiguous()
+    query_len = 1 if query_is_first_token else layout.max_seq_len
+    bias = storage.as_strided(
+        (num_sequences, num_heads, query_len, padded_len),
+        (num_heads * padded_len, padded_len, 0, 1),
+    )
+    num_key_tokens = per_key.size(0)
+    num_query_tokens = num_sequences if query_is_first_token else num_key_tokens
+    _kernel_bias_view(bias, num_query_tokens, num_key_tokens, allow_copy=False)
+    return bias
+
+
+def _kernel_per_bucket_attention(
+    query: Float[Tensor, "num_tokens num_heads head_dim"],
+    key: Float[Tensor, "num_tokens num_heads head_dim"],
+    value: Float[Tensor, "num_tokens num_heads head_dim"],
+    layout: PackedLayout,
+    per_key: Optional[Float[Tensor, "num_tokens num_heads"]],
+    per_pair: Float[Tensor, "num_pair_cells"],
+) -> Float[Tensor, "num_tokens num_heads head_dim"]:
+    """Runs the varlen kernel once per length bucket, with that bucket's per-pair bias.
+
+    Inference only: the kernel has no backward for a bias. Every token is queried,
+    and every bucket length is a multiple of 8, because the kernel needs the
+    bias's non-last strides to be multiples of 8.
+
+    The kernel is given each bucket's ``[bucket_sequences, num_heads, bucket_len,
+    bucket_len]`` block of ``per_pair`` as it is, with ``per_key`` of the
+    bucket's tokens added when given. Sequence offsets are the layout's, shifted
+    to the bucket's first token on the device.
+
+    Args:
+        query: Packed queries.
+        key: Packed keys.
+        value: Packed values.
+        layout: Layout from ``pack_sequences``.
+        per_key: Optional per-key bias.
+        per_pair: Flat per-pair bias, laid out as described in
+            ``PackedAttentionBias``.
+
+    Returns:
+        Attention output shaped like ``query``.
+    """
+    head_dim = query.size(-1)
+    if head_dim % 8 != 0:
+        query, key = _pad_query_key(query, key)
+        value = _pad_head_dim(value)
+    blocks = per_pair_bias_views(per_pair, layout, query.size(1))
+    outputs: list[Tensor] = []
+    for bucket, block in zip(layout_buckets(layout), blocks):
+        num_sequences = bucket.end_sequence - bucket.first_sequence
+        num_bucket_tokens = bucket.end_token - bucket.first_token
+        token_range = slice(bucket.first_token, bucket.end_token)
+        attn_bias = block.to(query.dtype).contiguous()
+        if per_key is not None:
+            num_heads = per_key.size(1)
+            per_key_grid = query.new_zeros(
+                num_sequences * bucket.bucket_len, num_heads
+            ).index_copy(
+                0,
+                _bucket_cell_index(layout, bucket),
+                per_key[token_range].to(query.dtype),
+            )
+            attn_bias = attn_bias + per_key_grid.view(
+                num_sequences, bucket.bucket_len, num_heads
+            ).permute(0, 2, 1).unsqueeze(2)
+        cu_seqlens = (
+            layout.cu_seqlens[bucket.first_sequence : bucket.end_sequence + 1]
+            - bucket.first_token
+        )
+        max_seqlen = min(bucket.bucket_len, num_bucket_tokens)
+        outputs.append(
+            _varlen_attention(
+                query[token_range],
+                key[token_range],
+                value[token_range],
+                cu_seqlens,
+                cu_seqlens,
+                max_seqlen,
+                max_seqlen,
+                attn_bias,
+            )
+        )
+    return torch.cat(outputs)[..., :head_dim]
+
+
 def packed_attention(
     query: Float[Tensor, "num_queries num_heads head_dim"],
     key: Float[Tensor, "num_tokens num_heads head_dim"],
@@ -774,10 +997,18 @@ def packed_attention(
        whose dropout is wrong in the backward pass in torch 2.8.
     2. A ``per_pair`` bias with ``query_is_first_token``: row 0 of each
        sequence's block becomes a per-key bias (``_first_row_per_key_bias``)
-       and the call continues on the varlen kernel, with or without gradient.
-    3. A ``per_pair`` bias on every token, with or without gradient: SDPA per
-       bucket.
-    4. Otherwise the varlen kernel, with a ``per_key`` bias folded into q and k
+       and the call continues as a per-key bias, with or without gradient.
+    3. A ``per_pair`` bias on every token: with a gradient, SDPA per bucket,
+       because the kernel has no backward for a bias. Without a gradient, the
+       varlen kernel once per bucket with that bucket's block as the kernel bias
+       (``_kernel_per_bucket_attention``), but only when every bucket length is a
+       multiple of 8, because the kernel needs the bias's non-last strides to be
+       multiples of 8. Otherwise SDPA per bucket.
+    4. A ``per_key`` bias without a gradient and with a head dim that is a
+       multiple of 8: the varlen kernel, with the bias as the kernel's
+       per-sequence bias with stride 0 on the query dim
+       (``_stride_zero_key_bias``). This keeps the head dim of q and k.
+    5. Otherwise the varlen kernel, with a ``per_key`` bias folded into q and k
        by ``_fold_per_key_bias``.
 
     Every sequence must contain at least one token (``lengths >= 1``). An empty
@@ -789,19 +1020,45 @@ def packed_attention(
         return _padded_packed_attention(
             query, key, value, layout, query_is_first_token, bias, dropout_p
         )
-    if bias is not None and bias.per_pair is not None:
-        # The one place to route a per-pair bias, with or without gradient.
-        if not query_is_first_token:
+    per_key = None
+    per_pair = None
+    if bias is not None:
+        per_key = bias.per_key
+        per_pair = bias.per_pair
+    if per_pair is not None and query_is_first_token:
+        first_row = _first_row_per_key_bias(per_pair, layout, query.size(1))
+        if per_key is not None:
+            first_row = per_key + first_row
+        per_key = first_row
+        per_pair = None
+    needs_grad = _requires_grad(query, key, value, per_key, per_pair)
+    head_dim = query.size(-1)
+    attn_bias = None
+    if per_pair is not None:
+        # The kernel needs the non-last strides of its bias to be multiples of 8,
+        # so a bucket length that is not one keeps SDPA per bucket. On an L4
+        # (512 sequences, 45,170 tokens, 8 heads, head dim 64, fp32 forward) the
+        # kernel per bucket took 4.2 ms against 14.8 ms for SDPA per bucket.
+        buckets_are_aligned = all(
+            bucket.bucket_len % 8 == 0 for bucket in layout_buckets(layout)
+        )
+        if needs_grad or not buckets_are_aligned:
             return _padded_packed_attention(
                 query, key, value, layout, query_is_first_token, bias
             )
-        per_key = _first_row_per_key_bias(bias.per_pair, layout, query.size(1))
-        if bias.per_key is not None:
-            per_key = bias.per_key + per_key
-        bias = PackedAttentionBias(per_key=per_key)
-    head_dim = query.size(-1)
-    if bias is not None and bias.per_key is not None:
-        query, key = _fold_per_key_bias(query, key, bias.per_key)
+        return _kernel_per_bucket_attention(
+            query, key, value, layout, per_key, per_pair
+        )
+    if per_key is not None and not needs_grad and head_dim % 8 == 0:
+        # A head dim that is not a multiple of 8 keeps the fold until this route
+        # is tested with ``_pad_query_key``. The fold widens the head dim 64 -> 72
+        # and moves the kernel to a slower tier: per-key-bias inference on an L4
+        # takes 96.9 ms per batch with the fold and 81.5 ms with this route.
+        attn_bias = _stride_zero_key_bias(
+            per_key, layout, query.dtype, query_is_first_token
+        )
+    elif per_key is not None:
+        query, key = _fold_per_key_bias(query, key, per_key)
     elif head_dim % 8 != 0:
         query, key = _pad_query_key(query, key)
     if head_dim % 8 != 0:
@@ -822,5 +1079,6 @@ def packed_attention(
         layout.cu_seqlens,
         max_seqlen_q,
         min(layout.max_seq_len, key.size(0)),
+        attn_bias,
     )
     return output[..., :head_dim]
