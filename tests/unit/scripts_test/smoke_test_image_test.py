@@ -44,6 +44,10 @@ class SmokeTestImageArgsTest(TestCase):
         for image_type, preset in smoke_test_image.IMAGE_TYPE_PRESETS.items():
             self.assertEqual(preset.boot_env, image_type == "dataflow")
 
+    def test_only_cpu_and_cuda_presets_require_jemalloc(self) -> None:
+        for image_type, preset in smoke_test_image.IMAGE_TYPE_PRESETS.items():
+            self.assertEqual(preset.require_jemalloc, image_type in ("cpu", "cuda"))
+
 
 class SmokeTestImageChecksTest(TestCase):
     def test_parse_version_compares_numerically(self) -> None:
@@ -72,6 +76,20 @@ class SmokeTestImageChecksTest(TestCase):
                 self.assertRaises(
                     AssertionError, smoke_test_image.check_nvidia_driver_path
                 )
+
+    def test_jemalloc_check_reads_the_memory_map(self) -> None:
+        jemalloc_line = "7f00-7f10 r-xp 00000000 08:01 42 /usr/lib/libjemalloc.so.2"
+        glibc_line = "7f20-7f30 r-xp 00000000 08:01 43 /usr/lib/libc.so.6"
+        maps_path = os.path.join(self.create_tempdir().full_path, "maps")
+        with open(maps_path, "w") as maps_file:
+            maps_file.write(f"{glibc_line}\n{jemalloc_line}\n")
+        smoke_test_image.check_jemalloc_loaded(maps_path=maps_path)
+
+        with open(maps_path, "w") as maps_file:
+            maps_file.write(f"{glibc_line}\n")
+        self.assertRaises(
+            AssertionError, smoke_test_image.check_jemalloc_loaded, maps_path
+        )
 
 
 class SmokeTestImageTorchVariantTest(TestCase):

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The CPU and CUDA images use jemalloc (`LD_PRELOAD` of the distro `libjemalloc2`, `MALLOC_CONF=background_thread:true`)
+  instead of glibc malloc, so GLT sampler worker processes return freed memory to the OS rather than growing for the
+  whole job. Set `LD_PRELOAD=` (empty) in the container environment to go back to glibc malloc. The Dataflow image is
+  unchanged by @kmontemayor2-sc
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,
