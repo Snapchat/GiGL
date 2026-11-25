@@ -19,6 +19,7 @@ from gigl.nn.graph_transformer import (
     GraphTransformerEncoder,
     GraphTransformerEncoderLayer,
     PackedRelationEdges,
+    _get_relation_segments_from_bounds,
 )
 from gigl.src.common.types.graph_data import EdgeType, NodeType, Relation
 from gigl.transforms.add_positional_encodings import AddHeteroHopDistanceEncoding
@@ -690,6 +691,53 @@ class PackedPathTest(TestCase):
 
 
 class PackedRelationMessageTest(TestCase):
+    @parameterized.expand(
+        [
+            param("linear", mode="edge_type_linear"),
+            param("attention", mode="edge_type_attention"),
+        ]
+    )
+    def test_many_edges_into_one_target_aggregate_in_float32(
+        self, _: str, mode: str
+    ) -> None:
+        num_edges = 500
+        model_dim = 8
+        num_heads = 2
+        generator = torch.Generator().manual_seed(0)
+        layer = GraphTransformerEncoderLayer(
+            model_dim=model_dim,
+            num_heads=num_heads,
+            feedforward_dim=16,
+            dropout_rate=0.0,
+            relation_message_mode=mode,
+            num_relations=1,
+        )
+        with torch.no_grad():
+            for name, parameter in layer.named_parameters():
+                if "_relation_message" in name:
+                    parameter.copy_(torch.randn(parameter.shape, generator=generator))
+        sources = torch.rand(num_edges, model_dim, generator=generator) + 1.0
+        queries = torch.randn(num_edges, num_heads, 4, generator=generator)
+        keys = torch.randn(num_edges, num_heads, 4, generator=generator)
+        is_attention = mode == "edge_type_attention"
+
+        def aggregate(dtype: torch.dtype) -> torch.Tensor:
+            return layer.to(dtype)._aggregate_relation_messages(
+                source_features=sources.to(dtype),
+                edge_queries=queries.to(dtype) if is_attention else None,
+                edge_keys=keys.to(dtype) if is_attention else None,
+                relation_indices=torch.zeros(num_edges, dtype=torch.long),
+                relation_segments=_get_relation_segments_from_bounds([0, num_edges]),
+                target_rows=torch.zeros(num_edges, dtype=torch.long),
+                num_target_rows=1,
+            )
+
+        with torch.no_grad():
+            expected = aggregate(torch.float32)
+            actual = aggregate(torch.bfloat16)
+        self.assertEqual(actual.dtype, torch.bfloat16)
+        torch.testing.assert_close(actual.float(), expected, rtol=2e-2, atol=2e-2)
+
     def test_batches_mix_truncated_and_short_sequences(self) -> None:
         for seed in range(3):
             lengths = _sequence_lengths(_three_relation_batch(seed))
