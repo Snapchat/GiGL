@@ -1034,6 +1034,7 @@ class PackedAttentionCudaTest(TestCase):
         bucketed: bool = False,
         gradient_relative_l2: Optional[float] = None,
         max_seq_len: int = _MAX_SEQ_LEN,
+        compile_attention: bool = False,
     ) -> None:
         """Compares ``packed_attention`` on CUDA to the CPU padded reference.
 
@@ -1044,8 +1045,15 @@ class PackedAttentionCudaTest(TestCase):
 
         With ``gradient_relative_l2`` each gradient is compared by relative L2
         error instead of elementwise. Outputs are always compared elementwise.
+
+        With ``compile_attention`` the CUDA call goes through ``torch.compile``.
         """
         device = torch.device("cuda")
+        attention: Callable[..., torch.Tensor] = packed_attention
+        if compile_attention:
+            torch._dynamo.reset()
+            self.addCleanup(torch._dynamo.reset)
+            attention = torch.compile(packed_attention)
         num_heads = 2
         if bucketed:
             packed = _bucketed_layout()
@@ -1099,7 +1107,7 @@ class PackedAttentionCudaTest(TestCase):
             query_is_first_token,
             cpu_bias,
         )
-        actual = packed_attention(
+        actual = attention(
             cuda_leaves["query"],
             cuda_leaves["key"],
             cuda_leaves["value"],
@@ -1399,6 +1407,39 @@ class PackedAttentionCudaTest(TestCase):
                     atol=atol,
                     check_gradients=False,
                     with_per_key=True,
+                )
+
+    def test_compiled_inference_per_pair_bias_matches_cpu_reference(self) -> None:
+        # Bucketed per-pair on every token takes the per-bucket kernel route;
+        # first-token queries fold the per-pair row into a per-key bias.
+        for query_is_first_token, with_per_key in itertools.product(
+            (False, True), (False, True)
+        ):
+            with (
+                self.subTest(first_token=query_is_first_token, per_key=with_per_key),
+                torch.no_grad(),
+            ):
+                self._assert_matches_cpu_reference(
+                    head_dim=64,
+                    query_is_first_token=query_is_first_token,
+                    check_gradients=False,
+                    with_per_key=with_per_key,
+                    with_per_pair=True,
+                    bucketed=True,
+                    compile_attention=True,
+                )
+
+    def test_compiled_inference_per_key_bias_with_stride_zero_matches_cpu_reference(
+        self,
+    ) -> None:
+        for query_is_first_token in (False, True):
+            with self.subTest(first_token=query_is_first_token), torch.no_grad():
+                self._assert_matches_cpu_reference(
+                    head_dim=64,
+                    query_is_first_token=query_is_first_token,
+                    check_gradients=False,
+                    with_per_key=True,
+                    compile_attention=True,
                 )
 
     def test_per_pair_bias_that_is_a_strided_flat_view_matches_the_padded_path(
