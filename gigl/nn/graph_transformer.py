@@ -260,14 +260,12 @@ class PackedRelationEdges(NamedTuple):
         segments: ``(relation, start, end)`` edge range of every relation, in
             order, covering ``[0, num_edges)``; empty if there are no edges. They
             are host values, so the per-relation transforms never read the device.
-        all_filtered: The batch has relation edges but none reach these outputs.
     """
 
     target: Tensor
     source: Tensor
     relation: Tensor
     segments: tuple[RelationSegment, ...]
-    all_filtered: bool = False
 
 
 def _get_relation_segments_from_bounds(
@@ -635,9 +633,11 @@ class GraphTransformerEncoderLayer(nn.Module):
                     num_target_rows=x.size(0),
                 )
                 x = x + self._dropout(messages)
-            elif self.training and relation_edges.all_filtered:
-                # Keep the relation parameters in the graph, as the padded path does
-                # when anchor filtering drops every edge.
+            elif self.training:
+                # No relation messages ran (no edges, or anchor filtering dropped
+                # them all). Keep the relation parameters in the graph, as the
+                # padded path does, so their gradients are zero rather than None
+                # (which breaks DDP on the next iteration).
                 x = x + self._zero_relation_parameter_dependency(x)
         return x + self._ffn(self._ffn_norm(x))
 
@@ -2349,7 +2349,6 @@ class GraphTransformerEncoder(nn.Module):
                 source=source_rows[anchor_edges],
                 relation=relations[anchor_edges],
                 segments=_get_relation_segments_from_bounds(anchor_bounds),
-                all_filtered=all_bounds[-1] > 0 and num_anchor_edges == 0,
             ),
         )
 
