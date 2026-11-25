@@ -46,29 +46,35 @@ Some highlights:
   drops from ~7.25x one int64 edge array to ~3x by @dsaini2 in https://github.com/Snapchat/GiGL/pull/768
 - `GraphTransformerEncoder` runs supported configs on CUDA on packed tokens: k-hop sequences come from a fixed-shape
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
-  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
-  or `anchor_neighbor_attention` readout (the default, so default-configured encoders now run packed on CUDA), any
-  `relation_attention_mode` (`none`, `edge_type_bilinear`, `edge_type_hgt`), any `relation_message_mode`, no
-  `ppr_weight` or `ppr_relation_features`, `hop_distance <= 4`, and either value of `prioritize_hop_order`. Attention
-  dropout in training runs SDPA per length bucket (sequences sorted by length, buckets of 32/64/128/256 tokens) instead
-  of the varlen kernel; outputs are returned in anchor order. Anchor-relative attributes work as token inputs and as a
-  per-key attention bias. Pairwise attention biases, including the learned non-missing bias, are supported: they are
-  built per length bucket (about a third of the dense grid's cells on realistic batches) and run SDPA per bucket. At
-  inference (no gradient), per-pair biases run the varlen kernel once per length bucket with that bucket's bias, and a
-  per-key-only bias runs the kernel without widening the head dim. An attribute other than `hop_distance`, and every
-  pairwise attention bias, is looked up in its sparse CSR matrix, which reads a value back from the device and has
-  data-dependent shapes, so such a config does not whole-encoder compile and loses the fixed host-sync count. Everything
-  else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are counted and
-  warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to float
-  error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives `hop_distance`
-  from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding` with the same
-  sampling direction), but a batch that falls back to the padded path needs the attribute and raises without it. The
-  relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation messages over the layout's
-  edges with a fixed number of host syncs per forward, independent of the number of relations and layers. With relation
-  attention, each layer adds the per-edge relation scores to its own copy of the length-bucketed per-pair bias and runs
-  SDPA per bucket; the last `anchor_only` layer adds them to the per-key bias and runs the kernel. The padded path's
-  relation scoring no longer reads one host value per relation. A `khop` config now raises a `ValueError` at
-  construction if its `hop_distance` embedding has `hop_distance` or fewer entries by @kmontemayor2-sc
+  (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences with
+  `hop_distance <= 4`, or `ppr` sequences with `ppr_weight`, `ppr_relation_features` and sinusoidal sequence positions;
+  `anchor_only` or `anchor_neighbor_attention` readout (the default, so default-configured encoders now run packed on
+  CUDA), any `relation_attention_mode` (`none`, `edge_type_bilinear`, `edge_type_hgt`), any `relation_message_mode`, and
+  either value of `prioritize_hop_order`. PPR sequences come from the same builder as the padded path, so both paths see
+  the same tokens and the same `ppr_is_expanded` relation filter. Attention dropout in training runs SDPA per length
+  bucket (sequences sorted by length, buckets of 32/64/128/256 tokens) instead of the varlen kernel; outputs are
+  returned in anchor order. Anchor-relative attributes work as token inputs and as a per-key attention bias. Pairwise
+  attention biases, including the learned non-missing bias, are supported: they are built per length bucket (about a
+  third of the dense grid's cells on realistic batches) and run SDPA per bucket. At inference (no gradient), per-pair
+  biases run the varlen kernel once per length bucket with that bucket's bias, and a per-key-only bias runs the kernel
+  without widening the head dim. An attribute other than `hop_distance` (and `hop_distance` itself with `ppr`
+  sequences), and every pairwise attention bias, is looked up in its sparse CSR matrix, which reads a value back from
+  the device and has data-dependent shapes; the PPR sequence builder also reads values back. Such configs, and every
+  `ppr` config, do not whole-encoder compile and have no fixed host-sync count. Everything else, CPU, CUDA runs in a
+  dtype other than float16, bfloat16 and float32, and batches whose k-hop candidate set is too large keep the padded
+  path; those batches are counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same
+  embeddings and gradients up to float error, except that train-mode `dropout_rate` and `attention_dropout_rate` draws
+  differ (same distribution). With `khop` sequences the packed path derives `hop_distance` from the layout and ignores
+  the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding` with the same sampling direction), but a
+  batch that falls back to the padded path needs the attribute and raises without it; with `ppr` sequences both paths
+  read the batch attribute. The relation message modes `edge_type_linear` and `edge_type_attention` aggregate
+  per-relation messages over the layout's edges with a fixed number of host syncs per forward, independent of the number
+  of relations and layers. With relation attention, each layer adds the per-edge relation scores to its own copy of the
+  length-bucketed per-pair bias and runs SDPA per bucket; the last `anchor_only` layer adds them to the per-key bias and
+  runs the kernel. The padded path's relation scoring no longer reads one host value per relation. A `khop` config now
+  raises a `ValueError` at construction if its `hop_distance` embedding has `hop_distance` or fewer entries. A `ppr`
+  batch with no anchors now returns an empty embedding on both the packed and padded paths instead of raising by
+  @kmontemayor2-sc
 - Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six
