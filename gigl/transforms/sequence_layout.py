@@ -35,12 +35,16 @@ class PackedRelationEdges(NamedTuple):
         segments: ``(relation, start, end)`` edge range of every relation, in
             order, covering ``[0, num_edges)``; empty if there are no edges. They
             are host values, so the per-relation transforms never read the device.
+        anchor_edges: The edges into each sequence's anchor token, with ``target``
+            the sequence index, for a last layer that computes only the anchors.
+            None when no such layer runs.
     """
 
     target: Tensor
     source: Tensor
     relation: Tensor
     segments: tuple[RelationSegment, ...]
+    anchor_edges: Optional["PackedRelationEdges"] = None
 
 
 class PackedLayout(NamedTuple):
