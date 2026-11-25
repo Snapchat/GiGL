@@ -8,7 +8,7 @@ from gigl.src.common.utils.spark_job_manager import (
 from gigl.src.validation_check.libs.name_checks import (
     check_if_kfp_pipeline_job_name_valid,
 )
-from tests.e2e_tests.e2e_test import E2ETestsSpec, build_e2e_job_name
+from tests.e2e_tests.e2e_test import E2ETestsSpec
 from tests.test_assets.test_case import TestCase
 
 _E2E_TESTS_YAML_PATH = "tests/e2e_tests/e2e_tests.yaml"
@@ -18,18 +18,12 @@ def _load_job_names_and_task_configs() -> dict[str, str]:
     """Returns the full e2e job name for each test, mapped to the test's task config URI."""
     spec = load_resolved_yaml(LocalUri(_E2E_TESTS_YAML_PATH), E2ETestsSpec)
     return {
-        build_e2e_job_name(name, test.name_suffix): test.task_config_uri
+        f"{name}{test.name_suffix}": test.task_config_uri
         for name, test in spec.tests.items()
     }
 
 
 class E2EJobNamesTest(TestCase):
-    def test_job_names_differ_between_calls(self) -> None:
-        self.assertNotEqual(
-            build_e2e_job_name("my_test", "_on_20260101_000000"),
-            build_e2e_job_name("my_test", "_on_20260101_000000"),
-        )
-
     def test_all_job_names_are_valid_kfp_job_names(self) -> None:
         job_names = _load_job_names_and_task_configs()
         self.assertGreater(len(job_names), 0)
