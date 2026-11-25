@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Store the compact CSR row pointers (`indptr`) as int32 when the partition's edge count for an edge type fits, in both
+  the rank-local and the full-range row layout, halving the one array sized by the node-id range. Add
+  `0003-glt-int32-indptr.patch` so the GLT build reads it; samplers it does not cover reject int32 rows with an error.
+  Anything that reads `Topology.indptr` must not assume int64. The native neighbor lookup reads int32 and int64 row
+  pointers, so it stays on for these graphs by @mkolodner-sc
+- Serve one-hop neighbor lookups, for local and remote nodes, with a native lookup: a C++ operator over the partition's
+  CSR (`torch.ops.gigl_core.lookup_neighbors`). Remote requests are sent as a TorchScript RPC function, so the serving
+  sampler does not take the Python interpreter lock per request; local lookups call the operator from Python, which
+  releases the lock while it runs. Sampled neighbors match GLT's. On by default; set `GIGL_NATIVE_NEIGHBOR_LOOKUP=off`
+  on every process to use GLT's sampler and Python callee. Samplers fall back to the Python callee automatically when
+  any rank cannot serve it (a non-CPU sampler device or graph, or weighted sampling)
+
 ## [0.4.0] - Nov 19, 2026
 
 This release has been a long time coming, and there have been many people who worked on it. Thank you to everyone,

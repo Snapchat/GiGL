@@ -1,5 +1,6 @@
 import os
 import tempfile
+from typing import Literal
 from unittest import mock
 
 import torch
@@ -8,10 +9,13 @@ from parameterized import param, parameterized
 
 from gigl.utils.csr import (
     CompactTopology,
+    _first_row_at_or_past,
     _scatter_in_bands,
+    _sort_within_rows,
     build_csr_from_coo,
+    select_indptr_dtype,
 )
-from gigl.utils.csr_parallel import parallel_scatter
+from gigl.utils.csr_parallel import _edge_balanced_row_bounds, parallel_scatter
 from gigl.utils.share_memory import allocate_preshared, is_disk_backed
 from tests.test_assets.test_case import TestCase
 
@@ -19,11 +23,15 @@ from tests.test_assets.test_case import TestCase
 def _reference_csr(
     row: torch.Tensor, col: torch.Tensor, num_rows: int
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """The (indptr, indices) that graphlearn_torch would produce for the same input."""
+    """The (indptr, indices) that graphlearn_torch would produce for the same input.
+
+    ``coo_to_csr`` returns an int64 indptr; it is cast to the dtype ``build_csr_from_coo`` picks so the
+    values can be compared exactly.
+    """
     indptr, indices, _, _ = coo_to_csr(
         row.to(torch.int64), col.to(torch.int64), node_sizes=(num_rows, num_rows)
     )
-    return indptr, indices
+    return indptr.to(select_indptr_dtype(row.numel())), indices
 
 
 class BuildCsrFromCooTest(TestCase):
@@ -63,7 +71,7 @@ class BuildCsrFromCooTest(TestCase):
         torch.testing.assert_close(
             result.indices.long(), expected_indices, rtol=0, atol=0
         )
-        self.assertEqual(result.indptr.dtype, torch.int64)
+        self.assertEqual(result.indptr.dtype, torch.int32)
         self.assertEqual(result.indices.dtype, dtype)
         edge_ids = result.edge_ids
         assert edge_ids is not None
@@ -77,7 +85,9 @@ class BuildCsrFromCooTest(TestCase):
         result = build_csr_from_coo(row, col, num_rows=2, retain_edge_ids=True)
 
         self.assertIsNotNone(result.edge_ids)
-        torch.testing.assert_close(result.indptr, torch.tensor([0, 2, 4]))
+        torch.testing.assert_close(
+            result.indptr, torch.tensor([0, 2, 4], dtype=torch.int32)
+        )
         torch.testing.assert_close(result.indices, torch.tensor([2, 5, 1, 3]))
         torch.testing.assert_close(result.edge_ids, torch.tensor([3, 1, 2, 0]))
 
@@ -457,7 +467,9 @@ class ScatterPlacementTest(TestCase):
 
         self.assertTrue(is_disk_backed(result.indices))
         reference_indptr, reference_indices = _reference_csr(row, col, 64)
-        torch.testing.assert_close(result.indptr, reference_indptr)
+        torch.testing.assert_close(
+            result.indptr, reference_indptr.to(result.indptr.dtype)
+        )
         torch.testing.assert_close(result.indices, reference_indices)
 
     def test_banded_disk_outputs_keep_edge_ids_aligned(self):
@@ -486,9 +498,208 @@ class ScatterPlacementTest(TestCase):
         expected_ptr, expected_col, expected_ids, _ = coo_to_csr(
             row, col, edge_id=torch.arange(128), node_sizes=(8, 16)
         )
-        torch.testing.assert_close(result.indptr, expected_ptr)
+        torch.testing.assert_close(result.indptr, expected_ptr.to(result.indptr.dtype))
         torch.testing.assert_close(result.indices, expected_col)
         torch.testing.assert_close(edge_ids, expected_ids)
+
+
+class IndptrDtypeTest(TestCase):
+    """The indptr is int32 while the edge count fits and int64 beyond it, in every code path.
+
+    A graph past 2**31 edges cannot be allocated in a unit test, so the overflow boundary is
+    exercised by lowering ``INT32_INDPTR_MAX_EDGES``; the default is asserted separately.
+    """
+
+    @parameterized.expand(
+        [
+            param("no_edges", num_edges=0, expected=torch.int32),
+            param("one_edge", num_edges=1, expected=torch.int32),
+            param(
+                "the_largest_count_int32_holds",
+                num_edges=2**31 - 1,
+                expected=torch.int32,
+            ),
+            param("one_edge_past_int32", num_edges=2**31, expected=torch.int64),
+            param("far_past_int32", num_edges=2**33, expected=torch.int64),
+        ]
+    )
+    def test_the_default_limit_switches_to_int64_one_edge_past_int32(
+        self, _name: str, num_edges: int, expected: torch.dtype
+    ) -> None:
+        self.assertEqual(select_indptr_dtype(num_edges), expected)
+
+    @parameterized.expand(
+        [
+            param("below_the_limit", num_edges=99, expected=torch.int32),
+            param("at_the_limit", num_edges=100, expected=torch.int32),
+            param("past_the_limit", num_edges=101, expected=torch.int64),
+        ]
+    )
+    def test_the_lowered_limit_moves_the_boundary(
+        self, _name: str, num_edges: int, expected: torch.dtype
+    ) -> None:
+        with mock.patch("gigl.utils.csr.INT32_INDPTR_MAX_EDGES", 100):
+            self.assertEqual(select_indptr_dtype(num_edges), expected)
+
+    @parameterized.expand(
+        [
+            param("int64_columns_stay_int64", column_dtype=torch.int64),
+            param("int32_columns_stay_int32", column_dtype=torch.int32),
+        ]
+    )
+    def test_int32_and_int64_indptr_hold_the_same_offsets_and_leave_indices_alone(
+        self, _name: str, column_dtype: torch.dtype
+    ) -> None:
+        generator = torch.Generator().manual_seed(3)
+        num_rows = 300
+        row = torch.randint(0, num_rows, (4_000,), generator=generator)
+        col = torch.randint(0, num_rows, (4_000,), generator=generator).to(column_dtype)
+
+        narrow = build_csr_from_coo(row, col, num_rows=num_rows, retain_edge_ids=True)
+        with mock.patch("gigl.utils.csr.INT32_INDPTR_MAX_EDGES", 100):
+            wide = build_csr_from_coo(row, col, num_rows=num_rows, retain_edge_ids=True)
+
+        self.assertEqual(narrow.indptr.dtype, torch.int32)
+        self.assertEqual(wide.indptr.dtype, torch.int64)
+        torch.testing.assert_close(narrow.indptr.long(), wide.indptr, rtol=0, atol=0)
+        torch.testing.assert_close(narrow.indices, wide.indices, rtol=0, atol=0)
+        torch.testing.assert_close(narrow.edge_ids, wide.edge_ids, rtol=0, atol=0)
+        self.assertEqual(narrow.indices.dtype, column_dtype)
+
+    def test_an_empty_build_uses_the_selected_dtype(self) -> None:
+        empty = torch.empty(0, dtype=torch.int64)
+        self.assertEqual(
+            build_csr_from_coo(empty, empty, num_rows=4).indptr.dtype, torch.int32
+        )
+        with mock.patch("gigl.utils.csr.INT32_INDPTR_MAX_EDGES", -1):
+            self.assertEqual(
+                build_csr_from_coo(empty, empty, num_rows=4).indptr.dtype, torch.int64
+            )
+
+    @parameterized.expand(
+        [
+            param(
+                "csr_with_a_row_for_every_id_below_the_range_end",
+                layout="CSR",
+                rank_local=False,
+            ),
+            param("csr_with_only_the_rank_local_rows", layout="CSR", rank_local=True),
+            param(
+                "csc_with_a_row_for_every_id_below_the_range_end",
+                layout="CSC",
+                rank_local=False,
+            ),
+            param("csc_with_only_the_rank_local_rows", layout="CSC", rank_local=True),
+        ]
+    )
+    def test_both_row_layouts_narrow_the_indptr_and_round_trip_through_to_coo(
+        self, _name: str, layout: Literal["CSR", "CSC"], rank_local: bool
+    ) -> None:
+        """A rank owning global ids [40, 100): rank-local stores 60 rows, full-range stores 100."""
+        range_start, range_rows = 40, 60
+        generator = torch.Generator().manual_seed(5)
+        compressed = torch.randint(
+            range_start, range_start + range_rows, (500,), generator=generator
+        )
+        other = torch.randint(0, 1000, (500,), generator=generator)
+        compressed_dimension = 0 if layout == "CSR" else 1
+        coo = torch.stack(
+            [compressed, other] if layout == "CSR" else [other, compressed]
+        )
+        compressed_id_offset = 0
+        num_rows = range_start + range_rows
+        if rank_local:
+            # What dist_dataset does before the build: shift into the rank's own row range.
+            coo[compressed_dimension] -= range_start
+            compressed_id_offset = range_start
+            num_rows = range_rows
+
+        def build() -> CompactTopology:
+            return CompactTopology(
+                coo.clone(),
+                layout=layout,
+                num_rows=num_rows,
+                compressed_id_offset=compressed_id_offset,
+            )
+
+        narrow_topology = build()
+        with mock.patch("gigl.utils.csr.INT32_INDPTR_MAX_EDGES", 100):
+            wide_topology = build()
+
+        self.assertEqual(narrow_topology.indptr.dtype, torch.int32)
+        self.assertEqual(wide_topology.indptr.dtype, torch.int64)
+        self.assertEqual(narrow_topology.indptr.numel(), num_rows + 1)
+        torch.testing.assert_close(
+            narrow_topology.indptr.long(), wide_topology.indptr, rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            narrow_topology.indices, wide_topology.indices, rtol=0, atol=0
+        )
+        # to_coo runs GLT's ptr2ind over the indptr and adds the offset back.
+        for narrow_part, wide_part in zip(
+            narrow_topology.to_coo()[:2], wide_topology.to_coo()[:2]
+        ):
+            torch.testing.assert_close(narrow_part, wide_part, rtol=0, atol=0)
+        original_compressed = narrow_topology.to_coo()[compressed_dimension]
+        self.assertEqual(
+            sorted(original_compressed.tolist()), sorted(compressed.tolist())
+        )
+
+    def test_the_banded_scatter_and_sort_give_the_same_columns_for_either_indptr_width(
+        self,
+    ) -> None:
+        generator = torch.Generator().manual_seed(9)
+        num_rows = 200
+        row = torch.randint(0, num_rows, (3_000,), generator=generator)
+        col = torch.randint(0, num_rows, (3_000,), generator=generator)
+        indptr64 = torch.zeros(num_rows + 1, dtype=torch.int64)
+        torch.cumsum(torch.bincount(row, minlength=num_rows), dim=0, out=indptr64[1:])
+
+        results = []
+        for indptr in (indptr64, indptr64.to(torch.int32)):
+            indices = torch.empty(row.numel(), dtype=torch.int64)
+            _scatter_in_bands(
+                row=row,
+                col=col,
+                indptr=indptr,
+                indices=indices,
+                chunk_size=211,
+                band_bytes=512,
+            )
+            _sort_within_rows(indptr, indices, block_edges=97)
+            results.append(indices)
+
+        torch.testing.assert_close(results[0], results[1], rtol=0, atol=0)
+        expected_indptr, expected_indices = _reference_csr(row, col, num_rows)
+        torch.testing.assert_close(results[1], expected_indices, rtol=0, atol=0)
+
+    @parameterized.expand(
+        [
+            param("an_offset_some_row_starts_at", edge_offset=3, expected=3),
+            param("an_offset_between_two_row_starts", edge_offset=4, expected=3),
+            param("the_final_offset", edge_offset=5, expected=3),
+            param("an_offset_past_every_row_start", edge_offset=6, expected=4),
+            # Past int32 itself: must not overflow or widen an int32 indptr.
+            param(
+                "an_offset_beyond_what_int32_holds", edge_offset=2**31 + 7, expected=4
+            ),
+        ]
+    )
+    def test_the_first_row_at_or_past_an_offset_is_the_same_for_int32_and_int64_indptr(
+        self, _name: str, edge_offset: int, expected: int
+    ) -> None:
+        indptr = torch.tensor([0, 2, 2, 5], dtype=torch.int32)
+        self.assertEqual(_first_row_at_or_past(indptr, edge_offset), expected)
+        self.assertEqual(
+            _first_row_at_or_past(indptr.to(torch.int64), edge_offset), expected
+        )
+
+    def test_edge_balanced_bounds_are_the_same_for_int32_and_int64_indptr(self) -> None:
+        indptr = torch.tensor([0, 5, 5, 9, 30, 31, 31, 60], dtype=torch.int64)
+        self.assertEqual(
+            _edge_balanced_row_bounds(indptr.to(torch.int32).numpy(), 3).tolist(),
+            _edge_balanced_row_bounds(indptr.numpy(), 3).tolist(),
+        )
 
 
 if __name__ == "__main__":

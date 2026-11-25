@@ -100,8 +100,11 @@ def _sort_rows_kernel(
 
 
 def _edge_balanced_row_bounds(indptr: np.ndarray, num_ranges: int) -> np.ndarray:
-    # int64 keys: float keys would make searchsorted copy all of indptr to compare.
-    keys = np.arange(num_ranges + 1, dtype=np.int64) * int(indptr[-1]) // num_ranges
+    # Keys in indptr's dtype: a different dtype (int64 keys against an int32 indptr, or float keys)
+    # makes searchsorted copy all of indptr to compare. Every key is at most indptr[-1], so it fits.
+    keys = (
+        np.arange(num_ranges + 1, dtype=np.int64) * int(indptr[-1]) // num_ranges
+    ).astype(indptr.dtype)
     bounds = np.searchsorted(indptr, keys)
     bounds[0] = 0
     bounds[-1] = indptr.shape[0] - 1

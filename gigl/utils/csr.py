@@ -17,6 +17,11 @@ which is 1.5x one int64 array with int32 inputs when edge IDs are omitted, since
 then stays int32, or 2.5x when the int64 edge IDs are retained. The ``max_degree`` term comes
 from within-row sorting; it matters when one row owns a meaningful fraction of the edges.
 
+``indptr`` holds one entry per row, so unlike the per-partition ``indices`` it is sized by the
+node-id range and is resident for every edge type. It is stored as int32 whenever the edge count
+fits (see :func:`select_indptr_dtype`), which halves it; GiGL's patched GLT build reads that
+layout (``gigl/scripts/patches/0003-glt-int32-indptr.patch``).
+
 :class:`CompactTopology` wraps the result as a GLT ``Topology``.
 """
 
@@ -46,6 +51,47 @@ DEFAULT_SORT_BLOCK_EDGES = 1 << 25
 # Destination window for the scatter when `indices` could not be placed in memory. Small enough that a band's pages stay cached while being written, large enough that the
 # number of input passes stays low.
 DEFAULT_BAND_BYTES = 4 * 2**30
+# The largest edge count whose offsets (the indptr values, 0..num_edges) fit in int32. Tests lower
+# this to exercise the int64 fallback without allocating 2**31 edges; it is not a tuning knob.
+INT32_INDPTR_MAX_EDGES = torch.iinfo(torch.int32).max
+
+
+def select_indptr_dtype(num_edges: int) -> torch.dtype:
+    """Return the narrowest dtype that holds every offset of an ``indptr`` over ``num_edges`` edges.
+
+    The values of ``indptr`` are edge offsets in ``[0, num_edges]``, so int32 is exact while
+    ``num_edges`` is at most ``INT32_INDPTR_MAX_EDGES`` and int64 is needed beyond it. The count
+    is per CSR, i.e. the edges this rank holds of one edge type, not the graph total.
+
+    Example:
+        >>> select_indptr_dtype(2**31 - 1)
+        torch.int32
+        >>> select_indptr_dtype(2**31)
+        torch.int64
+
+    Args:
+        num_edges: Number of edges the CSR holds.
+
+    Returns:
+        torch.dtype: ``torch.int32`` or ``torch.int64``.
+    """
+    return torch.int32 if num_edges <= INT32_INDPTR_MAX_EDGES else torch.int64
+
+
+def _first_row_at_or_past(indptr: torch.Tensor, edge_offset: int) -> int:
+    """Return the first index ``i`` with ``indptr[i] >= edge_offset``, or ``indptr.numel()`` if none.
+
+    ``edge_offset`` is a Python int and the search runs in ``indptr``'s own dtype, so an int32
+    ``indptr`` is neither widened nor overflowed by an offset that lies past its largest value.
+
+    Example: with ``indptr = [0, 2, 2, 5]``, ``_first_row_at_or_past(indptr, 3)`` is 3 and
+    ``_first_row_at_or_past(indptr, 6)`` is 4.
+    """
+    if edge_offset > torch.iinfo(indptr.dtype).max:
+        return indptr.numel()
+    return int(
+        torch.searchsorted(indptr, torch.tensor(edge_offset, dtype=indptr.dtype)).item()
+    )
 
 
 @dataclass(frozen=True)
@@ -142,8 +188,8 @@ def _scatter_in_bands(
         # The first row boundary past band_elements edges, clamped to at least one row so a row
         # with more edges than a band forms an oversized band of its own rather than looping
         # forever -- its destinations are contiguous anyway.
-        last_row = int(
-            torch.searchsorted(indptr, indptr[first_row] + band_elements).item()
+        last_row = _first_row_at_or_past(
+            indptr, int(indptr[first_row].item()) + band_elements
         )
         last_row = min(max(last_row, first_row + 1), num_rows)
         if int(indptr[last_row].item()) > int(indptr[first_row].item()):
@@ -215,8 +261,8 @@ def _sort_within_rows(
     num_rows = indptr.numel() - 1
     row_start = 0
     while row_start < num_rows:
-        row_end = int(
-            torch.searchsorted(indptr, indptr[row_start] + block_edges).item()
+        row_end = _first_row_at_or_past(
+            indptr, int(indptr[row_start].item()) + block_edges
         )
         # Capping rows too keeps `counts` and `rows_expanded` bounded across long runs of
         # empty rows, which the edge budget alone does not.
@@ -280,7 +326,8 @@ def build_csr_from_coo(
             when callers sample edge IDs.
 
     Returns:
-        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, always int64, and ``indices``
+        CsrBuildResult: ``indptr`` of shape ``[num_rows + 1]``, int32 when the edge count fits
+        (see :func:`select_indptr_dtype`) and int64 otherwise, and ``indices``
         of shape ``[num_edges]``, int32 when ``col`` is int32 and int64 otherwise, plus optional
         int64 ``edge_ids`` of shape ``[num_edges]`` in CSR order. Empty input returns an empty
         ID tensor when retention is enabled and ``None`` otherwise.
@@ -306,9 +353,10 @@ def build_csr_from_coo(
     elif row_max >= num_rows:
         raise ValueError(f"Row id {row_max} is out of range for num_rows={num_rows}")
 
-    # Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
+    # indptr is one entry per row, resident for every edge type, so it is narrowed whenever the edge
+    # offsets fit. Allocated so that a later Topology.share_memory_() cannot duplicate it -- see
     # allocate_preshared.
-    indptr = allocate_preshared((num_rows + 1,), torch.int64)
+    indptr = allocate_preshared((num_rows + 1,), select_indptr_dtype(num_edges))
     if num_edges == 0:
         # A rank can own no edges of some edge type.
         indptr.zero_()
@@ -321,7 +369,11 @@ def build_csr_from_coo(
             edge_ids=edge_ids,
         )
     indptr[0] = 0
-    torch.cumsum(parallel_degrees(row, num_rows), dim=0, out=indptr[1:])
+    # The degrees are int64; casting inside cumsum keeps the running sum in indptr's dtype, which
+    # holds it because the total is num_edges.
+    torch.cumsum(
+        parallel_degrees(row, num_rows), dim=0, dtype=indptr.dtype, out=indptr[1:]
+    )
     gc.collect()
 
     # random_access=True: the scatter writes all over the array, so memory is preferred; bands
@@ -364,6 +416,9 @@ class CompactTopology(Topology):
     and convert with ``coo_to_csr``. Instead, the counting sort writes original COO positions
     directly into final CSR order when retained. Edge features need explicit IDs and cannot use
     this class.
+
+    ``indptr`` is int32 when the edge count fits and int64 otherwise (:func:`select_indptr_dtype`),
+    whichever row layout ``compressed_id_offset`` selects. Code that reads it must not assume int64.
 
     Args:
         edge_index (torch.Tensor): ``[2, num_edges]`` COO. int32 and int64 are used as they are;
