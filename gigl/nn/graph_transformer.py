@@ -1409,8 +1409,9 @@ class GraphTransformerEncoder(nn.Module):
         The packed path computes ``hop_distance`` from the layout (the first-reach
         directed hop in ``sampling_direction``) and ignores the batch attribute.
         That equals ``AddHeteroHopDistanceEncoding(is_undirected=False,
-        sampling_direction=<same>, h_max >= hop_distance)``. The packed path costs
-        two host reads per batch.
+        sampling_direction=<same>, h_max >= hop_distance)``. When a packed forward gets
+        a batch that carries the attribute, the encoder logs a warning once per
+        instance. The packed path costs two host reads per batch.
 
         This encoder uses ``nn.LazyLinear`` for node-level PE fusion. If you wrap
         it with ``DistributedDataParallel``, run one representative no-grad
@@ -1737,6 +1738,7 @@ class GraphTransformerEncoder(nn.Module):
                 "tokens, because: " + "; ".join(unsupported_reasons)
             )
         self._packed_fallback_count = 0
+        self._warned_packed_ignores_hop_distance = False
         # A khop sequence holds hops 0 to ``hop_distance``, so the embedding needs
         # ``hop_distance + 1`` entries. PPR sequences take their hops from the
         # batch, so there is nothing to check.
@@ -1911,6 +1913,8 @@ class GraphTransformerEncoder(nn.Module):
                 device=device,
             )
             if packed_embeddings is not None:
+                if HOP_DISTANCE_FEATURE_NAME in data:
+                    self._warn_packed_ignores_hop_distance()
                 return packed_embeddings
             if (
                 HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
@@ -2042,6 +2046,35 @@ class GraphTransformerEncoder(nn.Module):
                 f"Running a batch on padded sequences ({count} so far) because "
                 f"the packed k-hop layout is too large: {error}"
             )
+
+    @torch.compiler.disable
+    def _warn_packed_ignores_hop_distance(self) -> None:
+        """Warns once per encoder that the packed path ignores a batch ``hop_distance``.
+
+        Call it only for a packed k-hop forward on a batch that carries the
+        attribute. It does nothing unless the encoder uses ``hop_distance`` as an
+        anchor-based input or attention bias.
+
+        Excluded from ``torch.compile``: Dynamo would guard on the flag value.
+        """
+        if self._warned_packed_ignores_hop_distance:
+            return
+        uses_hop_distance = (
+            HOP_DISTANCE_FEATURE_NAME in self._anchor_based_input_attr_names
+            or HOP_DISTANCE_FEATURE_NAME
+            in (self._anchor_based_attention_bias_attr_names or [])
+        )
+        if not uses_hop_distance:
+            return
+        self._warned_packed_ignores_hop_distance = True
+        logger.warning(
+            f"The packed path ignores the batch's '{HOP_DISTANCE_FEATURE_NAME}' "
+            "attribute and uses the directed hop computed from the k-hop layout. "
+            "This matches the padded path only if the batch's attribute came from "
+            "AddHeteroHopDistanceEncoding(is_undirected=False, "
+            f"sampling_direction='{self._sampling_direction}', "
+            f"h_max>={self._hop_distance})."
+        )
 
     def _encode_packed(
         self,

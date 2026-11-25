@@ -594,6 +594,30 @@ class PackedPathTest(TestCase):
         for output in outputs:
             torch.testing.assert_close(output, expected)
 
+    def test_packed_path_warns_once_that_it_ignores_the_batch_hop_distance(
+        self,
+    ) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        with (
+            torch.no_grad(),
+            self.assertLogs(gigl.nn.graph_transformer.logger.logger, "WARNING") as logs,
+        ):
+            _run_packed(encoder, data)
+            _run_packed(encoder, data)
+        self.assertEqual(len(logs.records), 1, logs.output)
+        self.assertIn("ignores", logs.records[0].getMessage())
+
+    def test_packed_path_does_not_warn_without_a_batch_hop_distance(self) -> None:
+        data = _random_batch(0)
+        encoder = _materialized_encoder(data, _encoder_kwargs())
+        delattr(data, _HOP)
+        with (
+            torch.no_grad(),
+            self.assertNoLogs(gigl.nn.graph_transformer.logger.logger, "WARNING"),
+        ):
+            _run_packed(encoder, data)
+
     def test_int32_edge_index(self) -> None:
         data = _random_batch(0)
         encoder = _materialized_encoder(data, _encoder_kwargs())
