@@ -1235,6 +1235,10 @@ class GraphTransformerEncoderLayer(nn.Module):
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
         num_edges, model_dim = source_features.shape
+        # The per-relation transforms run on ``split`` pieces rather than slices:
+        # the gradient of a slice is a full-size zero tensor per relation, while
+        # split's gradient is one concatenation.
+        segment_sizes = [end - start for _, start, end in relation_segments]
         # One group per (relation, target) and head.
         group_indices = relation_indices * num_target_rows + target_rows
         head_group_indices = group_indices.unsqueeze(-1).expand(-1, self._num_heads)
@@ -1260,22 +1264,23 @@ class GraphTransformerEncoderLayer(nn.Module):
             relation_attention_priors = self._relation_message_attention_priors.to(
                 dtype=edge_queries.dtype
             )
-            scores = torch.cat(
-                [
-                    (
-                        edge_queries[start:end]
-                        * torch.einsum(
-                            "ehd,hdf->ehf",
-                            edge_keys[start:end],
-                            relation_attention_matrices[relation_idx],
-                        )
-                    ).sum(dim=-1)
+            score_parts: list[Tensor] = []
+            for (relation_idx, _, _), relation_queries, relation_keys in zip(
+                relation_segments,
+                edge_queries.split(segment_sizes),
+                edge_keys.split(segment_sizes),
+            ):
+                transformed_keys = torch.einsum(
+                    "ehd,hdf->ehf",
+                    relation_keys,
+                    relation_attention_matrices[relation_idx],
+                )
+                score_parts.append(
+                    (relation_queries * transformed_keys).sum(dim=-1)
                     * relation_attention_priors[relation_idx]
                     / math.sqrt(self._head_dim)
-                    for relation_idx, start, end in relation_segments
-                ],
-                dim=0,
-            )  # (num_edges, num_heads)
+                )
+            scores = torch.cat(score_parts, dim=0)  # (num_edges, num_heads)
 
             # Numerically stable scatter-softmax per group and head. Group buffers
             # are (num_relations * num_target_rows, num_heads) -- tiny compared
@@ -1300,13 +1305,14 @@ class GraphTransformerEncoderLayer(nn.Module):
         relation_matrices = self._relation_message_matrices.to(
             dtype=source_features.dtype
         )
-        edge_messages = torch.cat(
-            [
-                source_features[start:end] @ relation_matrices[relation_idx].t()
-                for relation_idx, start, end in relation_segments
-            ],
-            dim=0,
-        )  # (num_edges, model_dim)
+        edge_message_parts: list[Tensor] = []
+        for (relation_idx, _, _), relation_features in zip(
+            relation_segments, source_features.split(segment_sizes)
+        ):
+            edge_message_parts.append(
+                relation_features @ relation_matrices[relation_idx].t()
+            )
+        edge_messages = torch.cat(edge_message_parts, dim=0)  # (num_edges, model_dim)
         weighted_messages = (
             edge_messages.view(num_edges, -1, model_dim // self._num_heads)
             * edge_weights.unsqueeze(-1)
