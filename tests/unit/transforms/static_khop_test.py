@@ -8,6 +8,7 @@ from unittest import mock
 import torch
 from absl.testing import absltest
 
+from gigl.nn.packed_attention import per_pair_bias_num_cells
 from gigl.transforms import sequence_layout, static_khop
 from gigl.transforms.graph_transformer import (
     _build_hop_ordered_sequence_layout_from_sparse_edges,
@@ -520,30 +521,65 @@ class StaticKhopLayoutTest(TestCase):
             plans.append(tuple(bucket.bucket_len for bucket in layout.buckets))
         self.assertEqual(plans[0], plans[1])
 
-    def test_pack_sequences_buckets_fall_back_unless_all_hold_two(self) -> None:
-        for counts in ((1, 4, 4, 4), (4, 1, 4, 4), (4, 4, 1, 4), (4, 4, 4, 1)):
-            with self.subTest(counts=counts):
-                layout = pack_sequences(
-                    self._lengths_filling_buckets(counts, seed=5),
-                    256,
-                    sort_by_length=True,
-                )
-                self.assertIsNone(layout.buckets)
-                self.assertIsNotNone(layout.sequence_order)
-        for counts in ((0, 4, 4, 4), (4, 4, 4, 0), (4, 0, 4, 4)):
-            with self.subTest(counts=counts):
-                layout = pack_sequences(
-                    self._lengths_filling_buckets(counts, seed=6),
-                    256,
-                    sort_by_length=True,
-                )
-                self.assertIsNone(layout.buckets)
+    def _bucket_plan(
+        self, counts: tuple[int, int, int, int], seed: int
+    ) -> list[tuple[int, int, int]]:
+        """Returns ``(first_sequence, end_sequence, bucket_len)`` of each bucket."""
         layout = pack_sequences(
-            self._lengths_filling_buckets((2, 2, 2, 2), seed=7),
+            self._lengths_filling_buckets(counts, seed), 256, sort_by_length=True
+        )
+        assert layout.buckets is not None
+        self._assert_buckets_are_consistent(layout)
+        return [
+            (bucket.first_sequence, bucket.end_sequence, bucket.bucket_len)
+            for bucket in layout.buckets
+        ]
+
+    def test_pack_sequences_drops_empty_buckets(self) -> None:
+        self.assertEqual(
+            self._bucket_plan((4, 0, 4, 4), seed=6),
+            [(0, 4, 256), (4, 8, 64), (8, 12, 32)],
+        )
+        self.assertEqual(
+            self._bucket_plan((0, 4, 4, 0), seed=6), [(0, 4, 128), (4, 8, 64)]
+        )
+
+    def test_pack_sequences_merges_a_single_sequence_bucket_into_the_longer_one(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._bucket_plan((4, 1, 4, 4), seed=5),
+            [(0, 5, 256), (5, 9, 64), (9, 13, 32)],
+        )
+        # An empty bucket in between does not stop the merge.
+        self.assertEqual(
+            self._bucket_plan((4, 0, 1, 4), seed=5), [(0, 5, 256), (5, 9, 32)]
+        )
+
+    def test_pack_sequences_single_sequence_in_longest_bucket_absorbs_the_next(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._bucket_plan((1, 4, 4, 4), seed=5),
+            [(0, 5, 256), (5, 9, 64), (9, 13, 32)],
+        )
+        self.assertEqual(
+            self._bucket_plan((1, 1, 1, 4), seed=5), [(0, 3, 256), (3, 7, 32)]
+        )
+
+    def test_pack_sequences_keeps_one_short_bucket(self) -> None:
+        lengths = torch.full((512,), 16)
+        layout = pack_sequences(lengths, 256, sort_by_length=True)
+        self.assertEqual(layout.buckets, ((0, 512, 0, 512 * 16, 32),))
+        self.assertEqual(per_pair_bias_num_cells(layout, 8), 512 * 8 * 32 * 32)
+
+        # Everything merges into the one bucket of max_seq_len.
+        layout = pack_sequences(
+            self._lengths_filling_buckets((1, 1, 1, 1), seed=5),
             256,
             sort_by_length=True,
         )
-        self.assertIsNotNone(layout.buckets)
+        self.assertIsNone(layout.buckets)
 
     def test_pack_sequences_bucket_edge_cases(self) -> None:
         # Below the smallest bucket length: one bucket length.
@@ -552,7 +588,7 @@ class StaticKhopLayoutTest(TestCase):
         layout = pack_sequences(
             torch.ones(5, dtype=torch.long), 256, sort_by_length=True
         )
-        self.assertIsNone(layout.buckets)
+        self.assertEqual(layout.buckets, ((0, 5, 0, 5, 32),))
         layout = pack_sequences(torch.tensor([9]), 256, sort_by_length=True)
         self.assertIsNone(layout.buckets)
         assert layout.sequence_order is not None
