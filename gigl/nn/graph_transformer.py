@@ -807,14 +807,21 @@ class GraphTransformerEncoderLayer(nn.Module):
         Returns:
             ``(num_edges, num_heads)`` per-head score of each edge.
         """
-        return torch.cat(
-            [
+        # ``split`` rather than slicing: the gradient of a slice is a full-size
+        # zero tensor per relation, while split's gradient is one concatenation.
+        segment_sizes = [end - start for _, start, end in segments]
+        scores: list[Tensor] = []
+        for (relation, _, _), relation_query, relation_key in zip(
+            segments,
+            selected_query.split(segment_sizes),
+            selected_key.split(segment_sizes),
+        ):
+            scores.append(
                 self._compute_relation_attention_scores(
-                    selected_query[start:end], selected_key[start:end], relation
+                    relation_query, relation_key, relation
                 )
-                for relation, start, end in segments
-            ]
-        )
+            )
+        return torch.cat(scores)
 
     def _forward_query_prefix(
         self,
