@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Set, Union, cast
+from typing import Protocol, Set, Union, cast, runtime_checkable
 
 import torch
 import torch.nn as nn
@@ -7,7 +7,6 @@ from jaxtyping import Float, Int64
 from torch_geometric.data import Data
 from torch_geometric.data.hetero_data import HeteroData
 
-from gigl.src.common.models.layers.decoder import LinkPredictionDecoder
 from gigl.src.common.models.layers.loss import ModelResultType
 from gigl.src.common.types.graph_data import (
     CondensedEdgeType,
@@ -31,6 +30,33 @@ from gigl.src.training.v1.lib.data_loaders.rooted_node_neighborhood_data_loader 
 )
 
 # TODO (mkolodner-sc) Move PyG Logic to PyG-specific location
+
+
+@runtime_checkable
+class _HasResultTypes(Protocol):
+    """Shape of the `tasks` attribute `infer_task_inputs` reads."""
+
+    @property
+    def result_types(self) -> Set[ModelResultType]: ...
+
+
+@runtime_checkable
+class _LinkPredictionModel(Protocol):
+    """Structural contract for models `infer_task_inputs` can run.
+
+    Any module exposing `decode` and `tasks.result_types` qualifies;
+    no concrete model class is imported here, which keeps the module
+    free of the link_prediction -> task -> infer import cycle.
+    """
+
+    def decode(
+        self,
+        query_embeddings: Float[torch.Tensor, "queries embedding_dim"],
+        candidate_embeddings: Float[torch.Tensor, "candidates embedding_dim"],
+    ) -> Float[torch.Tensor, "queries candidates"]: ...
+
+    @property
+    def tasks(self) -> _HasResultTypes: ...
 
 
 def infer_training_batch(
@@ -131,17 +157,23 @@ def infer_task_inputs(
     # Populate main_batch and RNN task inputs field
     input_batch = InputBatch(main_batch=main_batch, random_neg_batch=random_neg_batch)
 
-    batch_result_types: Set[ModelResultType]
-    decoder: LinkPredictionDecoder
     # Unwrap any DDP layers
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        decoder = model.module.decode
-        batch_result_types = model.module.tasks.result_types
-    else:
-        decoder = model.decode  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        batch_result_types = (
-            model.tasks.result_types  # ty: ignore[unresolved-attribute] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
-        )  # https://github.com/Snapchat/GiGL/issues/408  # ty: ignore[invalid-assignment] TODO(ty-torch-union-inference): fix ty Tensor/Module union inference regressions.
+    base_model = (
+        model.module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model
+    )
+    if not isinstance(base_model, _LinkPredictionModel):
+        raise TypeError(
+            "infer_task_inputs requires a model exposing decode() and "
+            f"tasks.result_types, got {type(base_model).__name__}"
+        )
+    # After the runtime check ty still sees `Module & _LinkPredictionModel` and
+    # resolves attributes through Module.__getattr__ too; cast to the Protocol so
+    # lookups use only its declared members (same pattern as gnn_inferencer.py).
+    link_prediction_model = cast(_LinkPredictionModel, base_model)
+    decoder = link_prediction_model.decode
+    batch_result_types = link_prediction_model.tasks.result_types
 
     # If we only have losses which only require the input batch, don't forward here and return the
     # input batch immediately to minimize computation we don't need, such as encoding and decoding.
