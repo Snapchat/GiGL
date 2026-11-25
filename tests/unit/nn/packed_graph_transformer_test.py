@@ -2902,6 +2902,7 @@ class ReferencePprSequenceTest(TestCase):
             device=torch.device("cpu"),
             return_edge_weights=True,
             return_relation_features=False,
+            return_expanded_token_mask=True,
         )
         expected_nodes = torch.tensor(self._NODE_GRID)
         torch.testing.assert_close(grids.node_index, expected_nodes)
