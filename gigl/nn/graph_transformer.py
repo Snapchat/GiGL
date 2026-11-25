@@ -693,11 +693,13 @@ class GraphTransformerEncoderLayer(nn.Module):
         Each edge adds its per-head score at (target query, source key) of its
         sequence, on top of ``bias`` when that is set.
 
-        The sum is always out of place. ``bias`` is shared by every layer, and the
+        The incoming ``bias`` is never written. It is shared by every layer, and the
         per-layer recompute of ``GraphTransformerEncoder._run_packed_layer`` runs
         the layer twice on it. A write into ``bias`` would carry this layer's
         scores into the next layers and into the recompute, which gives wrong
-        outputs and gradients without any autograd error.
+        outputs and gradients without any autograd error. Scores are summed out
+        of place onto ``bias.per_pair``, and in place only onto a buffer this
+        method allocated.
 
         With ``first_token_output`` the only query row that is read is row 0 of
         each sequence's block, which is a per-key bias. The scores then go into a
@@ -737,7 +739,7 @@ class GraphTransformerEncoderLayer(nn.Module):
                 score_dtype = per_key.dtype
             relation_per_key = query.new_zeros(
                 layout.flat_index.numel(), self._num_heads, dtype=score_dtype
-            ).index_add(0, source, scores.to(score_dtype))
+            ).index_add_(0, source, scores.to(score_dtype))
             if per_key is not None:
                 relation_per_key = relation_per_key + per_key
             return PackedAttentionBias(per_key=relation_per_key, per_pair=per_pair)
@@ -755,9 +757,11 @@ class GraphTransformerEncoderLayer(nn.Module):
         )  # [num_edges, num_heads]
         if per_pair is None:
             per_pair = query.new_zeros(per_pair_bias_num_cells(layout, self._num_heads))
-        per_pair = per_pair.index_add(
-            0, cells.flatten(), scores.to(per_pair.dtype).flatten()
-        )
+            per_pair.index_add_(0, cells.flatten(), scores.to(per_pair.dtype).flatten())
+        else:
+            per_pair = per_pair.index_add(
+                0, cells.flatten(), scores.to(per_pair.dtype).flatten()
+            )
         return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
 
     def _relation_attention_scores(
