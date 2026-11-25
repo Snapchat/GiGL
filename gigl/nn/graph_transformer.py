@@ -284,8 +284,7 @@ def _anchor_relation_edges(
     """The edges into each sequence's anchor token, as they feed a last layer that
     computes only the anchors.
 
-    ``target`` becomes the sequence index. The edges keep their relation order, and
-    ``all_filtered`` is set when ``edges`` has edges but none reach an anchor.
+    ``target`` becomes the sequence index. The edges keep their relation order.
     """
     into_anchor = layout.position[edges.target] == 0
     num_relations = 0
@@ -306,7 +305,6 @@ def _anchor_relation_edges(
         source=edges.source[anchor_order],
         relation=edges.relation[anchor_order],
         segments=_get_relation_segments_from_bounds(bounds),
-        all_filtered=edges.target.numel() > 0 and bounds[-1] == 0,
     )
 
 
@@ -647,9 +645,11 @@ class GraphTransformerEncoderLayer(nn.Module):
                     num_target_rows=x.size(0),
                 )
                 x = x + self._dropout(messages)
-            elif self.training and relation_edges.all_filtered:
-                # Keep the relation parameters in the graph, as the padded path does
-                # when anchor filtering drops every edge.
+            elif self.training:
+                # No relation messages ran (no edges, or anchor filtering dropped
+                # them all). Keep the relation parameters in the graph, as the
+                # padded path does, so their gradients are zero rather than None
+                # (which breaks DDP on the next iteration).
                 x = x + self._zero_relation_parameter_dependency(x)
         return x + self._ffn(self._ffn_norm(x))
 

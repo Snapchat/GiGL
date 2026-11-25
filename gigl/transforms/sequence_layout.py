@@ -35,14 +35,12 @@ class PackedRelationEdges(NamedTuple):
         segments: ``(relation, start, end)`` edge range of every relation, in
             order, covering ``[0, num_edges)``; empty if there are no edges. They
             are host values, so the per-relation transforms never read the device.
-        all_filtered: The batch has relation edges but none reach these outputs.
     """
 
     target: Tensor
     source: Tensor
     relation: Tensor
     segments: tuple[RelationSegment, ...]
-    all_filtered: bool = False
 
 
 class PackedLayout(NamedTuple):
