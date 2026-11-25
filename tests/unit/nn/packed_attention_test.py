@@ -2,17 +2,19 @@
 
 import itertools
 import unittest
+from typing import Optional
 
 import torch
 from absl.testing import absltest
 from torch.utils.checkpoint import checkpoint
 
 from gigl.nn.packed_attention import (
+    PackedAttentionBias,
     _padded_packed_attention,
     _varlen_attention,
     packed_attention,
 )
-from gigl.transforms.sequence_layout import pack_sequences
+from gigl.transforms.sequence_layout import PackedLayout, pack_sequences
 from tests.test_assets.test_case import TestCase
 
 _MAX_SEQ_LEN = 24
@@ -32,6 +34,89 @@ class PackedAttentionTest(TestCase):
             assert tensor.grad is not None
             self.assertEqual(tensor.grad.shape, tensor.shape)
 
+    def _bias_inputs(
+        self,
+    ) -> tuple[
+        list[int],
+        PackedLayout,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        lengths = [3, 1, 2]
+        layout = pack_sequences(torch.tensor(lengths), 3)
+        generator = torch.Generator().manual_seed(0)
+        query, key, value = (
+            torch.randn(6, 2, 8, generator=generator) for _ in range(3)
+        )
+        per_key = torch.randn(6, 2, generator=generator)
+        per_pair = torch.randn(3, 2, 3, 3, generator=generator)
+        return lengths, layout, query, key, value, per_key, per_pair
+
+    def _dense_reference(
+        self,
+        lengths: list[int],
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        per_key: Optional[torch.Tensor],
+        per_pair: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Returns softmax(q k^T / sqrt(D) + bias) v per sequence, as [num_tokens, H, D]."""
+        outputs: list[torch.Tensor] = []
+        start = 0
+        for sequence, length in enumerate(lengths):
+            rows = slice(start, start + length)
+            scores = torch.einsum("qhd,khd->hqk", query[rows], key[rows]) / 8**0.5
+            if per_key is not None:
+                scores = scores + per_key[rows].t()[:, None, :]
+            if per_pair is not None:
+                scores = scores + per_pair[sequence, :, :length, :length]
+            weights = scores.softmax(dim=-1)
+            outputs.append(torch.einsum("hqk,khd->qhd", weights, value[rows]))
+            start += length
+        return torch.cat(outputs)
+
+    def test_padded_packed_attention_with_bias_matches_dense_reference(self) -> None:
+        lengths, layout, query, key, value, per_key, per_pair = self._bias_inputs()
+        packed = _padded_packed_attention(
+            query, key, value, layout, False, PackedAttentionBias(per_key, per_pair)
+        )
+        reference = self._dense_reference(lengths, query, key, value, per_key, per_pair)
+        torch.testing.assert_close(packed, reference, rtol=1e-5, atol=1e-6)
+
+    def test_padded_packed_attention_per_key_only_matches_dense_reference(self) -> None:
+        lengths, layout, query, key, value, per_key, _ = self._bias_inputs()
+        packed = _padded_packed_attention(
+            query, key, value, layout, False, PackedAttentionBias(per_key=per_key)
+        )
+        reference = self._dense_reference(lengths, query, key, value, per_key, None)
+        torch.testing.assert_close(packed, reference, rtol=1e-5, atol=1e-6)
+
+    def test_padded_packed_attention_first_token_query_with_bias(self) -> None:
+        lengths, layout, query, key, value, per_key, per_pair = self._bias_inputs()
+        first_token = layout.cu_seqlens[:-1].long()
+        packed = _padded_packed_attention(
+            query[first_token],
+            key,
+            value,
+            layout,
+            True,
+            PackedAttentionBias(per_key, per_pair),
+        )
+        reference = self._dense_reference(lengths, query, key, value, per_key, per_pair)
+        torch.testing.assert_close(packed, reference[first_token], rtol=1e-5, atol=1e-6)
+
+    def test_empty_bias_matches_no_bias(self) -> None:
+        _, layout, query, key, value, _, _ = self._bias_inputs()
+        without = packed_attention(query, key, value, layout, False, bias=None)
+        empty = packed_attention(
+            query, key, value, layout, False, bias=PackedAttentionBias()
+        )
+        torch.testing.assert_close(empty, without, rtol=0, atol=0)
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
 class PackedAttentionCudaTest(TestCase):
@@ -40,7 +125,7 @@ class PackedAttentionCudaTest(TestCase):
         num_sequences, num_heads, head_dim = 6, 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12, 9], device=device)
         num_tokens = int(lengths.sum())
-        _, layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
         for dtype, atol in ((torch.float32, 1e-4), (torch.bfloat16, 5e-2)):
             for query_is_first_token, track_grad in itertools.product(
@@ -78,7 +163,7 @@ class PackedAttentionCudaTest(TestCase):
         num_heads, head_dim = 2, 64
         lengths = torch.tensor([5, 1, 24, 3, 12], device=device)
         num_tokens = int(lengths.sum())
-        _, layout = pack_sequences(lengths, _MAX_SEQ_LEN)
+        layout = pack_sequences(lengths, _MAX_SEQ_LEN)
         generator = torch.Generator().manual_seed(0)
 
         def random_rows(num_rows: int) -> torch.Tensor:
@@ -138,7 +223,7 @@ class PackedAttentionCudaTest(TestCase):
         for num_sequences in (2, 1):
             with self.subTest(num_sequences=num_sequences):
                 torch._dynamo.reset()
-                _, layout = pack_sequences(
+                layout = pack_sequences(
                     torch.full((num_sequences,), 12, device=device), _MAX_SEQ_LEN
                 )
                 inputs = torch.randn(

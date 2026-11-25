@@ -2,9 +2,9 @@
 
 This is the layout half of the packed backend of ``GraphTransformerEncoder``. For
 every anchor it picks which nodes become its tokens (the anchor, then its
-neighbours within ``hop_distance`` hops), and ``pack_sequences`` (in ``gigl.transforms.sequence_layout``) turns the padded
-result into the offsets that ``gigl.nn.packed_attention`` needs to run the
-transformer on real tokens only.
+neighbours within ``hop_distance`` hops), and ``pack_sequences`` (in
+``gigl.transforms.sequence_layout``) turns the padded result into the offsets that
+``gigl.nn.packed_attention`` needs to run the transformer on real tokens only.
 
 Why this exists:
   - Sequences are short and uneven (about 90 real tokens out of a 256-token
@@ -50,7 +50,8 @@ How a layout is built::
         |
         |  pack_sequences(lengths, max_seq_len)       (host read 2: total tokens)
         v
-    flat_index + PackedLayout(cu_seqlens, max_seq_len)  for gigl.nn.packed_attention
+    PackedLayout(cu_seqlens, max_seq_len, flat_index, sequence_id, position,
+    node_index, token_attrs)  for gigl.nn.packed_attention
 
 Constraints:
   - Memory is ``O(num_anchors * width ** hop_distance)``; see
@@ -76,8 +77,8 @@ Example:
     [[0, 1, 2, 3], [0, 1, 2, 3]]
     >>> lengths.tolist()
     [3, 3]
-    >>> flat_index, packed = pack_sequences(lengths, max_seq_len=4)
-    >>> (layout.flatten()[flat_index] >> hop_bits).tolist()
+    >>> packed = pack_sequences(lengths, max_seq_len=4)
+    >>> (layout.flatten()[packed.flat_index] >> hop_bits).tolist()
     [0, 1, 2, 1, 2, 3]
     >>> packed.cu_seqlens.tolist()
     [0, 3, 6]
@@ -89,7 +90,11 @@ import torch
 from jaxtyping import Int, Int64
 from torch import Tensor
 
-from gigl.transforms.sequence_layout import select_sequences
+from gigl.transforms.sequence_layout import (
+    PackedLayout,
+    pack_sequences,
+    select_sequences,
+)
 
 # Maximum number of int64 cells ``khop_layout`` builds: the candidates,
 # ``num_anchors * (1 + width + ... + width ** hop_distance)``, plus the neighbour
@@ -320,4 +325,41 @@ def khop_layout(
         hop_distance,
         max_seq_len,
         ordering,
+    )
+
+
+def pack_khop_layout(
+    edge_index: Int[Tensor, "2 num_edges"],
+    num_nodes: int,
+    anchor_indices: Int[Tensor, "num_anchors"],
+    hop_distance: int,
+    max_seq_len: int,
+    sampling_direction: Literal["in", "out"] = "out",
+    max_candidates: int = MAX_LAYOUT_CANDIDATES,
+    ordering: KhopOrdering = "node_id",
+) -> PackedLayout:
+    """Builds the k-hop token layout of every anchor and packs it.
+
+    Runs ``khop_layout``, decodes each cell into its node and hop, and calls
+    ``pack_sequences``. The arguments are those of ``khop_layout``.
+
+    Returns:
+        The packed layout. ``node_index`` is the node of each token and
+        ``token_attrs["hop_distance"]`` is its ``[num_tokens]`` long hop.
+    """
+    layout, lengths, hop_bits = khop_layout(
+        edge_index,
+        num_nodes,
+        anchor_indices,
+        hop_distance,
+        max_seq_len,
+        sampling_direction=sampling_direction,
+        max_candidates=max_candidates,
+        ordering=ordering,
+    )
+    return pack_sequences(
+        lengths,
+        max_seq_len,
+        node_grid=layout >> hop_bits,
+        attr_grids={"hop_distance": layout & ((1 << hop_bits) - 1)},
     )
