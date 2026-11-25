@@ -1517,6 +1517,41 @@ class PackedRelationMessageTest(TestCase):
         )
         _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
+    def test_training_gives_relation_parameters_zero_gradients_with_no_edges(
+        self,
+    ) -> None:
+        data = _three_relation_batch(0, 0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs()).train()
+        _, gradients = _gradients(lambda: _run_packed(encoder, data), encoder)
+        relation_parameter_names = [
+            name for name, _ in encoder.named_parameters() if "._relation_" in name
+        ]
+        self.assertTrue(relation_parameter_names)
+        for name in relation_parameter_names:
+            self.assertEqual(gradients[name].abs().max().item(), 0.0)
+
+    @parameterized.expand(
+        [
+            param("bilinear", attention="edge_type_bilinear"),
+            param("hgt", attention="edge_type_hgt"),
+        ]
+    )
+    def test_training_gives_relation_attention_parameters_zero_gradients_with_no_edges(
+        self, _: str, attention: str
+    ) -> None:
+        data = _three_relation_batch(0, 0)
+        encoder = _relation_encoder(
+            data,
+            _relation_encoder_kwargs("none", relation_attention_mode=attention),
+        ).train()
+        _, gradients = _gradients(lambda: _run_packed(encoder, data), encoder)
+        relation_parameter_names = [
+            name for name, _ in encoder.named_parameters() if "._relation_" in name
+        ]
+        self.assertTrue(relation_parameter_names)
+        for name in relation_parameter_names:
+            self.assertEqual(gradients[name].abs().max().item(), 0.0)
+
     @parameterized.expand(
         [
             param("bilinear", attention="edge_type_bilinear"),
@@ -1557,14 +1592,12 @@ class PackedRelationMessageTest(TestCase):
 
     @parameterized.expand(
         [
-            param("no_edges", num_edges=0, expects_all_filtered=False),
             # Every edge into an anchor is dropped: with "out" sampling and one hop
             # the expanded endpoint of such an edge is a last-hop token. Anchor
             # self-loops would survive the filter, so the batch has none.
             param(
                 "no_edges_into_anchors",
                 has_self_loops=False,
-                expects_all_filtered=True,
                 sampling_direction="out",
                 hop_distance=1,
             ),
@@ -1573,7 +1606,6 @@ class PackedRelationMessageTest(TestCase):
     def test_training_gradients_match_padded_path_when_edges_are_filtered(
         self,
         _: str,
-        expects_all_filtered: bool,
         num_edges: int = 80,
         has_self_loops: bool = True,
         **overrides: Any,
@@ -1581,7 +1613,6 @@ class PackedRelationMessageTest(TestCase):
         self._assert_filtered_edge_gradients_match(
             num_edges,
             has_self_loops=has_self_loops,
-            expects_all_filtered=expects_all_filtered,
             **overrides,
         )
 
@@ -1595,9 +1626,6 @@ class PackedRelationMessageTest(TestCase):
         self, _: str, attention: str
     ) -> None:
         self._assert_filtered_edge_gradients_match(
-            0, mode="none", relation_attention_mode=attention
-        )
-        self._assert_filtered_edge_gradients_match(
             80,
             mode="none",
             relation_attention_mode=attention,
@@ -1610,14 +1638,10 @@ class PackedRelationMessageTest(TestCase):
         num_edges: int,
         mode: str = "edge_type_attention",
         has_self_loops: bool = True,
-        expects_all_filtered: Optional[bool] = None,
         **overrides: Any,
     ) -> None:
         """Checks packed gradients against padded ones on a batch whose edges are
-        filtered.
-
-        With ``expects_all_filtered``, also checks whether the packed path takes the
-        all-filtered branch of the relation message layer.
+        filtered, and that the zero relation-parameter dependency is added.
         """
         data = _three_relation_batch(0, num_edges, has_self_loops=has_self_loops)
         if overrides:
@@ -1633,8 +1657,7 @@ class PackedRelationMessageTest(TestCase):
             side_effect=GraphTransformerEncoderLayer._zero_relation_parameter_dependency,
         ) as zero_dependency:
             actual = _gradients(lambda: _run_packed(encoder, data), encoder)
-        if expects_all_filtered is not None:
-            self.assertEqual(zero_dependency.called, expects_all_filtered)
+        self.assertTrue(zero_dependency.called)
         _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
     @parameterized.expand(
@@ -1891,9 +1914,17 @@ class PackedRelationMessageTest(TestCase):
         layout = layouts[0]
         assert layout.relation_edges is not None
         if first_token_output:
+            edges = layout.relation_edges
+            num_relations = len(encoder._relation_attention_edge_types)
+            sorted_keys, order = gigl.nn.graph_transformer._sort_anchor_relation_edges(
+                layout, edges.target, edges.relation, num_relations
+            )
+            bounds = torch.searchsorted(
+                sorted_keys, torch.arange(num_relations + 1)
+            ).tolist()
             layout = layout._replace(
                 relation_edges=gigl.nn.graph_transformer._anchor_relation_edges(
-                    layout.relation_edges, layout
+                    edges, layout, order, bounds
                 )
             )
         num_tokens = layout.flat_index.numel()

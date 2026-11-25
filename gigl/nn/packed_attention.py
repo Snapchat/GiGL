@@ -399,18 +399,20 @@ def _fold_per_key_bias(
     """Folds a per-key score bias into q and k as one extra head-dim column.
 
     With ``d`` the head dim and ``d_pad`` ``d + 1`` rounded up to a multiple of 8,
-    ``query' = [query * sqrt(d_pad / d), 1, 0...]`` and
-    ``key' = [key, per_key * sqrt(d_pad), 0...]``. The kernel's default scale
+    ``query' = [query * sqrt(d_pad / d), sqrt(d_pad), 0...]`` and
+    ``key' = [key, per_key, 0...]``. The kernel's default scale
     ``1 / sqrt(d_pad)`` then gives
-    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d) + per_key``. The bias is cast to
-    the key dtype.
+    ``q' . k' / sqrt(d_pad) == q . k / sqrt(d) + per_key``. The ``sqrt(d_pad)``
+    factor sits in the query column so a large finite ``per_key`` stays finite in
+    the key dtype (in FP16, ``10000 * sqrt(72)`` would overflow). The bias is cast
+    to the key dtype.
     """
     head_dim = query.size(-1)
     padded_dim = (head_dim + 1 + 7) // 8 * 8
     query = _rescale_query(query, padded_dim)
-    ones = torch.ones_like(query[..., :1])
-    key_bias = (per_key.to(key.dtype) * math.sqrt(padded_dim)).unsqueeze(-1)
-    query = _pad_head_dim(torch.cat([query, ones], dim=-1))
+    query_bias = torch.full_like(query[..., :1], math.sqrt(padded_dim))
+    key_bias = per_key.to(key.dtype).unsqueeze(-1)
+    query = _pad_head_dim(torch.cat([query, query_bias], dim=-1))
     key = _pad_head_dim(torch.cat([key, key_bias], dim=-1))
     return query, key
 
