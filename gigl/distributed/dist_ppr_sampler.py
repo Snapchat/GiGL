@@ -95,6 +95,27 @@ class SampledEdgeResult:
     num_sampled_edges: dict[EdgeType, list[int]]
 
 
+def _first_occurrence_indices(rows: torch.Tensor, cols: torch.Tensor) -> torch.Tensor:
+    """Return indices of the first copy of each distinct ``(row, col)`` pair.
+
+    Args:
+        rows: 1-D int64 tensor of local source indices.
+        cols: 1-D int64 tensor of local destination indices, aligned with ``rows``.
+
+    Returns:
+        Ascending indices into ``rows``/``cols``, one per distinct pair, so the
+        original edge order is preserved.
+    """
+    pair_keys = rows * (int(cols.max().item()) + 1) + cols
+    unique_keys, inverse = torch.unique(pair_keys, return_inverse=True)
+    first_index = torch.full(
+        (unique_keys.size(0),), pair_keys.size(0), dtype=torch.long
+    ).scatter_reduce_(
+        0, inverse, torch.arange(pair_keys.size(0)), reduce="amin", include_self=True
+    )
+    return torch.sort(first_index).values
+
+
 class DistPPRNeighborSampler(BaseDistNeighborSampler):
     """Personalized PageRank (PPR) based distributed neighbor sampler.
 
@@ -410,6 +431,10 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _get_destination_type(self, edge_type: EdgeType) -> NodeType:
         """Get the node type at the destination end of an edge type."""
         return edge_type[0] if self.edge_dir == "in" else edge_type[-1]
+
+    def _get_owner_node_type(self, edge_type: EdgeType) -> NodeType:
+        """Get the node type whose neighbor row the walk fetches for an edge type."""
+        return edge_type[-1] if self.edge_dir == "in" else edge_type[0]
 
     async def _batch_fetch_neighbors(
         self,
@@ -820,63 +845,124 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
     def _extract_original_edges_from_ppr_caches(
         self,
         node_dict: dict[NodeType, torch.Tensor],
-        ppr_cache_states: list[PPRForwardPush],
-    ) -> SampledEdgeResult:
+        ppr_cache_states_by_walk: list[list[PPRForwardPush]],
+    ) -> tuple[SampledEdgeResult, list[dict[NodeType, torch.Tensor]]]:
         """Extract original edges over selected nodes from C++ PPR caches.
 
         This intentionally does not issue another graph-store request; it extracts
         sampled edge rows already cached while computing PPR.
 
+        Each seed type runs its own PPR walk with its own neighbor cache, and an
+        ABLP batch emits the union of every walk's rows. A row fetched only by one
+        walk (e.g. a co-seeded positive's) must not be attributed to another walk,
+        so the second return value records, per walk, which nodes own a row in
+        that walk's cache.
+
+        Args:
+            node_dict: Selected global node IDs per node type, in local-index order.
+            ppr_cache_states_by_walk: One list per seed-type walk, holding that
+                walk's PPR states (one per typed channel, or a single state).
+
         Returns:
-            GLT sampled-edge dictionaries:
-            ``rows`` maps each original edge type to local source indices.
-            ``cols`` maps each original edge type to local destination indices.
-            ``edge_ids`` maps each original edge type to edge IDs when ``with_edge``
-            is enabled, otherwise it is ``None``.
-            ``num_sampled_edges`` maps each original edge type to GLT's per-hop edge
-            counts list, using one count because these edges are attached as a
-            single sampled-edge layer.
+            A tuple of:
+
+            - GLT sampled-edge dictionaries, unioned over all walks:
+              ``rows`` maps each original edge type to local source indices.
+              ``cols`` maps each original edge type to local destination indices.
+              ``edge_ids`` maps each original edge type to edge IDs when
+              ``with_edge`` is enabled, otherwise it is ``None``.
+              ``num_sampled_edges`` maps each original edge type to GLT's
+              per-hop edge counts list, using one count because these edges are
+              attached as a single sampled-edge layer.
+            - Per walk, a map from node type to an int64 tensor aligned with
+              ``node_dict[node_type]``. Bit ``c`` of an entry is set when channel
+              ``c`` of that walk cached an edge row owned by the node whose other
+              endpoint is also selected.
         """
         selected_node_ids_by_node_type_id = {
             self._node_type_to_id[node_type]: node_ids.cpu()
             for node_type, node_ids in node_dict.items()
         }
-        extracted_edges = extract_original_edges_from_ppr_caches(
-            ppr_cache_states,
-            selected_node_ids_by_node_type_id,
-            self.with_edge,
+
+        # Extract per state (not per walk) so cache ownership stays attributable
+        # to a single walk and channel, then merge the edges here.
+        edge_type_id_to_parts: dict[int, list[tuple[torch.Tensor, ...]]] = defaultdict(
+            list
         )
+        cached_owner_masks_by_walk: list[dict[NodeType, torch.Tensor]] = []
+        for walk_states in ppr_cache_states_by_walk:
+            cached_owner_masks = {
+                node_type: torch.zeros(node_ids.size(0), dtype=torch.long)
+                for node_type, node_ids in node_dict.items()
+            }
+            for channel_index, state in enumerate(walk_states):
+                extracted_edges = extract_original_edges_from_ppr_caches(
+                    [state],
+                    selected_node_ids_by_node_type_id,
+                    self.with_edge,
+                )
+                for edge_type_id, extracted in extracted_edges.items():
+                    owner_node_type = self._get_owner_node_type(
+                        self._etype_id_to_etype[edge_type_id]
+                    )
+                    cached_owner_masks[owner_node_type][extracted.rows] |= (
+                        1 << channel_index
+                    )
+                    edge_type_id_to_parts[edge_type_id].append(
+                        (
+                            extracted.rows,
+                            extracted.cols,
+                            extracted.edge_ids
+                            if extracted.edge_ids is not None
+                            else torch.empty(0, dtype=torch.long),
+                        )
+                    )
+            cached_owner_masks_by_walk.append(cached_owner_masks)
 
         rows_dict: dict[EdgeType, torch.Tensor] = {}
         cols_dict: dict[EdgeType, torch.Tensor] = {}
         edge_dict: dict[EdgeType, torch.Tensor] = {}
-        for edge_type_id, extracted in extracted_edges.items():
+        for edge_type_id, parts in edge_type_id_to_parts.items():
             edge_type = self._etype_id_to_etype[edge_type_id]
             output_edge_type = (
                 reverse_edge_type(edge_type) if self.edge_dir == "in" else edge_type
             )
-            rows_dict[output_edge_type] = extracted.rows
-            cols_dict[output_edge_type] = extracted.cols
-            if extracted.edge_ids is not None:
-                edge_dict[output_edge_type] = extracted.edge_ids
+            rows = torch.cat([part[0] for part in parts])
+            cols = torch.cat([part[1] for part in parts])
+            edge_ids = (
+                torch.cat([part[2] for part in parts]) if self.with_edge else None
+            )
+            if rows.numel() == 0:
+                continue
+            keep = _first_occurrence_indices(rows, cols)
+            rows_dict[output_edge_type] = rows[keep]
+            cols_dict[output_edge_type] = cols[keep]
+            if edge_ids is not None:
+                edge_dict[output_edge_type] = edge_ids[keep]
 
         if not rows_dict:
             empty_edge_dict = {} if self.with_edge else None
-            return SampledEdgeResult(
-                rows={},
-                cols={},
-                edge_ids=empty_edge_dict,
-                num_sampled_edges={},
+            return (
+                SampledEdgeResult(
+                    rows={},
+                    cols={},
+                    edge_ids=empty_edge_dict,
+                    num_sampled_edges={},
+                ),
+                cached_owner_masks_by_walk,
             )
 
         num_sampled_edges = {
             edge_type: [int(cols.size(0))] for edge_type, cols in cols_dict.items()
         }
-        return SampledEdgeResult(
-            rows=rows_dict,
-            cols=cols_dict,
-            edge_ids=edge_dict if self.with_edge else None,
-            num_sampled_edges=num_sampled_edges,
+        return (
+            SampledEdgeResult(
+                rows=rows_dict,
+                cols=cols_dict,
+                edge_ids=edge_dict if self.with_edge else None,
+                num_sampled_edges=num_sampled_edges,
+            ),
+            cached_owner_masks_by_walk,
         )
 
     async def _sample_from_nodes(
@@ -1005,8 +1091,11 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
             neighbor_dict: dict[EdgeType, list[torch.Tensor]] = {}
             ppr_edge_type_to_flat_weights: dict[EdgeType, torch.Tensor] = {}
             ppr_edge_type_to_flat_is_expanded: dict[EdgeType, torch.Tensor] = {}
+            ppr_edge_type_to_walk_index: dict[EdgeType, int] = {}
 
-            for seed_type, ppr_result in zip(seed_types, ppr_results):
+            for walk_index, (seed_type, ppr_result) in enumerate(
+                zip(seed_types, ppr_results)
+            ):
                 assert isinstance(ppr_result.node_ids, dict)
                 assert isinstance(ppr_result.weights, dict)
                 assert isinstance(ppr_result.valid_counts, dict)
@@ -1032,6 +1121,7 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                     ppr_edge_type_to_flat_is_expanded[ppr_edge_type] = (
                         node_type_to_flat_is_expanded[node_type]
                     )
+                    ppr_edge_type_to_walk_index[ppr_edge_type] = walk_index
 
                     # Skip empty pairs; induce_next handles deduplication across
                     # seed types so a neighbor reachable from multiple seed types
@@ -1075,21 +1165,30 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 edge_ids={} if self.with_edge else None,
                 num_sampled_edges={},
             )
+            cached_owner_masks_by_walk: Optional[list[dict[NodeType, torch.Tensor]]] = (
+                None
+            )
             if self._include_sampled_edges:
-                ppr_cache_states: list[PPRForwardPush] = []
+                ppr_cache_states_by_walk: list[list[PPRForwardPush]] = []
                 for ppr_result in ppr_results:
                     ppr_cache_state = ppr_result.cache_state
                     if isinstance(ppr_cache_state, PPRForwardPush):
-                        ppr_cache_states.append(ppr_cache_state)
+                        ppr_cache_states_by_walk.append([ppr_cache_state])
                     elif ppr_cache_state is not None:
-                        ppr_cache_states.extend(ppr_cache_state)
+                        ppr_cache_states_by_walk.append(list(ppr_cache_state))
+                # Walk indices recorded for the is_expanded filter below must line
+                # up with seed_types, so every walk must have returned a cache.
+                assert len(ppr_cache_states_by_walk) == len(seed_types)
                 # Keep the cache scan off the asyncio event-loop thread. The
                 # pybind wrapper releases the GIL around the C++ extraction.
-                sampled_edges = await asyncio.get_running_loop().run_in_executor(
+                (
+                    sampled_edges,
+                    cached_owner_masks_by_walk,
+                ) = await asyncio.get_running_loop().run_in_executor(
                     None,
                     self._extract_original_edges_from_ppr_caches,
                     node_dict,
-                    ppr_cache_states,
+                    ppr_cache_states_by_walk,
                 )
 
             if sampled_edges.num_sampled_edges:
@@ -1132,6 +1231,20 @@ class DistPPRNeighborSampler(BaseDistNeighborSampler):
                 flat_is_expanded = ppr_edge_type_to_flat_is_expanded[ppr_edge_type]
                 if rows is not None and cols is not None:
                     edge_index = torch.stack([rows, cols])
+                    if cached_owner_masks_by_walk is not None:
+                        # ``is_expanded`` records that the seed pushed the node, but
+                        # past ``max_fetch_iterations`` a push can run on a node whose
+                        # row this walk never cached. Another seed type's walk may
+                        # have cached that row, and the union of all walks' rows is
+                        # emitted, so a pushed-but-uncached owner would pick up edges
+                        # the seed's own walk (e.g. an anchor sampled alone) never
+                        # sees. Keep a push bit only where this walk cached the row.
+                        flat_is_expanded = (
+                            flat_is_expanded
+                            & cached_owner_masks_by_walk[
+                                ppr_edge_type_to_walk_index[ppr_edge_type]
+                            ][ppr_edge_type[2]][cols.cpu()].to(flat_is_expanded.device)
+                        )
                 else:
                     edge_index = torch.zeros(2, 0, dtype=torch.long, device=self.device)
                     flat_weights = flat_weights.new_zeros((0, *flat_weights.shape[1:]))

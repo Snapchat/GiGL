@@ -28,7 +28,7 @@ reversal is needed since both follow the original edge direction.
 
 import heapq
 from collections import defaultdict
-from typing import Literal
+from typing import Literal, Optional
 
 import networkx as nx
 import torch
@@ -992,6 +992,168 @@ def _run_ppr_ablp_label_edges_do_not_affect_anchor_ppr(_: int) -> None:
     shutdown_rpc()
 
 
+def _raw_original_edges(
+    datum: HeteroData,
+) -> set[tuple[tuple[str, str, str], int, int]]:
+    """Return every sampled original edge as ``(edge_type, source_id, owner_id)``.
+
+    The owner is the node whose neighbor row produced the edge, i.e. the target
+    of the collated edge. IDs are global.
+    """
+    raw_edges: set[tuple[tuple[str, str, str], int, int]] = set()
+    for edge_type in datum.edge_types:
+        if edge_type[1] == "ppr":
+            continue
+        edge_index = datum[edge_type].edge_index
+        source_ids = datum[edge_type[0]].node[edge_index[0]].tolist()
+        owner_ids = datum[edge_type[2]].node[edge_index[1]].tolist()
+        raw_edges.update(
+            (edge_type, source_id, owner_id)
+            for source_id, owner_id in zip(source_ids, owner_ids)
+        )
+    return raw_edges
+
+
+def _anchor_ppr_expanded_flags(
+    datum: HeteroData, anchor_node_type: str, anchor_id: int
+) -> dict[tuple[str, int], int]:
+    """Return ``ppr_is_expanded`` for each PPR neighbor of one anchor.
+
+    Returns:
+        Map from ``(node_type, global_id)`` of the neighbor to its flag.
+    """
+    anchor_local = int((datum[anchor_node_type].node == anchor_id).nonzero()[0])
+    flags: dict[tuple[str, int], int] = {}
+    for edge_type in datum.edge_types:
+        if edge_type[1] != "ppr" or edge_type[0] != anchor_node_type:
+            continue
+        edge_index = datum[edge_type].edge_index
+        from_anchor = edge_index[0] == anchor_local
+        neighbor_ids = datum[edge_type[2]].node[edge_index[1][from_anchor]].tolist()
+        is_expanded = datum[edge_type].ppr_is_expanded[from_anchor].tolist()
+        for neighbor_id, flag in zip(neighbor_ids, is_expanded):
+            flags[(edge_type[2], neighbor_id)] = flag
+    return flags
+
+
+def _anchor_kept_relation_edges(
+    datum: HeteroData, anchor_node_type: str, anchor_id: int
+) -> set[tuple[tuple[str, str, str], int, int]]:
+    """Return the relation edges the graph transformer would attach to one anchor.
+
+    Mirrors the transformer's relation filter: an edge is kept when both of its
+    endpoints are tokens of the anchor and its owner (the node whose neighbor row
+    produced the edge, the target of the collated edge) was marked expanded in
+    the anchor's PPR walk.
+
+    Returns:
+        ``(edge_type, source_global_id, owner_global_id)`` tuples.
+    """
+    expanded_flags = _anchor_ppr_expanded_flags(datum, anchor_node_type, anchor_id)
+    tokens = {(anchor_node_type, anchor_id), *expanded_flags}
+    expanded = {(anchor_node_type, anchor_id)} | {
+        token for token, flag in expanded_flags.items() if flag != 0
+    }
+    return {
+        (edge_type, source_id, owner_id)
+        for edge_type, source_id, owner_id in _raw_original_edges(datum)
+        if (edge_type[0], source_id) in tokens and (edge_type[2], owner_id) in expanded
+    }
+
+
+def _run_ppr_ablp_co_seeded_positive_does_not_change_anchor_relation_edges(
+    _: int, typed: bool, max_fetch_iterations: Optional[int]
+) -> None:
+    """Verify a co-seeded ABLP positive does not change its anchor's relation edges.
+
+    With ``max_fetch_iterations=1`` the anchor's walk pushes story 1 but never
+    fetches its row, while the positive's own walk (seeded at story 1) does. The
+    anchor's relation edges must match those from sampling
+    the anchor alone. With no fetch cap the anchor's walk fetches every row it
+    pushes, so the co-seeded positive must change nothing either.
+    """
+    create_test_process_group()
+
+    dataset = create_heterogeneous_dataset_for_ablp(
+        positive_labels={0: [1], 1: [0], 2: [1]},
+        train_node_ids=[0],
+        val_node_ids=[1],
+        test_node_ids=[2],
+        edge_indices={
+            USER_TO_STORY: torch.tensor([[0, 0, 1, 2], [0, 1, 0, 1]]),
+            STORY_TO_USER: torch.tensor([[0, 1, 0, 1], [0, 0, 1, 2]]),
+        },
+        edge_dir="out",
+    )
+    sampler_options = PPRSamplerOptions(
+        alpha=_TEST_ALPHA,
+        eps=_TEST_EPS,
+        max_ppr_nodes=_TEST_MAX_PPR_NODES,
+        max_fetch_iterations=max_fetch_iterations,
+        include_sampled_edges=True,
+        typed_channel_ratios=(
+            {
+                (USER_TO_STORY, STORY_TO_USER): 0.5,
+                (STORY_TO_USER,): 0.5,
+            }
+            if typed
+            else None
+        ),
+    )
+
+    ablp_loader = DistABLPLoader(
+        dataset=dataset,
+        num_neighbors=[],
+        input_nodes=(USER, torch.tensor([0])),
+        supervision_edge_type=USER_TO_STORY,
+        sampler_options=sampler_options,
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+    solo_loader = DistNeighborLoader(
+        dataset=dataset,
+        num_neighbors=[],
+        input_nodes=(USER, torch.tensor([0])),
+        sampler_options=sampler_options,
+        pin_memory_device=torch.device("cpu"),
+        batch_size=1,
+    )
+
+    ablp_datum = next(iter(ablp_loader))
+    solo_datum = next(iter(solo_loader))
+    assert isinstance(ablp_datum, HeteroData)
+    assert isinstance(solo_datum, HeteroData)
+    # The positive is sampled in the ABLP batch, so its walk can cache rows the
+    # anchor's walk does not.
+    assert 1 in ablp_datum[STORY].node.tolist()
+
+    ablp_edges = _anchor_kept_relation_edges(ablp_datum, str(USER), 0)
+    solo_edges = _anchor_kept_relation_edges(solo_datum, str(USER), 0)
+    assert solo_edges, "Expected the solo anchor to keep at least one relation edge"
+    assert ablp_edges == solo_edges, (
+        "Co-seeded positive changed the anchor's relation edges: "
+        f"extra={ablp_edges - solo_edges}, missing={solo_edges - ablp_edges}"
+    )
+    if max_fetch_iterations is not None:
+        # The anchor's walk pushed story 1 without caching its row, so the
+        # expanded bit must be cleared even though the positive's walk cached it.
+        ablp_flags = _anchor_ppr_expanded_flags(ablp_datum, str(USER), 0)
+        assert ablp_flags[(str(STORY), 1)] == 0
+
+    # The batch still emits the union of every walk's rows: the positive's walk
+    # contributes rows the anchor-only batch lacks, and none are dropped.
+    ablp_raw_edges = _raw_original_edges(ablp_datum)
+    solo_raw_edges = _raw_original_edges(solo_datum)
+    assert solo_raw_edges <= ablp_raw_edges
+    if max_fetch_iterations is not None:
+        assert ablp_raw_edges - solo_raw_edges, (
+            "Expected the positive's walk to cache a row the anchor's walk never "
+            "fetched; otherwise this test does not exercise the leak"
+        )
+
+    shutdown_rpc()
+
+
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
@@ -1061,6 +1223,39 @@ class DistPPRSamplerTest(TestCase):
     def test_ppr_sampler_ablp_ignores_label_edges_for_anchor_ppr(self) -> None:
         """Verify ABLP label edges are excluded from anchor-seed PPR walks."""
         mp.spawn(fn=_run_ppr_ablp_label_edges_do_not_affect_anchor_ppr, args=())
+
+    @parameterized.expand(
+        [
+            param(
+                "untyped_channels_when_the_fetch_cap_is_hit",
+                typed=False,
+                max_fetch_iterations=1,
+            ),
+            param(
+                "typed_channels_when_the_fetch_cap_is_hit",
+                typed=True,
+                max_fetch_iterations=1,
+            ),
+            param(
+                "untyped_channels_without_a_fetch_cap",
+                typed=False,
+                max_fetch_iterations=None,
+            ),
+            param(
+                "typed_channels_without_a_fetch_cap",
+                typed=True,
+                max_fetch_iterations=None,
+            ),
+        ]
+    )
+    def test_ppr_sampler_ablp_co_seeded_positive_does_not_change_anchor_relation_edges(
+        self, _, typed: bool, max_fetch_iterations: Optional[int]
+    ) -> None:
+        """Verify a co-seeded ABLP positive does not change its anchor's relation edges."""
+        mp.spawn(
+            fn=_run_ppr_ablp_co_seeded_positive_does_not_change_anchor_relation_edges,
+            args=(typed, max_fetch_iterations),
+        )
 
     def test_ppr_sampler_homogeneous_ablp(self) -> None:
         """Verify PPR handles homogeneous ABLP seed dictionaries."""
