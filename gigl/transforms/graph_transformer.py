@@ -585,6 +585,7 @@ def tensors_to_graph_transformer_input(
             return_relation_features=(
                 PPR_RELATION_FEATURES_NAME in anchor_input_attr_names
             ),
+            return_expanded_token_mask=bool(relation_edge_types),
         )
     else:
         raise ValueError(
@@ -1248,8 +1249,8 @@ class PprSequenceGrids(NamedTuple):
         ppr_relation_features: ``[num_anchors, max_seq_len, num_features]``
             relation features of each token's edge, or None if not requested.
         expanded_token_mask: Per-token bitmask of the PPR channels in which the
-            anchor pushed the token's node, or None without ``ppr_is_expanded``
-            flags. The anchor has every bit set.
+            anchor pushed the token's node, or None when not requested or without
+            ``ppr_is_expanded`` flags. The anchor has every bit set.
     """
 
     node_index: Tensor
@@ -1271,6 +1272,7 @@ def build_ppr_sequence_grids(
     device: torch.device,
     return_edge_weights: bool,
     return_relation_features: bool,
+    return_expanded_token_mask: bool,
 ) -> PprSequenceGrids:
     """Builds each anchor's PPR sequence from the batch's ``"ppr"`` edges.
 
@@ -1291,6 +1293,9 @@ def build_ppr_sequence_grids(
         device: Device of the returned tensors.
         return_edge_weights: Whether to return ``ppr_weight``.
         return_relation_features: Whether to return ``ppr_relation_features``.
+        return_expanded_token_mask: Whether to build ``expanded_token_mask``.
+            Only the relation edge lookup uses it, so callers without relation
+            edge types can skip its construction.
 
     Returns:
         The grids, see ``PprSequenceGrids``.
@@ -1339,7 +1344,9 @@ def build_ppr_sequence_grids(
     # its own push then supplies edges the anchor's solo sample never would.
     # The per-edge ppr_is_expanded flag marks which tokens the anchor pushed.
     ppr_edge_is_expanded_parts = [ppr_is_expanded_dict.get(et) for et in ppr_edge_types]
-    if all(part is not None for part in ppr_edge_is_expanded_parts):
+    if return_expanded_token_mask and all(
+        part is not None for part in ppr_edge_is_expanded_parts
+    ):
         ppr_edge_is_expanded = torch.cat(
             [
                 part.to(device=device)

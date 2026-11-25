@@ -39,14 +39,16 @@ class PackedRelationEdges(NamedTuple):
         segments: ``(relation, start, end)`` edge range of every relation, in
             order, covering ``[0, num_edges)``; empty if there are no edges. They
             are host values, so the per-relation transforms never read the device.
-        all_filtered: The batch has relation edges but none reach these outputs.
+        anchor_edges: The edges into each sequence's anchor token, with ``target``
+            the sequence index, for a last layer that computes only the anchors.
+            None when no such layer runs.
     """
 
     target: Tensor
     source: Tensor
     relation: Tensor
     segments: tuple[RelationSegment, ...]
-    all_filtered: bool = False
+    anchor_edges: Optional["PackedRelationEdges"] = None
 
 
 class PackedBucket(NamedTuple):
@@ -91,9 +93,10 @@ class PackedLayout(NamedTuple):
             (``lengths`` and the grids) of each packed sequence. None when the
             layout is not sorted.
         buckets: The ``PackedBucket`` runs, longest ``bucket_len`` first,
-            covering all sequences and tokens. None means one bucket of
-            ``max_seq_len`` covering everything, which is what an unsorted
-            layout has.
+            covering all sequences and tokens, each holding at least two
+            sequences. The lengths are a subset of the bucket lengths of
+            ``pack_sequences``. None means one bucket of ``max_seq_len``
+            covering everything, which is what an unsorted layout has.
 
     Every per-sequence quantity (``cu_seqlens``, ``sequence_id``, the rows of the
     grids ``flat_index`` refers to) is in packed order. ``flat_index`` indexes the
@@ -158,11 +161,16 @@ def pack_sequences(
     row of the input. The grids are permuted the same way before packing. The
     sorted sequences are also split into buckets by length: the lengths in
     ``PACKED_BUCKET_LENGTHS`` capped at ``max_seq_len``, plus ``max_seq_len``.
-    They depend on ``max_seq_len`` only, never on the data. A sequence goes to the
-    smallest bucket length that holds it. If any bucket would hold fewer than two
-    sequences, or there is only one bucket length, ``buckets`` is None. So a batch
-    has one of two structures, which keeps ``torch.compile`` from specializing on
-    sizes 0 and 1 of every pattern of small buckets.
+    The lengths depend on ``max_seq_len`` only, never on the data. A sequence
+    goes to the smallest bucket length that holds it. Empty buckets are dropped.
+    A bucket with one sequence is merged into the next longer non-empty bucket
+    (or, if it is the longest, absorbs the next shorter one) and keeps the longer
+    length, until every bucket holds at least two sequences or one bucket is
+    left. A single bucket of ``max_seq_len`` is ``buckets`` None, and so are fewer
+    than two sequences. A single shorter bucket is kept, so the per-pair bias is
+    sized by it rather than by ``max_seq_len``. Dropping and merging keep
+    ``torch.compile`` from specializing on bucket sizes 0 and 1, and the possible
+    structures are bounded by the subsets of the bucket lengths.
 
     Example:
         >>> packed = pack_sequences(torch.tensor([2, 1, 3]), max_seq_len=3)
@@ -237,25 +245,41 @@ def pack_sequences(
     flat_index = sequence_id * max_seq_len + position
 
     buckets: Optional[tuple[PackedBucket, ...]] = None
-    if sort_by_length and num_boundaries > 0:
+    if sort_by_length and num_boundaries > 0 and num_sequences >= 2:
         sequence_bounds = [0] + host_values[:num_boundaries] + [num_sequences]
         token_bounds = (
             [0] + host_values[num_boundaries : 2 * num_boundaries] + [num_tokens]
         )
-        counts = [
-            sequence_bounds[i + 1] - sequence_bounds[i] for i in range(len(bucket_lens))
-        ]
-        if min(counts) >= 2:
-            buckets = tuple(
-                PackedBucket(
-                    sequence_bounds[i],
-                    sequence_bounds[i + 1],
-                    token_bounds[i],
-                    token_bounds[i + 1],
-                    bucket_lens[i],
+        # Each run is [first_sequence, end_sequence, first_token, end_token,
+        # bucket_len]. Empty buckets are dropped.
+        runs: list[list[int]] = []
+        for i in range(len(bucket_lens)):
+            if sequence_bounds[i + 1] > sequence_bounds[i]:
+                runs.append(
+                    [
+                        sequence_bounds[i],
+                        sequence_bounds[i + 1],
+                        token_bounds[i],
+                        token_bounds[i + 1],
+                        bucket_lens[i],
+                    ]
                 )
-                for i in range(len(bucket_lens))
-            )
+        # A one-sequence bucket joins its next longer neighbor, or absorbs the
+        # next shorter one if it is the longest. The merged run keeps the longer
+        # bucket length, which holds every sequence in it.
+        while len(runs) > 1:
+            small = next((i for i, run in enumerate(runs) if run[1] - run[0] < 2), None)
+            if small is None:
+                break
+            if small > 0:
+                runs[small - 1][1] = runs[small][1]
+                runs[small - 1][3] = runs[small][3]
+            else:
+                runs[0][1] = runs[1][1]
+                runs[0][3] = runs[1][3]
+            del runs[small if small > 0 else 1]
+        if len(runs) > 1 or runs[0][4] < max_seq_len:
+            buckets = tuple(PackedBucket(*run) for run in runs)
 
     if node_grid is None:
         node_index = flat_index
