@@ -1105,7 +1105,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             num_target_rows: Number of output rows.
 
         The edge counts, the softmax sums and the message buffer accumulate in
-        FP32, as a BF16 running sum stops growing at 256.
+        FP32 (FP64 for FP64 inputs), as a BF16 running sum stops growing at 256.
 
         Returns:
             ``(num_target_rows, model_dim)`` messages in ``source_features``'
@@ -1122,14 +1122,16 @@ class GraphTransformerEncoderLayer(nn.Module):
         group_indices = relation_indices * num_target_rows + target_rows
         head_group_indices = group_indices.unsqueeze(-1).expand(-1, self._num_heads)
         num_groups = self._num_relations * num_target_rows
+        # FP32 for BF16 and FP16 inputs; FP64 inputs stay FP64.
+        accumulation_dtype = torch.promote_types(source_features.dtype, torch.float32)
 
         if edge_queries is None or edge_keys is None:
             group_degrees = source_features.new_zeros(
-                num_groups, dtype=torch.float32
+                num_groups, dtype=accumulation_dtype
             ).index_add_(
                 0,
                 group_indices,
-                source_features.new_ones(num_edges, dtype=torch.float32),
+                source_features.new_ones(num_edges, dtype=accumulation_dtype),
             )
             edge_weights = (1.0 / group_degrees[group_indices]).unsqueeze(-1)
         else:
@@ -1176,7 +1178,7 @@ class GraphTransformerEncoderLayer(nn.Module):
             )
             normalized_scores = torch.exp(
                 (scores - group_score_max.gather(0, head_group_indices)).to(
-                    torch.float32
+                    accumulation_dtype
                 )
             )
             group_denominators = normalized_scores.new_zeros(
@@ -1203,10 +1205,10 @@ class GraphTransformerEncoderLayer(nn.Module):
             * edge_weights.unsqueeze(-1)
         ).reshape(num_edges, model_dim)
         messages = source_features.new_zeros(
-            (num_target_rows, model_dim), dtype=torch.float32
+            (num_target_rows, model_dim), dtype=accumulation_dtype
         )
         return messages.index_put_(
-            (target_rows,), weighted_messages.to(torch.float32), accumulate=True
+            (target_rows,), weighted_messages.to(accumulation_dtype), accumulate=True
         ).to(source_features.dtype)
 
 
