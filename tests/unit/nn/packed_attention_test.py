@@ -454,7 +454,7 @@ class PackedAttentionTest(TestCase):
                 torch.tensor([5, 20, 7, 13]), 20, sort_by_length=True
             ),
             "all_lengths_1": pack_sequences(
-                torch.ones(5, dtype=torch.long), 40, sort_by_length=True
+                torch.ones(5, dtype=torch.long), 32, sort_by_length=True
             ),
             "one_sequence": pack_sequences(torch.tensor([37]), 64, sort_by_length=True),
         }
@@ -472,6 +472,24 @@ class PackedAttentionTest(TestCase):
                     self._assert_cpu_matches_reference(
                         layout, query_is_first_token, with_per_key, with_per_pair
                     )
+
+    def test_one_short_bucket_matches_reference_on_cpu(self) -> None:
+        layout = pack_sequences(
+            torch.tensor([5, 20, 7, 13, 1]), 256, sort_by_length=True
+        )
+        assert layout.buckets is not None
+        self.assertEqual([bucket.bucket_len for bucket in layout.buckets], [32])
+        for with_per_key, with_per_pair, query_is_first_token in itertools.product(
+            (False, True), (False, True), (False, True)
+        ):
+            with self.subTest(
+                per_key=with_per_key,
+                per_pair=with_per_pair,
+                first_token=query_is_first_token,
+            ):
+                self._assert_cpu_matches_reference(
+                    layout, query_is_first_token, with_per_key, with_per_pair
+                )
 
     def test_per_pair_linear_index_matches_the_bucket_views(self) -> None:
         layout = _bucketed_layout()
@@ -666,13 +684,22 @@ class PackedAttentionTest(TestCase):
         counter = CompileCounter()
         compiled = torch.compile(packed_attention, backend=counter)
         generator = torch.Generator().manual_seed(0)
-        bucketed_batches = [
-            [5, 20, 40, 60, 70, 100, 120, 130],
+        # Batches of three structures: four buckets, three buckets (the single
+        # sequence of the longest bucket absorbed the next one), and one bucket.
+        four_bucket_batches = [
             [1, 2, 33, 34, 65, 66, 129, 130, 131],
             [3, 4, 5, 40, 41, 70, 71, 72, 200, 201],
             [32, 32, 64, 64, 128, 128, 256, 256],
             [7, 8, 50, 51, 52, 90, 91, 140, 141, 142, 143],
+            [2, 2, 3, 3, 4, 40, 41, 45, 70, 80, 90, 91, 92, 150, 160, 170],
+            [9, 10, 34, 35, 36, 67, 68, 69, 70, 131, 132],
+        ]
+        three_bucket_batches = [
+            [5, 20, 40, 60, 70, 100, 120, 130],
             [31, 32, 33, 64, 65, 128, 129],
+            [2, 3, 40, 41, 60, 100, 101, 200],
+            [6, 7, 8, 42, 43, 44, 45, 110, 111, 239],
+            [11, 12, 55, 56, 99, 100, 101, 102, 250],
         ]
         one_bucket_batches = [
             [130, 200, 256],
@@ -681,16 +708,24 @@ class PackedAttentionTest(TestCase):
             [256, 256, 256],
         ]
         batches = [
-            bucketed_batches[0],
+            four_bucket_batches[0],
             one_bucket_batches[0],
-            bucketed_batches[1],
-            *bucketed_batches[2:],
-            *one_bucket_batches[1:],
+            three_bucket_batches[0],
+            four_bucket_batches[1],
+            three_bucket_batches[1],
+            one_bucket_batches[1],
+            *four_bucket_batches[2:],
+            *three_bucket_batches[2:],
+            *one_bucket_batches[2:],
         ]
         counts: list[int] = []
+        structures: list[tuple[int, ...]] = []
         for lengths in batches:
             layout = pack_sequences(
                 torch.tensor(lengths), _BUCKETED_MAX_SEQ_LEN, sort_by_length=True
+            )
+            structures.append(
+                tuple(bucket.bucket_len for bucket in layout_buckets(layout))
             )
             num_tokens = layout.flat_index.numel()
             query, key, value = (
@@ -709,11 +744,13 @@ class PackedAttentionTest(TestCase):
                 PackedAttentionBias(per_key, per_pair),
             )
             counts.append(counter.frame_count)
-        # The batches have two structures (bucketed, or one bucket). The first
-        # bucketed and one-bucket calls compile, and the second bucketed call
-        # recompiles with the host sizes as symbolic ints (this took five calls
-        # in the order above). After that, new sizes must not compile again.
-        self.assertEqual(counts[4:], [counts[4]] * (len(batches) - 4))
+        self.assertEqual(set(structures), {(256, 128, 64, 32), (256, 64, 32), (256,)})
+        # The first calls of a structure compile (the later ones with the host
+        # sizes as symbolic ints). After three calls of a structure, new sizes
+        # must not compile again.
+        for index in range(1, len(batches)):
+            if structures[:index].count(structures[index]) >= 3:
+                self.assertEqual(counts[index], counts[index - 1])
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
