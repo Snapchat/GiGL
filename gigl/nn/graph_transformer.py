@@ -1141,9 +1141,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             target_rows: ``(num_edges,)`` output row of each edge's target.
             num_target_rows: Number of output rows.
 
+        The edge counts, the softmax sums and the message buffer accumulate in
+        FP32, as a BF16 running sum stops growing at 256.
+
         Returns:
-            ``(num_target_rows, model_dim)`` messages; zero rows for targets
-            without edges.
+            ``(num_target_rows, model_dim)`` messages in ``source_features``'
+            dtype; zero rows for targets without edges.
         """
         if self._relation_message_matrices is None:
             raise ValueError("Relation message matrices are not initialized.")
@@ -1158,8 +1161,12 @@ class GraphTransformerEncoderLayer(nn.Module):
         num_groups = self._num_relations * num_target_rows
 
         if edge_queries is None or edge_keys is None:
-            group_degrees = source_features.new_zeros(num_groups).index_add_(
-                0, group_indices, source_features.new_ones(num_edges)
+            group_degrees = source_features.new_zeros(
+                num_groups, dtype=torch.float32
+            ).index_add_(
+                0,
+                group_indices,
+                source_features.new_ones(num_edges, dtype=torch.float32),
             )
             edge_weights = (1.0 / group_degrees[group_indices]).unsqueeze(-1)
         else:
@@ -1205,9 +1212,11 @@ class GraphTransformerEncoderLayer(nn.Module):
                 0, head_group_indices, scores.detach(), reduce="amax", include_self=True
             )
             normalized_scores = torch.exp(
-                scores - group_score_max.gather(0, head_group_indices)
+                (scores - group_score_max.gather(0, head_group_indices)).to(
+                    torch.float32
+                )
             )
-            group_denominators = scores.new_zeros(
+            group_denominators = normalized_scores.new_zeros(
                 (num_groups, self._num_heads)
             ).scatter_add(0, head_group_indices, normalized_scores)
             # Sums to 1 per (relation, target) and head.
@@ -1230,10 +1239,12 @@ class GraphTransformerEncoderLayer(nn.Module):
             edge_messages.view(num_edges, -1, model_dim // self._num_heads)
             * edge_weights.unsqueeze(-1)
         ).reshape(num_edges, model_dim)
-        messages = source_features.new_zeros((num_target_rows, model_dim))
-        return messages.index_put_(
-            (target_rows,), weighted_messages.to(dtype=messages.dtype), accumulate=True
+        messages = source_features.new_zeros(
+            (num_target_rows, model_dim), dtype=torch.float32
         )
+        return messages.index_put_(
+            (target_rows,), weighted_messages.to(torch.float32), accumulate=True
+        ).to(source_features.dtype)
 
 
 class GraphTransformerEncoder(nn.Module):
