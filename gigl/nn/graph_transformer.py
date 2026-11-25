@@ -23,7 +23,12 @@ from torch import Tensor
 from torch_geometric.utils import softmax
 
 from gigl.common.logger import Logger
-from gigl.nn.packed_attention import PackedAttentionBias, packed_attention
+from gigl.nn.packed_attention import (
+    PackedAttentionBias,
+    layout_buckets,
+    packed_attention,
+    per_pair_bias_num_cells,
+)
 from gigl.src.common.types.graph_data import EdgeType, NodeType
 from gigl.transforms.graph_transformer import (
     HOP_DISTANCE_FEATURE_NAME,
@@ -37,6 +42,7 @@ from gigl.transforms.graph_transformer import (
     get_sparse_feature_matrices,
     lookup_csr_values,
     lookup_pairwise_relation_indices,
+    lookup_pairwise_relative_features,
     tensors_to_graph_transformer_input,
     to_homogeneous_edge_index,
     validate_reserved_anchor_feature_usage,
@@ -1407,12 +1413,14 @@ class GraphTransformerEncoder(nn.Module):
         to padding) when the config meets all of these:
           - ``sequence_construction_method="khop"``
           - ``relation_attention_mode="none"`` (any ``relation_message_mode``)
-          - no pairwise attention biases
           - no ``ppr_weight`` or ``ppr_relation_features``
           - ``hop_distance <= 4``
 
         With ``attention_dropout_rate > 0``, training attention runs SDPA per length
-        bucket on the GPU, and eval attention runs the varlen kernel.
+        bucket on the GPU, and eval attention runs the varlen kernel. With pairwise
+        attention biases, attention runs SDPA per length bucket on every layer that
+        queries all tokens, and the last ``anchor_only`` layer runs the kernel with
+        row 0 of the bias as a per-key bias.
 
         Every other config, and every CPU run, uses padded sequences. A batch whose
         k-hop candidate set is too large for the packed layout also runs padded;
@@ -1790,8 +1798,6 @@ class GraphTransformerEncoder(nn.Module):
             unsupported_reasons.append("sequence_construction_method is not 'khop'")
         if self._relation_attention_mode != "none":
             unsupported_reasons.append("relation_attention_mode is not 'none'")
-        if self._pairwise_attention_bias_attr_names:
-            unsupported_reasons.append("pairwise attention biases are set")
         ppr_attr_names = {PPR_WEIGHT_FEATURE_NAME, PPR_RELATION_FEATURES_NAME}
         if ppr_attr_names & (
             set(self._anchor_based_attention_bias_attr_names)
@@ -2372,21 +2378,113 @@ class GraphTransformerEncoder(nn.Module):
             data: The batch holding the sparse attributes.
 
         Returns:
-            A per-key bias from the anchor-relative attention-bias attributes, or
-            None when there are none.
+            A per-key bias from the anchor-relative attention-bias attributes and
+            a per-pair bias from the pairwise attention-bias attributes, each None
+            when there are no such attributes, or None when there is neither.
+
+        Raises:
+            ValueError: If a pairwise attention-bias attribute is not on ``data``.
         """
+        per_key = None
         projection = self._anchor_pe_attention_bias_projection
-        if projection is None:
+        if projection is not None:
+            features = self._packed_anchor_relative_features(
+                self._anchor_based_attention_bias_attr_names,
+                layout,
+                anchor_node_index,
+                data,
+            )
+            per_key = projection(features.to(projection.weight.dtype))
+        per_pair = None
+        if self._pairwise_pe_attention_bias_projection is not None:
+            per_pair = self._packed_pairwise_bias(layout, data)
+        if per_key is None and per_pair is None:
             return None
-        features = self._packed_anchor_relative_features(
-            self._anchor_based_attention_bias_attr_names,
-            layout,
-            anchor_node_index,
-            data,
+        return PackedAttentionBias(per_key=per_key, per_pair=per_pair)
+
+    def _packed_pairwise_bias(
+        self,
+        layout: PackedLayout,
+        data: torch_geometric.data.hetero_data.HeteroData,
+    ) -> Float[Tensor, "num_pair_cells"]:
+        """The pairwise attention bias of every sequence, one block per length bucket.
+
+        Each bucket's block is built from that bucket's node grid, so the cost
+        follows the bucket lengths and not ``max_seq_len``.
+        The block keeps the projection's output dtype.
+
+        Args:
+            layout: Layout of the sequences.
+            data: The batch holding the sparse attributes.
+
+        Returns:
+            The flat ``PackedAttentionBias.per_pair`` bias: for each bucket in
+            order, its row-major ``[bucket_sequences, num_heads, bucket_len,
+            bucket_len]`` block.
+
+        Raises:
+            ValueError: If a pairwise attention-bias attribute is not on ``data``,
+                or no pairwise features were found.
+        """
+        projection = cast(nn.Linear, self._pairwise_pe_attention_bias_projection)
+        names = self._pairwise_attention_bias_attr_names
+        matrices = get_sparse_feature_matrices(
+            graph_attr_dict={
+                name: getattr(data, name) for name in names if name in data
+            },
+            attr_names=names,
+            missing_attr_error_prefix="Pairwise attention bias attribute",
         )
-        return PackedAttentionBias(
-            per_key=projection(features.to(projection.weight.dtype))
-        )
+        node_grid, valid_mask = self._layout_grids(layout)
+        blocks: list[Tensor] = []
+        for bucket in layout_buckets(layout):
+            bucket_len = bucket.bucket_len
+            features, nonmissing_indices = lookup_pairwise_relative_features(
+                node_index_sequences=node_grid[
+                    bucket.first_sequence : bucket.end_sequence, :bucket_len
+                ],
+                valid_mask=valid_mask[
+                    bucket.first_sequence : bucket.end_sequence, :bucket_len
+                ],
+                csr_matrices=matrices,
+                attr_names=names,
+                device=layout.node_index.device,
+            )
+            if features is None:
+                raise ValueError(
+                    "Pairwise attention biases are configured, but no pairwise "
+                    "features were found."
+                )
+            projected = projection(features.to(projection.weight.dtype))
+            block = projected.permute(0, 3, 1, 2).reshape(-1)
+            if nonmissing_indices is not None and nonmissing_indices.numel() > 0:
+                nonmissing_bias = cast(Tensor, self._pairwise_nonmissing_attention_bias)
+                num_pairs = nonmissing_indices.size(0)
+                heads = torch.arange(self._num_heads, device=block.device)
+                rows = (
+                    nonmissing_indices[:, 0:1] * self._num_heads + heads
+                ) * bucket_len + nonmissing_indices[:, 1:2]
+                cells = rows * bucket_len + nonmissing_indices[:, 2:3]
+                block = block.index_add(
+                    0,
+                    cells.flatten(),
+                    nonmissing_bias.to(block.dtype)
+                    .expand(num_pairs, self._num_heads)
+                    .flatten(),
+                )
+            blocks.append(block)
+        if len(blocks) == 1:
+            # Every block is already flat; skip the copy torch.cat would make.
+            per_pair = blocks[0]
+        else:
+            per_pair = torch.cat(blocks)
+        expected_cells = per_pair_bias_num_cells(layout, self._num_heads)
+        if per_pair.numel() != expected_cells:
+            raise ValueError(
+                f"Pairwise bias has {per_pair.numel()} cells but the layout needs "
+                f"{expected_cells}."
+            )
+        return per_pair
 
     def _run_packed_layers(
         self,
@@ -2520,6 +2618,28 @@ class GraphTransformerEncoder(nn.Module):
             bias=bias,
         )
 
+    def _layout_grids(
+        self, layout: PackedLayout
+    ) -> tuple[Int64[Tensor, "num_sequences max_seq_len"], Tensor]:
+        """The layout's tokens on the padded grid.
+
+        Returns:
+            ``[num_sequences, max_seq_len]`` homogeneous node ids, -1 in padding,
+            and the boolean mask of the non-padding positions.
+        """
+        device = layout.node_index.device
+        num_sequences = layout.cu_seqlens.numel() - 1
+        node_index = torch.full(
+            (num_sequences * layout.max_seq_len,), -1, dtype=torch.long, device=device
+        )
+        node_index[layout.flat_index] = layout.node_index
+        node_index = node_index.view(num_sequences, layout.max_seq_len)
+        lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
+        valid_mask = torch.arange(
+            layout.max_seq_len, device=device
+        ) < lengths.unsqueeze(1)
+        return node_index, valid_mask
+
     def _build_packed_relation_edges(
         self,
         edge_index_dict: dict[tuple[str, str, str], Tensor],
@@ -2546,17 +2666,12 @@ class GraphTransformerEncoder(nn.Module):
         """
         device = layout.node_index.device
         num_sequences = layout.cu_seqlens.numel() - 1
-        grid_size = num_sequences * layout.max_seq_len
-        node_index = torch.full((grid_size,), -1, dtype=torch.long, device=device)
-        node_index[layout.flat_index] = layout.node_index
-        node_index = node_index.view(num_sequences, layout.max_seq_len)
-        hop_index = torch.zeros(grid_size, dtype=torch.long, device=device)
+        node_index, valid_mask = self._layout_grids(layout)
+        hop_index = torch.zeros(
+            num_sequences * layout.max_seq_len, dtype=torch.long, device=device
+        )
         hop_index[layout.flat_index] = layout.token_attrs[HOP_DISTANCE_FEATURE_NAME]
         hop_index = hop_index.view(num_sequences, layout.max_seq_len)
-        lengths = layout.cu_seqlens[1:] - layout.cu_seqlens[:-1]
-        valid_mask = torch.arange(
-            layout.max_seq_len, device=device
-        ) < lengths.unsqueeze(1)
         # Sorted batch * num_nodes + node keys of the tokens fewer than hop_distance
         # hops out; the rest sort last as a key no edge has.
         batch_node_keys = (

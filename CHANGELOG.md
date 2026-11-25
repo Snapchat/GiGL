@@ -48,21 +48,23 @@ Some highlights:
   layout (`gigl/transforms/static_khop.py`) and the layers run on one `[tokens, dim]` buffer with varlen attention
   (`gigl/nn/packed_attention.py`), so there are no padding FLOPs. Supported configs use `khop` sequences, `anchor_only`
   or `anchor_neighbor_attention` readout (the default, so default-configured encoders now run packed on CUDA),
-  `relation_attention_mode` `none`, any `relation_message_mode`, no pairwise attention biases, no `ppr_weight` or
-  `ppr_relation_features`, `hop_distance <= 4`, and either value of `prioritize_hop_order`. Attention dropout in
-  training runs SDPA per length bucket (sequences sorted by length, buckets of 32/64/128/256 tokens) instead of the
-  varlen kernel; outputs are returned in anchor order. Anchor-relative attributes work as token inputs and as a per-key
-  attention bias. An attribute other than `hop_distance` is looked up in its sparse CSR matrix, which reads a value back
-  from the device and has data-dependent shapes, so such a config does not whole-encoder compile and loses the fixed
-  host-sync count. Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those
-  batches are counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and
-  gradients up to float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path
-  derives `hop_distance` from the layout and ignores the batch attribute (it equals the directed
-  `AddHeteroHopDistanceEncoding` with the same sampling direction), but a batch that falls back to the padded path needs
-  the attribute and raises without it. The relation message modes `edge_type_linear` and `edge_type_attention` aggregate
-  per-relation messages over the layout's edges with a fixed number of host syncs per forward, independent of the number
-  of relations and layers. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has
-  `hop_distance` or fewer entries by @kmontemayor2-sc
+  `relation_attention_mode` `none`, any `relation_message_mode`, no `ppr_weight` or `ppr_relation_features`,
+  `hop_distance <= 4`, and either value of `prioritize_hop_order`. Attention dropout in training runs SDPA per length
+  bucket (sequences sorted by length, buckets of 32/64/128/256 tokens) instead of the varlen kernel; outputs are
+  returned in anchor order. Anchor-relative attributes work as token inputs and as a per-key attention bias. Pairwise
+  attention biases, including the learned non-missing bias, are supported: they are built per length bucket (about a
+  third of the dense grid's cells on realistic batches) and run SDPA per bucket. An attribute other than `hop_distance`,
+  and every pairwise attention bias, is looked up in its sparse CSR matrix, which reads a value back from the device and
+  has data-dependent shapes, so such a config does not whole-encoder compile and loses the fixed host-sync count.
+  Everything else, CPU, and batches whose k-hop candidate set is too large keep the padded path; those batches are
+  counted and warned about on the 1st, 2nd, 4th, ... occurrence. Both paths give the same embeddings and gradients up to
+  float error, except that train-mode `dropout_rate` draws differ (same distribution). The packed path derives
+  `hop_distance` from the layout and ignores the batch attribute (it equals the directed `AddHeteroHopDistanceEncoding`
+  with the same sampling direction), but a batch that falls back to the padded path needs the attribute and raises
+  without it. The relation message modes `edge_type_linear` and `edge_type_attention` aggregate per-relation messages
+  over the layout's edges with a fixed number of host syncs per forward, independent of the number of relations and
+  layers. A `khop` config now raises a `ValueError` at construction if its `hop_distance` embedding has `hop_distance`
+  or fewer entries by @kmontemayor2-sc
 - Fetch every node or edge type that has features with one request per partition (`FusedFeatureStore` /
   `FusedDistFeature`), whether it has raw float features, packed quantized features, or both. Types with both stores
   used to need two requests per partition. The samplers register one feature lookup per entity kind instead of up to six

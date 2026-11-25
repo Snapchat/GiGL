@@ -699,7 +699,7 @@ def tensors_to_graph_transformer_input(
     )
 
     pairwise_feature_sequences, pairwise_nonmissing_indices = (
-        _lookup_pairwise_relative_features(
+        lookup_pairwise_relative_features(
             node_index_sequences=node_index_sequences,
             valid_mask=valid_mask,
             csr_matrices=pairwise_pe_matrices if pairwise_pe_matrices else None,
@@ -1544,13 +1544,16 @@ def _lookup_anchor_relative_features(
     return features
 
 
-def _lookup_pairwise_relative_features(
-    node_index_sequences: Tensor,
-    valid_mask: Tensor,
+def lookup_pairwise_relative_features(
+    node_index_sequences: Int[Tensor, "batch seq"],
+    valid_mask: Bool[Tensor, "batch seq"],
     csr_matrices: Optional[list[Tensor]],
     attr_names: Optional[list[str]],
     device: torch.device,
-) -> tuple[Optional[Tensor], Optional[Tensor]]:
+) -> tuple[
+    Optional[Float32[Tensor, "batch seq seq num_attrs"]],
+    Optional[Int64[Tensor, "num_nonmissing_pairs 3"]],
+]:
     """
     Look up pairwise sparse values for each valid token pair in the sequence.
 
