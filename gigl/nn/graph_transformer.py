@@ -280,35 +280,58 @@ def _get_relation_segments(
     return tuple(segments)
 
 
+def _sort_anchor_relation_edges(
+    layout: PackedLayout,
+    target: Tensor,
+    relation: Tensor,
+    num_relations: int,
+) -> tuple[Tensor, Tensor]:
+    """Sorts the edges so the ones into each sequence's anchor token come first.
+
+    Edges that do not reach an anchor sort after every relation. The sort is stable,
+    so each relation's edges keep their order. Reads nothing on the host.
+
+    Args:
+        layout: Layout of the packed tokens.
+        target: ``[num_edges]`` long packed token row of each edge's target.
+        relation: ``[num_edges]`` long relation of each edge.
+        num_relations: Number of relations.
+
+    Returns:
+        The sorted keys and the order of the edges, both ``[num_edges]``. The keys'
+        bounds for ``arange(num_relations + 1)`` are the anchor edges' relation
+        bounds.
+    """
+    into_anchor = layout.position[target] == 0
+    sort_keys = torch.where(
+        into_anchor, relation, torch.full_like(relation, num_relations)
+    )
+    return torch.sort(sort_keys, stable=True)
+
+
 def _anchor_relation_edges(
-    edges: PackedRelationEdges, layout: PackedLayout
+    edges: PackedRelationEdges,
+    layout: PackedLayout,
+    order: Tensor,
+    bounds: Sequence[int],
 ) -> PackedRelationEdges:
     """The edges into each sequence's anchor token, as they feed a last layer that
     computes only the anchors.
 
-    ``target`` becomes the sequence index. The edges keep their relation order, and
-    ``all_filtered`` is set when ``edges`` has edges but none reach an anchor.
+    ``target`` becomes the sequence index. The edges keep their relation order.
+
+    Args:
+        edges: All the relation edges.
+        layout: Layout of the packed tokens.
+        order: Edge order from ``_sort_anchor_relation_edges``.
+        bounds: Relation bounds of the sorted anchor edges, as host values.
     """
-    into_anchor = layout.position[edges.target] == 0
-    num_relations = 0
-    if edges.segments:
-        num_relations = edges.segments[-1][0] + 1
-    # Edges that do not reach an anchor sort after every relation. One sort and
-    # one host read give the order, every relation's bounds and the edge count.
-    sort_keys = torch.where(
-        into_anchor, edges.relation, torch.full_like(edges.relation, num_relations)
-    )
-    sorted_keys, order = torch.sort(sort_keys, stable=True)
-    bounds = torch.searchsorted(
-        sorted_keys, torch.arange(num_relations + 1, device=sorted_keys.device)
-    ).tolist()
     anchor_order = order[: bounds[-1]]
     return PackedRelationEdges(
         target=layout.sequence_id[edges.target[anchor_order]],
         source=edges.source[anchor_order],
         relation=edges.relation[anchor_order],
         segments=_get_relation_segments_from_bounds(bounds),
-        all_filtered=edges.target.numel() > 0 and bounds[-1] == 0,
     )
 
 
@@ -649,9 +672,11 @@ class GraphTransformerEncoderLayer(nn.Module):
                     num_target_rows=x.size(0),
                 )
                 x = x + self._dropout(messages)
-            elif self.training and relation_edges.all_filtered:
-                # Keep the relation parameters in the graph, as the padded path does
-                # when anchor filtering drops every edge.
+            elif self.training:
+                # No relation messages ran (no edges, or anchor filtering dropped
+                # them all). Keep the relation parameters in the graph, as the
+                # padded path does, so their gradients are zero rather than None
+                # (which breaks DDP on the next iteration).
                 x = x + self._zero_relation_parameter_dependency(x)
         return x + self._ffn(self._ffn_norm(x))
 
@@ -2330,7 +2355,7 @@ class GraphTransformerEncoder(nn.Module):
             first_token_output = anchor_only and layer_index == num_layers - 1
             relation_edges = layout.relation_edges
             if first_token_output and relation_edges is not None:
-                relation_edges = _anchor_relation_edges(relation_edges, layout)
+                relation_edges = relation_edges.anchor_edges
             x = self._run_packed_layer(
                 cast(GraphTransformerEncoderLayer, encoder_layer),
                 x,
@@ -2500,16 +2525,33 @@ class GraphTransformerEncoder(nn.Module):
         relations = relations.contiguous()
         edge_first_tokens = first_tokens[batch_indices]
         # Each relation's edges are contiguous, so one host read of the relation
-        # boundaries gives all the segments.
-        relation_ids = torch.arange(
-            len(self._relation_attention_edge_types) + 1, device=relations.device
-        )
-        bounds = torch.searchsorted(relations, relation_ids).tolist()
-        return PackedRelationEdges(
+        # boundaries gives all the segments. A last layer that computes only the
+        # anchors reads the anchor edges' boundaries in the same host read.
+        num_relations = len(self._relation_attention_edge_types)
+        relation_ids = torch.arange(num_relations + 1, device=relations.device)
+        edges = PackedRelationEdges(
             target=edge_first_tokens + target_positions,
             source=edge_first_tokens + source_positions,
             relation=relations,
+            segments=(),
+        )
+        bounds_tensor = torch.searchsorted(relations, relation_ids)
+        if self._readout_mode != "anchor_only" or len(self._encoder_layers) == 0:
+            return edges._replace(
+                segments=_get_relation_segments_from_bounds(bounds_tensor.tolist())
+            )
+        anchor_sorted_keys, anchor_order = _sort_anchor_relation_edges(
+            layout, edges.target, relations, num_relations
+        )
+        anchor_bounds_tensor = torch.searchsorted(anchor_sorted_keys, relation_ids)
+        bounds, anchor_bounds = torch.stack(
+            [bounds_tensor, anchor_bounds_tensor]
+        ).tolist()
+        return edges._replace(
             segments=_get_relation_segments_from_bounds(bounds),
+            anchor_edges=_anchor_relation_edges(
+                edges, layout, anchor_order, anchor_bounds
+            ),
         )
 
     def _get_sequence_positional_encoding(
