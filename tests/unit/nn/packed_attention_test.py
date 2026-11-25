@@ -141,6 +141,27 @@ class PackedAttentionTest(TestCase):
             atol=1e-5,
         )
 
+    def test_fold_per_key_bias_reproduces_the_scores_with_a_large_bias(self) -> None:
+        query, key = torch.randn(6, 2, 64), torch.randn(6, 2, 64)
+        per_key = torch.full((6, 2), 10_000.0)
+        folded_query, folded_key = _fold_per_key_bias(query, key, per_key)
+        self.assertEqual(folded_query.shape[-1], 72)
+        torch.testing.assert_close(
+            torch.einsum("qhd,khd->hqk", folded_query, folded_key) / 72**0.5,
+            torch.einsum("qhd,khd->hqk", query, key) / 64**0.5
+            + per_key.t()[:, None, :],
+            rtol=1e-6,
+            atol=1e-2,
+        )
+
+    def test_fold_per_key_bias_keeps_a_large_fp16_bias_finite(self) -> None:
+        query = torch.randn(6, 2, 64, dtype=torch.float16)
+        key = torch.randn(6, 2, 64, dtype=torch.float16)
+        per_key = torch.full((6, 2), 10_000.0)
+        folded_query, folded_key = _fold_per_key_bias(query, key, per_key)
+        self.assertTrue(torch.isfinite(folded_query).all().item())
+        self.assertTrue(torch.isfinite(folded_key).all().item())
+
     def test_fold_per_key_bias_casts_the_bias_to_the_key_dtype(self) -> None:
         query = torch.randn(6, 2, 8, dtype=torch.bfloat16)
         key = torch.randn(6, 2, 8, dtype=torch.bfloat16)

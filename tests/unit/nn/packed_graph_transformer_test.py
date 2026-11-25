@@ -1086,16 +1086,27 @@ class PackedRelationMessageTest(TestCase):
         )
         _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
+    def test_training_gives_relation_parameters_zero_gradients_with_no_edges(
+        self,
+    ) -> None:
+        data = _three_relation_batch(0, 0)
+        encoder = _relation_encoder(data, _relation_encoder_kwargs()).train()
+        _, gradients = _gradients(lambda: _run_packed(encoder, data), encoder)
+        relation_parameter_names = [
+            name for name, _ in encoder.named_parameters() if "._relation_" in name
+        ]
+        self.assertTrue(relation_parameter_names)
+        for name in relation_parameter_names:
+            self.assertEqual(gradients[name].abs().max().item(), 0.0)
+
     @parameterized.expand(
         [
-            param("no_edges", num_edges=0, expects_all_filtered=False),
             # Every edge into an anchor is dropped: with "out" sampling and one hop
             # the expanded endpoint of such an edge is a last-hop token. Anchor
             # self-loops would survive the filter, so the batch has none.
             param(
                 "no_edges_into_anchors",
                 has_self_loops=False,
-                expects_all_filtered=True,
                 sampling_direction="out",
                 hop_distance=1,
             ),
@@ -1104,7 +1115,6 @@ class PackedRelationMessageTest(TestCase):
     def test_training_gradients_match_padded_path_when_edges_are_filtered(
         self,
         _: str,
-        expects_all_filtered: bool,
         num_edges: int = 80,
         has_self_loops: bool = True,
         **overrides: Any,
@@ -1121,7 +1131,7 @@ class PackedRelationMessageTest(TestCase):
             side_effect=GraphTransformerEncoderLayer._zero_relation_parameter_dependency,
         ) as zero_dependency:
             actual = _gradients(lambda: _run_packed(encoder, data), encoder)
-        self.assertEqual(zero_dependency.called, expects_all_filtered)
+        self.assertTrue(zero_dependency.called)
         _assert_training_gradients_match(self, expected, actual, atol=1e-5)
 
     @parameterized.expand(
