@@ -91,15 +91,17 @@ Some highlights:
   cost per message; `mpt_uv` splits each payload across 16 extra TCP connections, which is 2-5x faster for
   multi-megabyte payloads and about 25% slower per small message; `cma` copies the payload straight out of the sender's
   memory (same host only, needs ptrace access) and is faster than `basic` only for multi-megabyte payloads. Each value
-  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default equals
-  GraphLearn-Torch's (`mpt_uv,basic`). Use the same value on every node of a job. A bad value fails in the parent
-  process before workers are spawned for the colocated sampling producer and the graph-store sampling backend, and in
-  the process that initializes RPC (the `mp.spawn` child, or each loader worker at startup) for the dataset-building
-  process and the colocated loader worker. The colocated loader worker, the dataset-building process, the colocated
-  sampling producer and the graph-store sampling worker subprocesses honor the variable. The graph-store `init_server`
-  and `init_client` (which accept `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep
-  GraphLearn-Torch's `init_rpc` and its default channels; they still share `basic` with every other process. A unit test
-  hashes the upstream source so a GraphLearn-Torch upgrade that changes it is noticed
+  is described at `SAMPLING_RPC_CHANNELS_ENV` in `gigl/distributed/constants.py`. Unset, the default is `basic`
+  (GraphLearn-Torch's is `mpt_uv,basic`; set `GIGL_SAMPLING_RPC_CHANNELS=mpt_uv,basic` to use it). On an 80-machine
+  colocated inference workload `basic` was about 1.8x faster per batch than `mpt_uv` and used about 4x less sampler CPU.
+  Use the same value on every node of a job. A bad value fails in the parent process before workers are spawned for the
+  colocated sampling producer and the graph-store sampling backend, and in the process that initializes RPC (the
+  `mp.spawn` child, or each loader worker at startup) for the dataset-building process and the colocated loader worker.
+  The colocated loader worker, the dataset-building process, the colocated sampling producer and the graph-store
+  sampling worker subprocesses honor the variable. The graph-store `init_server` and `init_client` (which accept
+  `is_dynamic`) and GraphLearn-Torch's own `init_server`/`init_client` keep GraphLearn-Torch's `init_rpc` and its
+  channels (`mpt_uv,basic`); they still share `basic` with every other process. A unit test hashes the upstream source
+  so a GraphLearn-Torch upgrade that changes it is noticed
 - Route ids to partitions with one stable sort instead of a mask and two `masked_select` calls per partition, in the
   neighbor samplers' one-hop sampling and in `FusedDistFeature` remote lookups. GraphLearn-Torch's per-partition loop
   releases and reacquires the GIL in every torch op, so with many partitions it dominates the sampler's event-loop

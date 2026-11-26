@@ -35,8 +35,9 @@ SAMPLING_RPC_INIT_TIMEOUT_ENV: Final[str] = "GIGL_SAMPLING_RPC_INIT_TIMEOUT_SECO
 DEFAULT_SAMPLING_RPC_INIT_TIMEOUT_SECONDS: Final[int] = 600
 
 # Comma-separated TensorPipe channels for the RPC agent of sampling workers, the dataset-building
-# process and colocated loader workers, highest priority first. Unset means GLT's default,
-# "mpt_uv,basic". Use the same value on every node of a job.
+# process and colocated loader workers, highest priority first. Unset means "basic", which differs
+# from GLT's default of "mpt_uv,basic"; set "mpt_uv,basic" to use GLT's channels. Use the same value
+# on every node of a job.
 #
 # A channel moves tensor payloads; control messages always use the "uv" (libuv TCP) transport.
 # TensorPipe uses the first channel both peers list and can use, so "basic" is required: every
@@ -55,7 +56,8 @@ DEFAULT_SAMPLING_RPC_INIT_TIMEOUT_SECONDS: Final[int] = 600
 #
 # Allowed values:
 #   basic:  Sends each payload over the pair's one TCP connection, served by one libuv I/O
-#           thread. Lowest cost per message, which suits the small payloads of sampling RPCs.
+#           thread. Lowest cost per message, which suits the small payloads of sampling RPCs. The
+#           default.
 #   mpt_uv: "Multiplexed transport over libuv". Splits each payload across 16 extra TCP
 #           connections, each with its own I/O thread. About 2-5x faster than basic for
 #           multi-megabyte payloads, about 25% slower per message for small ones.

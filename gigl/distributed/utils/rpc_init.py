@@ -4,14 +4,16 @@
 
 Differences from GLT's ``init_rpc`` (each one is marked ``# GiGL change:`` in the code):
 
-1. The TensorPipe channels come from the ``channels`` argument. GLT always uses ``["mpt_uv", "basic"]``.
+1. The TensorPipe channels come from the ``channels`` argument, which defaults to ``("basic",)``. GLT always
+   uses ``["mpt_uv", "basic"]``.
 2. There is no ``is_dynamic`` argument. No caller here needs it; the graph-store ``init_server`` and
    ``init_client``, which do, call GLT's ``init_rpc``.
 3. Module state is written as ``glt_rpc._rpc_inited = ...`` instead of with ``global``, because this code
    lives in another module. GLT's helpers (``all_gather``, ``barrier``, ``rpc_is_initialized``) read that
    state.
 
-With the default channels, the TensorPipe options, the module state and the side effects are the same as GLT's.
+With ``channels=("mpt_uv", "basic")``, the TensorPipe options, the module state and the side effects are the same
+as GLT's.
 
 ``GltInitRpcDriftTest`` hashes the source of GLT's ``init_rpc``, ``shutdown_rpc`` and ``rpc_is_initialized``.
 A GLT upgrade that changes any of them fails the test; compare the copy with the new source when it does.
@@ -26,14 +28,15 @@ Call sites that read the variable, through ``init_rpc_from_env``:
 - The colocated sampling producer (``DistSamplingProducer``).
 - The graph-store sampling worker subprocesses (``shared_dist_sampling_producer``).
 
-Call sites that ignore the variable and call GLT's ``init_rpc`` with GLT's default channels:
+Call sites that ignore the variable and call GLT's ``init_rpc`` with GLT's channels, ``mpt_uv`` and ``basic``:
 
 - The graph-store ``init_server`` and ``init_client`` (``dist_server`` and ``compute``), which accept
   ``is_dynamic``.
 - GLT's own ``init_server`` and ``init_client``.
 
-Processes that read the variable and processes that do not still share ``basic``, so a mixed deployment
-connects.
+Processes that read the variable, whose default is ``basic``, and processes that do not, which use ``mpt_uv``
+and ``basic``, share ``basic``, so a mixed deployment connects. Set ``GIGL_SAMPLING_RPC_CHANNELS=mpt_uv,basic``
+to use GLT's channels in the processes that read the variable.
 
 Where an invalid value fails:
 
@@ -51,10 +54,13 @@ import graphlearn_torch.distributed.rpc as glt_rpc
 from graphlearn_torch.distributed.dist_context import DistRole
 from torch.distributed import rpc
 
+from gigl.common.logger import Logger
 from gigl.distributed.constants import SAMPLING_RPC_CHANNELS_ENV
 
+logger = Logger()
+
 _TRANSPORTS: Final[tuple[str, ...]] = ("uv",)
-DEFAULT_CHANNELS: Final[tuple[str, ...]] = ("mpt_uv", "basic")
+DEFAULT_CHANNELS: Final[tuple[str, ...]] = ("basic",)
 
 # Each value is described at SAMPLING_RPC_CHANNELS_ENV in gigl/distributed/constants.py.
 _ALLOWED_CHANNELS: Final[frozenset[str]] = frozenset({"basic", "mpt_uv", "cma"})
@@ -83,7 +89,7 @@ def _validate_channels(channels: tuple[str, ...]) -> None:
 
 
 def sampling_rpc_channels_from_env() -> tuple[str, ...]:
-    """Returns the channels from the environment, defaulting to GLT's values.
+    """Returns the channels from the environment, defaulting to ``basic``.
 
     Raises:
         ValueError: If the variable is set to an invalid value, including an empty list.
@@ -186,6 +192,7 @@ def init_rpc_from_env(
 ) -> None:
     """Calls ``init_rpc_with_options`` with the channels from the environment."""
     channels = sampling_rpc_channels_from_env()
+    logger.info(f"Initializing sampling RPC with TensorPipe channels {list(channels)}")
     init_rpc_with_options(
         master_addr=master_addr,
         master_port=master_port,

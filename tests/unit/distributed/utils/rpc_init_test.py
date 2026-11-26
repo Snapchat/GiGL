@@ -298,9 +298,11 @@ class CallSitesTest(TestCase):
 class InitRpcMatchesGltTest(TestCase):
     """Two real processes that use ``init_rpc_from_env`` behave like ones that use GLT's ``init_rpc``."""
 
-    def test_default_matches_glt(self) -> None:
+    def test_glt_channels_match_glt(self) -> None:
         glt_states = _run_two_ranks(_init_with_glt, {})
-        gigl_states = _run_two_ranks(_init_with_gigl, {})
+        gigl_states = _run_two_ranks(
+            _init_with_gigl, {SAMPLING_RPC_CHANNELS_ENV: "mpt_uv,basic"}
+        )
 
         for rank in range(_WORLD_SIZE):
             # The two implementations agree on every observable value, thread count included.
@@ -323,20 +325,22 @@ class InitRpcMatchesGltTest(TestCase):
             self.assertEqual(expected["rpc_timeout"], _RPC_TIMEOUT_SECONDS)
 
     def test_basic_channel_skips_mpt_uv_threads(self) -> None:
-        default_states = _run_two_ranks(_init_with_gigl, {})
+        mpt_uv_states = _run_two_ranks(
+            _init_with_gigl, {SAMPLING_RPC_CHANNELS_ENV: "mpt_uv,basic"}
+        )
         basic_states = _run_two_ranks(
             _init_with_gigl, {SAMPLING_RPC_CHANNELS_ENV: "basic"}
         )
 
         for rank in range(_WORLD_SIZE):
-            default_state = dict(default_states[rank])
+            mpt_uv_state = dict(mpt_uv_states[rank])
             basic_state = dict(basic_states[rank])
             # Without the mpt_uv channel the agent has the lane threads fewer, and nothing else differs.
             self.assertEqual(
-                default_state.pop("uv_threads") - basic_state.pop("uv_threads"),
+                mpt_uv_state.pop("uv_threads") - basic_state.pop("uv_threads"),
                 _MPT_UV_LANE_THREADS,
             )
-            self.assertEqual(basic_state, default_state)
+            self.assertEqual(basic_state, mpt_uv_state)
 
 
 class SamplingRpcChannelsFromEnvTest(TestCase):
@@ -353,8 +357,8 @@ class SamplingRpcChannelsFromEnvTest(TestCase):
         self.addCleanup(patcher.stop)
         os.environ.pop(SAMPLING_RPC_CHANNELS_ENV, None)
 
-    def test_unset_gives_glt_defaults(self) -> None:
-        self.assertEqual(self._parse({}), ("mpt_uv", "basic"))
+    def test_unset_gives_basic(self) -> None:
+        self.assertEqual(self._parse({}), ("basic",))
 
     def test_valid_values_are_parsed_with_whitespace_trimmed(self) -> None:
         env = {SAMPLING_RPC_CHANNELS_ENV: "cma, mpt_uv ,basic"}
