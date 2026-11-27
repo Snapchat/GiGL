@@ -1051,7 +1051,7 @@ wheels = [
 
 [[package]]
 name = "gigl"
-version = "0.4.0"
+version = "0.4.0.dev20261127191311"
 source = { editable = "." }
 dependencies = [
     { name = "argo-workflows" },
@@ -1359,7 +1359,7 @@ typing-stubs = [
 
 [[package]]
 name = "gigl-core"
-version = "0.4.0"
+version = "0.4.0.dev20261127191311"
 source = { directory = "gigl-core" }
 
 [[package]]
